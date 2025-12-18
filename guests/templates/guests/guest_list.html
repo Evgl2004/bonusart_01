@@ -1,0 +1,673 @@
+{% extends "base.html" %}
+
+{% block title %}Гости{% endblock %}
+
+{% block content %}
+
+<!-- Стили для столбца "Категории" и бейджей -->
+<style>
+    /* Столбец "Категории" – фиксированная ширина, чтобы не прыгал */
+    .categories-col {
+      width: 220px;
+      max-width: 220px;
+    }
+
+    /* Общий вид "пилюли" */
+    .category-pill {
+      display: inline-block;
+      padding: 0.1rem 0.45rem;
+      border-radius: 999px;       /* круглая таблетка */
+      border: 1px solid currentColor;
+      font-size: 0.75rem;
+      font-weight: 500;
+      background-color: transparent; /* без заливки */
+      line-height: 1.2;
+      white-space: nowrap;           /* не переносить текст внутри */
+      margin-right: 0.25rem;
+      margin-bottom: 0.15rem;
+
+      max-width: 180px;           /* ширина «таблетки» */
+      white-space: nowrap;        /* одна строка */
+      overflow: hidden;           /* обрезаем лишнее */
+      text-overflow: ellipsis;    /* добавляем "…" в конце */
+    }
+
+    /* Набор разных цветов (по ID категории) */
+    .cat-c1 { color: #0d6efd; } /* синий */
+    .cat-c2 { color: #198754; } /* зелёный */
+    .cat-c3 { color: #fd7e14; } /* оранжевый */
+    .cat-c4 { color: #6610f2; } /* фиолетовый */
+    .cat-c5 { color: #dc3545; } /* красный */
+    .cat-c6 { color: #20c997; } /* бирюзовый */
+
+    /* сам контейнер */
+    .choices {
+      width: 100%;
+      margin-bottom: 0;
+      font-size: 0.875rem; /* как у остальных полей */
+    }
+
+    /* "поле ввода" – высота и рамка как у form-control / form-select */
+   .choices[data-type*="select-multiple"] .choices__inner{
+      min-height: calc(2.25rem + 2px);
+      height: auto;                 /* <-- ключевое */
+      padding: 0.375rem 0.75rem;
+      border-radius: 0.375rem;
+      border: 1px solid #ced4da;
+      box-shadow: 0 .125rem .25rem rgba(0,0,0,.075);
+      background-color: #fff;
+
+      display: flex;
+      flex-wrap: wrap;              /* <-- ключевое */
+      align-items: center;          /* можно center, а если “пляшет” — поставьте flex-start */
+      gap: 0.25rem;
+    }
+
+    /* список тегов внутри – в одну строку, без лишних отступов */
+   .choices__list--multiple{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.25rem;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* внутренний input для поиска – плоский, не увеличивает высоту */
+    .choices__input{
+      flex: 1 1 120px;              /* чтобы появлялся на новой строке, когда тесно */
+      min-width: 80px;
+      padding: 0;
+      margin: 0;
+      border: 0;
+    }
+
+    /* placeholder более бледный */
+    .choices__inner .choices__placeholder {
+      opacity: .6;
+    }
+
+    /* теги выбранных категорий – синяя таблетка */
+    .choices__list--multiple .choices__item {
+      background-color: #0d6efd;
+      border-color: #0d6efd;
+      color: #fff;
+      border-radius: 999px;
+      padding: 0.1rem 0.45rem;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    /* подсветка активного тега */
+    .choices__list--multiple .choices__item.is-highlighted {
+      background-color: #0b5ed7;
+      border-color: #0b5ed7;
+    }
+
+    /* крестик удаления – серый, видимый */
+    .choices__list--multiple .choices__item .choices__button {
+      color: #f8f9fa !important;  /* чтобы был виден на синем фоне */
+      opacity: 0.9 !important;
+      border: none !important;
+      background-color: transparent !important;
+      width: auto;
+      margin-left: 6px;
+    }
+
+    /* выпадающий список – как bootstrap dropdown */
+    .choices__list--dropdown {
+      border-radius: 0.375rem;
+      border: 1px solid #ced4da;
+      box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+      margin-top: 0.125rem;
+    }
+
+    /* подсветка пункта в списке */
+    .choices__list--dropdown .choices__item--selectable.is-highlighted {
+      background-color: #e9f2ff;
+      color: #0d6efd;
+    }
+
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3 mb-0">Список гостей</h1>
+    <span class="badge text-bg-primary fs-6">
+      Гостей: {{ page_obj.paginator.count|default:"0" }}
+    </span>
+</div>
+
+<!-- Поиск + фильтры -->
+<form method="get" id="filter-form" class="mb-4">
+
+  <!-- Ряд 1: поля -->
+  <div class="row gy-2 gx-2">
+    <!-- Поиск -->
+    <div class="col-12 col-md-4">
+      <label class="form-label small text-muted">Поиск</label>
+      <input
+        type="text"
+        name="q"
+        value="{{ q }}"
+        placeholder="Телефон, имя, email"
+        class="form-control shadow-sm"
+      />
+    </div>
+
+    <!-- Тип фильтра -->
+    <div class="col-12 col-md-3">
+      <label class="form-label small text-muted">Фильтр</label>
+      <select class="form-select shadow-sm"
+              name="f"
+              id="filterSelect"
+              data-selected="{{ f|default:'' }}">
+        <option value="">— без фильтра —</option>
+        <option value="activity_range">По дате создания</option>
+        <option value="days_since">За последние N дней</option>
+        <option value="by_restaurant">По заведению</option>
+        <option value="by_category">По категориям</option>
+      </select>
+    </div>
+
+    <!-- Период активности -->
+    <div class="col-6 col-md-2 filter-fields" id="f-activity-range-from">
+      <label class="form-label small text-muted">С даты</label>
+      <input type="date" class="form-control shadow-sm" name="from" value="{{ date_from }}"/>
+    </div>
+    <div class="col-6 col-md-2 filter-fields" id="f-activity-range-to">
+      <label class="form-label small text-muted">По дату</label>
+      <input type="date" class="form-control shadow-sm" name="to" value="{{ date_to }}"/>
+    </div>
+
+    <!-- Последние N дней -->
+    <div class="col-6 col-md-2 filter-fields" id="f-days-since">
+      <label class="form-label small text-muted">Последние, дней</label>
+      <input type="number" min="0"
+             class="form-control shadow-sm"
+             name="days"
+             value="{{ days }}"/>
+    </div>
+
+    <!-- Фильтр по заведению -->
+    <div class="col-12 col-md-3 filter-fields" id="f-restaurant">
+      <label class="form-label small text-muted">Заведение</label>
+      <select name="restaurant_id" class="form-select shadow-sm">
+        <option value="">— выберите заведение —</option>
+        {% for r in restaurants %}
+          <option value="{{ r.id }}"
+            {% if r.id|stringformat:'s' == selected_restaurant_id %}selected{% endif %}>
+            {{ r.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Фильтр по категориям -->
+    <div class="col-12 col-md-3 filter-fields" id="f-categories">
+      <label class="form-label small text-muted">Категории</label>
+      <select id="catsSelect"
+              class="form-select shadow-sm"
+              name="cats"
+              multiple>
+        {% for cat in categories %}
+          <option value="{{ cat.id }}" {% if cat.id|stringformat:'s' in filter_category_ids %}selected{% endif %}>
+            {{ cat.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+    <div class="col-12 col-md-3 filter-fields" id="f-cat-restaurant">
+      <label class="form-label small text-muted">Ресторан (где присвоена категория)</label>
+      <select name="cat_restaurant_id" class="form-select shadow-sm">
+        <option value="">— любой —</option>
+        {% for r in restaurants %}
+          <option value="{{ r.id }}" {% if cat_restaurant_id == r.id|stringformat:"s" %}selected{% endif %}>
+            {{ r.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+
+  <!-- Ряд 2: кнопки (в “красную зону”) -->
+  <div class="row mt-2">
+    <div class="col-12 col-md-7 d-flex gap-2">
+      <button type="submit" class="btn btn-primary px-4">Отсортировать</button>
+      {% if q or f or date_from or date_to or days or filter_category_ids or selected_restaurant_id %}
+        <a href="?" class="btn btn-outline-secondary">Сбросить</a>
+      {% endif %}
+    </div>
+  </div>
+
+</form>
+
+<!-- Форма для действий над гостями -->
+<form method="post" id="guest-actions-form">
+    {% csrf_token %}
+
+    <div class="d-flex justify-content-start mb-2 align-items-center">
+
+        {% if select_all %}
+        <!-- Активный режим "выбраны все по фильтру" -->
+        <button type="submit" name="action" value="unselect_all" class="btn btn-outline-danger">
+            Снять выбор
+        </button>
+        {% else %}
+        <!-- Обычный режим -->
+        <button type="submit" name="action" value="select_all" class="btn btn-primary">
+            Выбрать всех
+        </button>
+        {% endif %}
+
+        <!-- Универсальный счётчик выбранных гостей -->
+        <span id="selected-counter" class="ms-3 text-muted" style="display:none;">
+        Выбрано гостей:
+        <span id="selected-count">
+          {% if select_all %}{{ selected_count }}{% else %}0{% endif %}
+        </span>
+      </span>
+
+        <!-- БЛОК "ДОБАВИТЬ В КАТЕГОРИЮ" -->
+        {% if categories %}
+        <div id="category-actions"
+             class="d-flex align-items-center ms-3"
+             style="display:none;">
+            <select name="category_id"
+                    class="form-select form-select-sm w-auto">
+                <option value="">— выбрать категорию —</option>
+                {% for c in categories %}
+                <option value="{{ c.id }}">{{ c.name }}</option>
+                {% endfor %}
+            </select>
+
+            <button type="submit"
+                    name="action"
+                    value="add_to_category"
+                    class="btn btn-success btn-sm ms-2">
+                Добавить в категорию
+            </button>
+        </div>
+        {% endif %}
+
+    </div>
+
+<!-- Таблица -->
+<div class="table-responsive shadow-sm rounded-3 border border-primary-subtle bg-white">
+  <table class="table table-hover align-middle mb-0">
+    <thead class="table-primary">
+      {% with qv=q fv=f fromv=date_from tov=date_to daysv=days %}
+      <tr>
+        <!-- чекбокс для выбора всех на текущей странице -->
+        <th style="width: 40px;">
+          <input
+            type="checkbox"
+            id="select-all"
+            class="form-check-input"
+            {% if select_all %}checked{% endif %}
+          >
+        </th>
+
+        <th>
+          <a class="text-decoration-none"
+             href="?sort=id&dir={{ next_dir.id }}{% if qv %}&q={{ qv }}{% endif %}">
+            ID
+            {% if current_sort == "id" %}
+              {% if current_dir == "asc" %}↑{% else %}↓{% endif %}
+            {% endif %}
+          </a>
+        </th>
+
+        <th>
+          <a class="text-decoration-none"
+             href="?sort=phone&dir={{ next_dir.phone }}{% if qv %}&q={{ qv }}{% endif %}">
+            Телефон
+            {% if current_sort == "phone" %}
+              {% if current_dir == "asc" %}↑{% else %}↓{% endif %}
+            {% endif %}
+          </a>
+        </th>
+
+        <th>
+          <a class="text-decoration-none"
+             href="?sort=first_name&dir={{ next_dir.first_name }}{% if qv %}&q={{ qv }}{% endif %}">
+            Имя
+            {% if current_sort == "first_name" %}
+              {% if current_dir == "asc" %}↑{% else %}↓{% endif %}
+            {% endif %}
+          </a>
+        </th>
+
+        <th>
+          <a class="text-decoration-none"
+             href="?sort=last_name&dir={{ next_dir.last_name }}{% if qv %}&q={{ qv }}{% endif %}">
+            Фамилия
+            {% if current_sort == "last_name" %}
+              {% if current_dir == "asc" %}↑{% else %}↓{% endif %}
+            {% endif %}
+          </a>
+        </th>
+
+        <th>
+          <a class="text-decoration-none"
+             href="?sort=created_at&dir={{ next_dir.created_at }}{% if qv %}&q={{ qv }}{% endif %}">
+            Создан
+            {% if current_sort == "created_at" %}
+              {% if current_dir == "asc" %}↑{% else %}↓{% endif %}
+            {% endif %}
+          </a>
+        </th>
+
+        <th>
+          <a class="text-decoration-none"
+             href="?sort=updated_at&dir={{ next_dir.updated_at }}{% if qv %}&q={{ qv }}{% endif %}">
+            Обновлён
+            {% if current_sort == "updated_at" %}
+              {% if current_dir == "asc" %}↑{% else %}↓{% endif %}
+            {% endif %}
+          </a>
+        </th>
+
+        <th>
+          <a class="text-decoration-none"
+             href="?sort=last_visit&dir={{ next_dir.last_visit }}{% if qv %}&q={{ qv }}{% endif %}">
+            Последний визит
+            {% if current_sort == "last_visit" %}
+              {% if current_dir == "asc" %}↑{% else %}↓{% endif %}
+            {% endif %}
+          </a>
+        </th>
+
+        <th>Заведение</th>
+        {% if f == 'by_restaurant' %}
+            <th>Кол-во визитов</th>
+        {% endif %}
+        <th class="categories-col">Категории</th>
+
+      </tr>
+      {% endwith %}
+    </thead>
+
+    <tbody>
+      {% for g in guests %}
+        <tr class="guest-row" data-href="{% url 'guest_detail' g.id %}">
+
+        <!-- чекбокс одного гостя -->
+        <td>
+          <input
+            type="checkbox"
+            class="form-check-input guest-checkbox"
+            name="selected_guests"
+            value="{{ g.id }}"
+            {% if select_all %}checked{% endif %}
+          >
+        </td>
+
+        <td>{{ g.id }}</td>
+        <td class="fw-medium">{{ g.phone|default:"—" }}</td>
+        <td>{{ g.first_name|default:"—" }}</td>
+        <td>{{ g.last_name|default:"—" }}</td>
+        <td>{{ g.created_at|date:"Y-m-d H:i" }}</td>
+        <td>{{ g.updated_at|date:"Y-m-d H:i" }}</td>
+
+        <!-- Последний визит -->
+        <td>
+          {% if f == 'by_restaurant' %}
+              {% if g.last_visit_sort %}
+                  {{ g.last_visit_sort|date:"Y-m-d H:i" }}
+              {% else %}
+                  <span class="text-muted">—</span>
+              {% endif %}
+          {% else %}
+              {% if g.last_visit %}
+                  {{ g.last_visit.visit_date|date:"Y-m-d H:i" }}
+              {% else %}
+                  <span class="text-muted">—</span>
+              {% endif %}
+          {% endif %}
+        </td>
+
+
+        <!-- Заведение -->
+        <td>
+          {% if f == 'by_restaurant' and selected_restaurant %}
+              {{ selected_restaurant.name }}
+          {% else %}
+              {% if g.last_visit and g.last_visit.restaurant %}
+                  {{ g.last_visit.restaurant.name }}
+              {% else %}
+                  <span class="text-muted">—</span>
+              {% endif %}
+          {% endif %}
+        </td>
+
+        {# кол-во визитов: только при фильтре по заведению #}
+        {% if f == 'by_restaurant' %}
+          <td>
+            {% if g.visit_count %}
+                {{ g.visit_count }}
+            {% else %}
+                <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+        {% endif %}
+
+        <!-- Категории -->
+        <td class="categories-col">
+          {% if g.categories_list %}
+            {% for c in g.categories_list %}
+              {% with sid=c.id|stringformat:"s" %}
+                {% with last=sid|slice:"-1:" %}
+                  <span
+                    class="category-pill
+                      {% if last == '0' or last == '6' %} cat-c1
+                      {% elif last == '1' or last == '7' %} cat-c2
+                      {% elif last == '2' or last == '8' %} cat-c3
+                      {% elif last == '3' or last == '9' %} cat-c4
+                      {% elif last == '4' %} cat-c5
+                      {% else %} cat-c6
+                      {% endif %}"
+                    title="{{ c.name }}"
+                  >
+                    {{ c.name }}
+                  </span>
+                {% endwith %}
+              {% endwith %}
+            {% endfor %}
+          {% else %}
+            <span class="text-muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% empty %}
+      <tr>
+          <td colspan="{% if f == 'by_restaurant' %}11{% else %}10{% endif %}"
+              class="text-center py-4 text-muted">
+              Нет гостей
+          </td>
+      </tr>
+
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</form>
+
+
+<!-- Пагинация -->
+{% if is_paginated %}
+<nav class="mt-4" aria-label="Постраничная навигация">
+    <ul class="pagination justify-content-center mb-0">
+
+        {# ——— КНОПКА «НАЗАД» ——— #}
+        {% if page_obj.has_previous %}
+            <li class="page-item">
+                <a class="page-link"
+                   href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.previous_page_number }}">
+                    ← Назад
+                </a>
+            </li>
+        {% else %}
+            <li class="page-item disabled">
+                <span class="page-link">← Назад</span>
+            </li>
+        {% endif %}
+
+        {# ——— ТЕКСТ «стр. X из Y» ——— #}
+        <li class="page-item disabled">
+            <span class="page-link">
+                Стр. {{ page_obj.number }} из {{ paginator.num_pages }}
+            </span>
+        </li>
+
+        {# ——— КНОПКА «ВПЕРЁД» ——— #}
+        {% if page_obj.has_next %}
+            <li class="page-item">
+                <a class="page-link"
+                   href="?{% if query_string %}{{ query_string }}&{% endif %}page={{ page_obj.next_page_number }}">
+                    Вперёд →
+                </a>
+            </li>
+        {% else %}
+            <li class="page-item disabled">
+                <span class="page-link">Вперёд →</span>
+            </li>
+        {% endif %}
+
+    </ul>
+</nav>
+{% endif %}
+
+
+<!-- Скрипты: фильтры, выбор чекбоксов, счётчик и блок "Добавить в категорию" -->
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+
+    // ====== ЛОГИКА ФИЛЬТРОВ ======
+    function toggleFilterFields() {
+      var sel = document.getElementById('filterSelect');
+      if (!sel) return;
+
+      var v = sel.value;
+      var from = document.getElementById('f-activity-range-from');
+      var to   = document.getElementById('f-activity-range-to');
+      var days = document.getElementById('f-days-since');
+      var cats = document.getElementById('f-categories');
+      var rest = document.getElementById('f-restaurant');
+      var catRest = document.getElementById('f-cat-restaurant'); // NEW
+
+
+      if (from) from.style.display = 'none';
+      if (to)   to.style.display   = 'none';
+      if (days) days.style.display = 'none';
+      if (cats) cats.style.display = 'none';
+      if (rest) rest.style.display = 'none';
+      if (catRest) catRest.style.display = 'none'; // NEW
+
+
+      if (v === 'activity_range') {
+        if (from) from.style.display = 'block';
+        if (to)   to.style.display   = 'block';
+      } else if (v === 'days_since') {
+        if (days) days.style.display = 'block';
+      } else if (v === 'by_category') {
+        if (cats) cats.style.display = 'block';
+        if (catRest) catRest.style.display = 'block';
+      } else if (v === 'by_restaurant') {
+        if (rest) rest.style.display = 'block';
+      }
+    }
+
+    var sel = document.getElementById('filterSelect');
+    if (sel) {
+      if (sel.dataset.selected !== undefined) {
+        sel.value = sel.dataset.selected || '';
+      }
+      toggleFilterFields();
+      sel.addEventListener('change', toggleFilterFields);
+    }
+
+    // ====== ВЫБОР ГОСТЕЙ (ТОЛЬКО ТЕКУЩАЯ СТРАНИЦА) ======
+    var selectAllCheckbox = document.getElementById('select-all');
+    var rowCheckboxes = Array.prototype.slice.call(
+      document.querySelectorAll('.guest-checkbox')
+    );
+
+    var counterWrapper = document.getElementById('selected-counter');
+    var counterSpan = document.getElementById('selected-count');
+    var categoryBlock = document.getElementById('category-actions');
+
+    var isGlobalSelectAll = {{ select_all|yesno:"true,false" }};
+    var baseTotal = {{ selected_count|default:"0" }};
+
+    function recalcSelected() {
+      var total;
+
+      if (isGlobalSelectAll) {
+        var uncheckedOnPage = rowCheckboxes.filter(function (cb) {
+          return !cb.checked;
+        }).length;
+        total = baseTotal - uncheckedOnPage;
+      } else {
+        total = rowCheckboxes.filter(function (cb) {
+          return cb.checked;
+        }).length;
+      }
+
+      if (total > 0) {
+        counterWrapper.style.display = 'inline';
+        counterSpan.textContent = total;
+      } else {
+        counterWrapper.style.display = 'none';
+        counterSpan.textContent = '0';
+      }
+
+      if (categoryBlock) {
+        categoryBlock.style.display = total > 0 ? 'inline-flex' : 'none';
+      }
+    }
+
+    rowCheckboxes.forEach(function (cb) {
+      cb.addEventListener('change', recalcSelected);
+    });
+
+    if (selectAllCheckbox) {
+      selectAllCheckbox.addEventListener('change', function () {
+        var checked = selectAllCheckbox.checked;
+        rowCheckboxes.forEach(function (cb) {
+          cb.checked = checked;
+        });
+        recalcSelected();
+      });
+    }
+
+    recalcSelected();
+
+    // ====== Choices.js для селекта категорий ======
+    var categoriesSelect = document.getElementById('catsSelect');
+    if (categoriesSelect && window.Choices) {
+      new Choices(categoriesSelect, {
+        removeItemButton: true,
+        searchEnabled: true,
+        shouldSort: false,
+        placeholderValue: 'Выберите категории',
+        itemSelectText: '',
+      });
+    }
+
+    // ====== dblclick по строке → карточка гостя ======
+    document.querySelectorAll('tr.guest-row').forEach(function (row) {
+      row.addEventListener('dblclick', function (e) {
+        // не открываем карточку при клике по чекбоксу и кнопкам
+        if (e.target.closest('input, button, a, select, option, label')) return;
+
+        var href = row.dataset.href;
+        if (href) window.location.href = href;
+      });
+    });
+
+  });
+</script>
+
+{% endblock %}

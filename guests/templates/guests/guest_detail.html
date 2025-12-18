@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Карточка гостя{% endblock %}
+
+{% block content %}
+<h1 class="h3 mb-3">
+  Гость #{{ guest.id }} — {{ guest.first_name|default:"—" }} {{ guest.last_name|default:"—" }}
+</h1>
+
+<div class="card mb-3">
+  <div class="card-body">
+    <div><b>Телефон:</b> {{ guest.phone|default:"—" }}</div>
+    <div><b>Email:</b> {{ guest.email|default:"—" }}</div>
+    <div><b>Дата рождения:</b> {{ guest.birthdate|default:"—" }}</div>
+    <div><b>Создан:</b> {{ guest.created_at|date:"Y-m-d H:i" }}</div>
+    <div><b>Обновлён:</b> {{ guest.updated_at|date:"Y-m-d H:i" }}</div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-12 col-lg-4">
+    <div class="card mb-3">
+      <div class="card-header">Категории</div>
+      <div class="card-body">
+        {% if guest_categories %}
+          <ul class="mb-0">
+            {% for gc in guest_categories %}
+              <li>
+                {{ gc.category.name }}
+                <span class="text-muted">({{ gc.cnt }})</span>
+              </li>
+            {% endfor %}
+          </ul>
+
+        {% else %}
+          <span class="text-muted">— нет категорий —</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-8">
+    <div class="card mb-3">
+      <div class="card-header">Посещения</div>
+      <div class="card-body p-0">
+        <table class="table mb-0">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Заведение</th>
+              <th>Кол-во</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for v in visits %}
+              <tr>
+                <td>{{ v.visit_date|date:"Y-m-d H:i" }}</td>
+                <td>{{ v.restaurant.name }}</td>
+                <td>{{ v.visit_count }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="3" class="text-muted">— нет посещений —</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<a class="btn btn-outline-secondary" href="{% url 'guests' %}">← Назад к списку</a>
+{% endblock %}
