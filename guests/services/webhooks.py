@@ -21,11 +21,14 @@ logger = logging.getLogger(__name__)
 #                     НАСТРОЙКИ SAGUR API
 # =====================================================================
 
-
-
 SAGUR_BASE_URL = os.getenv("SAGUR_BASE_URL")
 SAGUR_USERNAME = os.getenv("SAGUR_USERNAME")
 SAGUR_PASSWORD = os.getenv("SAGUR_PASSWORD")
+
+PAGE_SIZE=490
+LIMIT =490
+
+ACCESS_TOKEN=None
 
 # =====================================================================
 #                     ПОЛУЧЕНИЕ ТОКЕНА
