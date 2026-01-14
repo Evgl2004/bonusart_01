@@ -1,10 +1,22 @@
 # loyalty_viewer/guests/tasks.py
+import logging
 
 from .services.webhooks import process_recent_webhooks
+
+logger = logging.getLogger(__name__)
 
 
 def fetch_pending_webhooks():
     """
     Задача для Django Q: обрабатывает вебхуки из внешней БД за последние 10 минут.
     """
-    return process_recent_webhooks(period_minutes=10)
+
+    logger.info("🔄 Запуск периодической проверки Уведомлений")
+
+    try:
+        processed = process_recent_webhooks(period_minutes=10)
+        logger.info(f"✅ Периодическая проверка: обработано {processed} Уведомлений")
+        return processed
+    except Exception as err:
+        logger.error(f"❌ Ошибка периодической проверки: {err}")
+        return 0
