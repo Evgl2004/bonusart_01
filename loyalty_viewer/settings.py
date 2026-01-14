@@ -1,13 +1,55 @@
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+import re
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR.parent / ".env")
 
 SECRET_KEY = os.getenv("SECRET_KEY", "devkey")
 DEBUG = os.getenv("DEBUG", "False") == "True"
-ALLOWED_HOSTS = []
+
+# Создаем папку для логов, если она не существует
+LOG_DIR = BASE_DIR / 'logs'
+LOG_DIR.mkdir(exist_ok=True)
+
+# Проверяет, что запрос пришел с разрешенного домена/IP.
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,0.0.0.0').split(',')
+ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS]
+
+# Настройки безопасности для работы через HTTPS
+SECURE_SSL_REDIRECT = True  # Перенаправлять все HTTP-запросы на HTTPS
+
+# Включает XSS фильтр в браузерах. Добавляет заголовок "X-XSS-Protection: 1; mode=block"
+SECURE_BROWSER_XSS_FILTER = True
+# Запрещает браузерам "угадывать" MIME-типы. Добавляет заголовок "X-Content-Type-Options: nosniff"
+SECURE_CONTENT_TYPE_NOSNIFF = True
+# Запрещает встраивание сайта в iframe. Добавляет заголовок "X-Frame-Options: DENY".
+X_FRAME_OPTIONS = 'DENY'
+
+# Дополнительные усиления безопасности (HSTS)
+SECURE_HSTS_SECONDS = 31536000  # 1 год: предписывает браузеру использовать только HTTPS
+SECURE_HSTS_INCLUDE_SUBDOMAINS = True  # Распространяет правило HSTS на все поддомены
+SECURE_HSTS_PRELOAD = True  # Позволяет включить домен в предзагрузку HSTS в браузерах
+
+# Блокировка User-Agent сканеров
+# Django CommonMiddleware проверяет User-Agent каждого запроса.
+# Для проверки используется метод .search() у объектов регулярных выражений.
+DISALLOWED_USER_AGENTS = [
+    # Целевые парсеры и скрипты
+    re.compile(r'^cypex\.ai'),
+    re.compile(r'^libredtail-http'),
+    # Автоматизированные HTTP-клиенты (могут быть легитимными, будьте осторожны)
+    # Временно отключает блокировку легитимных методов
+    # re.compile(r'^python-requests'),
+    # re.compile(r'^Go-http-client'),
+    # re.compile(r'^curl'),
+    # Общие шаблоны (используйте, если хотите агрессивную блокировку)
+    re.compile(r'scanner', re.IGNORECASE),
+    re.compile(r'bot', re.IGNORECASE),
+    re.compile(r'crawler', re.IGNORECASE),
+    re.compile(r'spider', re.IGNORECASE),
+]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -82,13 +124,51 @@ Q_CLUSTER = {
     "label": "Django Q",
     "django_redis": "default",
     "orm": "default",         # хранить задачи в БД (simple mode)
-    #"schedule": {
-    #    "sync_webhooks_recent": {
-    #        "func": "guests.tasks.sync_webhooks_recent",
-    #        "minutes": 10,  # раз в 10 минут запускать обработку
-    #    },
-    #},
+    "schedule": {
+        # Резерв: раз в 10 минут проверяем API на наличие упущенных Уведомлений
+        "sync_webhooks_recent": {
+            "func": "guests.tasks.fetch_pending_webhooks",
+            "minutes": 10,
+        },
+        # # Ночная глобальная проверка в 22:00 по UTC
+        # "nightly_health_check": {
+        #     "func": "guests.tasks.nightly_health_check",
+        #     "schedule_type": "C",  # Cron-тип расписания
+        #     "cron": "0 22 * * *",   # Каждый день в 22:00
+        # },
+    },
 }
+
+# Эти переменные используются для подключения к очереди,
+# куда внешний сервис Уведомлений складываем сообщения.
+REDIS_QUEUE_URL = os.getenv('REDIS_QUEUE_URL', 'redis://localhost:6379/1')
+
+# Имя очереди с сообщениями из сервиса Уведомлений Webhook
+REDIS_QUEUE_NAME = os.getenv('REDIS_QUEUE_NAME', 'webhook_queue')
+
+# Имя специальной очереди для хранения сообщений, которые не удалось обработать после нескольких попыток.
+REDIS_DLQ_NAME = os.getenv('REDIS_DLQ_NAME', 'webhook_queue_dlq')
+
+# Количество повторных попыток для обработки одного сообщения из очереди.
+try:
+    MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))
+except ValueError:
+    # Если значение не может быть преобразовано в число
+    MAX_RETRIES = 3  # значение по умолчанию
+
+# Значение с периодичностью которого будет выполняться логирование Обработка сообщений из очереди Redis.
+try:
+    ACTIVITY_LOG_INTERVAL = int(os.getenv('ACTIVITY_LOG_INTERVAL', '300'))
+except ValueError:
+    # Если значение не может быть преобразовано в число
+    ACTIVITY_LOG_INTERVAL = 300  # значение по умолчанию
+
+# Значение таймаута для BLPOP (секунды ожидания нового сообщения).
+try:
+    BLPOP_TIMEOUT = int(os.getenv('BLPOP_TIMEOUT', '2'))
+except ValueError:
+    # Если значение не может быть преобразовано в число
+    BLPOP_TIMEOUT = 2  # значение по умолчанию
 
 LOGGING = {
     "version": 1,
@@ -106,11 +186,13 @@ LOGGING = {
     },
 }
 LANGUAGE_CODE = 'ru-ru'
-TIME_ZONE = 'Europe/Moscow'
+# Все даты в БД и логи будут храниться в UTC.
+TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/loyalty/'
+MEDIA_URL = '/media/loyalty/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 #WEBHOOK_SERVICE_URL = "http://webhook-service:8000"
