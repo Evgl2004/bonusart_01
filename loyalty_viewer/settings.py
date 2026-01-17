@@ -19,6 +19,11 @@ ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS]
 
 # Настройки безопасности для работы через HTTPS
 SECURE_SSL_REDIRECT = True  # Перенаправлять все HTTP-запросы на HTTPS
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')  # Указывает Django, что запрос пришел по HTTPS
+
+SESSION_COOKIE_SECURE = True  # Отправлять сессионные куки только по HTTPS
+CSRF_COOKIE_SECURE = True  # Отправлять CSRF-куки только по HTTPS
+USE_X_FORWARDED_HOST = False    # если нужен в сложных сценариях с несколькими прокси или особой маршрутизацией.
 
 # Включает XSS фильтр в браузерах. Добавляет заголовок "X-XSS-Protection: 1; mode=block"
 SECURE_BROWSER_XSS_FILTER = True
@@ -50,6 +55,13 @@ DISALLOWED_USER_AGENTS = [
     re.compile(r'crawler', re.IGNORECASE),
     re.compile(r'spider', re.IGNORECASE),
 ]
+
+# Без CORS браузер блокирует JavaScript запросы между разными доменами
+CORS_ALLOW_ALL_ORIGINS = False
+
+# Защита от подделки межсайтовых запросов.
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
+CSRF_TRUSTED_ORIGINS = [host.strip() for host in CSRF_TRUSTED_ORIGINS]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -97,8 +109,8 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': os.getenv('PG_NAME', 'programm_loyalty'),
         'USER': os.getenv('PG_USER', 'postgres'),
-        'PASSWORD': os.getenv('PG_PASSWORD', ''),
-        'HOST': os.getenv('PG_HOST', 'localhost'),
+        'PASSWORD': os.getenv('PG_PASSWORD', '1234'),
+        'HOST': os.getenv('PG_HOST', 'db'),
         'PORT': os.getenv('PG_PORT', '5432'),
     },
     'webhooks': {
@@ -193,6 +205,10 @@ USE_TZ = True
 
 STATIC_URL = '/static/loyalty/'
 MEDIA_URL = '/media/loyalty/'
+
+STATIC_ROOT = BASE_DIR / 'static'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 #WEBHOOK_SERVICE_URL = "http://webhook-service:8000"

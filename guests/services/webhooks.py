@@ -131,10 +131,16 @@ def _iter_pending_webhooks(access_token: str, page_size: int = PAGE_SIZE):
             url = None
 
 
-def _update_webhook_business_status(access_token: str, webhook_id: int, status: str):
+def _update_webhook_business_status(access_token: str, webhook_id: int, status: str, error_description: str = None):
     headers = {"Authorization": f"Bearer {access_token}"}
     url = f"{SAGUR_BASE_URL}/api/internal/webhooks/{webhook_id}/update/"
-    payload = {"business_status": status}
+    payload = {
+        "business_status": status,
+        "service": "app_loyalty_bonus_service",
+    }
+
+    if error_description:
+        payload["error_description"] = error_description[:500]  # Ограничим длину
 
     while True:  # пытаемся пока не удастся или не упадём по др. ошибке
         try:
@@ -187,6 +193,16 @@ def find_guest(event: dict):
             guest = Guest.objects.filter(iiko_id=cid).first()
 
     return guest
+
+def _is_staff_notification(event: dict) -> bool:
+    """
+    Определяет, является ли уведомление связанным с сотрудником (идентификатор есть, но нет телефона).
+    Наличие идентификатора и отсутствие телефона - многовероятно, что это сотрудник.
+    Конечно, есть гости, которые до сих пор используют магнитную карту.
+    Таких гостей необходимо позже идентифицировать и добавить в исключения.
+    """
+
+    return event.get('phone') is None and event.get('customerId') is not None
 
 # =====================================================================
 #                         ПОИСК ГОСТЯ в iikocard
@@ -269,29 +285,34 @@ def get_or_create_guest_from_iiko(phone: str) -> Guest | None:
 # =====================================================================
 #                  ПРИМЕНЕНИЕ КАТЕГОРИЙ К ГОСТЮ
 # =====================================================================
-def apply_category_from_api_webhook(webhook: dict) -> bool:
+def apply_category_from_api_webhook(webhook: dict) -> tuple[bool, str]:
     """
     Обработка одного вебхука, полученного из SAGUR API.
 
     webhook – объект из списка "results" ответа /api/internal/webhooks
     (включая поля category_id_ext, parsed_body, и т.п.).
 
-    Возвращает:
+    Возвращает: (assigned, reason)
         True  - если категория гостю была назначена,
-        False - если ничего не сделали (пропущен/ошибка/нет данных).
+        False - если ничего не сделали (пропущен/ошибка/нет данных), reason содержит причину.
     """
     webhook_id = webhook.get("id")
     event = webhook.get("parsed_body") or {}
 
+    # Проверка на уведомление от сотрудника
+    if _is_staff_notification(event):
+        customer_id = event.get('customerId')
+        reason = (f"Category webhook id={webhook_id} пропущен: "
+                  f"гость является сотрудником (customerId={customer_id}, phone отсутствует).")
+        logger.info(reason)
+        return True, reason
+
     # 0) Обрабатываем только notificationType == 5
     notif_type = event.get("notificationType")
     if notif_type != 5:
-        logger.info(
-            "Webhook id=%s: notificationType=%s (пропуск, ожидаем 5)",
-            webhook_id,
-            notif_type,
-        )
-        return False
+        reason = f"Webhook id={webhook_id}: notificationType={notif_type} (пропуск, ожидаем 5)"
+        logger.info(reason)
+        return False, reason
 
     logger.info("Webhook id=%s: notificationType=5, назначаем категорию гостю", webhook_id)
 
@@ -301,34 +322,25 @@ def apply_category_from_api_webhook(webhook: dict) -> bool:
         guest = get_or_create_guest_from_iiko(event["phone"])
 
     if not guest:
-        logger.warning(
-            "Category webhook id=%s: гость не найден (phone=%s, customerId=%s)",
-            webhook_id,
-            event.get("phone"),
-            event.get("customerId"),
-        )
-        return False
+        reason = (f"Category webhook id={webhook_id}: "
+                  f"гость не найден (phone={event.get("phone")}, customerId={event.get("customerId")})")
+        logger.warning(reason)
+        return False, reason
 
     # 2) Находим категорию по category_id_ext (external_id в нашей БД)
     category_ext_id = webhook.get("category_id_ext")
     if not category_ext_id:
-        logger.info(
-            "Category webhook id=%s: нет category_id_ext, пропускаем (guest_id=%s)",
-            webhook_id,
-            guest.id,
-        )
-        return False
+        reason = f"Category webhook id={webhook_id}: нет category_id_ext, пропускаем (guest_id={guest.id})"
+        logger.info(reason)
+        return False, reason
 
     try:
         cat = Category.objects.get(external_id=category_ext_id, is_active=True)
     except Category.DoesNotExist:
-        logger.warning(
-            "Category webhook id=%s: категория external_id=%s не найдена/неактивна (guest_id=%s)",
-            webhook_id,
-            category_ext_id,
-            guest.id,
-        )
-        return False
+        reason = (f"Category webhook id={webhook_id}: категория external_id={category_ext_id} "
+                  f"не найдена/неактивна (guest_id={guest.id})")
+        logger.warning(reason)
+        return False, reason
 
     # 3) Определяем ресторан
     terminal_group_id = event.get("terminalGroupId")
@@ -470,20 +482,33 @@ def apply_category_from_api_webhook(webhook: dict) -> bool:
                 getattr(restaurant, "id", None),
             )
 
-    return True
+    return True, ""
 
 
 # =====================================================================
 #                  ПРИМЕНЕНИЕ ПОСЕЩЕНИЯ  ГОСТЮ
 # =====================================================================
-def update_visit_history_from_event(event: dict) -> bool:
+def update_visit_history_from_event(event: dict) -> tuple[bool, str]:
     """
     Обновляет историю посещений гостя (VisitHistory) из вебхука notificationType=1.
 
     Сопоставление:
       - гость: по phone (и при необходимости по customerId -> Guest.iiko_id)
       - ресторан: по terminalGroupId (или organizationId) -> Restaurant.iiko_id
+
+    Возвращает: (success, reason)
+       - success=True - визит обновлен
+       - success=False - не обновлен, reason содержит причину
     """
+
+    # Проверка на уведомление от сотрудника
+    if _is_staff_notification(event):
+        customer_id = event.get('customerId')
+        reason = (f"Уведомление от сотрудника пропущено: customerId={customer_id} "
+                  f"(отсутствует phone, многовероятно это сотрудник)")
+        logger.info(reason)
+        return True, reason
+
     phone = event.get("phone")
     customer_id = event.get("customerId")
     terminal_group_id = event.get("terminalGroupId")  # предполагаем, что это iiko_id ресторана
@@ -504,34 +529,25 @@ def update_visit_history_from_event(event: dict) -> bool:
         guest = Guest.objects.filter(iiko_id=customer_id).first()
 
     if not guest:
-        logger.warning(
-            "Гость не найден для notificationType=1: phone=%s, customerId=%s",
-            phone,
-            customer_id,
-        )
-        return False
+        reason = f"Гость не найден для notificationType=1: phone={phone}, customerId={customer_id}"
+        logger.warning(reason)
+        return False, reason
 
     # 2. Ищем ресторан по iiko_id
     restaurant_iiko_id = terminal_group_id or organization_id
     if not restaurant_iiko_id:
-        logger.warning(
-            "Не указан идентификатор ресторана (terminalGroupId/organizationId) "
-            "для гостя id=%s, phone=%s",
-            guest.id,
-            guest.phone,
-        )
-        return False
+        reason = (f"Не указан идентификатор ресторана (terminalGroupId/organizationId) "
+                  f"для гостя id={guest.id}, phone={guest.phone}")
+        logger.warning(reason)
+        return False, reason
 
     try:
         restaurant = Restaurant.objects.get(iiko_id=restaurant_iiko_id)
     except Restaurant.DoesNotExist:
-        logger.warning(
-            "Ресторан с iiko_id=%s не найден в БД для гостя id=%s, phone=%s",
-            restaurant_iiko_id,
-            guest.id,
-            guest.phone,
-        )
-        return False
+        reason = (f"Ресторан с iiko_id={restaurant_iiko_id} не найден в БД "
+                  f"для гостя id={guest.id}, phone={guest.phone}")
+        logger.warning(reason)
+        return False, reason
 
     # 3. Парсим дату визита
     changed_on = event.get("changedOn")
@@ -599,11 +615,10 @@ def update_visit_history_from_event(event: dict) -> bool:
             visit_dt,
         )
 
+    return True, ""
 
-    return True
 
-
-def handle_api_webhook(webhook: dict) -> bool:
+def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     """
     Центральный обработчик вебхука из SAGUR API.
 
@@ -643,8 +658,7 @@ def handle_api_webhook(webhook: dict) -> bool:
         webhook_id,
         notif_type,
     )
-    return False
-
+    return False, f"Неизвестный notificationType={notif_type}"
 
 
 # =====================================================================
@@ -687,19 +701,21 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
         webhook_id = webhook.get("id")
 
         try:
-            assigned = handle_api_webhook(webhook)
+            assigned, reason = handle_api_webhook(webhook)
 
             if assigned:
-                _update_webhook_business_status(access_token, webhook_id, "complete")
                 processed_count += 1
+                final_status = "complete"
+                log_details = reason or 'Успех'
+                reason = reason if reason else None
+                logger.info(f"Уведомление id={webhook_id} успешно обработано! Детали: {log_details}")
             else:
-                # Логическая ошибка / ничего не сделали -> считаем FAILED
-                logger.warning(
-                    "Webhook id=%s не обработан (assigned=False), "
-                    "устанавливаем business_status='failed'",
-                    webhook_id,
-                )
-                _update_webhook_business_status(access_token, webhook_id, "failed")
+                final_status = "failed"
+                logger.warning(f"Уведомление id={webhook_id} не обработан: {reason}. "
+                               f"Устанавливаем business_status='failed'")
+
+            # Единый вызов для обновления статуса в БД
+            _update_webhook_business_status(access_token, webhook_id, final_status, reason)
 
         except Exception as e:
             logger.exception(
@@ -708,7 +724,8 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
                 e,
             )
             try:
-                _update_webhook_business_status(access_token, webhook_id, "failed")
+                reason = f"Ошибка обработки: {str(e)[:200]}"
+                _update_webhook_business_status(access_token, webhook_id, "failed", reason)
             except Exception as e2:
                 logger.error(
                     "Доп. ошибка при обновлении статуса вебхука id=%s на 'failed': %s",
@@ -723,4 +740,3 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
         processed_count,
     )
     return processed_count
-
