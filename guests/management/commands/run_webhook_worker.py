@@ -39,7 +39,7 @@ class Command(BaseCommand):
         )
 
         parser.add_argument(
-            '--verbose', '-v',
+            '--verbose', '-V',
             action='store_true',
             help='Подробный вывод информации'
         )

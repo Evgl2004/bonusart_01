@@ -15,7 +15,10 @@ def fetch_pending_webhooks():
 
     try:
         processed = process_recent_webhooks(period_minutes=10)
-        logger.info(f"✅ Периодическая проверка: обработано {processed} Уведомлений")
+        if processed > 0:
+            logger.info(f"✅ Периодическая проверка: обработано {processed} Уведомлений")
+        else:
+            logger.info("✅ Уведомлений старше 10 минут не обнаружено")
         return processed
     except Exception as err:
         logger.error(f"❌ Ошибка периодической проверки: {err}")

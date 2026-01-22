@@ -10,7 +10,7 @@ from redis import ConnectionError as redis_ConnectionError
 from redis import RedisError as redis_RedisError
 from django.conf import settings
 
-from webhooks import handle_api_webhook, _get_sagur_access_token_cached, _update_webhook_business_status
+from guests.services.webhooks import handle_api_webhook, _get_sagur_access_token_cached, _update_webhook_business_status
 
 logger = logging.getLogger(__name__)
 
@@ -446,6 +446,16 @@ class WebhookWorker:
         Эвристический метод определения временных ошибок.
         Анализирует текст исключения и его тип.
         """
+
+        error_str = str(error).lower()
+
+        # 429 - временная ошибка (rate limiting)
+        if "429" in error_str or "too many requests" in error_str:
+            return True
+
+        # 401 - токен истёк, тоже временная (обновим и повторим)
+        if "401" in error_str or "token expired" in error_str:
+            return True
 
         error_str = str(error).lower()
         retryable_keywords = [

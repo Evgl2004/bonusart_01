@@ -136,6 +136,7 @@ Q_CLUSTER = {
     "label": "Django Q",
     "django_redis": "default",
     "orm": "default",         # хранить задачи в БД (simple mode)
+    "log_level": "INFO",  # Уровень логирования INFO
     "schedule": {
         # Резерв: раз в 10 минут проверяем API на наличие упущенных Уведомлений
         "sync_webhooks_recent": {
@@ -186,9 +187,36 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
 
+    "formatters": {
+        "simple": {
+            "format": "{levelname} [{asctime}] {message}",
+            "style": "{",
+        },
+        "verbose": {
+            "format": "{levelname} [{asctime}] {module} {funcName} {message}",
+            "style": "{",
+        },
+    },
+
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
+            "formatter": "simple",
+        },
+    },
+
+    "loggers": {
+        # Логгер для приложения guests
+        "guests": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        # Логгер для Django Q
+        "django_q": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
         },
     },
 
