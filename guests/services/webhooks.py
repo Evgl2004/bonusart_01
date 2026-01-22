@@ -4,15 +4,14 @@ import requests
 import time
 import os
 
-from requests import HTTPError
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.db import transaction
 from django.utils import timezone
 
-from ..models import Guest, Category, GuestCategory, Restaurant, VisitHistory, GuestCategoryAssignment
+from guests.models import Guest, Category, GuestCategory, Restaurant, VisitHistory, GuestCategoryAssignment
 
-from .iiko_client import iiko_client
+from guests.services.iiko_client import iiko_client
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +24,12 @@ SAGUR_BASE_URL = os.getenv("SAGUR_BASE_URL")
 SAGUR_USERNAME = os.getenv("SAGUR_USERNAME")
 SAGUR_PASSWORD = os.getenv("SAGUR_PASSWORD")
 
-PAGE_SIZE=490
-LIMIT =490
+PAGE_SIZE= 490
+LIMIT = 490
 
-ACCESS_TOKEN=None
+ACCESS_TOKEN = None
+TOKEN_EXPIRES_AT = 0  # Время последней проверки токена
+
 
 # =====================================================================
 #                     ПОЛУЧЕНИЕ ТОКЕНА
@@ -80,19 +81,24 @@ def _get_sagur_access_token_cached() -> str:
     Возвращает действующий токен.
     Запрашивает новый, только если старый умер.
     """
-    global ACCESS_TOKEN
+    global ACCESS_TOKEN, TOKEN_EXPIRES_AT
 
-    # Есть токен? Проверяем его
-    if ACCESS_TOKEN:
-        if _verify_token(ACCESS_TOKEN):
-            return ACCESS_TOKEN
-        else:
-            logger.info("SAGUR: токен не активен, запрашиваю новый...")
+    current_time = time.time()
 
-    # Иначе — берём новый
-    ACCESS_TOKEN = _get_new_access_token()
-    logger.info("SAGUR: получен новый access-токен")
-    return ACCESS_TOKEN
+    # Если токен есть и еще не истек (по нашему локальному расчету) - возвращаем его
+    if ACCESS_TOKEN and TOKEN_EXPIRES_AT and current_time < TOKEN_EXPIRES_AT:
+        return ACCESS_TOKEN
+
+    # Сюда попадаем, если токена нет или он просрочен.
+    try:
+        ACCESS_TOKEN = _get_new_access_token()
+        TOKEN_EXPIRES_AT = current_time + 14 * 60
+        logger.info("SAGUR: получен новый access-токен, действителен до: %s",
+                   time.strftime('%H:%M:%S', time.localtime(TOKEN_EXPIRES_AT)))
+
+    except Exception as err:
+        logger.error(f"Не удалось получить новый токен: {err}")
+        raise
 
 
 def _iter_pending_webhooks(access_token: str, page_size: int = PAGE_SIZE):
@@ -104,10 +110,12 @@ def _iter_pending_webhooks(access_token: str, page_size: int = PAGE_SIZE):
         "Authorization": f"Bearer {access_token}",
     }
 
-    url = f"{SAGUR_BASE_URL}/api/internal/webhooks"
+    date_to = timezone.now() - timedelta(minutes=10)
+    url = f"{SAGUR_BASE_URL}/api/internal/webhooks/"
     params = {
         "business_status": "pending",
         "page_size": page_size,
+        "date_to": date_to.isoformat(),
     }
 
     while url:
@@ -132,41 +140,49 @@ def _iter_pending_webhooks(access_token: str, page_size: int = PAGE_SIZE):
 
 
 def _update_webhook_business_status(access_token: str, webhook_id: int, status: str, error_description: str = None):
-    headers = {"Authorization": f"Bearer {access_token}"}
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "X-Service-Name": "app_loyalty_bonus_service",
+    }
     url = f"{SAGUR_BASE_URL}/api/internal/webhooks/{webhook_id}/update/"
     payload = {
         "business_status": status,
-        "service": "app_loyalty_bonus_service",
     }
 
     if error_description:
         payload["error_description"] = error_description[:500]  # Ограничим длину
 
-    while True:  # пытаемся пока не удастся или не упадём по др. ошибке
-        try:
-            resp = requests.patch(url, headers=headers, json=payload, timeout=10)
-            resp.raise_for_status()
-            logger.info("Webhook %s → %s", webhook_id, status)
-            return
+    try:
+        resp = requests.patch(url, headers=headers, json=payload, timeout=10)
+        resp.raise_for_status()
+        logger.info("Webhook %s → %s", webhook_id, status)
 
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 429:
-                retry_after = e.response.headers.get("Retry-After")
-                if retry_after:
-                    wait_time = int(retry_after)
-                else:
-                    wait_time = 3600  # подождать 1 час, если сервер не дал подсказку
+    except requests.exceptions.HTTPError as err:
+        # Убираем специальную обработку кода ошибки 429 (rate limiting)
+        # Обрабатывается как любая другая HTTP ошибка
 
-                logger.warning(
-                    "API вернул 429 (лимит). Ждём %s секунд перед повтором PATCH id=%s",
-                    wait_time,
-                    webhook_id
-                )
-                time.sleep(wait_time)
-                continue
+        if err.response.status_code == 401:
+            # Ошибка 401 говорит, что токен истёк
+            global ACCESS_TOKEN, TOKEN_EXPIRES_AT
+            ACCESS_TOKEN = None
+            TOKEN_EXPIRES_AT = 0
 
-            # для других ошибок выбрасываем исключение
+            logger.warning("Токен истёк при обновлении статуса %s, кэш очищен", webhook_id)
             raise
+        else:
+            # Для всех остальных ошибок (включая 429) логируем и пробрасываем
+            logger.error(
+                "Ошибка обновления статуса %s: статус %s, ответ: %s",
+                webhook_id,
+                err.response.status_code,
+                err.response.text[:200]
+            )
+            raise  # Пробрасываем исключение дальше
+
+    except Exception as err:
+        logger.error("Неожиданная ошибка обновления статуса %s: %s", webhook_id, err)
+        raise
+
 
 # =====================================================================
 #                         ПОИСК ГОСТЯ
