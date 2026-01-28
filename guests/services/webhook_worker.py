@@ -421,8 +421,11 @@ class WebhookWorker:
 
         # Основная обработка Уведомлений
         try:
-            processed_successfully = handle_api_webhook(webhook_data)
-            logger.info(f"Уведомление с id={webhook_id_int} обработано, результат: {processed_successfully}")
+            processed_successfully, result_message = handle_api_webhook(webhook_data)
+            if result_message:
+                logger.info(f"Уведомление с id={webhook_id_int} обработано: успешно! Результат: {result_message }")
+            else:
+                logger.info(f"Уведомление с id={webhook_id_int} обработано: успешно!")
         except Exception as err:
             logger.error(f"Ошибка для Уведомления с id={webhook_id_int}: {err}")
             # Определяем тип ошибки

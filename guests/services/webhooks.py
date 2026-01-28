@@ -96,6 +96,8 @@ def _get_sagur_access_token_cached() -> str:
         logger.info("SAGUR: получен новый access-токен, действителен до: %s",
                    time.strftime('%H:%M:%S', time.localtime(TOKEN_EXPIRES_AT)))
 
+        return ACCESS_TOKEN
+
     except Exception as err:
         logger.error(f"Не удалось получить новый токен: {err}")
         raise
