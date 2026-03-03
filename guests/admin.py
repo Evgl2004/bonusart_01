@@ -2,7 +2,7 @@ from django.contrib import admin
 
 # Register your models here.
 from django.contrib import admin
-from .models import Guest, Restaurant, VisitHistory, Category, GuestCategory
+from .models import Guest, Restaurant, VisitHistory, Category, GuestCategory,MailingChannel
 
 @admin.register(Restaurant)
 class RestaurantAdmin(admin.ModelAdmin):
@@ -19,3 +19,9 @@ class VisitHistoryAdmin(admin.ModelAdmin):
 @admin.register(GuestCategory)
 class GuestCategoryAdmin(admin.ModelAdmin):
     list_display = ("id", "guest", "category")
+
+@admin.register(MailingChannel)
+class MailingChannelAdmin(admin.ModelAdmin):
+    list_display = ("id", "name", "channel_kind", "is_active", "created_at", "updated_at")
+    list_filter = ("channel_kind", "is_active")
+    search_fields = ("name",)

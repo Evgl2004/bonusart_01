@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+
+<h2>Логи рассылки: {{ mailing.name }} (ID {{ mailing.id }})</h2>
+
+<div style="margin: 12px 0;">
+  <a class="btn btn-outline-primary"
+     href="{% url 'mailing_logs_txt' mailing.id %}">
+    Скачать полный лог (.txt)
+  </a>
+  <a class="btn btn-outline-secondary" href="{% url 'mailing_edit' mailing.id %}">
+    Назад к редактированию
+  </a>
+</div>
+
+<h4>Сводка</h4>
+<ul>
+  <li>Всего: <b>{{ stats.total }}</b></li>
+  <li>Готовится (planned): <b>{{ stats.planned }}</b></li>
+  <li>В процессе (in_progress): <b>{{ stats.in_progress }}</b></li>
+  <li>Успешно (done): <b>{{ stats.done }}</b></li>
+  <li>Ошибки (error): <b>{{ stats.error }}</b></li>
+</ul>
+
+{% if delivery_stats %}
+  <h4>Delivery status</h4>
+  <ul>
+    {% for row in delivery_stats %}
+      <li>{{ row.delivery_status }}: <b>{{ row.c }}</b></li>
+    {% endfor %}
+  </ul>
+{% endif %}
+
+<h4>Последние 100 строк</h4>
+<table class="table table-sm">
+  <thead>
+    <tr>
+
+      <th>Телефон</th>
+      <th>Гость</th>
+      <th>Статус</th>
+      <th>Отправка</th>
+      <th>Дата отправки</th>
+      <th>Внешний ID</th>
+      <th>Запланировано</th>
+      <th>Ошибки</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in last_rows %}
+      <tr>
+
+        <td>{{ r.phone }}</td>
+        <td>{{ r.guest_id }}</td>
+        <td>{{ r.status }}</td>
+        <td>{{ r.delivery_status }}</td>
+        <td>{{ r.sent_at }}</td>
+        <td>{{ r.external_id }}</td>
+        <td>{{ r.scheduled_datetime }}</td>
+        <td style="max-width: 400px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+          {{ r.error_description }}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

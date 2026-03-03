@@ -290,6 +290,21 @@
             </button>
         </div>
         {% endif %}
+        <select name="mailing_id" class="form-select form-select-sm ms-2" style="max-width: 260px;">
+          <option value="">— выбрать рассылку —</option>
+          {% for m in mailings %}
+            <option value="{{ m.id }}">{{ m.name }}</option>
+          {% endfor %}
+        </select>
+
+        <button type="submit"
+                name="action"
+                value="add_to_mailing"
+                class="btn btn-outline-primary btn-sm ms-2">
+          Добавить в рассылку
+        </button>
+
+
 
     </div>
 
@@ -494,7 +509,6 @@
 </div>
 </form>
 
-
 <!-- Пагинация -->
 {% if is_paginated %}
 <nav class="mt-4" aria-label="Постраничная навигация">
@@ -626,6 +640,7 @@
       if (categoryBlock) {
         categoryBlock.style.display = total > 0 ? 'inline-flex' : 'none';
       }
+
     }
 
     rowCheckboxes.forEach(function (cb) {
