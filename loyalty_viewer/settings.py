@@ -226,7 +226,7 @@ LOGGING = {
     },
 }
 LANGUAGE_CODE = 'ru-ru'
-# Все даты в БД и логи будут храниться в UTC.
+
 USE_TZ = True
 TIME_ZONE = "Asia/Yekaterinburg"
 #USE_I18N = True
