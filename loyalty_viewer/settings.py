@@ -227,9 +227,9 @@ LOGGING = {
 }
 LANGUAGE_CODE = 'ru-ru'
 # Все даты в БД и логи будут храниться в UTC.
-TIME_ZONE = 'UTC'
-USE_I18N = True
 USE_TZ = True
+TIME_ZONE = "Asia/Yekaterinburg"
+#USE_I18N = True
 
 STATIC_URL = '/static/loyalty/'
 MEDIA_URL = '/media/loyalty/'
