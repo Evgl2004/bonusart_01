@@ -90,7 +90,17 @@ python manage.py runserver
 python manage.py qcluster
 
 Без запуска qcluster фоновые задачи и обработка вебхуков работать не будут.
+---
+Запуск фоновой рассылки 
+python manage.py mailing_worker  
 
 ---
+Добавление таблиц в БД 
 
-Просто скажи, что нужно дальше.
+python manage.py init_schema
+
+---
+Добавление chat_id  в таблицу гостей 
+python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1 --dry-run  ( посмотреть как отработает и не применять изменение)
+python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1  (запуск и применением изменений)
+
