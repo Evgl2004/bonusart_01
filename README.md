@@ -101,6 +101,6 @@ python manage.py init_schema
 
 ---
 Добавление chat_id  в таблицу гостей 
-python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1 --dry-run  ( посмотреть как отработает и не применять изменение)
-python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1  (запуск и применением изменений)
+  python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1 --dry-run  ( посмотреть как отработает и не применять изменение)
+  python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1  (запуск и применением изменений)
 
