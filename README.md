@@ -91,7 +91,8 @@ python manage.py qcluster
 
 Без запуска qcluster фоновые задачи и обработка вебхуков работать не будут.
 ---
-Запуск фоновой рассылки 
+Запуск фоновой рассылки
+
 python manage.py mailing_worker  
 
 ---
@@ -101,6 +102,8 @@ python manage.py init_schema
 
 ---
 Добавление chat_id  в таблицу гостей 
-  python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1 --dry-run  ( посмотреть как отработает и не применять изменение)
-  python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1  (запуск и применением изменений)
+
+ 1) python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1 --dry-run  ( посмотреть как отработает и не применять изменение)
+    
+ 2) python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --channel-id 1  (запуск и применением изменений)
 
