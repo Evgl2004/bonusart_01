@@ -162,6 +162,21 @@ REDIS_QUEUE_NAME = os.getenv('REDIS_QUEUE_NAME', 'webhook_queue')
 # Имя специальной очереди для хранения сообщений, которые не удалось обработать после нескольких попыток.
 REDIS_DLQ_NAME = os.getenv('REDIS_DLQ_NAME', 'webhook_queue_dlq')
 
+# Настройки новой универсальной очереди (v1).
+# По умолчанию использует тот же Redis-инстанс, но отдельный namespace ключей.
+UNIVERSAL_QUEUE_REDIS_URL = os.getenv('UNIVERSAL_QUEUE_REDIS_URL', REDIS_QUEUE_URL)
+UNIVERSAL_QUEUE_NAMESPACE = os.getenv('UNIVERSAL_QUEUE_NAMESPACE', 'uq:v1')
+
+try:
+    UNIVERSAL_DISPATCH_BATCH_SIZE = int(os.getenv('UNIVERSAL_DISPATCH_BATCH_SIZE', '200'))
+except ValueError:
+    UNIVERSAL_DISPATCH_BATCH_SIZE = 200
+
+try:
+    UNIVERSAL_DISPATCH_SLEEP_SECONDS = float(os.getenv('UNIVERSAL_DISPATCH_SLEEP_SECONDS', '2'))
+except ValueError:
+    UNIVERSAL_DISPATCH_SLEEP_SECONDS = 2.0
+
 # Количество повторных попыток для обработки одного сообщения из очереди.
 try:
     MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))

@@ -470,6 +470,7 @@ class DispatchTask(models.Model):
 
     class Status(models.TextChoices):
         PENDING = "pending", "Ожидает отправки"
+        QUEUED = "queued", "Поставлено в Redis-очередь"
         IN_PROGRESS = "in_progress", "В обработке"
         DONE = "done", "Успешно отправлено"
         FAILED = "failed", "Ошибка отправки"
@@ -547,6 +548,18 @@ class DispatchTask(models.Model):
         default=timezone.now,
         db_index=True,
         help_text="Время, начиная с которого задачу можно брать в обработку.",
+    )
+    enqueued_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Время постановки задачи в Redis-очередь провайдера.",
+    )
+    queue_name = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        help_text="Физическое имя Redis-очереди (lane), куда отправлена задача.",
     )
 
     started_at = models.DateTimeField(blank=True, null=True)
