@@ -9,6 +9,7 @@
 from .dispatcher import UniversalTaskDispatcher
 from .maintenance import QueueHealthSnapshot, RecoverySummary, UniversalQueueMaintenanceService
 from .mailing_producer import enqueue_mailing_rows_as_dispatch_tasks
+from .notification_producer import enqueue_guest_notification_tasks
 from .provider_worker import AsyncProviderWorker, FairPolicy, ProviderWorkerConfig
 from .rate_limiter import CentralizedRedisRateLimiter, ProviderRatePolicy
 from .redis_lanes import ProviderLaneQueue, QueueEnvelope
@@ -26,6 +27,7 @@ __all__ = [
     "RecoverySummary",
     "UniversalTaskDispatcher",
     "UniversalQueueMaintenanceService",
+    "enqueue_guest_notification_tasks",
     "enqueue_mailing_rows_as_dispatch_tasks",
     "enqueue_high_priority_webhook_tasks",
 ]

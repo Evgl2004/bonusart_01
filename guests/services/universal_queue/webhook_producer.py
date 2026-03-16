@@ -1,12 +1,11 @@
-import logging
+﻿import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from django.conf import settings
-from django.db import IntegrityError
-from django.utils import timezone
 
-from guests.models import DispatchTask, Guest, GuestBotBinding, GuestChannelLink, MailingChannel
+from guests.models import DispatchTask, Guest
+from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +47,14 @@ def _resolve_guest(event: Dict[str, Any]) -> Guest | None:
 
 def _should_enqueue(event: Dict[str, Any]) -> bool:
     """
-    Определяет, нужно ли ставить задачу на отправку по данному webhook.
+    Определяет, нужно ли ставить задачу на отправку по этому webhook.
     """
     notify_types_raw = getattr(settings, "UNIVERSAL_QUEUE_WEBHOOK_NOTIFY_TYPES", "")
     if notify_types_raw:
         allowed = {item.strip() for item in notify_types_raw.split(",") if item.strip()}
         return str(event.get("notificationType")) in allowed
 
-    # Базовая эвристика: если есть текст, считаем webhook коммуникационным.
+    # Базовая эвристика: если есть текст — webhook считается коммуникационным.
     return bool(str(event.get("text") or "").strip())
 
 
@@ -88,86 +87,14 @@ def _build_message_text(event: Dict[str, Any]) -> str:
     return f"Системное уведомление (тип {notification_type})."
 
 
-def _collect_targets_from_bindings(guest: Guest, primary_only: bool) -> List[Dict[str, Any]]:
-    """
-    Собирает целевые каналы из новой модели GuestBotBinding.
-    """
-    query = (
-        GuestBotBinding.objects.select_related("bot")
-        .filter(
-            guest=guest,
-            is_active=True,
-            is_opt_in=True,
-            is_stop_sending=False,
-            bot__is_active=True,
-        )
-        .exclude(external_chat_id__isnull=True)
-        .exclude(external_chat_id="")
-        .order_by("-is_primary", "id")
-    )
-    if primary_only:
-        query = query.filter(is_primary=True)
-
-    targets: List[Dict[str, Any]] = []
-    for binding in query:
-        provider_type = binding.bot.provider_type
-        if provider_type not in ("telegram", "max", "vk"):
-            continue
-        targets.append(
-            {
-                "provider_type": provider_type,
-                "external_chat_id": binding.external_chat_id,
-                "guest_binding": binding,
-                "bot_profile": binding.bot,
-            }
-        )
-    return targets
-
-
-def _collect_targets_from_legacy_links(guest: Guest) -> List[Dict[str, Any]]:
-    """
-    Fallback на существующую схему GuestChannelLink (только Telegram).
-    """
-    query = (
-        GuestChannelLink.objects.select_related("channel")
-        .filter(
-            guest=guest,
-            is_active=True,
-            is_opt_in=True,
-            is_stop_sending=False,
-            channel__is_active=True,
-            channel__channel_kind__in=[
-                MailingChannel.ChannelKind.PHONE_TELEGRAM,
-                MailingChannel.ChannelKind.PHONE_TELEGRAM_BOT,
-            ],
-        )
-        .exclude(external_chat_id__isnull=True)
-        .exclude(external_chat_id="")
-        .order_by("id")
-    )
-
-    targets: List[Dict[str, Any]] = []
-    for link in query:
-        targets.append(
-            {
-                "provider_type": "telegram",
-                "external_chat_id": link.external_chat_id,
-                "guest_binding": None,
-                "bot_profile": None,
-                "legacy_channel_id": link.channel_id,
-            }
-        )
-    return targets
-
-
 def enqueue_high_priority_webhook_tasks(webhook: Dict[str, Any]) -> int:
     """
-    Создаёт high-priority задачи DispatchTask на основе входящего webhook.
+    Создаёт high-priority DispatchTask для входящего webhook.
 
     Важно:
-    1. Механизм работает только при включенном feature flag.
-    2. Текущий контур обработки webhook не ломается при ошибке постановки задач.
-    3. Для защиты от дублей используется idempotency_key.
+    1. Механизм работает только при включённом feature-flag.
+    2. Текущий контур обработки webhook не ломается при ошибках producer-а.
+    3. Дедупликация выполняется через idempotency_key на основе `source_key`.
     """
     if not getattr(settings, "UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE", False):
         return 0
@@ -184,51 +111,23 @@ def enqueue_high_priority_webhook_tasks(webhook: Dict[str, Any]) -> int:
         logger.info("Webhook enqueue: гость не найден, задача не создана.")
         return 0
 
+    webhook_id = webhook.get("id")
     priority = _resolve_priority()
     message_text = _build_message_text(event)
-    webhook_id = webhook.get("id")
     primary_only = bool(getattr(settings, "UNIVERSAL_QUEUE_WEBHOOK_PRIMARY_ONLY", True))
+    fallback_legacy = bool(getattr(settings, "UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS", True))
 
-    targets = _collect_targets_from_bindings(guest=guest, primary_only=primary_only)
-    if not targets and bool(getattr(settings, "UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS", True)):
-        targets = _collect_targets_from_legacy_links(guest=guest)
-
-    if not targets:
-        logger.info("Webhook enqueue: нет доступных каналов для guest_id=%s", guest.id)
-        return 0
-
-    created_count = 0
-    now = timezone.now()
-    for target in targets:
-        provider_type = target["provider_type"]
-        external_chat_id = str(target["external_chat_id"]).strip()
-        idempotency_key = (
-            f"webhook:{webhook_id}:guest:{guest.id}:provider:{provider_type}:chat:{external_chat_id}"
-        )
-
-        try:
-            DispatchTask.objects.create(
-                source_type=DispatchTask.SourceType.WEBHOOK,
-                provider_type=provider_type,
-                priority=priority,
-                status=DispatchTask.Status.PENDING,
-                guest=guest,
-                bot_profile=target["bot_profile"],
-                guest_binding=target["guest_binding"],
-                external_chat_id=external_chat_id,
-                message_text=message_text,
-                payload={
-                    "webhook_id": webhook_id,
-                    "notification_type": event.get("notificationType"),
-                    "event": event,
-                    "legacy_channel_id": target.get("legacy_channel_id"),
-                },
-                scheduled_at=now,
-                available_at=now,
-                idempotency_key=idempotency_key,
-            )
-            created_count += 1
-        except IntegrityError:
-            logger.info("Webhook enqueue: дубликат задачи, пропускаем (%s)", idempotency_key)
-
-    return created_count
+    return enqueue_guest_notification_tasks(
+        guest=guest,
+        message_text=message_text,
+        source_type=DispatchTask.SourceType.WEBHOOK,
+        source_key=str(webhook_id or ""),
+        priority=priority,
+        primary_only=primary_only,
+        payload={
+            "webhook_id": webhook_id,
+            "notification_type": event.get("notificationType"),
+            "event": event,
+        },
+        fallback_legacy=fallback_legacy,
+    )
