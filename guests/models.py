@@ -1,5 +1,6 @@
 from django.db import models
 from django.utils import timezone
+import os
 import uuid
 
 
@@ -365,6 +366,16 @@ class BotProfile(models.Model):
         null=True,
         help_text="Токен/секрет доступа. На данном этапе хранится в открытом виде.",
     )
+    secret_ref = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text=(
+            "Ссылка на секрет в окружении (например, BOT_TOKEN_TG_MAIN). "
+            "Если указано, токен берётся из переменной окружения, а не из БД."
+        ),
+    )
     settings = models.JSONField(
         default=dict,
         blank=True,
@@ -381,6 +392,20 @@ class BotProfile(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.provider_type})"
+
+    def resolve_token(self) -> str:
+        """
+        Возвращает действующий токен бота.
+
+        Приоритет источников:
+        1. Переменная окружения по ключу `secret_ref` (предпочтительный и безопасный путь).
+        2. Поле `token` в базе данных (legacy-режим совместимости).
+        """
+        if self.secret_ref:
+            token_from_env = os.getenv(self.secret_ref, "").strip()
+            if token_from_env:
+                return token_from_env
+        return (self.token or "").strip()
 
 
 class GuestBotBinding(models.Model):
