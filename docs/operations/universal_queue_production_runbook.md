@@ -200,6 +200,10 @@
       - app_network
 ```
 
+## Готовый unified diff
+Готовый патч для внешнего файла уже подготовлен в репозитории:
+`docs/operations/patches/webhook_03/docker-compose.prod.universal-queue.patch`
+
 ## Обязательные флаги в `.env` (для включения нового контура)
 Минимум:
 1. `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH=true`
