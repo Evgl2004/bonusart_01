@@ -254,6 +254,70 @@ UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS = os.getenv(
     "True",
 ).strip().lower() in ("1", "true", "yes", "on")
 
+# Настройки async provider-worker (F5).
+try:
+    UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS = int(os.getenv("UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS", "2"))
+except ValueError:
+    UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS = 2
+
+try:
+    UNIVERSAL_PROVIDER_IDLE_SLEEP_SECONDS = float(os.getenv("UNIVERSAL_PROVIDER_IDLE_SLEEP_SECONDS", "0.2"))
+except ValueError:
+    UNIVERSAL_PROVIDER_IDLE_SLEEP_SECONDS = 0.2
+
+try:
+    UNIVERSAL_PROVIDER_RETRY_BASE_SECONDS = float(os.getenv("UNIVERSAL_PROVIDER_RETRY_BASE_SECONDS", "3"))
+except ValueError:
+    UNIVERSAL_PROVIDER_RETRY_BASE_SECONDS = 3.0
+
+try:
+    UNIVERSAL_PROVIDER_RETRY_MAX_SECONDS = float(os.getenv("UNIVERSAL_PROVIDER_RETRY_MAX_SECONDS", "300"))
+except ValueError:
+    UNIVERSAL_PROVIDER_RETRY_MAX_SECONDS = 300.0
+
+try:
+    UNIVERSAL_FAIR_HIGH = int(os.getenv("UNIVERSAL_FAIR_HIGH", "10"))
+except ValueError:
+    UNIVERSAL_FAIR_HIGH = 10
+
+try:
+    UNIVERSAL_FAIR_NORMAL = int(os.getenv("UNIVERSAL_FAIR_NORMAL", "3"))
+except ValueError:
+    UNIVERSAL_FAIR_NORMAL = 3
+
+try:
+    UNIVERSAL_FAIR_BULK = int(os.getenv("UNIVERSAL_FAIR_BULK", "1"))
+except ValueError:
+    UNIVERSAL_FAIR_BULK = 1
+
+# Централизованные лимиты отправки (сообщений в секунду) для Redis rate limiter.
+try:
+    UNIVERSAL_RATE_LIMIT_TELEGRAM_PER_SECOND = float(os.getenv("UNIVERSAL_RATE_LIMIT_TELEGRAM_PER_SECOND", "28"))
+except ValueError:
+    UNIVERSAL_RATE_LIMIT_TELEGRAM_PER_SECOND = 28.0
+
+try:
+    UNIVERSAL_RATE_LIMIT_MAX_PER_SECOND = float(os.getenv("UNIVERSAL_RATE_LIMIT_MAX_PER_SECOND", "20"))
+except ValueError:
+    UNIVERSAL_RATE_LIMIT_MAX_PER_SECOND = 20.0
+
+try:
+    UNIVERSAL_RATE_LIMIT_VK_PER_SECOND = float(os.getenv("UNIVERSAL_RATE_LIMIT_VK_PER_SECOND", "20"))
+except ValueError:
+    UNIVERSAL_RATE_LIMIT_VK_PER_SECOND = 20.0
+
+try:
+    UNIVERSAL_PROVIDER_HTTP_TIMEOUT = float(os.getenv("UNIVERSAL_PROVIDER_HTTP_TIMEOUT", "20"))
+except ValueError:
+    UNIVERSAL_PROVIDER_HTTP_TIMEOUT = 20.0
+
+# Базовые URL и параметры API провайдеров.
+TELEGRAM_API_BASE_URL = os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip()
+MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").strip()
+MAX_API_AUTH_PREFIX = os.getenv("MAX_API_AUTH_PREFIX", "").strip()
+VK_API_BASE_URL = os.getenv("VK_API_BASE_URL", "https://api.vk.com/method").strip()
+VK_API_VERSION = os.getenv("VK_API_VERSION", "5.199").strip()
+
 # Количество повторных попыток для обработки одного сообщения из очереди.
 try:
     MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))

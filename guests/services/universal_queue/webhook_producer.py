@@ -154,6 +154,7 @@ def _collect_targets_from_legacy_links(guest: Guest) -> List[Dict[str, Any]]:
                 "external_chat_id": link.external_chat_id,
                 "guest_binding": None,
                 "bot_profile": None,
+                "legacy_channel_id": link.channel_id,
             }
         )
     return targets
@@ -220,6 +221,7 @@ def enqueue_high_priority_webhook_tasks(webhook: Dict[str, Any]) -> int:
                     "webhook_id": webhook_id,
                     "notification_type": event.get("notificationType"),
                     "event": event,
+                    "legacy_channel_id": target.get("legacy_channel_id"),
                 },
                 scheduled_at=now,
                 available_at=now,

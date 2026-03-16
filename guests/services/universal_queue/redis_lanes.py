@@ -122,6 +122,19 @@ class ProviderLaneQueue:
         envelope = QueueEnvelope.from_bytes(raw_payload)
         return key, envelope
 
+    def pop_from_lane(self, provider_type: str, priority: str) -> Optional[QueueEnvelope]:
+        """
+        Неблокирующе извлекает задачу из конкретного priority-lane.
+
+        Метод нужен provider-воркеру для fair-policy (квоты приоритетов),
+        чтобы задачи `bulk` не голодали при постоянном потоке `high`.
+        """
+        lane_key = self.lane_key(provider_type, priority)
+        raw_payload = self.redis.lpop(lane_key)
+        if raw_payload is None:
+            return None
+        return QueueEnvelope.from_bytes(raw_payload)
+
     def lane_lengths(self, provider_type: str) -> Dict[str, int]:
         """
         Возвращает длину каждой lane-очереди провайдера.

@@ -148,6 +148,7 @@ def _targets_from_legacy_links(links: List[GuestChannelLink]) -> List[Dict[str, 
                 "external_chat_id": chat_id,
                 "guest_binding": None,
                 "bot_profile": None,
+                "legacy_channel_id": link.channel_id,
             }
         )
     return targets
@@ -221,6 +222,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                         "mailing_id": mailing.id,
                         "mailing_guest_id": row.id,
                         "channel_mode": "legacy_fallback" if target["guest_binding"] is None else "bindings",
+                        "legacy_channel_id": target.get("legacy_channel_id"),
                     },
                     scheduled_at=row.scheduled_datetime,
                     available_at=available_at,
