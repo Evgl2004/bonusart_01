@@ -614,7 +614,7 @@ class DispatchTask(models.Model):
             ),
             models.Index(
                 fields=["status", "available_at"],
-                name="dispatch_tasks_status_available_idx",
+                name="dispatch_tasks_status_avl_idx",
             ),
             models.Index(
                 fields=["guest", "created_at"],

@@ -60,8 +60,32 @@ DISALLOWED_USER_AGENTS = [
 CORS_ALLOW_ALL_ORIGINS = False
 
 # Защита от подделки межсайтовых запросов.
-CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
-CSRF_TRUSTED_ORIGINS = [host.strip() for host in CSRF_TRUSTED_ORIGINS]
+def _build_csrf_trusted_origins() -> list[str]:
+    """
+    Формирует и нормализует список доверенных origins для CSRF.
+
+    Поддерживаются оба варианта в .env:
+    1. Полный origin со схемой (`https://example.com`);
+    2. Только хост/домен (`example.com`) - в этом случае добавляется `https://`.
+    """
+    raw_value = os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost,https://localhost,http://127.0.0.1,https://127.0.0.1",
+    )
+    origins: list[str] = []
+
+    for item in raw_value.split(","):
+        origin = item.strip().rstrip("/")
+        if not origin:
+            continue
+        if not (origin.startswith("http://") or origin.startswith("https://")):
+            origin = f"https://{origin}"
+        origins.append(origin)
+
+    return origins
+
+
+CSRF_TRUSTED_ORIGINS = _build_csrf_trusted_origins()
 
 INSTALLED_APPS = [
     'django.contrib.admin',
