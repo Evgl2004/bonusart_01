@@ -177,6 +177,32 @@ try:
 except ValueError:
     UNIVERSAL_DISPATCH_SLEEP_SECONDS = 2.0
 
+# Включение producer-а webhook -> DispatchTask.
+# По умолчанию выключено для безопасного поэтапного включения.
+UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE = os.getenv(
+    "UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE",
+    "False",
+).strip().lower() in ("1", "true", "yes", "on")
+
+# Список notificationType через запятую.
+# Если пусто, producer использует эвристику "есть текст в событии".
+UNIVERSAL_QUEUE_WEBHOOK_NOTIFY_TYPES = os.getenv("UNIVERSAL_QUEUE_WEBHOOK_NOTIFY_TYPES", "")
+
+# Приоритет задач, создаваемых из webhook producer-а.
+UNIVERSAL_QUEUE_WEBHOOK_PRIORITY = os.getenv("UNIVERSAL_QUEUE_WEBHOOK_PRIORITY", "high")
+
+# Режим маршрутизации: True -> только основной бот гостя.
+UNIVERSAL_QUEUE_WEBHOOK_PRIMARY_ONLY = os.getenv(
+    "UNIVERSAL_QUEUE_WEBHOOK_PRIMARY_ONLY",
+    "True",
+).strip().lower() in ("1", "true", "yes", "on")
+
+# Fallback на legacy GuestChannelLink (Telegram), если новых привязок ещё нет.
+UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS = os.getenv(
+    "UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS",
+    "True",
+).strip().lower() in ("1", "true", "yes", "on")
+
 # Количество повторных попыток для обработки одного сообщения из очереди.
 try:
     MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))

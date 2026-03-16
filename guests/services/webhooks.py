@@ -12,6 +12,7 @@ from django.utils import timezone
 from guests.models import Guest, Category, GuestCategory, Restaurant, VisitHistory, GuestCategoryAssignment
 
 from guests.services.iiko_client import iiko_client
+from guests.services.universal_queue.webhook_producer import enqueue_high_priority_webhook_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -652,6 +653,24 @@ def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     event = webhook.get("parsed_body") or {}
     notif_type = event.get("notificationType")
     webhook_id = webhook.get("id")
+
+    # Отдельный контур приоритетных уведомлений:
+    # попытка постановки webhook-задач в универсальную очередь не должна
+    # ломать текущую бизнес-обработку webhook.
+    try:
+        enqueued_tasks = enqueue_high_priority_webhook_tasks(webhook)
+        if enqueued_tasks > 0:
+            logger.info(
+                "Webhook id=%s: поставлено задач в универсальную очередь: %s",
+                webhook_id,
+                enqueued_tasks,
+            )
+    except Exception:
+        logger.exception(
+            "Webhook id=%s: ошибка постановки задач в универсальную очередь. "
+            "Продолжаем основную обработку.",
+            webhook_id,
+        )
 
     # --- notificationType = 1: обновляем историю посещений ---
     if notif_type == 1:

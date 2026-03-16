@@ -8,9 +8,11 @@
 
 from .dispatcher import UniversalTaskDispatcher
 from .redis_lanes import ProviderLaneQueue, QueueEnvelope
+from .webhook_producer import enqueue_high_priority_webhook_tasks
 
 __all__ = [
     "ProviderLaneQueue",
     "QueueEnvelope",
     "UniversalTaskDispatcher",
+    "enqueue_high_priority_webhook_tasks",
 ]
