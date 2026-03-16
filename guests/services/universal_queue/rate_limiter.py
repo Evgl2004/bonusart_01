@@ -72,6 +72,10 @@ return wait_ms
     def _pause_key(self, provider_type: str) -> str:
         return f"{self.namespace}:rate:{provider_type}:pause_until_ms"
 
+    def _scope_pause_key(self, provider_type: str, scope_key: str) -> str:
+        safe_scope_key = str(scope_key).strip()
+        return f"{self.namespace}:rate:{provider_type}:scope:{safe_scope_key}:pause_until_ms"
+
     def _interval_ms(self, provider_type: str) -> int:
         policy = self.provider_policies.get(provider_type)
         if policy is None:
@@ -95,8 +99,8 @@ return wait_ms
 
         return int(result or 0)
 
-    def _current_pause_delay_ms(self, provider_type: str, now_ms: int) -> int:
-        raw_value = self.redis.get(self._pause_key(provider_type))
+    def _current_pause_delay_for_key_ms(self, redis_key: str, now_ms: int) -> int:
+        raw_value = self.redis.get(redis_key)
         if not raw_value:
             return 0
         try:
@@ -105,7 +109,23 @@ return wait_ms
             return 0
         return max(0, pause_until_ms - now_ms)
 
-    async def acquire(self, provider_type: str, timeout_seconds: float = 30.0) -> None:
+    def _current_pause_delay_ms(self, provider_type: str, now_ms: int, scope_key: str | None = None) -> int:
+        provider_delay = self._current_pause_delay_for_key_ms(self._pause_key(provider_type), now_ms)
+        if not scope_key:
+            return provider_delay
+
+        scope_delay = self._current_pause_delay_for_key_ms(
+            self._scope_pause_key(provider_type, scope_key),
+            now_ms,
+        )
+        return max(provider_delay, scope_delay)
+
+    async def acquire(
+        self,
+        provider_type: str,
+        timeout_seconds: float = 30.0,
+        scope_key: str | None = None,
+    ) -> None:
         """
         Асинхронно ждёт глобально разрешённый слот отправки для провайдера.
 
@@ -115,7 +135,12 @@ return wait_ms
 
         while True:
             now_ms = int(time.time() * 1000)
-            pause_delay_ms = await asyncio.to_thread(self._current_pause_delay_ms, provider_type, now_ms)
+            pause_delay_ms = await asyncio.to_thread(
+                self._current_pause_delay_ms,
+                provider_type,
+                now_ms,
+                scope_key,
+            )
             if pause_delay_ms > 0:
                 await asyncio.sleep(pause_delay_ms / 1000.0)
                 continue
@@ -148,5 +173,38 @@ return wait_ms
         logger.warning(
             "Rate limiter pause provider=%s retry_after=%.2fs",
             provider_type,
+            safe_retry_after,
+        )
+
+    async def register_scope_retry_after(
+        self,
+        provider_type: str,
+        scope_key: str,
+        retry_after_seconds: float,
+    ) -> None:
+        """
+        Регистрирует паузу по scope-ключу (например, по chat_id/peer_id).
+        """
+        safe_scope_key = str(scope_key).strip()
+        if not safe_scope_key:
+            return
+
+        safe_retry_after = max(0.0, float(retry_after_seconds))
+        now_ms = int(time.time() * 1000)
+        pause_until_ms = now_ms + int(safe_retry_after * 1000)
+        pause_ttl_ms = max(1000, int(safe_retry_after * 2000))
+
+        def _save_pause() -> None:
+            self.redis.psetex(
+                self._scope_pause_key(provider_type, safe_scope_key),
+                pause_ttl_ms,
+                str(pause_until_ms),
+            )
+
+        await asyncio.to_thread(_save_pause)
+        logger.warning(
+            "Rate limiter scope pause provider=%s scope=%s retry_after=%.2fs",
+            provider_type,
+            safe_scope_key,
             safe_retry_after,
         )

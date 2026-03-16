@@ -31,6 +31,7 @@
 Limiter хранит состояние в Redis namespace universal queue:
 1. `...:rate:<provider>:next_ts_ms` — следующий допустимый слот.
 2. `...:rate:<provider>:pause_until_ms` — глобальная пауза после `RetryAfter`.
+3. `...:rate:<provider>:scope:<chat_or_peer>:pause_until_ms` — локальная пауза по конкретному получателю.
 
 Атомарность резервирования слота обеспечивается Lua-скриптом.
 
@@ -76,4 +77,3 @@ Limiter хранит состояние в Redis namespace universal queue:
    - `UNIVERSAL_QUEUE_TELEGRAM_FALLBACK_TOKEN`
    - `UNIVERSAL_QUEUE_MAX_FALLBACK_TOKEN`
    - `UNIVERSAL_QUEUE_VK_FALLBACK_TOKEN`
-

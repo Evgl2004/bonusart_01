@@ -198,7 +198,11 @@ class AsyncProviderWorker:
             return
 
         try:
-            await self.rate_limiter.acquire(provider_type=self.config.provider_type, timeout_seconds=30.0)
+            await self.rate_limiter.acquire(
+                provider_type=self.config.provider_type,
+                timeout_seconds=30.0,
+                scope_key=chat_id,
+            )
             result = await self.sender.send(task=task, chat_id=chat_id, text=task.message_text or "")
             await sync_to_async(self._mark_done_sync, thread_sensitive=True)(task.id, result)
             logger.info(
@@ -211,6 +215,11 @@ class AsyncProviderWorker:
         except ProviderRateLimitError as err:
             await self.rate_limiter.register_retry_after(
                 provider_type=self.config.provider_type,
+                retry_after_seconds=err.retry_after_seconds,
+            )
+            await self.rate_limiter.register_scope_retry_after(
+                provider_type=self.config.provider_type,
+                scope_key=chat_id,
                 retry_after_seconds=err.retry_after_seconds,
             )
             await sync_to_async(self._requeue_task_sync, thread_sensitive=True)(
