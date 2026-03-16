@@ -203,6 +203,33 @@ UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS = os.getenv(
     "True",
 ).strip().lower() in ("1", "true", "yes", "on")
 
+# Включение F4: массовая рассылка ставит задачи в DispatchTask (через producer),
+# а не отправляет сообщения напрямую из mailing_worker.
+UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH = os.getenv(
+    "UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH",
+    "False",
+).strip().lower() in ("1", "true", "yes", "on")
+
+# Режим целевых каналов для массовой рассылки:
+# 1) primary_only - только основной бот гостя (по умолчанию);
+# 2) all_bots - все активные привязки гостя.
+UNIVERSAL_QUEUE_MAILING_TARGET_MODE = os.getenv(
+    "UNIVERSAL_QUEUE_MAILING_TARGET_MODE",
+    "primary_only",
+).strip().lower()
+
+# Приоритет задач, создаваемых из MailingGuest.
+UNIVERSAL_QUEUE_MAILING_PRIORITY = os.getenv(
+    "UNIVERSAL_QUEUE_MAILING_PRIORITY",
+    "bulk",
+).strip().lower()
+
+# Fallback на legacy GuestChannelLink (Telegram) при отсутствии новых привязок.
+UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS = os.getenv(
+    "UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS",
+    "True",
+).strip().lower() in ("1", "true", "yes", "on")
+
 # Количество повторных попыток для обработки одного сообщения из очереди.
 try:
     MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))

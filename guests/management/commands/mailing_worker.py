@@ -1,10 +1,12 @@
 # guests/management/commands/mailing_worker.py
 
+import logging
 import time
 import traceback
 from datetime import datetime, timedelta
 from telegram.error import TimedOut
 
+from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django.db import transaction
@@ -13,6 +15,9 @@ from telegram.error import RetryAfter, Forbidden, BadRequest, TelegramError
 
 from guests.models import Mailing, MailingGuest, MailingChannel ,GuestChannelLink
 from guests.services.telegram_bot import TelegramSender
+from guests.services.universal_queue import enqueue_mailing_rows_as_dispatch_tasks
+
+logger = logging.getLogger(__name__)
 
 SLEEP_SECONDS = 3
 
@@ -25,6 +30,17 @@ WINDOW_SECONDS = 1.0
 
 # через сколько минут возвращаем зависшие IN_PROGRESS обратно в PLANNED
 STUCK_TIMEOUT_MINUTES = 3
+
+
+def _is_universal_dispatch_enabled() -> bool:
+    """
+    Возвращает признак включения режима F4:
+    массовая рассылка ставит задачи в DispatchTask вместо прямой отправки.
+    """
+    raw_value = getattr(settings, "UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH", False)
+    if isinstance(raw_value, bool):
+        return raw_value
+    return str(raw_value).strip().lower() in ("1", "true", "yes", "on")
 
 
 class Command(BaseCommand):
@@ -136,7 +152,47 @@ def process_one_mailing(mailing: Mailing, now) -> int:
         MailingGuest.objects.filter(id__in=ids).update(status=MailingGuest.Status.IN_PROGRESS)
         print(f"[mailing:{mailing.id}] moved to IN_PROGRESS ids={ids}")
 
-    # 4) Подготовим TelegramSender по каналам
+    # 4) Режим F4: вместо прямой отправки ставим DispatchTask в универсальную очередь.
+    if _is_universal_dispatch_enabled():
+        try:
+            summary = enqueue_mailing_rows_as_dispatch_tasks(
+                mailing=mailing,
+                rows=rows,
+                channels=channels,
+                now=now,
+            )
+            logger.info(
+                "F4 enqueue mailing_id=%s rows_total=%s rows_queued=%s rows_failed=%s tasks_created=%s tasks_duplicates=%s",
+                mailing.id,
+                summary.rows_total,
+                summary.rows_queued,
+                summary.rows_failed,
+                summary.tasks_created,
+                summary.tasks_duplicates,
+            )
+            print(
+                f"[mailing:{mailing.id}] queued_to_dispatch="
+                f"{summary.rows_queued}/{summary.rows_total} failed={summary.rows_failed}"
+            )
+            return summary.rows_total
+        except Exception as enqueue_error:
+            # В случае сбоя не оставляем строки в IN_PROGRESS.
+            error_text = f"dispatch_enqueue_exception: {str(enqueue_error)[:1800]}"
+            for row in rows:
+                row.status = MailingGuest.Status.ERROR
+                row.delivery_status = "dispatch_enqueue_exception"
+                row.error_description = error_text
+                row.save(update_fields=["status", "delivery_status", "error_description"])
+
+            logger.exception(
+                "Ошибка F4-постановки задач для mailing_id=%s: %s",
+                mailing.id,
+                enqueue_error,
+            )
+            print(f"[mailing:{mailing.id}] F4 enqueue failed -> rows marked ERROR")
+            return len(rows)
+
+    # 5) Подготовим TelegramSender по каналам (legacy direct-send path)
     telegram_senders: dict[int, TelegramSender] = {}
     for ch in channels:
         if ch.channel_kind in (
