@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 import uuid
 
 
@@ -332,6 +333,259 @@ class GuestChannelLink(models.Model):
         managed = False
         db_table = "guest_channel_links"
         unique_together = (("guest", "channel"),)
+
+
+class BotProfile(models.Model):
+    """
+    Справочник подключенных ботов.
+
+    Модель хранит канальные настройки отправки для каждого провайдера:
+    Telegram, Max и VK. Один провайдер может иметь несколько профилей
+    (например, разные боты/сообщества для разных брендов).
+    """
+
+    class ProviderType(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
+        VK = "vk", "VK"
+
+    code = models.SlugField(
+        max_length=64,
+        unique=True,
+        help_text="Уникальный код профиля бота для внутренних интеграций.",
+    )
+    name = models.CharField(max_length=150)
+    provider_type = models.CharField(
+        max_length=32,
+        choices=ProviderType.choices,
+        db_index=True,
+    )
+    token = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Токен/секрет доступа. На данном этапе хранится в открытом виде.",
+    )
+    settings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Параметры провайдера в JSON (таймауты, базовые URL, флаги и пр.).",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "bot_profiles"
+        verbose_name = "Профиль бота"
+        verbose_name_plural = "Профили ботов"
+
+    def __str__(self):
+        return f"{self.name} ({self.provider_type})"
+
+
+class GuestBotBinding(models.Model):
+    """
+    Привязка гостя к конкретному боту и внешнему идентификатору чата.
+
+    Через эту модель определяется:
+    1. куда отправлять сообщения пользователю в конкретном провайдере;
+    2. какой бот считается основным для повседневных коммуникаций.
+    """
+
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.CASCADE,
+        related_name="bot_bindings",
+    )
+    bot = models.ForeignKey(
+        "BotProfile",
+        on_delete=models.CASCADE,
+        related_name="guest_bindings",
+    )
+    external_chat_id = models.CharField(
+        max_length=128,
+        help_text="Идентификатор чата/peer, куда отправляются сообщения.",
+    )
+    external_user_id = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        help_text="Опциональный идентификатор пользователя у провайдера.",
+    )
+    is_primary = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Признак основного бота для гостя.",
+    )
+    is_active = models.BooleanField(default=True)
+    is_opt_in = models.BooleanField(default=True)
+    is_stop_sending = models.BooleanField(default=False)
+    last_error = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_bot_bindings"
+        verbose_name = "Привязка гостя к боту"
+        verbose_name_plural = "Привязки гостей к ботам"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["guest", "bot"],
+                name="guest_bot_bindings_guest_bot_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["guest"],
+                condition=models.Q(is_primary=True),
+                name="guest_bot_bindings_primary_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["bot", "is_active"], name="gbb_bot_active_idx"),
+            models.Index(fields=["guest", "is_active"], name="gbb_guest_active_idx"),
+        ]
+
+    def __str__(self):
+        return f"guest={self.guest_id} bot={self.bot_id} chat={self.external_chat_id}"
+
+
+class DispatchTask(models.Model):
+    """
+    Универсальная задача на отправку сообщения.
+
+    В эту модель попадают задачи из любых источников:
+    массовые рассылки, веб-хуки, ручные триггеры. Далее диспетчер
+    маршрутизирует их в Redis-очереди нужного провайдера и приоритета.
+    """
+
+    class SourceType(models.TextChoices):
+        MAILING = "mailing", "Массовая рассылка"
+        WEBHOOK = "webhook", "Веб-хук"
+        MANUAL = "manual", "Ручной запуск"
+        SYSTEM = "system", "Системная задача"
+
+    class Priority(models.TextChoices):
+        HIGH = "high", "Высокий"
+        NORMAL = "normal", "Обычный"
+        BULK = "bulk", "Пакетный"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает отправки"
+        IN_PROGRESS = "in_progress", "В обработке"
+        DONE = "done", "Успешно отправлено"
+        FAILED = "failed", "Ошибка отправки"
+        CANCELED = "canceled", "Отменено"
+
+    uuid = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        editable=False,
+        db_index=True,
+    )
+    source_type = models.CharField(
+        max_length=32,
+        choices=SourceType.choices,
+        default=SourceType.MAILING,
+    )
+    provider_type = models.CharField(
+        max_length=32,
+        choices=BotProfile.ProviderType.choices,
+        db_index=True,
+    )
+    priority = models.CharField(
+        max_length=16,
+        choices=Priority.choices,
+        default=Priority.BULK,
+        db_index=True,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="dispatch_tasks",
+    )
+    bot_profile = models.ForeignKey(
+        "BotProfile",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="dispatch_tasks",
+    )
+    guest_binding = models.ForeignKey(
+        "GuestBotBinding",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="dispatch_tasks",
+    )
+    external_chat_id = models.CharField(max_length=128, blank=True, null=True)
+
+    payload = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Полезная нагрузка задачи (шаблон, переменные, метаданные).",
+    )
+    message_text = models.TextField(blank=True, default="")
+
+    idempotency_key = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        unique=True,
+        help_text="Ключ дедупликации задачи для безопасных повторов.",
+    )
+
+    scheduled_at = models.DateTimeField(blank=True, null=True)
+    available_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text="Время, начиная с которого задачу можно брать в обработку.",
+    )
+
+    started_at = models.DateTimeField(blank=True, null=True)
+    finished_at = models.DateTimeField(blank=True, null=True)
+
+    attempt = models.PositiveIntegerField(default=0)
+    max_attempts = models.PositiveIntegerField(default=5)
+    last_error = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "dispatch_tasks"
+        verbose_name = "Задача диспетчера"
+        verbose_name_plural = "Задачи диспетчера"
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(attempt__lte=models.F("max_attempts")),
+                name="dispatch_tasks_attempt_lte_max",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["provider_type", "priority", "status", "available_at"],
+                name="dispatch_tasks_lane_idx",
+            ),
+            models.Index(
+                fields=["status", "available_at"],
+                name="dispatch_tasks_status_available_idx",
+            ),
+            models.Index(
+                fields=["guest", "created_at"],
+                name="dispatch_tasks_guest_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"task={self.id} provider={self.provider_type} priority={self.priority} status={self.status}"
 
 
 
