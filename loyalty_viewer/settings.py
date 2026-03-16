@@ -318,6 +318,22 @@ MAX_API_AUTH_PREFIX = os.getenv("MAX_API_AUTH_PREFIX", "").strip()
 VK_API_BASE_URL = os.getenv("VK_API_BASE_URL", "https://api.vk.com/method").strip()
 VK_API_VERSION = os.getenv("VK_API_VERSION", "5.199").strip()
 
+# Настройки monitor-процесса universal queue (F6).
+try:
+    UNIVERSAL_MONITOR_INTERVAL_SECONDS = float(os.getenv("UNIVERSAL_MONITOR_INTERVAL_SECONDS", "60"))
+except ValueError:
+    UNIVERSAL_MONITOR_INTERVAL_SECONDS = 60.0
+
+try:
+    UNIVERSAL_STALE_QUEUED_SECONDS = int(os.getenv("UNIVERSAL_STALE_QUEUED_SECONDS", "180"))
+except ValueError:
+    UNIVERSAL_STALE_QUEUED_SECONDS = 180
+
+try:
+    UNIVERSAL_STALE_IN_PROGRESS_SECONDS = int(os.getenv("UNIVERSAL_STALE_IN_PROGRESS_SECONDS", "600"))
+except ValueError:
+    UNIVERSAL_STALE_IN_PROGRESS_SECONDS = 600
+
 # Количество повторных попыток для обработки одного сообщения из очереди.
 try:
     MAX_RETRIES = int(os.getenv('MAX_RETRIES', '3'))

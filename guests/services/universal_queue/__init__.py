@@ -7,6 +7,7 @@
 """
 
 from .dispatcher import UniversalTaskDispatcher
+from .maintenance import QueueHealthSnapshot, RecoverySummary, UniversalQueueMaintenanceService
 from .mailing_producer import enqueue_mailing_rows_as_dispatch_tasks
 from .provider_worker import AsyncProviderWorker, FairPolicy, ProviderWorkerConfig
 from .rate_limiter import CentralizedRedisRateLimiter, ProviderRatePolicy
@@ -20,8 +21,11 @@ __all__ = [
     "ProviderLaneQueue",
     "ProviderRatePolicy",
     "ProviderWorkerConfig",
+    "QueueHealthSnapshot",
     "QueueEnvelope",
+    "RecoverySummary",
     "UniversalTaskDispatcher",
+    "UniversalQueueMaintenanceService",
     "enqueue_mailing_rows_as_dispatch_tasks",
     "enqueue_high_priority_webhook_tasks",
 ]
