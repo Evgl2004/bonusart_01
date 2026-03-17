@@ -65,10 +65,11 @@ python manage.py test guests.tests.NotificationScenarioIntegrationTests
 
 Поведение при срабатывании лимита:
 1. `NotificationEvent` создаётся для аудита;
-2. событие получает статус `skipped`;
-3. в `NotificationEvent.error_text` записывается причина пропуска;
-4. новая `DispatchTask` не создаётся.
+2. событие не пропускается, а переносится вперёд по времени;
+3. `planned_send_at` сдвигается на допустимый момент;
+4. `DispatchTask` всё равно создаётся с `available_at = planned_send_at`;
+5. в `NotificationEvent.payload.deferred` сохраняется причина и время переноса.
 
 Диагностика:
-1. в админке фильтруйте `NotificationEvent` по `status=skipped`;
-2. проверяйте `error_text` на признаки `cooldown` или `дневной лимит`.
+1. в админке смотрите `NotificationEvent.planned_send_at` и `payload`;
+2. в `payload.deferred.reason` ищите признаки `cooldown` и `max_per_day`.

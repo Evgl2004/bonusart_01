@@ -169,34 +169,41 @@ def _scenario_day_bounds(
     return day_start_local.astimezone(current_tz), day_end_local.astimezone(current_tz)
 
 
-def _check_scenario_send_limits(
+def _apply_scenario_send_limits(
     *,
     scenario: NotificationScenario,
     guest: Guest,
-    event_at: datetime,
-) -> Optional[str]:
+    planned_send_at: datetime,
+) -> tuple[datetime, Optional[str]]:
     """
     Проверяет ограничения сценария отправки для одного гостя.
 
     Возвращает:
-    1. `None`, если ограничения не нарушены;
-    2. Текст причины, если событие нужно пропустить.
+    1. Итоговое время `planned_send_at` с учётом ограничений;
+    2. Текст причины переноса (если перенос применён).
     """
+    candidate = planned_send_at
+    defer_reasons: list[str] = []
+
     base_queryset = NotificationEvent.objects.filter(
         scenario=scenario,
         guest=guest,
         status=NotificationEvent.Status.TASK_CREATED,
+        planned_send_at__isnull=False,
     )
 
     cooldown_minutes = int(getattr(scenario, "cooldown_minutes", 0) or 0)
     if cooldown_minutes > 0:
-        cooldown_start = event_at - timedelta(minutes=cooldown_minutes)
-        recent_exists = base_queryset.filter(event_at__gte=cooldown_start).exists()
-        if recent_exists:
-            return (
-                "Событие пропущено: действует cooldown "
-                f"{cooldown_minutes} мин. для этого гостя."
-            )
+        latest_planned_send_at = (
+            base_queryset.order_by("-planned_send_at")
+            .values_list("planned_send_at", flat=True)
+            .first()
+        )
+        if latest_planned_send_at is not None:
+            cooldown_allowed_at = latest_planned_send_at + timedelta(minutes=cooldown_minutes)
+            if candidate < cooldown_allowed_at:
+                candidate = cooldown_allowed_at
+                defer_reasons.append(f"cooldown:{cooldown_minutes}m")
 
     max_per_day = getattr(scenario, "max_per_day_per_guest", None)
     if max_per_day is not None:
@@ -206,21 +213,25 @@ def _check_scenario_send_limits(
             max_per_day_int = 0
 
         if max_per_day_int > 0:
-            day_start, day_end = _scenario_day_bounds(
-                timezone_name=getattr(scenario, "timezone", None),
-                dt=event_at,
-            )
-            sent_today = base_queryset.filter(
-                event_at__gte=day_start,
-                event_at__lt=day_end,
-            ).count()
-            if sent_today >= max_per_day_int:
-                return (
-                    "Событие пропущено: достигнут дневной лимит "
-                    f"{max_per_day_int} отправок для гостя."
+            for _ in range(366):
+                day_start, day_end = _scenario_day_bounds(
+                    timezone_name=getattr(scenario, "timezone", None),
+                    dt=candidate,
                 )
+                sent_on_day = base_queryset.filter(
+                    planned_send_at__gte=day_start,
+                    planned_send_at__lt=day_end,
+                ).count()
+                if sent_on_day < max_per_day_int:
+                    break
+                candidate = candidate + timedelta(days=1)
+                if f"max_per_day:{max_per_day_int}" not in defer_reasons:
+                    defer_reasons.append(f"max_per_day:{max_per_day_int}")
 
-    return None
+    if candidate <= planned_send_at:
+        return planned_send_at, None
+
+    return candidate, ", ".join(defer_reasons) if defer_reasons else "send_limits"
 
 
 @transaction.atomic
@@ -307,23 +318,29 @@ def enqueue_notification_event_from_scenario(
         )
         return 0
 
-    skip_reason = _check_scenario_send_limits(
+    adjusted_planned_send_at, defer_reason = _apply_scenario_send_limits(
         scenario=scenario,
         guest=guest,
-        event_at=safe_event_at,
+        planned_send_at=planned_send_at,
     )
-    if skip_reason:
-        event.status = NotificationEvent.Status.SKIPPED
-        event.error_text = skip_reason
-        event.save(update_fields=["status", "error_text", "updated_at"])
+    if adjusted_planned_send_at != planned_send_at:
+        planned_send_at = adjusted_planned_send_at
+        event_payload = dict(event.payload or {})
+        event_payload["deferred"] = {
+            "reason": defer_reason or "send_limits",
+            "deferred_until": planned_send_at.isoformat(),
+        }
+        event.planned_send_at = planned_send_at
+        event.payload = event_payload
+        event.save(update_fields=["planned_send_at", "payload", "updated_at"])
         logger.info(
-            "NotificationEvent id=%s scenario=%s guest_id=%s пропущено по лимитам: %s",
+            "NotificationEvent id=%s scenario=%s guest_id=%s отложено по лимитам до %s (%s)",
             event.id,
             scenario.code,
             guest.id,
-            skip_reason,
+            planned_send_at.isoformat(),
+            defer_reason or "send_limits",
         )
-        return 0
 
     message_text = _render_scenario_message(
         scenario=scenario,

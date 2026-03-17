@@ -165,7 +165,7 @@ class NotificationScenarioIntegrationTests(TestCase):
 
     def test_enqueue_notification_event_respects_cooldown_limit(self):
         """
-        Проверяет, что при cooldown второе событие по сценарию пропускается.
+        Проверяет, что при cooldown второе событие откладывается, но не теряется.
         """
         scenario = self._create_scenario(
             code="test_webhook_cooldown",
@@ -199,19 +199,29 @@ class NotificationScenarioIntegrationTests(TestCase):
         )
 
         self.assertEqual(first_created, 1)
-        self.assertEqual(second_created, 0)
-        self.assertEqual(DispatchTask.objects.count(), 1)
+        self.assertEqual(second_created, 1)
+        self.assertEqual(DispatchTask.objects.count(), 2)
 
-        skipped_event = NotificationEvent.objects.get(
+        first_event = NotificationEvent.objects.get(
+            scenario=scenario,
+            dedupe_key="cooldown:1",
+        )
+        deferred_event = NotificationEvent.objects.get(
             scenario=scenario,
             dedupe_key="cooldown:2",
         )
-        self.assertEqual(skipped_event.status, NotificationEvent.Status.SKIPPED)
-        self.assertIn("cooldown", (skipped_event.error_text or "").lower())
+        self.assertEqual(deferred_event.status, NotificationEvent.Status.TASK_CREATED)
+        self.assertGreaterEqual(
+            deferred_event.planned_send_at,
+            first_event.planned_send_at + timedelta(minutes=10),
+        )
+
+        second_task = DispatchTask.objects.get(notification_event=deferred_event)
+        self.assertEqual(second_task.available_at, deferred_event.planned_send_at)
 
     def test_enqueue_notification_event_respects_daily_limit(self):
         """
-        Проверяет дневной лимит: в тот же день событие пропускается, на следующий день проходит.
+        Проверяет дневной лимит: события не пропускаются, а разносятся по следующим дням.
         """
         scenario = self._create_scenario(
             code="test_webhook_daily_limit",
@@ -257,16 +267,30 @@ class NotificationScenarioIntegrationTests(TestCase):
         )
 
         self.assertEqual(first_created, 1)
-        self.assertEqual(second_created, 0)
+        self.assertEqual(second_created, 1)
         self.assertEqual(third_created, 1)
-        self.assertEqual(DispatchTask.objects.count(), 2)
+        self.assertEqual(DispatchTask.objects.count(), 3)
 
-        skipped_event = NotificationEvent.objects.get(
+        first_event = NotificationEvent.objects.get(
+            scenario=scenario,
+            dedupe_key="daily:1",
+        )
+        second_event = NotificationEvent.objects.get(
             scenario=scenario,
             dedupe_key="daily:2",
         )
-        self.assertEqual(skipped_event.status, NotificationEvent.Status.SKIPPED)
-        self.assertIn("лимит", (skipped_event.error_text or "").lower())
+        third_event = NotificationEvent.objects.get(
+            scenario=scenario,
+            dedupe_key="daily:3",
+        )
+
+        self.assertEqual(second_event.status, NotificationEvent.Status.TASK_CREATED)
+        self.assertEqual(third_event.status, NotificationEvent.Status.TASK_CREATED)
+        self.assertGreaterEqual(second_event.planned_send_at, first_event.planned_send_at + timedelta(days=1))
+        self.assertGreaterEqual(third_event.planned_send_at, second_event.planned_send_at + timedelta(days=1))
+
+        scenario_events = NotificationEvent.objects.filter(scenario=scenario)
+        self.assertFalse(scenario_events.filter(status=NotificationEvent.Status.SKIPPED).exists())
 
     def test_scheduled_inactive_runner_creates_event_and_task(self):
         """
