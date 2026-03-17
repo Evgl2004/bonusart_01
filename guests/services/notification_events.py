@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, time as dt_time, timedelta
 from typing import Any, Dict, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -151,6 +151,78 @@ def _normalize_event_source_type(source_type: str) -> str:
     return value if value in allowed else NotificationEvent.SourceType.WEBHOOK
 
 
+def _scenario_day_bounds(
+    *,
+    timezone_name: str | None,
+    dt: datetime,
+) -> tuple[datetime, datetime]:
+    """
+    Возвращает границы суток сценария в текущей timezone Django.
+
+    Нужен для корректного подсчёта дневных лимитов в локальной зоне сценария.
+    """
+    tzinfo = _resolve_zoneinfo(timezone_name)
+    local_dt = timezone.localtime(dt, timezone=tzinfo)
+    day_start_local = datetime.combine(local_dt.date(), dt_time.min, tzinfo=tzinfo)
+    day_end_local = day_start_local + timedelta(days=1)
+    current_tz = timezone.get_current_timezone()
+    return day_start_local.astimezone(current_tz), day_end_local.astimezone(current_tz)
+
+
+def _check_scenario_send_limits(
+    *,
+    scenario: NotificationScenario,
+    guest: Guest,
+    event_at: datetime,
+) -> Optional[str]:
+    """
+    Проверяет ограничения сценария отправки для одного гостя.
+
+    Возвращает:
+    1. `None`, если ограничения не нарушены;
+    2. Текст причины, если событие нужно пропустить.
+    """
+    base_queryset = NotificationEvent.objects.filter(
+        scenario=scenario,
+        guest=guest,
+        status=NotificationEvent.Status.TASK_CREATED,
+    )
+
+    cooldown_minutes = int(getattr(scenario, "cooldown_minutes", 0) or 0)
+    if cooldown_minutes > 0:
+        cooldown_start = event_at - timedelta(minutes=cooldown_minutes)
+        recent_exists = base_queryset.filter(event_at__gte=cooldown_start).exists()
+        if recent_exists:
+            return (
+                "Событие пропущено: действует cooldown "
+                f"{cooldown_minutes} мин. для этого гостя."
+            )
+
+    max_per_day = getattr(scenario, "max_per_day_per_guest", None)
+    if max_per_day is not None:
+        try:
+            max_per_day_int = int(max_per_day)
+        except (TypeError, ValueError):
+            max_per_day_int = 0
+
+        if max_per_day_int > 0:
+            day_start, day_end = _scenario_day_bounds(
+                timezone_name=getattr(scenario, "timezone", None),
+                dt=event_at,
+            )
+            sent_today = base_queryset.filter(
+                event_at__gte=day_start,
+                event_at__lt=day_end,
+            ).count()
+            if sent_today >= max_per_day_int:
+                return (
+                    "Событие пропущено: достигнут дневной лимит "
+                    f"{max_per_day_int} отправок для гостя."
+                )
+
+    return None
+
+
 @transaction.atomic
 def enqueue_notification_event_from_scenario(
     *,
@@ -232,6 +304,24 @@ def enqueue_notification_event_from_scenario(
             scenario.code,
             safe_dedupe_key,
             guest.id,
+        )
+        return 0
+
+    skip_reason = _check_scenario_send_limits(
+        scenario=scenario,
+        guest=guest,
+        event_at=safe_event_at,
+    )
+    if skip_reason:
+        event.status = NotificationEvent.Status.SKIPPED
+        event.error_text = skip_reason
+        event.save(update_fields=["status", "error_text", "updated_at"])
+        logger.info(
+            "NotificationEvent id=%s scenario=%s guest_id=%s пропущено по лимитам: %s",
+            event.id,
+            scenario.code,
+            guest.id,
+            skip_reason,
         )
         return 0
 

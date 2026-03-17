@@ -57,3 +57,18 @@ python manage.py run_notification_scenarios
 ```bash
 python manage.py test guests.tests.NotificationScenarioIntegrationTests
 ```
+
+## Лимиты отправки по сценарию
+В `NotificationScenario` поддерживаются защитные лимиты для одного гостя:
+1. `cooldown_minutes` — минимальный интервал между успешными отправками по этому сценарию;
+2. `max_per_day_per_guest` — максимальное число отправок в сутки (в timezone сценария).
+
+Поведение при срабатывании лимита:
+1. `NotificationEvent` создаётся для аудита;
+2. событие получает статус `skipped`;
+3. в `NotificationEvent.error_text` записывается причина пропуска;
+4. новая `DispatchTask` не создаётся.
+
+Диагностика:
+1. в админке фильтруйте `NotificationEvent` по `status=skipped`;
+2. проверяйте `error_text` на признаки `cooldown` или `дневной лимит`.

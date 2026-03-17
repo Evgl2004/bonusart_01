@@ -69,6 +69,8 @@ class NotificationScenarioIntegrationTests(TestCase):
         distribution_mode: str = NotificationScenario.DistributionMode.IMMEDIATE,
         is_active: bool = True,
         settings: dict | None = None,
+        cooldown_minutes: int = 0,
+        max_per_day_per_guest: int | None = None,
     ) -> NotificationScenario:
         """
         Создаёт NotificationScenario для тестового кейса.
@@ -85,6 +87,8 @@ class NotificationScenarioIntegrationTests(TestCase):
             target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
             distribution_mode=distribution_mode,
             timezone="Asia/Yekaterinburg",
+            cooldown_minutes=cooldown_minutes,
+            max_per_day_per_guest=max_per_day_per_guest,
             settings=settings or {},
         )
 
@@ -158,6 +162,111 @@ class NotificationScenarioIntegrationTests(TestCase):
         event = NotificationEvent.objects.get()
         self.assertEqual(event.duplicate_hits, 1)
         self.assertIsNotNone(event.last_duplicate_at)
+
+    def test_enqueue_notification_event_respects_cooldown_limit(self):
+        """
+        Проверяет, что при cooldown второе событие по сценарию пропускается.
+        """
+        scenario = self._create_scenario(
+            code="test_webhook_cooldown",
+            cooldown_minutes=10,
+        )
+        base_time = timezone.now()
+
+        first_created = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="cooldown:1",
+            source_ref="cooldown-1",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "balance_changed"},
+            template_context={"first_name": "Иван", "message_text": "Первое событие"},
+            fallback_message_text="Первое событие",
+            event_at=base_time,
+        )
+        second_created = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="cooldown:2",
+            source_ref="cooldown-2",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "balance_changed"},
+            template_context={"first_name": "Иван", "message_text": "Второе событие"},
+            fallback_message_text="Второе событие",
+            event_at=base_time + timedelta(minutes=1),
+        )
+
+        self.assertEqual(first_created, 1)
+        self.assertEqual(second_created, 0)
+        self.assertEqual(DispatchTask.objects.count(), 1)
+
+        skipped_event = NotificationEvent.objects.get(
+            scenario=scenario,
+            dedupe_key="cooldown:2",
+        )
+        self.assertEqual(skipped_event.status, NotificationEvent.Status.SKIPPED)
+        self.assertIn("cooldown", (skipped_event.error_text or "").lower())
+
+    def test_enqueue_notification_event_respects_daily_limit(self):
+        """
+        Проверяет дневной лимит: в тот же день событие пропускается, на следующий день проходит.
+        """
+        scenario = self._create_scenario(
+            code="test_webhook_daily_limit",
+            max_per_day_per_guest=1,
+        )
+        base_time = timezone.now()
+
+        first_created = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="daily:1",
+            source_ref="daily-1",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "balance_changed"},
+            template_context={"first_name": "Иван", "message_text": "Первый в день"},
+            fallback_message_text="Первый в день",
+            event_at=base_time,
+        )
+        second_created = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="daily:2",
+            source_ref="daily-2",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "balance_changed"},
+            template_context={"first_name": "Иван", "message_text": "Второй в день"},
+            fallback_message_text="Второй в день",
+            event_at=base_time + timedelta(hours=1),
+        )
+        third_created = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="daily:3",
+            source_ref="daily-3",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "balance_changed"},
+            template_context={"first_name": "Иван", "message_text": "Следующий день"},
+            fallback_message_text="Следующий день",
+            event_at=base_time + timedelta(days=1, minutes=1),
+        )
+
+        self.assertEqual(first_created, 1)
+        self.assertEqual(second_created, 0)
+        self.assertEqual(third_created, 1)
+        self.assertEqual(DispatchTask.objects.count(), 2)
+
+        skipped_event = NotificationEvent.objects.get(
+            scenario=scenario,
+            dedupe_key="daily:2",
+        )
+        self.assertEqual(skipped_event.status, NotificationEvent.Status.SKIPPED)
+        self.assertIn("лимит", (skipped_event.error_text or "").lower())
 
     def test_scheduled_inactive_runner_creates_event_and_task(self):
         """
