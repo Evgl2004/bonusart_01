@@ -28,6 +28,7 @@ SAGUR_PASSWORD = os.getenv("SAGUR_PASSWORD")
 
 PAGE_SIZE= 490
 LIMIT = 490
+BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID = "BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M"
 
 ACCESS_TOKEN = None
 TOKEN_EXPIRES_AT = 0  # Время последней проверки токена
@@ -652,21 +653,34 @@ def _extract_balance_change_value(event: dict) -> str | None:
     return None
 
 
-def _is_balance_notification_event(event: dict) -> bool:
+def _extract_category_external_id(webhook: dict, event: dict) -> str:
     """
-    Явно определяет, относится ли событие к информированию о балансе.
+    Извлекает внешний идентификатор категории из webhook.
 
-    Признаки:
-    1. Есть одно из полей изменения баланса;
-    2. Или в тексте события явно упомянут баланс.
+    В разных payload-версиях поле может называться по-разному, поэтому
+    проверяем несколько вариантов.
     """
-    if _extract_balance_change_value(event) is not None:
-        return True
+    candidates = (
+        webhook.get("category_id_ext"),
+        event.get("category_id_ext"),
+        event.get("categoryExternalId"),
+        event.get("categoryId"),
+    )
+    for value in candidates:
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
 
-    text = str(event.get("text") or "").strip().lower()
-    if "баланс" in text or "balance" in text:
-        return True
-    return False
+
+def _is_balance_webhook(webhook: dict, event: dict) -> bool:
+    """
+    Определяет, что webhook относится к сценарию «Баланс».
+
+    Критерий строгий и явный:
+    `category_external_id == BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID`.
+    """
+    category_external_id = _extract_category_external_id(webhook, event)
+    return category_external_id == BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID
 
 
 def _build_balance_notification_text(event: dict) -> str:
@@ -708,7 +722,7 @@ def enqueue_balance_notification_from_webhook(webhook: dict) -> int:
     if not isinstance(event, dict):
         return 0
 
-    if not _is_balance_notification_event(event):
+    if not _is_balance_webhook(webhook, event):
         return 0
 
     guest = find_guest(event)
@@ -745,38 +759,42 @@ def enqueue_balance_notification_from_webhook(webhook: dict) -> int:
 
 def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     """
-    Центральный обработчик вебхука из SAGUR API.
+    Центральный обработчик webhook из SAGUR API.
 
-    Внутри по notificationType решаем, что делать:
-      - 1  -> обновляем историю посещений (VisitHistory)
-      - 5  -> назначаем категорию гостю
-      - иначе -> пока ничего не делаем
+    Правила маршрутизации:
+    1. Если `category_id_ext` совпадает с категорией «Баланс»,
+       ставим high-priority задачу уведомления в universal queue.
+    2. `notificationType=1` -> обновляем историю посещений (VisitHistory).
+    3. `notificationType=5` -> назначаем категорию гостю.
+    4. Остальные типы пока не обрабатываем.
 
     Возвращает:
-        True  - вебхук считается успешно обработанным, можно ставить business_status='complete'
-        False - вебхук оставляем pending (например, гость/ресторан не найден, ошибка и т.п.)
+        True  - webhook обработан успешно, можно ставить `business_status=complete`.
+        False - webhook не обработан (ошибка/недостаток данных), ставим `business_status=failed`.
     """
     event = webhook.get("parsed_body") or {}
     notif_type = event.get("notificationType")
     webhook_id = webhook.get("id")
+    is_balance_webhook = _is_balance_webhook(webhook, event if isinstance(event, dict) else {})
 
-    # Отдельный контур приоритетных уведомлений:
-    # попытка постановки webhook-задач в универсальную очередь не должна
-    # ломать текущую бизнес-обработку webhook.
-    try:
-        enqueued_tasks = enqueue_balance_notification_from_webhook(webhook)
-        if enqueued_tasks > 0:
+    # --- Явный balance-сценарий по фиксированному category external id ---
+    if is_balance_webhook:
+        try:
+            enqueued_tasks = enqueue_balance_notification_from_webhook(webhook)
             logger.info(
-                "Webhook id=%s: поставлено задач в универсальную очередь: %s",
+                "Webhook id=%s: balance-событие обработано (category_ext_id=%s), "
+                "поставлено задач: %s",
                 webhook_id,
+                BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID,
                 enqueued_tasks,
             )
-    except Exception:
-        logger.exception(
-            "Webhook id=%s: ошибка постановки задач в универсальную очередь. "
-            "Продолжаем основную обработку.",
-            webhook_id,
-        )
+            return True, f"balance webhook processed, enqueued={enqueued_tasks}"
+        except Exception:
+            logger.exception(
+                "Webhook id=%s: ошибка постановки balance-задач в universal queue.",
+                webhook_id,
+            )
+            return False, "balance enqueue error"
 
     # --- notificationType = 1: обновляем историю посещений ---
     if notif_type == 1:
@@ -803,7 +821,6 @@ def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     )
     return False, f"Неизвестный notificationType={notif_type}"
 
-
 # =====================================================================
 #        ОБРАБОТКА ВЕБ-ХУКОВ ЧЕРЕЗ SAGUR API (business_status=pending)
 # =====================================================================
@@ -815,8 +832,11 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
     Сейчас:
       - получаем список вебхуков из SAGUR API /api/internal/webhooks
         с business_status=pending
-      - обрабатываем каждый (назначаем категорию гостю ТОЛЬКО для notificationType=5)
-      - помечаем его в SAGUR как business_status='complete' (если категория назначена)
+      - обрабатываем каждый:
+          * balance-событие по category_id_ext -> enqueue уведомления в universal queue
+          * notificationType=1 -> обновление VisitHistory
+          * notificationType=5 -> назначение категории гостю
+      - помечаем его в SAGUR как business_status='complete' при успешной обработке
         или 'failed' при ошибке.
 
     ВАЖНО:

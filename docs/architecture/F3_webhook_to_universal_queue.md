@@ -6,8 +6,8 @@
 ## Что реализовано
 1. В `guests/services/webhooks.py` добавлен явный бизнес-метод:
    - `enqueue_balance_notification_from_webhook(webhook)`.
-2. В `handle_api_webhook` добавлен безопасный вызов этого метода:
-   - ошибки enqueue не прерывают основную бизнес-обработку веб-хука.
+2. В `handle_api_webhook` добавлен отдельный маршрут balance-события:
+   - webhook относится к балансу, если `category_id_ext == "BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M"`.
 3. Для управления включением используются feature-flag:
    - `UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE`
    - `UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION`
@@ -16,8 +16,9 @@
    - `primary_only=True`
 
 ## Логика постановки balance-уведомления
-1. Проверяется включение обоих флагов.
-2. Из `parsed_body` определяется, что событие относится к балансу.
+1. Проверяется, что webhook относится к балансу:
+   - `category_id_ext` должен совпасть с фиксированным ID категории баланса.
+2. Проверяется включение обоих флагов.
 3. Определяется гость:
    - сначала из локальной БД;
    - при наличии телефона используется fallback `get_or_create_guest_from_iiko`.
