@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Set
 
 from django.conf import settings
 from django.db import IntegrityError
@@ -49,14 +49,32 @@ def _resolve_priority_for_mailing(mailing: Mailing) -> str:
     return value if value in allowed else DispatchTask.Priority.BULK
 
 
-def _build_bindings_map(guest_ids: Iterable[int]) -> Dict[int, List[GuestBotBinding]]:
+def _resolve_selected_bot_profiles(mailing: Mailing) -> tuple[Set[int], Set[str]]:
+    """
+    Возвращает набор выбранных активных ботов рассылки:
+    1. идентификаторы профилей ботов;
+    2. типы провайдеров (`telegram|max|vk`).
+    """
+    selected_rows = list(
+        mailing.bot_profiles.filter(is_active=True).values("id", "provider_type")
+    )
+    selected_bot_ids = {row["id"] for row in selected_rows}
+    selected_providers = {str(row["provider_type"]).strip().lower() for row in selected_rows}
+    return selected_bot_ids, selected_providers
+
+
+def _build_bindings_map(guest_ids: Iterable[int], selected_bot_ids: Set[int]) -> Dict[int, List[GuestBotBinding]]:
     """
     Собирает активные привязки гостей к ботам в словарь `guest_id -> bindings`.
     """
+    if not selected_bot_ids:
+        return {}
+
     bindings = (
         GuestBotBinding.objects.select_related("bot")
         .filter(
             guest_id__in=list(guest_ids),
+            bot_id__in=list(selected_bot_ids),
             is_active=True,
             is_opt_in=True,
             is_stop_sending=False,
@@ -179,10 +197,21 @@ def enqueue_mailing_rows_as_dispatch_tasks(
     target_mode = _resolve_target_mode_for_mailing(mailing)
     priority = _resolve_priority_for_mailing(mailing)
     now = now or timezone.now()
+    selected_bot_ids, selected_provider_types = _resolve_selected_bot_profiles(mailing)
+
+    if not selected_bot_ids:
+        for row in rows:
+            row.status = MailingGuest.Status.ERROR
+            row.delivery_status = "dispatch_no_bot_profiles"
+            row.error_description = "В рассылке не выбраны активные профили ботов."
+            row.save(update_fields=["status", "delivery_status", "error_description"])
+            summary.rows_failed += 1
+        return summary
 
     guest_ids = [row.guest_id for row in rows]
-    bindings_map = _build_bindings_map(guest_ids)
+    bindings_map = _build_bindings_map(guest_ids, selected_bot_ids=selected_bot_ids)
     use_legacy_fallback = bool(getattr(settings, "UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS", True))
+    use_legacy_fallback = use_legacy_fallback and ("telegram" in selected_provider_types)
     legacy_links_map = _build_legacy_tg_links_map(guest_ids, channels) if use_legacy_fallback else {}
 
     for row in rows:

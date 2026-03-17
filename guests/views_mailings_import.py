@@ -6,12 +6,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.http import HttpResponse
-from django.db.models import Count
-
 from openpyxl import load_workbook, Workbook
 
 from .forms import MailingImportPhonesForm
-from .models import Mailing, MailingGuest, Guest,GuestChannelLink ,MailingChannel
+from .models import GuestBotBinding, Guest, Mailing, MailingGuest
 
 
 def normalize_phone(raw: str) -> str | None:
@@ -104,37 +102,35 @@ class MailingImportPhonesView(View):
 
         to_add = [g for g in guests_found if g.id not in already_ids]
 
-        # 2.5) если в рассылке есть TG-каналы — оставляем только гостей с валидными GuestChannelLink
-        active_channels = list(mailing.channels.filter(is_active=True))
-        tg_channel_ids = [
-            ch.id for ch in active_channels
-            if ch.channel_kind in (
-                MailingChannel.ChannelKind.PHONE_TELEGRAM,
-                MailingChannel.ChannelKind.PHONE_TELEGRAM_BOT,
-            )
-        ]
-
-        if tg_channel_ids and to_add:
+        # 2.5) Оставляем гостей только с активными привязками к ботам,
+        # выбранным в этой рассылке.
+        selected_bot_ids = list(
+            mailing.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+        )
+        if not selected_bot_ids:
+            to_add = []
+        elif to_add:
             to_add_ids = [g.id for g in to_add]
-
-            eligible_ids = (
-                GuestChannelLink.objects
+            eligible_bindings = (
+                GuestBotBinding.objects
                 .filter(
                     guest_id__in=to_add_ids,
-                    channel_id__in=tg_channel_ids,
+                    bot_id__in=selected_bot_ids,
                     is_active=True,
                     is_opt_in=True,
                     is_stop_sending=False,
                 )
                 .exclude(external_chat_id__isnull=True)
                 .exclude(external_chat_id="")
-                .values("guest_id")
-                .annotate(cnt=Count("channel_id", distinct=True))
-                .filter(cnt=len(tg_channel_ids))
-                .values_list("guest_id", flat=True)
             )
 
-            eligible_ids = set(eligible_ids)
+            if mailing.target_mode == Mailing.TargetMode.PRIMARY_ONLY:
+                eligible_ids = set(
+                    eligible_bindings.filter(is_primary=True).values_list("guest_id", flat=True)
+                )
+            else:
+                eligible_ids = set(eligible_bindings.values_list("guest_id", flat=True).distinct())
+
             to_add = [g for g in to_add if g.id in eligible_ids]
 
         # 3) создаём строки MailingGuest

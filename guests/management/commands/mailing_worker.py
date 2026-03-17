@@ -112,13 +112,31 @@ def process_one_mailing(mailing: Mailing, now) -> int:
             f"{mailing.send_window_begin}-{mailing.send_window_end}, skip"
         )
         return 0
-    # 2) Активные каналы рассылки
+    use_universal_dispatch = _is_universal_dispatch_enabled()
+
+    # 2) Активные боты и legacy-каналы рассылки
+    selected_bots = list(mailing.bot_profiles.filter(is_active=True).order_by("provider_type", "id"))
+    print(f"[mailing:{mailing.id}] selected bot profiles: {len(selected_bots)}")
+    for bot in selected_bots:
+        print(f"  - bot id={bot.id} provider={bot.provider_type} code={bot.code}")
+
     channels = list(mailing.channels.filter(is_active=True))
     print(f"[mailing:{mailing.id}] active channels: {len(channels)}")
     for ch in channels:
         print(f"  - channel id={ch.id} kind={ch.channel_kind} token={'YES' if ch.token else 'NO'}")
 
-    if not channels:
+    if use_universal_dispatch and not selected_bots:
+        updated = MailingGuest.objects.filter(
+            mailing=mailing,
+            status=MailingGuest.Status.PLANNED,
+        ).update(
+            status=MailingGuest.Status.ERROR,
+            delivery_status="no_bot_profiles",
+            error_description="No active bot profiles in mailing",
+        )
+        print(f"[mailing:{mailing.id}] NO BOT PROFILES -> marked ERROR rows: {updated}")
+        return 0
+    if not use_universal_dispatch and not channels:
         updated = MailingGuest.objects.filter(
             mailing=mailing,
             status=MailingGuest.Status.PLANNED,
@@ -153,7 +171,7 @@ def process_one_mailing(mailing: Mailing, now) -> int:
         print(f"[mailing:{mailing.id}] moved to IN_PROGRESS ids={ids}")
 
     # 4) Режим F4: вместо прямой отправки ставим DispatchTask в универсальную очередь.
-    if _is_universal_dispatch_enabled():
+    if use_universal_dispatch:
         try:
             summary = enqueue_mailing_rows_as_dispatch_tasks(
                 mailing=mailing,

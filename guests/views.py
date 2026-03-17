@@ -16,7 +16,7 @@ from django.views import View
 from django.contrib import messages
 
 from .models import Guest, GuestCategory, GuestCategoryAssignment, Category, Restaurant, VisitHistory,MessageTemplate
-from .models import Mailing, MailingGuest,MailingChannel, GuestChannelLink
+from .models import GuestBotBinding, Mailing, MailingGuest
 
 from .forms import CategoryForm,MessageTemplateForm,MailingForm
 from .services.template_render import render_message_for_guest
@@ -270,54 +270,41 @@ class GuestListView(ListView):
 
             now = timezone.now()
 
-            # 1) Активные каналы рассылки
-            active_channels = list(mailing.channels.filter(is_active=True))
-            if not active_channels:
-                # нечего слать — просто сбросим выбор
+            # 1) Активные боты, выбранные в настройках рассылки
+            selected_bot_ids = list(
+                mailing.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+            )
+            if not selected_bot_ids:
+                # Нет выбранных ботов — сбрасываем выбор и выходим.
                 request.session["guests_select_all"] = False
                 request.session["guests_selected_count"] = 0
                 request.session.modified = True
                 return self.get(request, *args, **kwargs)
 
-            # 2) Если есть TG-каналы — фильтруем гостей по GuestChannelLink
-            tg_channel_ids = [
-                ch.id for ch in active_channels
-                if ch.channel_kind in (
-                    MailingChannel.ChannelKind.PHONE_TELEGRAM,
-                    MailingChannel.ChannelKind.PHONE_TELEGRAM_BOT,
-                )
-            ]
-
-            if tg_channel_ids:
-                # ВАЖНО: если select_all=True, guests_qs может быть "сложным" queryset’ом с фильтрами/аннотациями.
-                # Поэтому берём список guest_id отдельным запросом (только ids).
-                base_guest_ids = list(guests_qs.values_list("id", flat=True))
-
-                if base_guest_ids:
-                    eligible_guest_ids = (
-                        GuestChannelLink.objects
-                        .filter(
-                            guest_id__in=base_guest_ids,
-                            channel_id__in=tg_channel_ids,
-                            is_active=True,
-                            is_opt_in=True,
-                            is_stop_sending=False,
-                        )
-                        .exclude(external_chat_id__isnull=True)
-                        .exclude(external_chat_id="")
-                        .values("guest_id")
-                        .annotate(cnt=Count("channel_id", distinct=True))
-                        .filter(cnt=len(tg_channel_ids))
-                        .values_list("guest_id", flat=True)
+            # 2) Оставляем только гостей, у которых есть активные привязки к выбранным ботам.
+            base_guest_ids = list(guests_qs.values_list("id", flat=True))
+            if not base_guest_ids:
+                guests_qs = Guest.objects.none()
+            else:
+                eligible_bindings = (
+                    GuestBotBinding.objects
+                    .filter(
+                        guest_id__in=base_guest_ids,
+                        bot_id__in=selected_bot_ids,
+                        is_active=True,
+                        is_opt_in=True,
+                        is_stop_sending=False,
                     )
-                    guests_qs = Guest.objects.filter(id__in=eligible_guest_ids)
-                else:
-                    guests_qs = Guest.objects.none()
+                    .exclude(external_chat_id__isnull=True)
+                    .exclude(external_chat_id="")
+                )
 
-            # (опционально) если хочешь: для EMAIL-канала можно отфильтровать гостей без email
-            # email_required = any(ch.channel_kind == MailingChannel.ChannelKind.EMAIL for ch in active_channels)
-            # if email_required:
-            #     guests_qs = guests_qs.exclude(email__isnull=True).exclude(email="")
+                if mailing.target_mode == Mailing.TargetMode.PRIMARY_ONLY:
+                    eligible_guest_ids = eligible_bindings.filter(is_primary=True).values_list("guest_id", flat=True)
+                else:
+                    eligible_guest_ids = eligible_bindings.values_list("guest_id", flat=True)
+
+                guests_qs = Guest.objects.filter(id__in=eligible_guest_ids.distinct())
 
             # 3) Создаём строки MailingGuest (как у тебя было)
             rows = []

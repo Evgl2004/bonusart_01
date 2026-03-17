@@ -1,13 +1,13 @@
-from django import forms
+﻿from django import forms
 from django.utils import timezone
-from datetime import datetime
-from .models import Category ,MessageTemplate,Mailing,MailingChannel
+
+from .models import BotProfile, Category, Mailing, MailingChannel, MessageTemplate
 
 
 class CategoryForm(forms.ModelForm):
     class Meta:
         model = Category
-        fields = ["name", "description", "is_active","external_id"]
+        fields = ["name", "description", "is_active", "external_id"]
         widgets = {
             "name": forms.TextInput(attrs={"class": "form-control"}),
             "description": forms.TextInput(attrs={"class": "form-control"}),
@@ -21,18 +21,14 @@ class CategoryForm(forms.ModelForm):
             "external_id": "Внешний ID",
         }
 
+
 class MessageTemplateForm(forms.ModelForm):
     class Meta:
         model = MessageTemplate
         fields = ["name", "description", "message_text", "is_active"]
-
         widgets = {
-            "name": forms.TextInput(
-                attrs={"class": "form-control"}
-            ),
-            "description": forms.TextInput(
-                attrs={"class": "form-control"}
-            ),
+            "name": forms.TextInput(attrs={"class": "form-control"}),
+            "description": forms.TextInput(attrs={"class": "form-control"}),
             "message_text": forms.Textarea(
                 attrs={
                     "class": "form-control",
@@ -40,17 +36,15 @@ class MessageTemplateForm(forms.ModelForm):
                     "style": "min-height: 280px;",
                 }
             ),
-            "is_active": forms.CheckboxInput(
-                attrs={"class": "form-check-input"}
-            ),
+            "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
-
         labels = {
             "name": "Название шаблона",
             "description": "Описание",
             "message_text": "Текст сообщения",
             "is_active": "Активен",
         }
+
 
 class MailingForm(forms.ModelForm):
     class Meta:
@@ -65,24 +59,17 @@ class MailingForm(forms.ModelForm):
             "send_window_end",
             "target_mode",
             "queue_priority",
+            "bot_profiles",
             "channels",
-            #"is_active",
+            # "is_active",
         ]
-
         widgets = {
-            "name": forms.TextInput(attrs={
-                "class": "form-control",
-            }),
-
-            "template": forms.Select(attrs={
-                "class": "form-select",
-            }),
-
+            "name": forms.TextInput(attrs={"class": "form-control"}),
+            "template": forms.Select(attrs={"class": "form-select"}),
             "scheduled_date": forms.DateInput(
                 attrs={"type": "date", "class": "form-control"},
                 format="%Y-%m-%d",
             ),
-
             "scheduled_time_begin": forms.DateTimeInput(
                 attrs={"type": "datetime-local", "class": "form-control"},
                 format="%Y-%m-%dT%H:%M",
@@ -99,23 +86,22 @@ class MailingForm(forms.ModelForm):
                 attrs={"type": "time", "class": "form-control"},
                 format="%H:%M",
             ),
-            "target_mode": forms.Select(attrs={
-                "class": "form-select",
-            }),
-            "queue_priority": forms.Select(attrs={
-                "class": "form-select",
-            }),
-            # ✅ множественный выбор каналов
-            "channels": forms.SelectMultiple(attrs={
-                "class": "form-select",
-                "size": "6",  # чтобы было видно несколько строк
-            }),
-
-           # "is_active": forms.CheckboxInput(attrs={
-           #     "class": "form-check-input",
-           # }),
+            "target_mode": forms.Select(attrs={"class": "form-select"}),
+            "queue_priority": forms.Select(attrs={"class": "form-select"}),
+            "bot_profiles": forms.SelectMultiple(
+                attrs={
+                    "class": "form-select",
+                    "size": "6",
+                }
+            ),
+            "channels": forms.SelectMultiple(
+                attrs={
+                    "class": "form-select",
+                    "size": "6",
+                }
+            ),
+            # "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
-
         labels = {
             "name": "Название рассылки",
             "template": "Шаблон",
@@ -126,29 +112,35 @@ class MailingForm(forms.ModelForm):
             "send_window_end": "Конец окна отправки",
             "target_mode": "Режим получателей",
             "queue_priority": "Приоритет в очереди",
-            "channels": "Каналы рассылки",  # ✅
-            #"is_active": "Активна",
+            "bot_profiles": "Боты для рассылки",
+            "channels": "Каналы рассылки",
+            # "is_active": "Активна",
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # Важно для datetime-local: чтобы Django правильно парсил значение из браузера
         self.fields["scheduled_time_begin"].input_formats = ["%Y-%m-%dT%H:%M"]
         self.fields["scheduled_time_end"].input_formats = ["%Y-%m-%dT%H:%M"]
         self.fields["send_window_begin"].input_formats = ["%H:%M"]
         self.fields["send_window_end"].input_formats = ["%H:%M"]
         self.fields["scheduled_date"].input_formats = ["%Y-%m-%d"]
-        # Чтобы datetime-local отображался при редактировании
+
+        # Чтобы datetime-local корректно отображался при редактировании.
         if self.instance and self.instance.pk:
             if self.instance.scheduled_time_begin:
                 dt = self.instance.scheduled_time_begin
                 self.initial["scheduled_time_begin"] = timezone.localtime(dt) if timezone.is_aware(dt) else dt
-
             if self.instance.scheduled_time_end:
                 dt = self.instance.scheduled_time_end
                 self.initial["scheduled_time_end"] = timezone.localtime(dt) if timezone.is_aware(dt) else dt
-# ✅ отсортируем каналы красиво
+
+        if "bot_profiles" in self.fields:
+            self.fields["bot_profiles"].queryset = BotProfile.objects.filter(is_active=True).order_by(
+                "provider_type", "name"
+            )
+            self.fields["bot_profiles"].required = True
+
         if "channels" in self.fields:
             self.fields["channels"].queryset = MailingChannel.objects.order_by("id")
             self.fields["channels"].required = False
@@ -167,7 +159,7 @@ class MailingImportPhonesForm(forms.Form):
     )
 
     def clean_file(self):
-        f = self.cleaned_data["file"]
-        if not f.name.lower().endswith(".xlsx"):
+        file_obj = self.cleaned_data["file"]
+        if not file_obj.name.lower().endswith(".xlsx"):
             raise forms.ValidationError("Нужен файл .xlsx")
-        return f
+        return file_obj

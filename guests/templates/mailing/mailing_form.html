@@ -68,10 +68,23 @@
         </div>
 
         <div class="mb-3">
-          <label class="form-label">РљР°РЅР°Р»С‹ СЂР°СЃСЃС‹Р»РєРё</label>
+          {{ form.bot_profiles.label_tag }}
+          <div class="border rounded p-3">
+            {{ form.bot_profiles }}
+          </div>
+          <small class="text-muted">
+            Выберите конкретных ботов, через которых нужно отправлять эту рассылку.
+          </small>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Legacy-каналы (опционально)</label>
           <div class="border rounded p-3">
             {{ form.channels }}
           </div>
+          <small class="text-muted">
+            Используются только как fallback для старых Telegram-связок GuestChannelLink.
+          </small>
         </div>
 
         <div class="form-check mb-3">
@@ -149,3 +162,5 @@
   });
 </script>
 {% endblock %}
+
+

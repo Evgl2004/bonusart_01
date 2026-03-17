@@ -19,6 +19,8 @@
    - `queue_priority` (`high|normal|bulk`).
 4. В форме создания/редактирования рассылки добавлены элементы управления
    режимом получателей и приоритетом очереди.
+5. Добавлена связь рассылки с конкретными ботами:
+   - `Mailing.bot_profiles` через таблицу `MailingBotProfileLink`.
 
 ## Новые настройки
 1. `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH` — включает F4-режим producer для `mailing_worker`.
@@ -30,10 +32,13 @@
    - `all_bots` — отправка во все активные привязки гостя.
 2. `Mailing.queue_priority` — приоритет задач (`high|normal|bulk`), применяется
    при создании `DispatchTask` для строк конкретной рассылки.
+3. `Mailing.bot_profiles` — список конкретных активных ботов, через которые
+   должна отправляться эта рассылка.
 
 ## Логика постановки задач
 Для каждой строки `MailingGuest`:
-1. Выбираются цели отправки из `GuestBotBinding` (новая модель).
+1. Выбираются цели отправки из `GuestBotBinding` только для ботов,
+   указанных в `mailing.bot_profiles`.
 2. При отсутствии целей и включённом fallback используются legacy `GuestChannelLink`.
 3. Для каждой цели создаётся `DispatchTask`:
    - `source_type=mailing`;
@@ -46,7 +51,9 @@
    `status=done`, `delivery_status=queued_to_dispatch`.
 2. Нет доступных каналов:  
    `status=error`, `delivery_status=dispatch_no_targets`.
-3. Ошибка постановки задач:  
+3. В рассылке не выбраны активные боты:  
+   `status=error`, `delivery_status=dispatch_no_bot_profiles`.
+4. Ошибка постановки задач:  
    `status=error`, `delivery_status=dispatch_enqueue_error` или `dispatch_enqueue_exception`.
 
 ## Почему это безопасно для поэтапного включения

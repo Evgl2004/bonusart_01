@@ -198,6 +198,12 @@ class Mailing(models.Model):
         through="MailingChannelLink",
         related_name="mailings",
     )
+    bot_profiles = models.ManyToManyField(
+        "BotProfile",
+        through="MailingBotProfileLink",
+        related_name="mailings",
+        help_text="Список конкретных ботов, через которые должна идти рассылка.",
+    )
 
     class Meta:
         db_table = "mailings"
@@ -282,6 +288,47 @@ class MailingChannelLink(models.Model):
 
     def __str__(self):
         return f"mailing={self.mailing_id} channel={self.channel_id}"
+
+
+class MailingBotProfileLink(models.Model):
+    """
+    Связь рассылки с конкретными профилями ботов.
+
+    Через эту таблицу определяется, какими именно ботами (Telegram/Max/VK)
+    должна отправляться конкретная рассылка.
+    """
+
+    id = models.BigAutoField(primary_key=True)
+
+    mailing = models.ForeignKey(
+        "Mailing",
+        on_delete=models.CASCADE,
+        db_column="mailing_id",
+        related_name="bot_profile_links",
+    )
+    bot_profile = models.ForeignKey(
+        "BotProfile",
+        on_delete=models.RESTRICT,
+        db_column="bot_profile_id",
+        related_name="mailing_links",
+    )
+
+    class Meta:
+        db_table = "mailing_bot_profile_links"
+        managed = True
+        constraints = [
+            models.UniqueConstraint(
+                fields=["mailing", "bot_profile"],
+                name="mailing_bot_profile_links_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["mailing"], name="mbpl_mailing_id_idx"),
+            models.Index(fields=["bot_profile"], name="mbpl_bot_profile_id_idx"),
+        ]
+
+    def __str__(self):
+        return f"mailing={self.mailing_id} bot_profile={self.bot_profile_id}"
 
 
 class MailingGuest(models.Model):
