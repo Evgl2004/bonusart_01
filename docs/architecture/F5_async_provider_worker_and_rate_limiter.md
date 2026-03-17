@@ -42,6 +42,8 @@ Limiter хранит состояние в Redis namespace universal queue:
    - `status=done`, `finished_at`, метаданные отправки в `payload`
 3. Временная ошибка / rate-limit:
    - `status=pending`, `enqueued_at=NULL`, `queue_name=NULL`, `available_at=now+delay`
+   - для `temporary/unexpected` ошибок дополнительно ставится глобальная пауза провайдера
+     в rate limiter на рассчитанный `delay` (анти-шторм защита API).
 4. Невосстановимая ошибка:
    - `status=failed`, `last_error`
 5. Для blocked:

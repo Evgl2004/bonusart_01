@@ -232,6 +232,12 @@ class AsyncProviderWorker:
             await sync_to_async(self._fail_task_sync, thread_sensitive=True)(task.id, f"blocked: {err}")
         except ProviderTemporaryError as err:
             next_delay = self._temporary_retry_delay_seconds(task.attempt)
+            # При временном сбое ставим глобальную паузу провайдера, чтобы
+            # не бомбить API следующими сообщениями в период деградации.
+            await self.rate_limiter.register_retry_after(
+                provider_type=self.config.provider_type,
+                retry_after_seconds=next_delay,
+            )
             if task.attempt >= task.max_attempts:
                 await sync_to_async(self._fail_task_sync, thread_sensitive=True)(
                     task.id,
@@ -248,6 +254,12 @@ class AsyncProviderWorker:
         except Exception as err:
             logger.exception("Unexpected provider worker error task_id=%s: %s", task.id, err)
             next_delay = self._temporary_retry_delay_seconds(task.attempt)
+            # Защита от каскадных сбоев: при неизвестной ошибке также
+            # притормаживаем весь провайдер на рассчитанный backoff-период.
+            await self.rate_limiter.register_retry_after(
+                provider_type=self.config.provider_type,
+                retry_after_seconds=next_delay,
+            )
             if task.attempt >= task.max_attempts:
                 await sync_to_async(self._fail_task_sync, thread_sensitive=True)(
                     task.id,
