@@ -208,17 +208,12 @@ UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE = os.getenv(
     "False",
 ).strip().lower() in ("1", "true", "yes", "on")
 
-# Список notificationType через запятую.
-# Если пусто, producer использует эвристику "есть текст в событии".
-UNIVERSAL_QUEUE_WEBHOOK_NOTIFY_TYPES = os.getenv("UNIVERSAL_QUEUE_WEBHOOK_NOTIFY_TYPES", "")
-
-# Приоритет задач, создаваемых из webhook producer-а.
-UNIVERSAL_QUEUE_WEBHOOK_PRIORITY = os.getenv("UNIVERSAL_QUEUE_WEBHOOK_PRIORITY", "high")
-
-# Режим маршрутизации: True -> только основной бот гостя.
-UNIVERSAL_QUEUE_WEBHOOK_PRIMARY_ONLY = os.getenv(
-    "UNIVERSAL_QUEUE_WEBHOOK_PRIMARY_ONLY",
-    "True",
+# Флаг отправки уведомлений об изменении баланса в ботов.
+# false отключает только отправку в боты, бизнес-обработка webhook
+# (категории/визиты и т.п.) продолжает работать.
+UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION = os.getenv(
+    "UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION",
+    "False",
 ).strip().lower() in ("1", "true", "yes", "on")
 
 # Fallback на legacy GuestChannelLink (Telegram), если новых привязок ещё нет.

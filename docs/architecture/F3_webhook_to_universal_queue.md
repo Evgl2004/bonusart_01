@@ -1,43 +1,41 @@
-# F3: Веб-хук -> универсальная очередь (high priority)
+# F3: Веб-хук -> универсальная очередь (баланс, high priority)
 
 ## Цель этапа
-
-Подключить постановку задач из входящих веб-хуков в новую универсальную очередь, не ломая текущий контур обработки iiko.
+Подключить постановку задач уведомления об изменении баланса из входящих веб-хуков в универсальную очередь, не ломая текущий контур обработки iiko.
 
 ## Что реализовано
-
-1. Добавлен `webhook_producer`:
-   `guests/services/universal_queue/webhook_producer.py`
-2. В `handle_api_webhook` добавлен безопасный вызов producer-а:
-   ошибки enqueue не прерывают основную бизнес-обработку веб-хука.
-3. Добавлены feature flags в settings:
+1. В `guests/services/webhooks.py` добавлен явный бизнес-метод:
+   - `enqueue_balance_notification_from_webhook(webhook)`.
+2. В `handle_api_webhook` добавлен безопасный вызов этого метода:
+   - ошибки enqueue не прерывают основную бизнес-обработку веб-хука.
+3. Для управления включением используются feature-flag:
    - `UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE`
-   - `UNIVERSAL_QUEUE_WEBHOOK_NOTIFY_TYPES`
-   - `UNIVERSAL_QUEUE_WEBHOOK_PRIORITY`
-   - `UNIVERSAL_QUEUE_WEBHOOK_PRIMARY_ONLY`
-   - `UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS`
+   - `UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION`
+4. Маршрутизация задаётся явно из кода:
+   - `priority=high`
+   - `primary_only=True`
 
-## Логика producer-а
-
-1. Проверяет feature flag и отбор событий.
-2. Находит гостя по `phone` или `customerId`.
-3. Находит каналы доставки:
-   - сначала через новую модель `GuestBotBinding`;
-   - если нет, использует fallback `GuestChannelLink` (Telegram).
-4. Создаёт `DispatchTask` с:
+## Логика постановки balance-уведомления
+1. Проверяется включение обоих флагов.
+2. Из `parsed_body` определяется, что событие относится к балансу.
+3. Определяется гость:
+   - сначала из локальной БД;
+   - при наличии телефона используется fallback `get_or_create_guest_from_iiko`.
+4. Формируется текст сообщения.
+5. Через `enqueue_guest_notification_tasks(...)` создаются `DispatchTask` с:
    - `source_type=webhook`
-   - `priority=high` (или из настройки)
+   - `priority=high`
    - `status=pending`
-   - `idempotency_key` для дедупликации
+   - payload с деталями события.
 
 ## Совместимость
-
-Текущая обработка веб-хуков (категории, визиты, статусы webhook) продолжает работать в прежнем режиме.
-Новый producer подключается независимо и не ломает старый контур даже при ошибках Redis/БД enqueue.
+1. Текущая бизнес-обработка веб-хуков (категории, визиты, статусы webhook) сохраняется без изменений.
+2. `UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION=false` отключает только отправку уведомлений в боты.
+3. Временный legacy-адаптер `enqueue_high_priority_webhook_tasks(...)` оставлен для совместимости импортов и перенаправляет вызов в новый метод.
 
 ## Рекомендуемое включение
-
-1. Сначала оставить `UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE=False`.
-2. На тесте включить `True` и проверить создание `DispatchTask`.
-3. Настроить `UNIVERSAL_QUEUE_WEBHOOK_NOTIFY_TYPES` под нужные типы событий баланса.
-4. После проверки запустить `dispatch_universal_tasks` и контролировать backlog lane-очередей.
+1. Сначала оставить:
+   - `UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE=False`
+   - `UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION=False`
+2. На тесте включить сначала enqueue (`...WEBHOOK_ENQUEUE=True`), затем balance (`...BALANCE_NOTIFICATION=True`).
+3. Проверить создание `DispatchTask` и доставку через `dispatch_universal_tasks` и `send_provider_queue`.

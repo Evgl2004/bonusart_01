@@ -6,13 +6,14 @@ import os
 
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from guests.models import Guest, Category, GuestCategory, Restaurant, VisitHistory, GuestCategoryAssignment
+from guests.models import Category, DispatchTask, Guest, GuestCategory, GuestCategoryAssignment, Restaurant, VisitHistory
 
 from guests.services.iiko_client import iiko_client
-from guests.services.universal_queue.webhook_producer import enqueue_high_priority_webhook_tasks
+from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -637,6 +638,111 @@ def update_visit_history_from_event(event: dict) -> tuple[bool, str]:
     return True, ""
 
 
+def _extract_balance_change_value(event: dict) -> str | None:
+    """
+    Возвращает ключевое значение изменения баланса из webhook-события.
+
+    В проде встречаются разные payload-форматы, поэтому проверяем
+    несколько наиболее частых полей.
+    """
+    for field_name in ("changeSum", "newBalance", "balance", "sum"):
+        value = event.get(field_name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _is_balance_notification_event(event: dict) -> bool:
+    """
+    Явно определяет, относится ли событие к информированию о балансе.
+
+    Признаки:
+    1. Есть одно из полей изменения баланса;
+    2. Или в тексте события явно упомянут баланс.
+    """
+    if _extract_balance_change_value(event) is not None:
+        return True
+
+    text = str(event.get("text") or "").strip().lower()
+    if "баланс" in text or "balance" in text:
+        return True
+    return False
+
+
+def _build_balance_notification_text(event: dict) -> str:
+    """
+    Формирует текст уведомления об изменении баланса.
+
+    Приоритет:
+    1. Явный текст из webhook;
+    2. Автогенерация из числового значения изменения баланса.
+    """
+    text = str(event.get("text") or "").strip()
+    if text:
+        return text
+
+    value = _extract_balance_change_value(event)
+    if value is not None:
+        return f"Изменение баланса: {value}"
+
+    return "Произошло изменение баланса."
+
+
+def enqueue_balance_notification_from_webhook(webhook: dict) -> int:
+    """
+    Явный бизнес-вызов постановки уведомления о балансе в universal queue.
+
+    Важно:
+    1. Отключение через feature-flag влияет только на отправку уведомления;
+       остальная бизнес-обработка webhook продолжает работать.
+    2. Параметры маршрутизации задаются явно из кода (без env-магии):
+       priority=high, primary_only=True.
+    """
+    if not getattr(settings, "UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE", False):
+        return 0
+
+    if not getattr(settings, "UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION", False):
+        return 0
+
+    event = webhook.get("parsed_body") or {}
+    if not isinstance(event, dict):
+        return 0
+
+    if not _is_balance_notification_event(event):
+        return 0
+
+    guest = find_guest(event)
+    if not guest and event.get("phone"):
+        guest = get_or_create_guest_from_iiko(event["phone"])
+
+    if guest is None:
+        logger.info("Balance webhook enqueue: гость не найден, задача не создана.")
+        return 0
+
+    message_text = _build_balance_notification_text(event)
+    if not message_text:
+        return 0
+
+    webhook_id = webhook.get("id")
+    fallback_legacy = bool(getattr(settings, "UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS", True))
+
+    return enqueue_guest_notification_tasks(
+        guest=guest,
+        message_text=message_text,
+        source_type=DispatchTask.SourceType.WEBHOOK,
+        source_key=f"balance:{webhook_id or ''}",
+        priority=DispatchTask.Priority.HIGH,
+        primary_only=True,
+        payload={
+            "webhook_id": webhook_id,
+            "notification_type": event.get("notificationType"),
+            "kind": "balance_changed",
+            "event": event,
+        },
+        fallback_legacy=fallback_legacy,
+    )
+
+
 def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     """
     Центральный обработчик вебхука из SAGUR API.
@@ -658,7 +764,7 @@ def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     # попытка постановки webhook-задач в универсальную очередь не должна
     # ломать текущую бизнес-обработку webhook.
     try:
-        enqueued_tasks = enqueue_high_priority_webhook_tasks(webhook)
+        enqueued_tasks = enqueue_balance_notification_from_webhook(webhook)
         if enqueued_tasks > 0:
             logger.info(
                 "Webhook id=%s: поставлено задач в универсальную очередь: %s",
