@@ -527,6 +527,14 @@ class DispatchTask(models.Model):
         null=True,
         related_name="dispatch_tasks",
     )
+    mailing_guest = models.ForeignKey(
+        "MailingGuest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="dispatch_tasks",
+        help_text="Ссылка на строку массовой рассылки (если задача создана из MailingGuest).",
+    )
     bot_profile = models.ForeignKey(
         "BotProfile",
         on_delete=models.SET_NULL,

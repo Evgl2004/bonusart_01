@@ -590,7 +590,7 @@ class MailingCreateView(CreateView):
 
         self.object.save()
 
-        # 🔥 ВАЖНО — сохраняет channels (many-to-many)
+        # ВАЖНО: сохраняем many-to-many связи (включая bot_profiles).
         form.save_m2m()
 
         return redirect(self.success_url)
@@ -614,7 +614,7 @@ class MailingUpdateView(UpdateView):
 
         self.object.save()
 
-        # 🔥 ВАЖНО — сохраняет выбранные каналы
+        # ВАЖНО: сохраняем many-to-many связи (включая bot_profiles).
         form.save_m2m()
 
         return redirect("mailings")

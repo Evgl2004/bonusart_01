@@ -184,6 +184,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                     priority=priority,
                     status=DispatchTask.Status.PENDING,
                     guest_id=row.guest_id,
+                    mailing_guest=row,
                     bot_profile=target["bot_profile"],
                     guest_binding=target["guest_binding"],
                     external_chat_id=external_chat_id,
