@@ -18,7 +18,7 @@ class Guest(models.Model):
     gender= models.CharField(max_length=20, blank=True, null=True)
 
     class Meta:
-        managed = False  # таблица уже создана в БД
+        managed = True  # таблица полностью управляется Django migrations
         db_table = "guests"
 
     def __str__(self):
@@ -48,7 +48,7 @@ class Restaurant(models.Model):
     name = models.CharField(max_length=255)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = "restaurants"
 
     def __str__(self):
@@ -71,7 +71,7 @@ class VisitHistory(models.Model):
     visit_count = models.IntegerField(default=1)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = "visit_history"
         unique_together = ("guest", "restaurant")
 
@@ -91,7 +91,7 @@ class Category(models.Model):
     external_id = models.CharField(max_length=50, blank=True, null=True)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = "categories"
 
     def __str__(self):
@@ -114,7 +114,7 @@ class GuestCategory(models.Model):
     assign_count = models.IntegerField(default=1)
 
     class Meta:
-        managed = False
+        managed = True
         db_table = "guest_categories"
         unique_together = ("guest", "category")
 
@@ -129,7 +129,7 @@ class GuestCategoryAssignment(models.Model):
 
     class Meta:
         db_table = "guest_category_assignments"
-        managed = False
+        managed = True
 
 class MessageTemplate(models.Model):
     name = models.CharField(max_length=150)
@@ -142,7 +142,7 @@ class MessageTemplate(models.Model):
 
     class Meta:
         db_table = "message_templates"
-        managed = False
+        managed = True
 
     def __str__(self):
         return self.name
@@ -179,7 +179,7 @@ class Mailing(models.Model):
 
     class Meta:
         db_table = "mailings"
-        managed = False  # если таблица уже создана SQL
+        managed = True  # таблица полностью управляется Django migrations
         constraints = [
             models.CheckConstraint(
                 check=models.Q(scheduled_time_begin__lte=models.F("scheduled_time_end")),
@@ -209,7 +209,7 @@ class MailingChannel(models.Model):
 
     class Meta:
         db_table = "mailing_channels"
-        managed = False  # если таблица уже создана SQL
+        managed = True  # таблица полностью управляется Django migrations
         constraints = [
             models.CheckConstraint(
                 check=models.Q(channel_kind__in=["phone_telegram", "phone_telegram_bot", "email"]),
@@ -241,7 +241,7 @@ class MailingChannelLink(models.Model):
 
     class Meta:
         db_table = "mailing_channel_links"
-        managed = False  # если таблица уже создана SQL
+        managed = True  # таблица полностью управляется Django migrations
         constraints = [
             models.UniqueConstraint(fields=["mailing", "channel"], name="mailing_channel_links_uniq"),
         ]
@@ -301,7 +301,7 @@ class MailingGuest(models.Model):
 
     class Meta:
         db_table = "mailing_guests"
-        managed = False  # если таблица уже создана SQL
+        managed = True  # таблица полностью управляется Django migrations
         constraints = [
             models.UniqueConstraint(fields=["mailing", "guest"], name="mailing_guests_uniq"),
             models.CheckConstraint(
@@ -331,7 +331,7 @@ class GuestChannelLink(models.Model):
     updated_at = models.DateTimeField()
 
     class Meta:
-        managed = False
+        managed = True
         db_table = "guest_channel_links"
         unique_together = (("guest", "channel"),)
 
