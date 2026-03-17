@@ -299,7 +299,9 @@ class MaxAsyncSender(BaseAsyncProviderSender):
         request_body = {"text": text}
         request_url = f"{self.base_url}/messages"
         auth_prefix = str(getattr(settings, "MAX_API_AUTH_PREFIX", "")).strip()
-        authorization = f"{auth_prefix}{token}" if auth_prefix else token
+        # Формируем стандартный формат заголовка: "<prefix> <token>".
+        # Пример: "Bearer <token>".
+        authorization = f"{auth_prefix} {token}" if auth_prefix else token
 
         response = await self.client.post(
             request_url,
