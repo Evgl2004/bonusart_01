@@ -5,7 +5,7 @@ from django.db.models import Count
 from django.utils import timezone
 from django.shortcuts import get_object_or_404, render
 
-from .models import Mailing, MailingGuest,GuestChannelLink,MailingChannel
+from .models import Mailing, MailingGuest
 
 
 class MailingLogsView(View):

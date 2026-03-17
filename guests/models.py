@@ -192,12 +192,6 @@ class Mailing(models.Model):
         help_text="Приоритет задач рассылки в универсальной очереди.",
     )
 
-    # удобно иметь доступ к каналам как many-to-many
-    channels = models.ManyToManyField(
-        "MailingChannel",
-        through="MailingChannelLink",
-        related_name="mailings",
-    )
     bot_profiles = models.ManyToManyField(
         "BotProfile",
         through="MailingBotProfileLink",
@@ -225,69 +219,6 @@ class Mailing(models.Model):
 
     def __str__(self):
         return f"{self.id}: {self.name}"
-
-
-class MailingChannel(models.Model):
-    class ChannelKind(models.TextChoices):
-        PHONE_TELEGRAM = "phone_telegram", "Телефон Телеграмм"
-        PHONE_TELEGRAM_BOT = "phone_telegram_bot", "Телефон Телеграмм Бот"
-        EMAIL = "email", "Электронная почта"
-
-    id = models.BigAutoField(primary_key=True)
-    name = models.CharField(max_length=150)
-    channel_kind = models.CharField(max_length=50, choices=ChannelKind.choices)
-
-    token = models.TextField(blank=True, null=True)
-    is_active = models.BooleanField(default=True)
-
-    created_at = models.DateTimeField()
-    updated_at = models.DateTimeField()
-
-    class Meta:
-        db_table = "mailing_channels"
-        managed = True  # таблица полностью управляется Django migrations
-        constraints = [
-            models.CheckConstraint(
-                check=models.Q(channel_kind__in=["phone_telegram", "phone_telegram_bot", "email"]),
-                name="mailing_channels_kind_chk",
-            )
-        ]
-
-    def __str__(self):
-        #return f"{self.id}: {self.name} ({self.channel_kind})"
-        return getattr(self, "name", f"Channel {self.pk}")
-
-
-class MailingChannelLink(models.Model):
-    id = models.BigAutoField(primary_key=True)
-
-    mailing = models.ForeignKey(
-        "Mailing",
-        on_delete=models.CASCADE,
-        db_column="mailing_id",
-        related_name="channel_links",
-    )
-
-    channel = models.ForeignKey(
-        "MailingChannel",
-        on_delete=models.RESTRICT,
-        db_column="channel_id",
-        related_name="mailing_links",
-    )
-
-    class Meta:
-        db_table = "mailing_channel_links"
-        managed = True  # таблица полностью управляется Django migrations
-        constraints = [
-            models.UniqueConstraint(fields=["mailing", "channel"], name="mailing_channel_links_uniq"),
-        ]
-        indexes = [
-            models.Index(fields=["mailing"], name="mcl_mailing_id_idx"),
-            models.Index(fields=["channel"], name="mcl_channel_id_idx"),
-        ]
-
-    def __str__(self):
-        return f"mailing={self.mailing_id} channel={self.channel_id}"
 
 
 class MailingBotProfileLink(models.Model):
@@ -394,24 +325,6 @@ class MailingGuest(models.Model):
 
     def __str__(self):
         return f"mailing={self.mailing_id} guest={self.guest_id} status={self.status}"
-
-class GuestChannelLink(models.Model):
-    guest = models.ForeignKey("Guest", on_delete=models.CASCADE, db_column="guest_id")
-    channel = models.ForeignKey("MailingChannel", on_delete=models.CASCADE, db_column="channel_id")
-
-    external_chat_id = models.CharField(max_length=64, blank=True, null=True)
-    is_opt_in = models.BooleanField(default=True)
-    is_active = models.BooleanField(default=True)
-    is_stop_sending = models.BooleanField(default=False)
-    last_error = models.TextField(blank=True, null=True)
-    created_at = models.DateTimeField()
-    updated_at = models.DateTimeField()
-
-    class Meta:
-        managed = True
-        db_table = "guest_channel_links"
-        unique_together = (("guest", "channel"),)
-
 
 class BotProfile(models.Model):
     """
