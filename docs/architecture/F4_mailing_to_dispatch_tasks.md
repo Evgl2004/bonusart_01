@@ -14,15 +14,22 @@
 2. В `mailing_worker` добавлено условное ветвление:
    - `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH=False` (по умолчанию): старый direct-send путь.
    - `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH=True`: новый путь постановки задач в `DispatchTask`.
-3. В `settings.py` добавлены параметры маршрутизации массовой рассылки.
+3. В модель `Mailing` добавлены поля маршрутизации:
+   - `target_mode` (`primary_only|all_bots`);
+   - `queue_priority` (`high|normal|bulk`).
+4. В форме создания/редактирования рассылки добавлены элементы управления
+   режимом получателей и приоритетом очереди.
 
 ## Новые настройки
 1. `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH` — включает F4-режим producer для `mailing_worker`.
-2. `UNIVERSAL_QUEUE_MAILING_TARGET_MODE`:
+2. `UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS` — fallback на `GuestChannelLink` (legacy Telegram).
+
+## Параметры рассылки в модели
+1. `Mailing.target_mode`:
    - `primary_only` — отправка в основной бот гостя;
    - `all_bots` — отправка во все активные привязки гостя.
-3. `UNIVERSAL_QUEUE_MAILING_PRIORITY` — приоритет задач (`high|normal|bulk`), по умолчанию `bulk`.
-4. `UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS` — fallback на `GuestChannelLink` (legacy Telegram).
+2. `Mailing.queue_priority` — приоритет задач (`high|normal|bulk`), применяется
+   при создании `DispatchTask` для строк конкретной рассылки.
 
 ## Логика постановки задач
 Для каждой строки `MailingGuest`:
@@ -31,7 +38,7 @@
 3. Для каждой цели создаётся `DispatchTask`:
    - `source_type=mailing`;
    - `provider_type` по типу бота (`telegram|max|vk`);
-   - `priority` из настройки;
+   - `priority` из `mailing.queue_priority`;
    - `idempotency_key` в формате `mailing:<id>:row:<id>:provider:<provider>:chat:<chat_id>`.
 
 ## Статусы `MailingGuest` в F4
@@ -47,4 +54,3 @@
 2. Старый путь отправки не удалён.
 3. Добавлена дедупликация через `idempotency_key`.
 4. В логах фиксируются агрегаты постановки задач (`rows_total/rows_queued/rows_failed`).
-

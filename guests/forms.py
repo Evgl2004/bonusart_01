@@ -63,6 +63,8 @@ class MailingForm(forms.ModelForm):
             "scheduled_time_end",
             "send_window_begin",
             "send_window_end",
+            "target_mode",
+            "queue_priority",
             "channels",
             #"is_active",
         ]
@@ -97,6 +99,12 @@ class MailingForm(forms.ModelForm):
                 attrs={"type": "time", "class": "form-control"},
                 format="%H:%M",
             ),
+            "target_mode": forms.Select(attrs={
+                "class": "form-select",
+            }),
+            "queue_priority": forms.Select(attrs={
+                "class": "form-select",
+            }),
             # ✅ множественный выбор каналов
             "channels": forms.SelectMultiple(attrs={
                 "class": "form-select",
@@ -116,6 +124,8 @@ class MailingForm(forms.ModelForm):
             "scheduled_time_end": "Окончание (дата и время)",
             "send_window_begin": "Начало окна отправки",
             "send_window_end": "Конец окна отправки",
+            "target_mode": "Режим получателей",
+            "queue_priority": "Приоритет в очереди",
             "channels": "Каналы рассылки",  # ✅
             #"is_active": "Активна",
         }

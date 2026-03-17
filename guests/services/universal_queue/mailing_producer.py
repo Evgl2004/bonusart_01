@@ -24,20 +24,23 @@ class MailingDispatchSummary:
     tasks_duplicates: int = 0
 
 
-def _resolve_target_mode() -> str:
+def _resolve_target_mode_for_mailing(mailing: Mailing) -> str:
     """
-    Возвращает режим маршрутизации рассылки:
-    `primary_only` или `all_bots`.
+    Возвращает режим маршрутизации из параметров конкретной рассылки.
+
+    Значения:
+    1. `primary_only` - только основной бот гостя;
+    2. `all_bots` - все активные привязки гостя.
     """
-    value = str(getattr(settings, "UNIVERSAL_QUEUE_MAILING_TARGET_MODE", "primary_only")).strip().lower()
+    value = str(getattr(mailing, "target_mode", "primary_only") or "").strip().lower()
     return value if value in ("primary_only", "all_bots") else "primary_only"
 
 
-def _resolve_priority() -> str:
+def _resolve_priority_for_mailing(mailing: Mailing) -> str:
     """
-    Возвращает приоритет задач для массовых рассылок.
+    Возвращает приоритет задач из параметров конкретной рассылки.
     """
-    value = str(getattr(settings, "UNIVERSAL_QUEUE_MAILING_PRIORITY", "bulk")).strip().lower()
+    value = str(getattr(mailing, "queue_priority", DispatchTask.Priority.BULK) or "").strip().lower()
     allowed = {
         DispatchTask.Priority.HIGH,
         DispatchTask.Priority.NORMAL,
@@ -173,8 +176,8 @@ def enqueue_mailing_rows_as_dispatch_tasks(
     if not rows:
         return summary
 
-    target_mode = _resolve_target_mode()
-    priority = _resolve_priority()
+    target_mode = _resolve_target_mode_for_mailing(mailing)
+    priority = _resolve_priority_for_mailing(mailing)
     now = now or timezone.now()
 
     guest_ids = [row.guest_id for row in rows]

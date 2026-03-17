@@ -219,8 +219,10 @@
 2. `UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE=true`
 3. `UNIVERSAL_QUEUE_REDIS_URL=redis://redis:6379/1`
 4. `UNIVERSAL_QUEUE_NAMESPACE=uq:v1`
-5. `UNIVERSAL_QUEUE_MAILING_TARGET_MODE=primary_only` (или `all_bots`)
-6. `UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION=false` (включайте `true` после проверки на тесте)
+5. `UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION=false` (включайте `true` после проверки на тесте)
+
+Режим получателей и приоритет массовой рассылки задаются не в `.env`,
+а в карточке конкретной рассылки (`Mailing.target_mode` и `Mailing.queue_priority`).
 
 Полный пример переменных добавлен в файл `.env.sample` в корне репозитория.
 

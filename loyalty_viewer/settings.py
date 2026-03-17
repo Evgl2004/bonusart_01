@@ -229,20 +229,6 @@ UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH = os.getenv(
     "False",
 ).strip().lower() in ("1", "true", "yes", "on")
 
-# Режим целевых каналов для массовой рассылки:
-# 1) primary_only - только основной бот гостя (по умолчанию);
-# 2) all_bots - все активные привязки гостя.
-UNIVERSAL_QUEUE_MAILING_TARGET_MODE = os.getenv(
-    "UNIVERSAL_QUEUE_MAILING_TARGET_MODE",
-    "primary_only",
-).strip().lower()
-
-# Приоритет задач, создаваемых из MailingGuest.
-UNIVERSAL_QUEUE_MAILING_PRIORITY = os.getenv(
-    "UNIVERSAL_QUEUE_MAILING_PRIORITY",
-    "bulk",
-).strip().lower()
-
 # Fallback на legacy GuestChannelLink (Telegram) при отсутствии новых привязок.
 UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS = os.getenv(
     "UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS",

@@ -148,6 +148,15 @@ class MessageTemplate(models.Model):
         return self.name
 
 class Mailing(models.Model):
+    class TargetMode(models.TextChoices):
+        PRIMARY_ONLY = "primary_only", "Только основной бот"
+        ALL_BOTS = "all_bots", "Все активные боты"
+
+    class QueuePriority(models.TextChoices):
+        HIGH = "high", "Высокий"
+        NORMAL = "normal", "Обычный"
+        BULK = "bulk", "Массовый"
+
     id = models.BigAutoField(primary_key=True)
     name = models.CharField(max_length=150)
 
@@ -170,6 +179,19 @@ class Mailing(models.Model):
     send_window_begin = models.TimeField()
     send_window_end = models.TimeField()
 
+    target_mode = models.CharField(
+        max_length=20,
+        choices=TargetMode.choices,
+        default=TargetMode.PRIMARY_ONLY,
+        help_text="Режим выбора целей: только основной бот или все активные боты гостя.",
+    )
+    queue_priority = models.CharField(
+        max_length=20,
+        choices=QueuePriority.choices,
+        default=QueuePriority.BULK,
+        help_text="Приоритет задач рассылки в универсальной очереди.",
+    )
+
     # удобно иметь доступ к каналам как many-to-many
     channels = models.ManyToManyField(
         "MailingChannel",
@@ -184,7 +206,15 @@ class Mailing(models.Model):
             models.CheckConstraint(
                 check=models.Q(scheduled_time_begin__lte=models.F("scheduled_time_end")),
                 name="mailings_time_chk",
-            )
+            ),
+            models.CheckConstraint(
+                check=models.Q(target_mode__in=["primary_only", "all_bots"]),
+                name="mailings_target_mode_chk",
+            ),
+            models.CheckConstraint(
+                check=models.Q(queue_priority__in=["high", "normal", "bulk"]),
+                name="mailings_queue_priority_chk",
+            ),
         ]
 
     def __str__(self):
