@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from django.db import transaction
 from django.db.models import Case, IntegerField, Value, When
@@ -35,8 +35,12 @@ class UniversalTaskDispatcher:
     4. При ошибке откатывает задачу обратно в pending.
     """
 
-    def __init__(self, lane_queue: ProviderLaneQueue):
+    def __init__(self, lane_queue: ProviderLaneQueue, provider_type: Optional[str] = None):
         self.lane_queue = lane_queue
+        self.provider_type = str(provider_type).strip().lower() if provider_type else None
+
+        if self.provider_type and self.provider_type not in ProviderLaneQueue.PROVIDERS:
+            raise ValueError(f"Неподдерживаемый provider_type={provider_type}")
 
     @staticmethod
     def _priority_order_expression() -> Case:
@@ -58,7 +62,7 @@ class UniversalTaskDispatcher:
         """
         now = timezone.now()
         with transaction.atomic():
-            tasks = list(
+            queryset = (
                 DispatchTask.objects.select_for_update(skip_locked=True)
                 .select_related("guest_binding")
                 .filter(
@@ -66,6 +70,14 @@ class UniversalTaskDispatcher:
                     enqueued_at__isnull=True,
                     available_at__lte=now,
                 )
+            )
+
+            # Если задан provider_type, диспетчер обрабатывает только свой провайдер.
+            if self.provider_type:
+                queryset = queryset.filter(provider_type=self.provider_type)
+
+            tasks = list(
+                queryset
                 .annotate(priority_rank=self._priority_order_expression())
                 .order_by("priority_rank", "available_at", "id")[:batch_size]
             )

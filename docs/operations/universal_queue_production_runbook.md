@@ -79,6 +79,15 @@
     networks:
       - app_network
 
+  # Рекомендуемый прод-режим: отдельный dispatcher на каждый провайдер.
+  # Пример команд:
+  # - python manage.py dispatch_universal_tasks --provider telegram
+  # - python manage.py dispatch_universal_tasks --provider max
+  # - python manage.py dispatch_universal_tasks --provider vk
+  #
+  # Такой запуск предотвращает перекос общей порции задач в один провайдер
+  # и позволяет стабильно загружать каждую провайдерную очередь независимо.
+
   # sender: Telegram provider worker
   sender-telegram-bonus:
     build: ./loyalty_service

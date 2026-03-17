@@ -54,6 +54,13 @@ class Command(BaseCommand):
             help="URL подключения к Redis для универсальной очереди.",
         )
         parser.add_argument(
+            "--provider",
+            type=str,
+            choices=["telegram", "max", "vk"],
+            default=None,
+            help="Ограничить диспетчеризацию конкретным провайдером.",
+        )
+        parser.add_argument(
             "--namespace",
             type=str,
             default=getattr(settings, "UNIVERSAL_QUEUE_NAMESPACE", "uq:v1"),
@@ -101,17 +108,19 @@ class Command(BaseCommand):
         batch_size: int = max(1, options["batch_size"])
         sleep_seconds: float = max(0.1, options["sleep_seconds"])
         redis_url: str = options["redis_url"]
+        provider_type: Optional[str] = options["provider"]
         namespace: str = options["namespace"]
 
         queue: Optional[ProviderLaneQueue] = None
 
         try:
             queue = ProviderLaneQueue(redis_url=redis_url, namespace=namespace)
-            dispatcher = UniversalTaskDispatcher(lane_queue=queue)
+            dispatcher = UniversalTaskDispatcher(lane_queue=queue, provider_type=provider_type)
 
             self.stdout.write(self.style.SUCCESS("Запущен диспетчер универсальной очереди"))
             self.stdout.write(f"Redis URL: {redis_url}")
             self.stdout.write(f"Namespace: {namespace}")
+            self.stdout.write(f"Provider: {provider_type or 'all'}")
             self.stdout.write(f"Batch size: {batch_size}")
             self.stdout.write(f"Mode: {'once' if once_mode else 'loop'}")
 
