@@ -3,6 +3,8 @@ import logging
 import requests
 import time
 import os
+import hashlib
+import json
 
 from datetime import datetime, timedelta
 
@@ -12,6 +14,11 @@ from django.utils import timezone
 from guests.models import Category, DispatchTask, Guest, GuestCategory, GuestCategoryAssignment, Restaurant, VisitHistory
 
 from guests.services.iiko_client import iiko_client
+from guests.services.notification_events import (
+    SCENARIO_CODE_BALANCE_CHANGED,
+    ScenarioNotConfiguredError,
+    enqueue_notification_event_from_scenario,
+)
 from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
 
 logger = logging.getLogger(__name__)
@@ -701,6 +708,31 @@ def _build_balance_notification_text(event: dict) -> str:
     return "Произошло изменение баланса."
 
 
+def _build_balance_dedupe_key(webhook: dict, event: dict, guest_id: int) -> str:
+    """
+    Формирует ключ дедупликации для balance-уведомления.
+
+    Правила:
+    1. если у webhook есть id -> используем его как самый надёжный источник идемпотентности;
+    2. если id отсутствует -> строим hash-ключ по стабильным полям события.
+    """
+    webhook_id = webhook.get("id")
+    if webhook_id:
+        return f"balance:webhook:{webhook_id}"
+
+    stable_payload = {
+        "guest_id": guest_id,
+        "category_id_ext": _extract_category_external_id(webhook, event),
+        "changed_on": str(event.get("changedOn") or ""),
+        "notification_type": str(event.get("notificationType") or ""),
+        "value": str(_extract_balance_change_value(event) or ""),
+    }
+    digest = hashlib.sha1(
+        json.dumps(stable_payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+    ).hexdigest()
+    return f"balance:fallback:{digest}"
+
+
 def enqueue_balance_notification_from_webhook(
     webhook: dict,
     *,
@@ -740,21 +772,46 @@ def enqueue_balance_notification_from_webhook(
         return 0
 
     webhook_id = webhook.get("id")
+    dedupe_key = _build_balance_dedupe_key(webhook=webhook, event=event, guest_id=guest.id)
+    payload = {
+        "webhook_id": webhook_id,
+        "notification_type": event.get("notificationType"),
+        "kind": "balance_changed",
+        "event": event,
+    }
 
-    return enqueue_guest_notification_tasks(
-        guest=guest,
-        message_text=message_text,
-        source_type=DispatchTask.SourceType.WEBHOOK,
-        source_key=f"balance:{webhook_id or ''}",
-        priority=priority,
-        primary_only=primary_only,
-        payload={
-            "webhook_id": webhook_id,
-            "notification_type": event.get("notificationType"),
-            "kind": "balance_changed",
-            "event": event,
-        },
-    )
+    try:
+        return enqueue_notification_event_from_scenario(
+            scenario_code=SCENARIO_CODE_BALANCE_CHANGED,
+            guest=guest,
+            dedupe_key=dedupe_key,
+            source_ref=str(webhook_id or ""),
+            event_source_type="webhook",
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload=payload,
+            template_context={
+                "message_text": message_text,
+                "guest_id": guest.id,
+                "balance_change_value": _extract_balance_change_value(event) or "",
+            },
+            fallback_message_text=message_text,
+        )
+    except ScenarioNotConfiguredError:
+        logger.warning(
+            "Balance scenario '%s' не найден/выключен. "
+            "Используется fallback-продюсер без NotificationEvent.",
+            SCENARIO_CODE_BALANCE_CHANGED,
+        )
+        # Временный безопасный fallback, чтобы не блокировать отправки до настройки сценария.
+        return enqueue_guest_notification_tasks(
+            guest=guest,
+            message_text=message_text,
+            source_type=DispatchTask.SourceType.WEBHOOK,
+            source_key=f"balance:{webhook_id or ''}",
+            priority=priority,
+            primary_only=primary_only,
+            payload=payload,
+        )
 
 
 def handle_api_webhook(

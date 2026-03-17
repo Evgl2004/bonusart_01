@@ -6,12 +6,13 @@ Fallback на `GuestChannelLink` удалён.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from datetime import datetime
+from typing import Any, Dict, Iterable, List, Optional
 
 from django.db import IntegrityError
 from django.utils import timezone
 
-from guests.models import DispatchTask, Guest, GuestBotBinding
+from guests.models import DispatchTask, Guest, GuestBotBinding, NotificationEvent, NotificationScenario
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,11 @@ def _normalize_priority(priority: str, default: str = DispatchTask.Priority.HIGH
     return value if value in allowed else default
 
 
-def _collect_targets_from_bindings(guest: Guest, primary_only: bool) -> List[Dict[str, Any]]:
+def _collect_targets_from_bindings(
+    guest: Guest,
+    primary_only: bool,
+    allowed_bot_profile_ids: Optional[Iterable[int]] = None,
+) -> List[Dict[str, Any]]:
     """
     Собирает цели отправки из модели GuestBotBinding.
     """
@@ -48,6 +53,10 @@ def _collect_targets_from_bindings(guest: Guest, primary_only: bool) -> List[Dic
     )
     if primary_only:
         query = query.filter(is_primary=True)
+    if allowed_bot_profile_ids is not None:
+        bot_ids = [int(bot_id) for bot_id in allowed_bot_profile_ids]
+        if bot_ids:
+            query = query.filter(bot_id__in=bot_ids)
 
     targets: List[Dict[str, Any]] = []
     for binding in query:
@@ -74,6 +83,10 @@ def enqueue_guest_notification_tasks(
     priority: str = DispatchTask.Priority.HIGH,
     primary_only: bool = True,
     payload: Optional[Dict[str, Any]] = None,
+    notification_scenario: Optional[NotificationScenario] = None,
+    notification_event: Optional[NotificationEvent] = None,
+    available_at: Optional[datetime] = None,
+    allowed_bot_profile_ids: Optional[Iterable[int]] = None,
 ) -> int:
     """
     Универсальный producer задач уведомления для одного гостя.
@@ -93,13 +106,18 @@ def enqueue_guest_notification_tasks(
     safe_payload: Dict[str, Any] = dict(payload or {})
     safe_priority = _normalize_priority(priority=priority, default=DispatchTask.Priority.HIGH)
 
-    targets = _collect_targets_from_bindings(guest=guest, primary_only=primary_only)
+    targets = _collect_targets_from_bindings(
+        guest=guest,
+        primary_only=primary_only,
+        allowed_bot_profile_ids=allowed_bot_profile_ids,
+    )
     if not targets:
         logger.info("Notification enqueue: нет доступных bot-привязок для guest_id=%s", guest.id)
         return 0
 
     created_count = 0
     now = timezone.now()
+    task_available_at = available_at if available_at is not None else now
     safe_source_key = str(source_key or "").strip()
 
     for target in targets:
@@ -119,13 +137,15 @@ def enqueue_guest_notification_tasks(
                 priority=safe_priority,
                 status=DispatchTask.Status.PENDING,
                 guest=guest,
+                notification_scenario=notification_scenario,
+                notification_event=notification_event,
                 bot_profile=target["bot_profile"],
                 guest_binding=target["guest_binding"],
                 external_chat_id=external_chat_id,
                 message_text=safe_message,
                 payload=safe_payload,
-                scheduled_at=now,
-                available_at=now,
+                scheduled_at=task_available_at,
+                available_at=task_available_at,
                 idempotency_key=idempotency_key,
             )
             created_count += 1
