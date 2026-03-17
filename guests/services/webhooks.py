@@ -702,20 +702,26 @@ def _build_balance_notification_text(event: dict) -> str:
     return "Произошло изменение баланса."
 
 
-def enqueue_balance_notification_from_webhook(webhook: dict) -> int:
+def enqueue_balance_notification_from_webhook(
+    webhook: dict,
+    *,
+    is_enabled: bool = True,
+    priority: str = DispatchTask.Priority.HIGH,
+    primary_only: bool = True,
+) -> int:
     """
     Явный бизнес-вызов постановки уведомления о балансе в universal queue.
 
     Важно:
-    1. Отключение через feature-flag влияет только на отправку уведомления;
+    1. Параметр `is_enabled=False` отключает только отправку уведомления;
        остальная бизнес-обработка webhook продолжает работать.
     2. Параметры маршрутизации задаются явно из кода (без env-магии):
        priority=high, primary_only=True.
     """
-    if not getattr(settings, "UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE", False):
+    if not is_enabled:
         return 0
 
-    if not getattr(settings, "UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION", False):
+    if not getattr(settings, "UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE", False):
         return 0
 
     event = webhook.get("parsed_body") or {}
@@ -745,8 +751,8 @@ def enqueue_balance_notification_from_webhook(webhook: dict) -> int:
         message_text=message_text,
         source_type=DispatchTask.SourceType.WEBHOOK,
         source_key=f"balance:{webhook_id or ''}",
-        priority=DispatchTask.Priority.HIGH,
-        primary_only=True,
+        priority=priority,
+        primary_only=primary_only,
         payload={
             "webhook_id": webhook_id,
             "notification_type": event.get("notificationType"),
@@ -757,7 +763,11 @@ def enqueue_balance_notification_from_webhook(webhook: dict) -> int:
     )
 
 
-def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
+def handle_api_webhook(
+    webhook: dict,
+    *,
+    send_balance_notification: bool = True,
+) -> tuple[bool, str]:
     """
     Центральный обработчик webhook из SAGUR API.
 
@@ -771,6 +781,10 @@ def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     Возвращает:
         True  - webhook обработан успешно, можно ставить `business_status=complete`.
         False - webhook не обработан (ошибка/недостаток данных), ставим `business_status=failed`.
+
+    Параметры:
+        send_balance_notification: включать ли постановку balance-уведомления
+        в universal queue для данного вызова.
     """
     event = webhook.get("parsed_body") or {}
     notif_type = event.get("notificationType")
@@ -780,7 +794,12 @@ def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     # --- Явный balance-сценарий по фиксированному category external id ---
     if is_balance_webhook:
         try:
-            enqueued_tasks = enqueue_balance_notification_from_webhook(webhook)
+            enqueued_tasks = enqueue_balance_notification_from_webhook(
+                webhook,
+                is_enabled=send_balance_notification,
+                priority=DispatchTask.Priority.HIGH,
+                primary_only=True,
+            )
             logger.info(
                 "Webhook id=%s: balance-событие обработано (category_ext_id=%s), "
                 "поставлено задач: %s",
@@ -864,7 +883,10 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
         webhook_id = webhook.get("id")
 
         try:
-            assigned, reason = handle_api_webhook(webhook)
+            assigned, reason = handle_api_webhook(
+                webhook,
+                send_balance_notification=True,
+            )
 
             if assigned:
                 processed_count += 1

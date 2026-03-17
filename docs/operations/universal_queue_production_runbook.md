@@ -219,10 +219,11 @@
 2. `UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE=true`
 3. `UNIVERSAL_QUEUE_REDIS_URL=redis://redis:6379/1`
 4. `UNIVERSAL_QUEUE_NAMESPACE=uq:v1`
-5. `UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION=false` (включайте `true` после проверки на тесте)
 
 Режим получателей и приоритет массовой рассылки задаются не в `.env`,
 а в карточке конкретной рассылки (`Mailing.target_mode` и `Mailing.queue_priority`).
+Для balance-вебхуков включение/выключение отправки задаётся параметром
+`send_balance_notification` в коде бизнес-вызова `handle_api_webhook(...)`.
 
 Полный пример переменных добавлен в файл `.env.sample` в корне репозитория.
 

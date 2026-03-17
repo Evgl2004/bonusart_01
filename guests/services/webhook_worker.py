@@ -421,7 +421,10 @@ class WebhookWorker:
 
         # Основная обработка Уведомлений
         try:
-            processed_successfully, result_message = handle_api_webhook(webhook_data)
+            processed_successfully, result_message = handle_api_webhook(
+                webhook_data,
+                send_balance_notification=True,
+            )
             if result_message:
                 logger.info(f"Уведомление с id={webhook_id_int} обработано: успешно! Результат: {result_message }")
             else:

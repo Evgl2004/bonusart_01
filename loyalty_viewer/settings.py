@@ -208,14 +208,6 @@ UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE = os.getenv(
     "False",
 ).strip().lower() in ("1", "true", "yes", "on")
 
-# Флаг отправки уведомлений об изменении баланса в ботов.
-# false отключает только отправку в боты, бизнес-обработка webhook
-# (категории/визиты и т.п.) продолжает работать.
-UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION = os.getenv(
-    "UNIVERSAL_QUEUE_ENABLE_BALANCE_NOTIFICATION",
-    "False",
-).strip().lower() in ("1", "true", "yes", "on")
-
 # Fallback на legacy GuestChannelLink (Telegram), если новых привязок ещё нет.
 UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS = os.getenv(
     "UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS",
