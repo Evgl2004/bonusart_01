@@ -4,200 +4,302 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
-class Migration(migrations.Migration):
+STATE_SYNC_OPERATIONS = [
+    migrations.RemoveField(
+        model_name="guest",
+        name="is_stop_sending",
+    ),
+    migrations.AddField(
+        model_name="category",
+        name="external_id",
+        field=models.CharField(blank=True, max_length=50, null=True),
+    ),
+    migrations.AddField(
+        model_name="guest",
+        name="gender",
+        field=models.CharField(blank=True, max_length=20, null=True),
+    ),
+    migrations.AddField(
+        model_name="guestcategory",
+        name="assign_count",
+        field=models.IntegerField(default=1),
+    ),
+    migrations.AddField(
+        model_name="guestcategory",
+        name="category",
+        field=models.ForeignKey(
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            to="guests.category",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="guestcategory",
+        name="guest",
+        field=models.ForeignKey(
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            to="guests.guest",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="guestcategory",
+        name="last_assigned_at",
+        field=models.DateTimeField(blank=True, null=True),
+    ),
+    migrations.AddField(
+        model_name="guestcategoryassignment",
+        name="category",
+        field=models.ForeignKey(
+            db_column="category_id",
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            to="guests.category",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="guestcategoryassignment",
+        name="guest",
+        field=models.ForeignKey(
+            db_column="guest_id",
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            to="guests.guest",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="guestcategoryassignment",
+        name="restaurant",
+        field=models.ForeignKey(
+            db_column="restaurant_id",
+            null=True,
+            on_delete=django.db.models.deletion.SET_NULL,
+            to="guests.restaurant",
+        ),
+    ),
+    migrations.AddField(
+        model_name="guestchannellink",
+        name="channel",
+        field=models.ForeignKey(
+            db_column="channel_id",
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            to="guests.mailingchannel",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="guestchannellink",
+        name="guest",
+        field=models.ForeignKey(
+            db_column="guest_id",
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            to="guests.guest",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="mailing",
+        name="channels",
+        field=models.ManyToManyField(
+            related_name="mailings",
+            through="guests.MailingChannelLink",
+            to="guests.mailingchannel",
+        ),
+    ),
+    migrations.AddField(
+        model_name="mailing",
+        name="template",
+        field=models.ForeignKey(
+            db_column="template_id",
+            default=1,
+            on_delete=django.db.models.deletion.RESTRICT,
+            related_name="mailings",
+            to="guests.messagetemplate",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="mailingchannellink",
+        name="channel",
+        field=models.ForeignKey(
+            db_column="channel_id",
+            default=1,
+            on_delete=django.db.models.deletion.RESTRICT,
+            related_name="mailing_links",
+            to="guests.mailingchannel",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="mailingchannellink",
+        name="mailing",
+        field=models.ForeignKey(
+            db_column="mailing_id",
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="channel_links",
+            to="guests.mailing",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="mailingguest",
+        name="guest",
+        field=models.ForeignKey(
+            db_column="guest_id",
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="mailings_rows",
+            to="guests.guest",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="mailingguest",
+        name="mailing",
+        field=models.ForeignKey(
+            db_column="mailing_id",
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="guests_rows",
+            to="guests.mailing",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="visithistory",
+        name="guest",
+        field=models.ForeignKey(
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="visits",
+            to="guests.guest",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="visithistory",
+        name="restaurant",
+        field=models.ForeignKey(
+            default=1,
+            on_delete=django.db.models.deletion.CASCADE,
+            related_name="visits",
+            to="guests.restaurant",
+        ),
+        preserve_default=False,
+    ),
+    migrations.AddField(
+        model_name="visithistory",
+        name="visit_count",
+        field=models.IntegerField(default=1),
+    ),
+    migrations.AlterField(
+        model_name="category",
+        name="created_at",
+        field=models.DateTimeField(auto_now_add=True, default=1),
+        preserve_default=False,
+    ),
+    migrations.AlterField(
+        model_name="category",
+        name="updated_at",
+        field=models.DateTimeField(auto_now=True, default=1),
+        preserve_default=False,
+    ),
+    migrations.AlterUniqueTogether(
+        name="guestcategory",
+        unique_together={("guest", "category")},
+    ),
+    migrations.AlterUniqueTogether(
+        name="guestchannellink",
+        unique_together={("guest", "channel")},
+    ),
+    migrations.AlterUniqueTogether(
+        name="visithistory",
+        unique_together={("guest", "restaurant")},
+    ),
+    migrations.AddIndex(
+        model_name="mailingchannellink",
+        index=models.Index(fields=["mailing"], name="mcl_mailing_id_idx"),
+    ),
+    migrations.AddIndex(
+        model_name="mailingchannellink",
+        index=models.Index(fields=["channel"], name="mcl_channel_id_idx"),
+    ),
+    migrations.AddIndex(
+        model_name="mailingguest",
+        index=models.Index(fields=["mailing"], name="mailing_guests_mailing_id_idx"),
+    ),
+    migrations.AddIndex(
+        model_name="mailingguest",
+        index=models.Index(fields=["status"], name="mailing_guests_status_idx"),
+    ),
+    migrations.AddIndex(
+        model_name="mailingguest",
+        index=models.Index(fields=["scheduled_datetime"], name="mailing_guests_scheduled_idx"),
+    ),
+    migrations.AddConstraint(
+        model_name="mailing",
+        constraint=models.CheckConstraint(
+            condition=models.Q(("scheduled_time_begin__lte", models.F("scheduled_time_end"))),
+            name="mailings_time_chk",
+        ),
+    ),
+    migrations.AddConstraint(
+        model_name="mailingchannel",
+        constraint=models.CheckConstraint(
+            condition=models.Q(("channel_kind__in", ["phone_telegram", "phone_telegram_bot", "email"])),
+            name="mailing_channels_kind_chk",
+        ),
+    ),
+    migrations.AddConstraint(
+        model_name="mailingchannellink",
+        constraint=models.UniqueConstraint(
+            fields=("mailing", "channel"),
+            name="mailing_channel_links_uniq",
+        ),
+    ),
+    migrations.AddConstraint(
+        model_name="mailingguest",
+        constraint=models.UniqueConstraint(
+            fields=("mailing", "guest"),
+            name="mailing_guests_uniq",
+        ),
+    ),
+    migrations.AddConstraint(
+        model_name="mailingguest",
+        constraint=models.CheckConstraint(
+            condition=models.Q(("status__in", ["planned", "in_progress", "done", "error"])),
+            name="mailing_guests_status_chk",
+        ),
+    ),
+]
 
+
+DATABASE_SYNC_OPERATIONS = [
+    operation
+    for operation in STATE_SYNC_OPERATIONS
+    if not (
+        isinstance(operation, migrations.AlterField)
+        and getattr(operation, "model_name", "") == "category"
+        and getattr(operation, "name", "") in {"created_at", "updated_at"}
+    )
+]
+
+
+class Migration(migrations.Migration):
     dependencies = [
-        ('guests', '0010_alter_category_options_alter_guest_options_and_more'),
+        ("guests", "0010_alter_category_options_alter_guest_options_and_more"),
     ]
 
     operations = [
         migrations.SeparateDatabaseAndState(
-            # Этап безопасной синхронизации:
-            # фиксируем состояние моделей в Django без выполнения SQL-изменений.
-            # Это позволяет перейти на managed=True для уже существующей схемы БД.
-            state_operations=[
-        migrations.RemoveField(
-            model_name='guest',
-            name='is_stop_sending',
-        ),
-        migrations.AddField(
-            model_name='category',
-            name='external_id',
-            field=models.CharField(blank=True, max_length=50, null=True),
-        ),
-        migrations.AddField(
-            model_name='guest',
-            name='gender',
-            field=models.CharField(blank=True, max_length=20, null=True),
-        ),
-        migrations.AddField(
-            model_name='guestcategory',
-            name='assign_count',
-            field=models.IntegerField(default=1),
-        ),
-        migrations.AddField(
-            model_name='guestcategory',
-            name='category',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, to='guests.category'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='guestcategory',
-            name='guest',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, to='guests.guest'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='guestcategory',
-            name='last_assigned_at',
-            field=models.DateTimeField(blank=True, null=True),
-        ),
-        migrations.AddField(
-            model_name='guestcategoryassignment',
-            name='category',
-            field=models.ForeignKey(db_column='category_id', default=1, on_delete=django.db.models.deletion.CASCADE, to='guests.category'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='guestcategoryassignment',
-            name='guest',
-            field=models.ForeignKey(db_column='guest_id', default=1, on_delete=django.db.models.deletion.CASCADE, to='guests.guest'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='guestcategoryassignment',
-            name='restaurant',
-            field=models.ForeignKey(db_column='restaurant_id', null=True, on_delete=django.db.models.deletion.SET_NULL, to='guests.restaurant'),
-        ),
-        migrations.AddField(
-            model_name='guestchannellink',
-            name='channel',
-            field=models.ForeignKey(db_column='channel_id', default=1, on_delete=django.db.models.deletion.CASCADE, to='guests.mailingchannel'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='guestchannellink',
-            name='guest',
-            field=models.ForeignKey(db_column='guest_id', default=1, on_delete=django.db.models.deletion.CASCADE, to='guests.guest'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='mailing',
-            name='channels',
-            field=models.ManyToManyField(related_name='mailings', through='guests.MailingChannelLink', to='guests.mailingchannel'),
-        ),
-        migrations.AddField(
-            model_name='mailing',
-            name='template',
-            field=models.ForeignKey(db_column='template_id', default=1, on_delete=django.db.models.deletion.RESTRICT, related_name='mailings', to='guests.messagetemplate'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='mailingchannellink',
-            name='channel',
-            field=models.ForeignKey(db_column='channel_id', default=1, on_delete=django.db.models.deletion.RESTRICT, related_name='mailing_links', to='guests.mailingchannel'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='mailingchannellink',
-            name='mailing',
-            field=models.ForeignKey(db_column='mailing_id', default=1, on_delete=django.db.models.deletion.CASCADE, related_name='channel_links', to='guests.mailing'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='mailingguest',
-            name='guest',
-            field=models.ForeignKey(db_column='guest_id', default=1, on_delete=django.db.models.deletion.CASCADE, related_name='mailings_rows', to='guests.guest'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='mailingguest',
-            name='mailing',
-            field=models.ForeignKey(db_column='mailing_id', default=1, on_delete=django.db.models.deletion.CASCADE, related_name='guests_rows', to='guests.mailing'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='visithistory',
-            name='guest',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, related_name='visits', to='guests.guest'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='visithistory',
-            name='restaurant',
-            field=models.ForeignKey(default=1, on_delete=django.db.models.deletion.CASCADE, related_name='visits', to='guests.restaurant'),
-            preserve_default=False,
-        ),
-        migrations.AddField(
-            model_name='visithistory',
-            name='visit_count',
-            field=models.IntegerField(default=1),
-        ),
-        migrations.AlterField(
-            model_name='category',
-            name='created_at',
-            field=models.DateTimeField(auto_now_add=True, default=1),
-            preserve_default=False,
-        ),
-        migrations.AlterField(
-            model_name='category',
-            name='updated_at',
-            field=models.DateTimeField(auto_now=True, default=1),
-            preserve_default=False,
-        ),
-        migrations.AlterUniqueTogether(
-            name='guestcategory',
-            unique_together={('guest', 'category')},
-        ),
-        migrations.AlterUniqueTogether(
-            name='guestchannellink',
-            unique_together={('guest', 'channel')},
-        ),
-        migrations.AlterUniqueTogether(
-            name='visithistory',
-            unique_together={('guest', 'restaurant')},
-        ),
-        migrations.AddIndex(
-            model_name='mailingchannellink',
-            index=models.Index(fields=['mailing'], name='mcl_mailing_id_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='mailingchannellink',
-            index=models.Index(fields=['channel'], name='mcl_channel_id_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='mailingguest',
-            index=models.Index(fields=['mailing'], name='mailing_guests_mailing_id_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='mailingguest',
-            index=models.Index(fields=['status'], name='mailing_guests_status_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='mailingguest',
-            index=models.Index(fields=['scheduled_datetime'], name='mailing_guests_scheduled_idx'),
-        ),
-        migrations.AddConstraint(
-            model_name='mailing',
-            constraint=models.CheckConstraint(condition=models.Q(('scheduled_time_begin__lte', models.F('scheduled_time_end'))), name='mailings_time_chk'),
-        ),
-        migrations.AddConstraint(
-            model_name='mailingchannel',
-            constraint=models.CheckConstraint(condition=models.Q(('channel_kind__in', ['phone_telegram', 'phone_telegram_bot', 'email'])), name='mailing_channels_kind_chk'),
-        ),
-        migrations.AddConstraint(
-            model_name='mailingchannellink',
-            constraint=models.UniqueConstraint(fields=('mailing', 'channel'), name='mailing_channel_links_uniq'),
-        ),
-        migrations.AddConstraint(
-            model_name='mailingguest',
-            constraint=models.UniqueConstraint(fields=('mailing', 'guest'), name='mailing_guests_uniq'),
-        ),
-        migrations.AddConstraint(
-            model_name='mailingguest',
-            constraint=models.CheckConstraint(condition=models.Q(('status__in', ['planned', 'in_progress', 'done', 'error'])), name='mailing_guests_status_chk'),
-        ),
-            ],
-            database_operations=[],
+            state_operations=STATE_SYNC_OPERATIONS,
+            database_operations=DATABASE_SYNC_OPERATIONS,
         ),
     ]

@@ -24,7 +24,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'guest_channel_links',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -43,7 +43,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'mailings',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -59,7 +59,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'mailing_channels',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -69,7 +69,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'mailing_channel_links',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -89,7 +89,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'mailing_guests',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.AlterModelOptions(
