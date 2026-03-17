@@ -1,4 +1,4 @@
-import os
+﻿import os
 from datetime import timedelta
 
 from django.contrib import admin, messages
@@ -15,6 +15,9 @@ from .models import (
     Mailing,
     MailingBotProfileLink,
     MailingGuest,
+    NotificationEvent,
+    NotificationScenario,
+    NotificationScenarioBotProfileLink,
     Restaurant,
     VisitHistory,
 )
@@ -224,6 +227,243 @@ class MailingGuestAdmin(admin.ModelAdmin):
         return int(getattr(obj, "dispatch_tasks_total", 0))
 
 
+class NotificationScenarioBotProfileLinkInline(admin.TabularInline):
+    """
+    Связь сценария авто-уведомления с разрешёнными ботами.
+    """
+
+    model = NotificationScenarioBotProfileLink
+    extra = 1
+    autocomplete_fields = ("bot_profile",)
+    verbose_name = "Разрешённый бот"
+    verbose_name_plural = "Разрешённые боты"
+
+
+@admin.register(NotificationScenario)
+class NotificationScenarioAdmin(admin.ModelAdmin):
+    """
+    Техническая панель управления правилами авто-уведомлений.
+    """
+
+    list_display = (
+        "id",
+        "code",
+        "name",
+        "is_active",
+        "is_system",
+        "trigger_type",
+        "priority",
+        "target_mode",
+        "distribution_mode",
+        "send_window_begin",
+        "send_window_end",
+        "updated_at",
+    )
+    list_filter = (
+        "is_active",
+        "is_system",
+        "trigger_type",
+        "priority",
+        "target_mode",
+        "distribution_mode",
+    )
+    search_fields = (
+        "code",
+        "name",
+        "description",
+        "webhook_category_external_id",
+        "template__name",
+    )
+    raw_id_fields = ("template",)
+    readonly_fields = ("created_at", "updated_at")
+    inlines = (NotificationScenarioBotProfileLinkInline,)
+    list_per_page = 100
+    actions = ("action_activate", "action_deactivate")
+
+    fieldsets = (
+        (
+            "Идентификация сценария",
+            {
+                "fields": ("code", "name", "description", "is_active", "is_system"),
+            },
+        ),
+        (
+            "Триггер и шаблон",
+            {
+                "fields": ("trigger_type", "webhook_category_external_id", "template"),
+            },
+        ),
+        (
+            "Маршрутизация и приоритет",
+            {
+                "fields": ("priority", "target_mode", "distribution_mode"),
+            },
+        ),
+        (
+            "Окно отправки и ограничения",
+            {
+                "fields": (
+                    "send_window_begin",
+                    "send_window_end",
+                    "timezone",
+                    "cooldown_minutes",
+                    "max_per_day_per_guest",
+                ),
+            },
+        ),
+        (
+            "Дополнительные настройки",
+            {
+                "fields": ("settings",),
+            },
+        ),
+        (
+            "Служебные поля",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+
+    @admin.action(description="Включить выбранные сценарии")
+    def action_activate(self, request, queryset):
+        updated = queryset.update(is_active=True, updated_at=timezone.now())
+        self.message_user(request, f"Включено сценариев: {updated}", level=messages.SUCCESS)
+
+    @admin.action(description="Отключить выбранные сценарии")
+    def action_deactivate(self, request, queryset):
+        updated = queryset.update(is_active=False, updated_at=timezone.now())
+        self.message_user(request, f"Отключено сценариев: {updated}", level=messages.WARNING)
+
+    def has_delete_permission(self, request, obj=None):
+        """
+        Системные сценарии нельзя удалять из админки.
+        """
+        if obj is not None and obj.is_system:
+            return False
+        return super().has_delete_permission(request, obj)
+
+    def delete_queryset(self, request, queryset):
+        protected = queryset.filter(is_system=True).count()
+        deleted = queryset.exclude(is_system=True).delete()[0]
+        if protected:
+            self.message_user(
+                request,
+                f"Системные сценарии пропущены и не удалены: {protected}.",
+                level=messages.WARNING,
+            )
+        self.message_user(request, f"Удалено сценариев: {deleted}", level=messages.SUCCESS)
+
+
+@admin.register(NotificationEvent)
+class NotificationEventAdmin(admin.ModelAdmin):
+    """
+    Операционный журнал фактов срабатывания авто-уведомлений.
+    """
+
+    list_display = (
+        "id",
+        "scenario_code",
+        "guest_id",
+        "source_type",
+        "status",
+        "duplicate_hits",
+        "dispatch_tasks_count",
+        "planned_send_at",
+        "created_at",
+    )
+    list_filter = ("source_type", "status", "scenario", "created_at")
+    search_fields = (
+        "scenario__code",
+        "scenario__name",
+        "guest__phone",
+        "source_ref",
+        "dedupe_key",
+        "coupon_code",
+        "error_text",
+    )
+    raw_id_fields = ("scenario", "guest")
+    readonly_fields = (
+        "uuid",
+        "scenario",
+        "guest",
+        "source_type",
+        "source_ref",
+        "dedupe_key",
+        "status",
+        "event_at",
+        "planned_send_at",
+        "duplicate_hits",
+        "last_duplicate_at",
+        "payload",
+        "coupon_code",
+        "coupon_external_id",
+        "coupon_expires_at",
+        "error_text",
+        "created_at",
+        "updated_at",
+    )
+    date_hierarchy = "created_at"
+    list_per_page = 100
+
+    fieldsets = (
+        (
+            "Идентификация события",
+            {
+                "fields": (
+                    "uuid",
+                    "scenario",
+                    "guest",
+                    "source_type",
+                    "source_ref",
+                    "dedupe_key",
+                    "status",
+                )
+            },
+        ),
+        (
+            "Планирование и дубли",
+            {
+                "fields": (
+                    "event_at",
+                    "planned_send_at",
+                    "duplicate_hits",
+                    "last_duplicate_at",
+                ),
+            },
+        ),
+        (
+            "Купоны и payload",
+            {
+                "fields": ("coupon_code", "coupon_external_id", "coupon_expires_at", "payload"),
+            },
+        ),
+        (
+            "Ошибки и аудит",
+            {
+                "fields": ("error_text", "created_at", "updated_at"),
+            },
+        ),
+    )
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.select_related("scenario", "guest").annotate(dispatch_tasks_total=Count("dispatch_tasks"))
+
+    @admin.display(description="Сценарий")
+    def scenario_code(self, obj: NotificationEvent) -> str:
+        if obj.scenario_id:
+            return obj.scenario.code
+        return "—"
+
+    @admin.display(description="DispatchTask")
+    def dispatch_tasks_count(self, obj: NotificationEvent) -> int:
+        return int(getattr(obj, "dispatch_tasks_total", 0))
+
+    def has_add_permission(self, request):
+        return False
+
+
 @admin.register(DispatchTask)
 class DispatchTaskAdmin(admin.ModelAdmin):
     """
@@ -238,22 +478,40 @@ class DispatchTaskAdmin(admin.ModelAdmin):
         "status",
         "attempt_progress",
         "mailing_guest_id",
+        "notification_scenario_code",
+        "notification_event_id",
         "guest_id",
         "bot_profile_code",
         "external_chat_id",
         "available_at",
         "updated_at",
     )
-    list_filter = ("source_type", "provider_type", "priority", "status", "created_at")
+    list_filter = (
+        "source_type",
+        "provider_type",
+        "priority",
+        "status",
+        "notification_scenario",
+        "created_at",
+    )
     search_fields = (
         "idempotency_key",
         "external_chat_id",
         "guest__phone",
         "bot_profile__code",
+        "notification_scenario__code",
+        "notification_event__dedupe_key",
         "last_error",
         "message_text",
     )
-    raw_id_fields = ("guest", "mailing_guest", "bot_profile", "guest_binding")
+    raw_id_fields = (
+        "guest",
+        "mailing_guest",
+        "notification_scenario",
+        "notification_event",
+        "bot_profile",
+        "guest_binding",
+    )
     readonly_fields = (
         "uuid",
         "created_at",
@@ -278,6 +536,8 @@ class DispatchTaskAdmin(admin.ModelAdmin):
                     "priority",
                     "status",
                     "mailing_guest",
+                    "notification_scenario",
+                    "notification_event",
                     "guest",
                     "bot_profile",
                     "guest_binding",
@@ -320,7 +580,13 @@ class DispatchTaskAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request):
         queryset = super().get_queryset(request)
-        return queryset.select_related("guest", "mailing_guest", "bot_profile")
+        return queryset.select_related(
+            "guest",
+            "mailing_guest",
+            "notification_scenario",
+            "notification_event",
+            "bot_profile",
+        )
 
     @admin.display(description="Попытки")
     def attempt_progress(self, obj: DispatchTask) -> str:
@@ -330,6 +596,12 @@ class DispatchTaskAdmin(admin.ModelAdmin):
     def bot_profile_code(self, obj: DispatchTask) -> str:
         if obj.bot_profile:
             return obj.bot_profile.code
+        return "—"
+
+    @admin.display(description="Scenario")
+    def notification_scenario_code(self, obj: DispatchTask) -> str:
+        if obj.notification_scenario_id:
+            return obj.notification_scenario.code
         return "—"
 
     @admin.display(description="Краткая ошибка")
