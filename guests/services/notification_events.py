@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 
 SCENARIO_CODE_BALANCE_CHANGED = "balance_changed"
+SCENARIO_CODE_INACTIVE_7D = "inactive_7d"
+SCENARIO_CODE_INACTIVE_30D_COUPON = "inactive_30d_coupon"
 
 
 class ScenarioNotConfiguredError(RuntimeError):

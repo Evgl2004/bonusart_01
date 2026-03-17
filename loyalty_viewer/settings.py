@@ -167,6 +167,10 @@ Q_CLUSTER = {
             "func": "guests.tasks.fetch_pending_webhooks",
             "minutes": 10,
         },
+        "run_notification_scenarios": {
+            "func": "guests.tasks.run_scheduled_notification_scenarios_task",
+            "minutes": 30,
+        },
         # # Ночная глобальная проверка в 22:00 по UTC
         # "nightly_health_check": {
         #     "func": "guests.tasks.nightly_health_check",
