@@ -463,6 +463,279 @@ class GuestBotBinding(models.Model):
         return f"guest={self.guest_id} bot={self.bot_id} chat={self.external_chat_id}"
 
 
+class NotificationScenario(models.Model):
+    """
+    Правило автоматизированного уведомления.
+
+    Сценарий описывает политику отправки:
+    1. источник триггера (веб-хук/планировщик/ручной запуск);
+    2. приоритет, режим выбора ботов и режим распределения по времени;
+    3. шаблон сообщения и список разрешённых BotProfile.
+    """
+
+    class TriggerType(models.TextChoices):
+        WEBHOOK = "webhook", "Веб-хук"
+        SCHEDULE = "schedule", "Планировщик"
+        MANUAL = "manual", "Ручной запуск"
+
+    class Priority(models.TextChoices):
+        HIGH = "high", "Высокий"
+        NORMAL = "normal", "Обычный"
+        BULK = "bulk", "Массовый"
+
+    class TargetMode(models.TextChoices):
+        PRIMARY_ONLY = "primary_only", "Только основной бот"
+        ALL_BOTS = "all_bots", "Все активные боты"
+
+    class DistributionMode(models.TextChoices):
+        IMMEDIATE = "immediate", "Сразу"
+        UNIFORM = "uniform", "Равномерно в окне"
+
+    code = models.SlugField(
+        max_length=80,
+        unique=True,
+        help_text="Уникальный технический код сценария, например balance_changed.",
+    )
+    name = models.CharField(max_length=150)
+    description = models.TextField(blank=True, null=True)
+
+    is_active = models.BooleanField(default=True)
+    is_system = models.BooleanField(
+        default=False,
+        help_text="Служебный сценарий: запрещено удаление/изменение через пользовательский UI.",
+    )
+
+    trigger_type = models.CharField(
+        max_length=20,
+        choices=TriggerType.choices,
+        default=TriggerType.WEBHOOK,
+        db_index=True,
+    )
+    webhook_category_external_id = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Внешний category_id для webhook-сценариев (если используется).",
+    )
+
+    template = models.ForeignKey(
+        "MessageTemplate",
+        on_delete=models.RESTRICT,
+        related_name="notification_scenarios",
+    )
+
+    priority = models.CharField(
+        max_length=16,
+        choices=Priority.choices,
+        default=Priority.NORMAL,
+    )
+    target_mode = models.CharField(
+        max_length=20,
+        choices=TargetMode.choices,
+        default=TargetMode.PRIMARY_ONLY,
+    )
+    distribution_mode = models.CharField(
+        max_length=20,
+        choices=DistributionMode.choices,
+        default=DistributionMode.IMMEDIATE,
+    )
+
+    send_window_begin = models.TimeField(blank=True, null=True)
+    send_window_end = models.TimeField(blank=True, null=True)
+    timezone = models.CharField(max_length=64, default="Asia/Yekaterinburg")
+
+    cooldown_minutes = models.PositiveIntegerField(
+        default=0,
+        help_text="Минимальная пауза между отправками одному гостю по этому сценарию.",
+    )
+    max_per_day_per_guest = models.PositiveIntegerField(
+        blank=True,
+        null=True,
+        help_text="Дневной лимит отправок одному гостю по сценарию (если задан).",
+    )
+
+    settings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Расширенные параметры сценария в JSON.",
+    )
+
+    bot_profiles = models.ManyToManyField(
+        "BotProfile",
+        through="NotificationScenarioBotProfileLink",
+        related_name="notification_scenarios",
+        help_text="Список разрешённых ботов для этого сценария.",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "notification_scenarios"
+        verbose_name = "Сценарий уведомления"
+        verbose_name_plural = "Сценарии уведомлений"
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(priority__in=["high", "normal", "bulk"]),
+                name="ns_priority_chk",
+            ),
+            models.CheckConstraint(
+                check=models.Q(target_mode__in=["primary_only", "all_bots"]),
+                name="ns_target_mode_chk",
+            ),
+            models.CheckConstraint(
+                check=models.Q(distribution_mode__in=["immediate", "uniform"]),
+                name="ns_distribution_mode_chk",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["is_active", "trigger_type"], name="ns_active_trigger_idx"),
+            models.Index(fields=["code"], name="ns_code_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.code} ({self.name})"
+
+
+class NotificationScenarioBotProfileLink(models.Model):
+    """
+    Явная связь сценария с конкретными ботами.
+
+    Нужна для точного контроля, через какие BotProfile разрешено отправлять
+    уведомления в рамках конкретного сценария.
+    """
+
+    scenario = models.ForeignKey(
+        "NotificationScenario",
+        on_delete=models.CASCADE,
+        related_name="bot_profile_links",
+    )
+    bot_profile = models.ForeignKey(
+        "BotProfile",
+        on_delete=models.RESTRICT,
+        related_name="notification_scenario_links",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "notification_scenario_bot_profile_links"
+        verbose_name = "Связь сценария с ботом"
+        verbose_name_plural = "Связи сценариев с ботами"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "bot_profile"],
+                name="nsbpl_scenario_bot_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["scenario"], name="nsbpl_scenario_idx"),
+            models.Index(fields=["bot_profile"], name="nsbpl_bot_idx"),
+        ]
+
+    def __str__(self):
+        return f"scenario={self.scenario_id} bot={self.bot_profile_id}"
+
+
+class NotificationEvent(models.Model):
+    """
+    Факт срабатывания сценария уведомления для конкретного гостя.
+
+    Таблица хранит:
+    1. бизнес-факт (почему возникла отправка);
+    2. дедупликацию события;
+    3. плановое время отправки для создания DispatchTask.
+    """
+
+    class SourceType(models.TextChoices):
+        WEBHOOK = "webhook", "Веб-хук"
+        SCHEDULE = "schedule", "Планировщик"
+        MANUAL = "manual", "Ручной запуск"
+
+    class Status(models.TextChoices):
+        NEW = "new", "Новое"
+        DUPLICATED = "duplicated", "Дубликат"
+        TASK_CREATED = "task_created", "Задача создана"
+        SKIPPED = "skipped", "Пропущено по правилам"
+        ERROR = "error", "Ошибка обработки"
+
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    scenario = models.ForeignKey(
+        "NotificationScenario",
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="notification_events",
+    )
+
+    source_type = models.CharField(max_length=20, choices=SourceType.choices, db_index=True)
+    source_ref = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Внешний идентификатор события (например webhook id).",
+    )
+    dedupe_key = models.CharField(
+        max_length=180,
+        help_text="Ключ дедупликации: повтор с тем же ключом не создаёт новую отправку.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NEW,
+        db_index=True,
+    )
+
+    event_at = models.DateTimeField(default=timezone.now, db_index=True)
+    planned_send_at = models.DateTimeField(
+        default=timezone.now,
+        db_index=True,
+        help_text="Рассчитанное время, когда уведомление можно отправлять в очередь доставки.",
+    )
+
+    duplicate_hits = models.PositiveIntegerField(default=0)
+    last_duplicate_at = models.DateTimeField(blank=True, null=True)
+
+    payload = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Контекст события для рендера шаблона и аудита.",
+    )
+
+    coupon_code = models.CharField(max_length=120, blank=True, null=True)
+    coupon_external_id = models.CharField(max_length=150, blank=True, null=True)
+    coupon_expires_at = models.DateTimeField(blank=True, null=True)
+
+    error_text = models.TextField(blank=True, null=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "notification_events"
+        verbose_name = "Событие уведомления"
+        verbose_name_plural = "События уведомлений"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "dedupe_key"],
+                name="ne_scenario_dedupe_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "planned_send_at"], name="ne_status_plan_idx"),
+            models.Index(fields=["guest", "scenario", "event_at"], name="ne_guest_scn_evt_idx"),
+        ]
+
+    def __str__(self):
+        return f"event={self.id} scenario={self.scenario_id} status={self.status}"
+
+
 class DispatchTask(models.Model):
     """
     Универсальная задача на отправку сообщения.
@@ -534,6 +807,22 @@ class DispatchTask(models.Model):
         null=True,
         related_name="dispatch_tasks",
         help_text="Ссылка на строку массовой рассылки (если задача создана из MailingGuest).",
+    )
+    notification_scenario = models.ForeignKey(
+        "NotificationScenario",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="dispatch_tasks",
+        help_text="Ссылка на сценарий авто-уведомления (для задач не из MailingGuest).",
+    )
+    notification_event = models.ForeignKey(
+        "NotificationEvent",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="dispatch_tasks",
+        help_text="Ссылка на событие, из которого сформирована задача доставки.",
     )
     bot_profile = models.ForeignKey(
         "BotProfile",

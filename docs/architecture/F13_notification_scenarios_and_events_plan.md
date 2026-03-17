@@ -10,11 +10,11 @@
 
 ## План из 10 шагов
 1. Ввести сущность `NotificationScenario` (правило автоматизации) с настройками приоритета, целевого режима, окна и режима распределения.
-   Статус: `pending`
+   Статус: `completed`
 2. Ввести сущность `NotificationEvent` (факт срабатывания сценария) с полями дедупликации, планового времени отправки и контекстом события.
-   Статус: `pending`
+   Статус: `completed`
 3. Добавить связь `DispatchTask` c `notification_scenario` и `notification_event` (оба nullable) для трассировки источника задач.
-   Статус: `pending`
+   Статус: `completed`
 4. Реализовать дедупликацию через `dedupe_key` и уникальный индекс `(scenario, dedupe_key)`.
    Статус: `pending`
 5. Реализовать расчёт `planned_send_at` и перенос в `DispatchTask.available_at`.
