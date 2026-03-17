@@ -7,13 +7,13 @@
 2. Переводит их в `in_progress`.
 3. Ставит задачи в `DispatchTask` для дальнейшей отправки провайдерными воркерами.
 
-Текущий direct-send путь сохранён как fallback и отключается/включается feature-flag.
+Legacy direct-send путь удалён: `mailing_worker` работает только в dispatch-only режиме.
 
 ## Что изменено
 1. Добавлен сервис `guests/services/universal_queue/mailing_producer.py`.
-2. В `mailing_worker` добавлено условное ветвление:
-   - `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH=False` (по умолчанию): старый direct-send путь.
-   - `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH=True`: новый путь постановки задач в `DispatchTask`.
+2. `mailing_worker` переведён в целевой режим:
+   - только постановка задач в `DispatchTask`;
+   - без прямой отправки в провайдеров.
 3. В модель `Mailing` добавлены поля маршрутизации:
    - `target_mode` (`primary_only|all_bots`);
    - `queue_priority` (`high|normal|bulk`).
@@ -21,10 +21,6 @@
    режимом получателей и приоритетом очереди.
 5. Добавлена связь рассылки с конкретными ботами:
    - `Mailing.bot_profiles` через таблицу `MailingBotProfileLink`.
-
-## Новые настройки
-1. `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH` — включает F4-режим producer для `mailing_worker`.
-2. `UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS` — fallback на `GuestChannelLink` (legacy Telegram).
 
 ## Параметры рассылки в модели
 1. `Mailing.target_mode`:
@@ -39,8 +35,7 @@
 Для каждой строки `MailingGuest`:
 1. Выбираются цели отправки из `GuestBotBinding` только для ботов,
    указанных в `mailing.bot_profiles`.
-2. При отсутствии целей и включённом fallback используются legacy `GuestChannelLink`.
-3. Для каждой цели создаётся `DispatchTask`:
+2. Для каждой цели создаётся `DispatchTask`:
    - `source_type=mailing`;
    - `provider_type` по типу бота (`telegram|max|vk`);
    - `priority` из `mailing.queue_priority`;
@@ -56,8 +51,7 @@
 4. Ошибка постановки задач:  
    `status=error`, `delivery_status=dispatch_enqueue_error` или `dispatch_enqueue_exception`.
 
-## Почему это безопасно для поэтапного включения
-1. F4 выключен по умолчанию.
-2. Старый путь отправки не удалён.
-3. Добавлена дедупликация через `idempotency_key`.
-4. В логах фиксируются агрегаты постановки задач (`rows_total/rows_queued/rows_failed`).
+## Почему это безопасно после cutover
+1. Добавлена дедупликация через `idempotency_key`.
+2. В логах фиксируются агрегаты постановки задач (`rows_total/rows_queued/rows_failed`).
+3. Единый путь отправки снижает риск рассинхронизации бизнес-логики.

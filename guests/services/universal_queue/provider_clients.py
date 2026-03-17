@@ -7,11 +7,10 @@ from datetime import datetime
 from typing import Any, Dict
 
 import httpx
-from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.utils import timezone
 
-from guests.models import DispatchTask, MailingChannel
+from guests.models import DispatchTask
 
 logger = logging.getLogger(__name__)
 
@@ -96,28 +95,12 @@ def _get_payload(task: DispatchTask) -> Dict[str, Any]:
     return task.payload if isinstance(task.payload, dict) else {}
 
 
-def _resolve_legacy_channel_token_sync(task: DispatchTask) -> str:
-    """
-    Возвращает token из legacy MailingChannel по `legacy_channel_id` в payload.
-    """
-    payload = _get_payload(task)
-    channel_id = payload.get("legacy_channel_id")
-    if not channel_id:
-        return ""
-
-    channel = MailingChannel.objects.filter(id=channel_id, is_active=True).only("token").first()
-    if channel and channel.token:
-        return str(channel.token).strip()
-    return ""
-
-
 async def _resolve_bot_token(task: DispatchTask, fallback_env_name: str) -> str:
     """
     Унифицированное разрешение токена бота:
     1. BotProfile.resolve_token();
     2. token/token_ref в payload задачи;
-    3. token legacy канала MailingChannel (если `legacy_channel_id` передан в payload);
-    4. fallback из env-переменной.
+    3. fallback из env-переменной.
     """
     if task.bot_profile:
         token = task.bot_profile.resolve_token()
@@ -134,10 +117,6 @@ async def _resolve_bot_token(task: DispatchTask, fallback_env_name: str) -> str:
         token_from_ref = os.getenv(payload_token_ref, "").strip()
         if token_from_ref:
             return token_from_ref
-
-    legacy_token = await sync_to_async(_resolve_legacy_channel_token_sync, thread_sensitive=True)(task)
-    if legacy_token:
-        return legacy_token
 
     return os.getenv(fallback_env_name, "").strip()
 

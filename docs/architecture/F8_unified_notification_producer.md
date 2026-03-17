@@ -18,13 +18,11 @@
 3. Legacy-функция `enqueue_high_priority_webhook_tasks(...)` оставлена только как совместимый адаптер.
 
 ## Логика общего producer-а
-1. Принимает гостя, текст, приоритет, `source_type`, `source_key`, payload и флаг fallback.
+1. Принимает гостя, текст, приоритет, `source_type`, `source_key`, payload.
 2. Собирает цели доставки:
-   - сначала `GuestBotBinding`;
-   - затем fallback `GuestChannelLink` (legacy Telegram), если включён.
+   - только из `GuestBotBinding`.
 3. Создаёт `DispatchTask` по каждой цели:
-   - с дедупликацией через `idempotency_key`, когда передан `source_key`;
-   - с сохранением `legacy_channel_id` в payload для fallback-сценариев.
+   - с дедупликацией через `idempotency_key`, когда передан `source_key`.
 
 ## Практический эффект
 1. Новые источники уведомлений подключаются единообразно.

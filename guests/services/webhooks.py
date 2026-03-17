@@ -6,7 +6,6 @@ import os
 
 from datetime import datetime, timedelta
 
-from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -721,9 +720,6 @@ def enqueue_balance_notification_from_webhook(
     if not is_enabled:
         return 0
 
-    if not getattr(settings, "UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE", False):
-        return 0
-
     event = webhook.get("parsed_body") or {}
     if not isinstance(event, dict):
         return 0
@@ -744,7 +740,6 @@ def enqueue_balance_notification_from_webhook(
         return 0
 
     webhook_id = webhook.get("id")
-    fallback_legacy = bool(getattr(settings, "UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS", True))
 
     return enqueue_guest_notification_tasks(
         guest=guest,
@@ -759,7 +754,6 @@ def enqueue_balance_notification_from_webhook(
             "kind": "balance_changed",
             "event": event,
         },
-        fallback_legacy=fallback_legacy,
     )
 
 

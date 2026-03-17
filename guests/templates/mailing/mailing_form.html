@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+п»ї{% extends "base.html" %}
 {% block title %}
   {% if object and object.pk %}Р РµРґР°РєС‚РёСЂРѕРІР°С‚СЊ СЂР°СЃСЃС‹Р»РєСѓ{% else %}РЎРѕР·РґР°С‚СЊ СЂР°СЃСЃС‹Р»РєСѓ{% endif %}
 {% endblock %}
@@ -15,7 +15,6 @@
 
   <div class="card">
     <div class="card-body">
-
 
       <form method="post">
         {% csrf_token %}
@@ -45,6 +44,7 @@
             {{ form.scheduled_time_end }}
           </div>
         </div>
+
         <div class="row">
           <div class="col-md-6 mb-3">
             {{ form.send_window_begin.label_tag }}
@@ -73,30 +73,14 @@
             {{ form.bot_profiles }}
           </div>
           <small class="text-muted">
-            Выберите конкретных ботов, через которых нужно отправлять эту рассылку.
+            Р’С‹Р±РµСЂРёС‚Рµ РєРѕРЅРєСЂРµС‚РЅС‹С… Р°РєС‚РёРІРЅС‹С… Р±РѕС‚РѕРІ, С‡РµСЂРµР· РєРѕС‚РѕСЂС‹С… РґРѕР»Р¶РЅР° РёРґС‚Рё СЌС‚Р° СЂР°СЃСЃС‹Р»РєР°.
           </small>
-        </div>
-
-        <div class="mb-3">
-          <label class="form-label">Legacy-каналы (опционально)</label>
-          <div class="border rounded p-3">
-            {{ form.channels }}
-          </div>
-          <small class="text-muted">
-            Используются только как fallback для старых Telegram-связок GuestChannelLink.
-          </small>
-        </div>
-
-        <div class="form-check mb-3">
-          {{ form.is_active }}
-          {{ form.is_active.label_tag }}
         </div>
 
         <button type="submit" class="btn btn-primary">
           {% if object and object.pk %}РЎРѕС…СЂР°РЅРёС‚СЊ{% else %}РЎРѕР·РґР°С‚СЊ{% endif %}
         </button>
       </form>
-
 
       {% if object and object.id %}
         <hr>
@@ -123,7 +107,6 @@
             РЎРєР°С‡Р°С‚СЊ С€Р°Р±Р»РѕРЅ Excel
           </a>
         </div>
-
 
         <form method="post" action="{% url 'mailing_import_phones' object.id %}" enctype="multipart/form-data">
           {% csrf_token %}
@@ -157,10 +140,8 @@
         setTimeout(function () {
           report.remove();
         }, 500);
-      }, 10000); // 10 СЃРµРєСѓРЅРґ
+      }, 10000);
     }
   });
 </script>
 {% endblock %}
-
-

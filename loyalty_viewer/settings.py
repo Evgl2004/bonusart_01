@@ -201,32 +201,6 @@ try:
 except ValueError:
     UNIVERSAL_DISPATCH_SLEEP_SECONDS = 2.0
 
-# Включение producer-а webhook -> DispatchTask.
-# По умолчанию выключено для безопасного поэтапного включения.
-UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE = os.getenv(
-    "UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE",
-    "False",
-).strip().lower() in ("1", "true", "yes", "on")
-
-# Fallback на legacy GuestChannelLink (Telegram), если новых привязок ещё нет.
-UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS = os.getenv(
-    "UNIVERSAL_QUEUE_FALLBACK_OLD_TG_LINKS",
-    "True",
-).strip().lower() in ("1", "true", "yes", "on")
-
-# Включение F4: массовая рассылка ставит задачи в DispatchTask (через producer),
-# а не отправляет сообщения напрямую из mailing_worker.
-UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH = os.getenv(
-    "UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH",
-    "False",
-).strip().lower() in ("1", "true", "yes", "on")
-
-# Fallback на legacy GuestChannelLink (Telegram) при отсутствии новых привязок.
-UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS = os.getenv(
-    "UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS",
-    "True",
-).strip().lower() in ("1", "true", "yes", "on")
-
 # Настройки async provider-worker (F5).
 try:
     UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS = int(os.getenv("UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS", "2"))

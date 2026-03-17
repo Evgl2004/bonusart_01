@@ -1,12 +1,19 @@
+﻿"""
+Producer для перевода строк массовой рассылки в универсальную очередь DispatchTask.
+
+Важно: здесь оставлена только целевая модель маршрутизации через
+`GuestBotBinding` и выбранные в рассылке `Mailing.bot_profiles`.
+Legacy fallback на `GuestChannelLink` удалён.
+"""
+
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Set
 
-from django.conf import settings
 from django.db import IntegrityError
 from django.utils import timezone
 
-from guests.models import DispatchTask, GuestBotBinding, GuestChannelLink, Mailing, MailingChannel, MailingGuest
+from guests.models import DispatchTask, GuestBotBinding, Mailing, MailingGuest
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +62,7 @@ def _resolve_selected_bot_profiles(mailing: Mailing) -> tuple[Set[int], Set[str]
     1. идентификаторы профилей ботов;
     2. типы провайдеров (`telegram|max|vk`).
     """
-    selected_rows = list(
-        mailing.bot_profiles.filter(is_active=True).values("id", "provider_type")
-    )
+    selected_rows = list(mailing.bot_profiles.filter(is_active=True).values("id", "provider_type"))
     selected_bot_ids = {row["id"] for row in selected_rows}
     selected_providers = {str(row["provider_type"]).strip().lower() for row in selected_rows}
     return selected_bot_ids, selected_providers
@@ -91,40 +96,6 @@ def _build_bindings_map(guest_ids: Iterable[int], selected_bot_ids: Set[int]) ->
     return result
 
 
-def _build_legacy_tg_links_map(guest_ids: Iterable[int], channels: List[MailingChannel]) -> Dict[int, List[GuestChannelLink]]:
-    """
-    Собирает legacy Telegram-связки для обратной совместимости.
-    """
-    tg_channel_ids = [
-        channel.id
-        for channel in channels
-        if channel.channel_kind in (
-            MailingChannel.ChannelKind.PHONE_TELEGRAM,
-            MailingChannel.ChannelKind.PHONE_TELEGRAM_BOT,
-        )
-    ]
-    if not tg_channel_ids:
-        return {}
-
-    links = (
-        GuestChannelLink.objects.filter(
-            guest_id__in=list(guest_ids),
-            channel_id__in=tg_channel_ids,
-            is_active=True,
-            is_opt_in=True,
-            is_stop_sending=False,
-        )
-        .exclude(external_chat_id__isnull=True)
-        .exclude(external_chat_id="")
-        .order_by("id")
-    )
-
-    result: Dict[int, List[GuestChannelLink]] = {}
-    for link in links:
-        result.setdefault(link.guest_id, []).append(link)
-    return result
-
-
 def _targets_from_bindings(bindings: List[GuestBotBinding], target_mode: str) -> List[Dict[str, Any]]:
     """
     Формирует целевые каналы отправки из новой модели GuestBotBinding.
@@ -152,43 +123,17 @@ def _targets_from_bindings(bindings: List[GuestBotBinding], target_mode: str) ->
     return targets
 
 
-def _targets_from_legacy_links(links: List[GuestChannelLink]) -> List[Dict[str, Any]]:
-    """
-    Формирует целевые каналы отправки из legacy GuestChannelLink.
-    """
-    targets: List[Dict[str, Any]] = []
-    seen_chat_ids: set[str] = set()
-    for link in links:
-        chat_id = str(link.external_chat_id).strip()
-        if not chat_id or chat_id in seen_chat_ids:
-            continue
-        seen_chat_ids.add(chat_id)
-        targets.append(
-            {
-                "provider_type": "telegram",
-                "external_chat_id": chat_id,
-                "guest_binding": None,
-                "bot_profile": None,
-                "legacy_channel_id": link.channel_id,
-            }
-        )
-    return targets
-
-
 def enqueue_mailing_rows_as_dispatch_tasks(
     mailing: Mailing,
     rows: List[MailingGuest],
-    channels: List[MailingChannel],
     now=None,
 ) -> MailingDispatchSummary:
     """
     Переводит пачку строк MailingGuest в задачи DispatchTask.
 
     Важно:
-    1. Это переходный шаг миграции: строки MailingGuest помечаются как `done`,
-       когда они успешно поставлены в универсальную очередь.
-    2. Фактическая отправка сообщения в провайдера выполняется позже
-       провайдерными воркерами по DispatchTask.
+    1. строки `MailingGuest` помечаются `done`, когда задачи успешно поставлены в очередь;
+    2. фактическая отправка выполняется провайдерными async-воркерами.
     """
     summary = MailingDispatchSummary(rows_total=len(rows))
     if not rows:
@@ -197,7 +142,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
     target_mode = _resolve_target_mode_for_mailing(mailing)
     priority = _resolve_priority_for_mailing(mailing)
     now = now or timezone.now()
-    selected_bot_ids, selected_provider_types = _resolve_selected_bot_profiles(mailing)
+    selected_bot_ids, _selected_provider_types = _resolve_selected_bot_profiles(mailing)
 
     if not selected_bot_ids:
         for row in rows:
@@ -210,19 +155,14 @@ def enqueue_mailing_rows_as_dispatch_tasks(
 
     guest_ids = [row.guest_id for row in rows]
     bindings_map = _build_bindings_map(guest_ids, selected_bot_ids=selected_bot_ids)
-    use_legacy_fallback = bool(getattr(settings, "UNIVERSAL_QUEUE_MAILING_FALLBACK_OLD_TG_LINKS", True))
-    use_legacy_fallback = use_legacy_fallback and ("telegram" in selected_provider_types)
-    legacy_links_map = _build_legacy_tg_links_map(guest_ids, channels) if use_legacy_fallback else {}
 
     for row in rows:
         row_targets = _targets_from_bindings(bindings_map.get(row.guest_id, []), target_mode=target_mode)
-        if not row_targets and use_legacy_fallback:
-            row_targets = _targets_from_legacy_links(legacy_links_map.get(row.guest_id, []))
 
         if not row_targets:
             row.status = MailingGuest.Status.ERROR
             row.delivery_status = "dispatch_no_targets"
-            row.error_description = "Не найдено активных каналов для постановки в универсальную очередь."
+            row.error_description = "Не найдено активных bot-привязок для постановки в универсальную очередь."
             row.save(update_fields=["status", "delivery_status", "error_description"])
             summary.rows_failed += 1
             continue
@@ -235,9 +175,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
         for target in row_targets:
             provider_type = target["provider_type"]
             external_chat_id = target["external_chat_id"]
-            idempotency_key = (
-                f"mailing:{mailing.id}:row:{row.id}:provider:{provider_type}:chat:{external_chat_id}"
-            )
+            idempotency_key = f"mailing:{mailing.id}:row:{row.id}:provider:{provider_type}:chat:{external_chat_id}"
 
             try:
                 DispatchTask.objects.create(
@@ -253,8 +191,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                     payload={
                         "mailing_id": mailing.id,
                         "mailing_guest_id": row.id,
-                        "channel_mode": "legacy_fallback" if target["guest_binding"] is None else "bindings",
-                        "legacy_channel_id": target.get("legacy_channel_id"),
+                        "channel_mode": "bindings",
                     },
                     scheduled_at=row.scheduled_datetime,
                     available_at=available_at,

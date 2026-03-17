@@ -215,10 +215,8 @@
 
 ## Обязательные флаги в `.env` (для включения нового контура)
 Минимум:
-1. `UNIVERSAL_QUEUE_ENABLE_MAILING_DISPATCH=true`
-2. `UNIVERSAL_QUEUE_ENABLE_WEBHOOK_ENQUEUE=true`
-3. `UNIVERSAL_QUEUE_REDIS_URL=redis://redis:6379/1`
-4. `UNIVERSAL_QUEUE_NAMESPACE=uq:v1`
+1. `UNIVERSAL_QUEUE_REDIS_URL=redis://redis:6379/1`
+2. `UNIVERSAL_QUEUE_NAMESPACE=uq:v1`
 
 Режим получателей и приоритет массовой рассылки задаются не в `.env`,
 а в карточке конкретной рассылки (`Mailing.target_mode` и `Mailing.queue_priority`).

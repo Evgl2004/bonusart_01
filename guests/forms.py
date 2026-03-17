@@ -1,7 +1,7 @@
 ﻿from django import forms
 from django.utils import timezone
 
-from .models import BotProfile, Category, Mailing, MailingChannel, MessageTemplate
+from .models import BotProfile, Category, Mailing, MessageTemplate
 
 
 class CategoryForm(forms.ModelForm):
@@ -60,7 +60,6 @@ class MailingForm(forms.ModelForm):
             "target_mode",
             "queue_priority",
             "bot_profiles",
-            "channels",
             # "is_active",
         ]
         widgets = {
@@ -94,12 +93,6 @@ class MailingForm(forms.ModelForm):
                     "size": "6",
                 }
             ),
-            "channels": forms.SelectMultiple(
-                attrs={
-                    "class": "form-select",
-                    "size": "6",
-                }
-            ),
             # "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
         }
         labels = {
@@ -113,7 +106,6 @@ class MailingForm(forms.ModelForm):
             "target_mode": "Режим получателей",
             "queue_priority": "Приоритет в очереди",
             "bot_profiles": "Боты для рассылки",
-            "channels": "Каналы рассылки",
             # "is_active": "Активна",
         }
 
@@ -140,10 +132,6 @@ class MailingForm(forms.ModelForm):
                 "provider_type", "name"
             )
             self.fields["bot_profiles"].required = True
-
-        if "channels" in self.fields:
-            self.fields["channels"].queryset = MailingChannel.objects.order_by("id")
-            self.fields["channels"].required = False
 
         if self.instance and self.instance.pk:
             if self.instance.send_window_begin:
