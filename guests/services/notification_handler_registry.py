@@ -5,7 +5,9 @@
 `scenario_code -> handler`, чтобы запуск сценариев выполнялся
 через единый централизованный слой.
 
-На текущем этапе реестр покрывает плановые (`trigger_type=schedule`) сценарии.
+На текущем этапе реестр покрывает:
+1. плановые (`trigger_type=schedule`) сценарии;
+2. webhook-сценарий `balance_changed`.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ import logging
 from typing import Dict, Iterable, Optional
 
 from guests.services.notification_registry import (
+    SCENARIO_CODE_BALANCE_CHANGED,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
 )
@@ -97,3 +100,68 @@ def run_registered_schedule_scenarios(
             coupon_resolver=coupon_resolver,
         )
     return result
+
+
+def _run_balance_changed_webhook_handler(
+    *,
+    webhook: dict,
+    is_enabled: bool = True,
+    priority: str = "high",
+    primary_only: bool = True,
+) -> int:
+    """
+    Handler webhook-сценария `balance_changed`.
+
+    Импорт выполняется локально, чтобы избежать циклической зависимости
+    между `webhooks.py` и реестром обработчиков.
+    """
+    from guests.services.balance_notifications import enqueue_balance_notification_from_webhook
+
+    return int(
+        enqueue_balance_notification_from_webhook(
+            webhook=webhook,
+            is_enabled=is_enabled,
+            priority=priority,
+            primary_only=primary_only,
+        )
+    )
+
+
+WEBHOOK_SCENARIO_HANDLERS = {
+    SCENARIO_CODE_BALANCE_CHANGED: _run_balance_changed_webhook_handler,
+}
+
+
+def run_webhook_scenario_by_code(
+    *,
+    scenario_code: str,
+    webhook: dict,
+    is_enabled: bool = True,
+    priority: str = "high",
+    primary_only: bool = True,
+) -> int:
+    """
+    Запускает webhook-сценарий по коду через реестр `code -> handler`.
+
+    Возвращает количество созданных задач DispatchTask.
+    """
+    safe_code = str(scenario_code or "").strip()
+    if not safe_code:
+        return 0
+
+    handler = WEBHOOK_SCENARIO_HANDLERS.get(safe_code)
+    if handler is None:
+        logger.warning(
+            "Для webhook scenario_code=%s не найден handler в реестре.",
+            safe_code,
+        )
+        return 0
+
+    return int(
+        handler(
+            webhook=webhook,
+            is_enabled=is_enabled,
+            priority=priority,
+            primary_only=primary_only,
+        )
+    )

@@ -14,12 +14,8 @@ from django.utils import timezone
 from guests.models import Category, DispatchTask, Guest, GuestCategory, GuestCategoryAssignment, Restaurant, VisitHistory
 
 from guests.services.iiko_client import iiko_client
+from guests.services.notification_handler_registry import run_webhook_scenario_by_code
 from guests.services.notification_registry import SCENARIO_CODE_BALANCE_CHANGED
-from guests.services.notification_events import (
-    ScenarioNotConfiguredError,
-    enqueue_notification_event_from_scenario,
-)
-from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -749,69 +745,16 @@ def enqueue_balance_notification_from_webhook(
     2. Параметры маршрутизации задаются явно из кода (без env-магии):
        priority=high, primary_only=True.
     """
-    if not is_enabled:
-        return 0
+    from guests.services.balance_notifications import (
+        enqueue_balance_notification_from_webhook as _enqueue_balance_notification,
+    )
 
-    event = webhook.get("parsed_body") or {}
-    if not isinstance(event, dict):
-        return 0
-
-    if not _is_balance_webhook(webhook, event):
-        return 0
-
-    guest = find_guest(event)
-    if not guest and event.get("phone"):
-        guest = get_or_create_guest_from_iiko(event["phone"])
-
-    if guest is None:
-        logger.info("Balance webhook enqueue: гость не найден, задача не создана.")
-        return 0
-
-    message_text = _build_balance_notification_text(event)
-    if not message_text:
-        return 0
-
-    webhook_id = webhook.get("id")
-    dedupe_key = _build_balance_dedupe_key(webhook=webhook, event=event, guest_id=guest.id)
-    payload = {
-        "webhook_id": webhook_id,
-        "notification_type": event.get("notificationType"),
-        "kind": "balance_changed",
-        "event": event,
-    }
-
-    try:
-        return enqueue_notification_event_from_scenario(
-            scenario_code=SCENARIO_CODE_BALANCE_CHANGED,
-            guest=guest,
-            dedupe_key=dedupe_key,
-            source_ref=str(webhook_id or ""),
-            event_source_type="webhook",
-            task_source_type=DispatchTask.SourceType.WEBHOOK,
-            payload=payload,
-            template_context={
-                "message_text": message_text,
-                "guest_id": guest.id,
-                "balance_change_value": _extract_balance_change_value(event) or "",
-            },
-            fallback_message_text=message_text,
-        )
-    except ScenarioNotConfiguredError:
-        logger.warning(
-            "Balance scenario '%s' не найден/выключен. "
-            "Используется fallback-продюсер без NotificationEvent.",
-            SCENARIO_CODE_BALANCE_CHANGED,
-        )
-        # Временный безопасный fallback, чтобы не блокировать отправки до настройки сценария.
-        return enqueue_guest_notification_tasks(
-            guest=guest,
-            message_text=message_text,
-            source_type=DispatchTask.SourceType.WEBHOOK,
-            source_key=f"balance:{webhook_id or ''}",
-            priority=priority,
-            primary_only=primary_only,
-            payload=payload,
-        )
+    return _enqueue_balance_notification(
+        webhook=webhook,
+        is_enabled=is_enabled,
+        priority=priority,
+        primary_only=primary_only,
+    )
 
 
 def handle_api_webhook(
@@ -845,8 +788,9 @@ def handle_api_webhook(
     # --- Явный balance-сценарий по фиксированному category external id ---
     if is_balance_webhook:
         try:
-            enqueued_tasks = enqueue_balance_notification_from_webhook(
-                webhook,
+            enqueued_tasks = run_webhook_scenario_by_code(
+                scenario_code=SCENARIO_CODE_BALANCE_CHANGED,
+                webhook=webhook,
                 is_enabled=send_balance_notification,
                 priority=DispatchTask.Priority.HIGH,
                 primary_only=True,

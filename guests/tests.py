@@ -27,6 +27,7 @@ from guests.services.notification_registry import (
 )
 from guests.services.notification_handler_registry import (
     run_registered_schedule_scenarios,
+    run_webhook_scenario_by_code,
 )
 from guests.services.notification_events import (
     SCENARIO_CODE_INACTIVE_7D,
@@ -171,6 +172,56 @@ class NotificationScenarioIntegrationTests(TestCase):
         event = NotificationEvent.objects.get()
         self.assertEqual(event.duplicate_hits, 1)
         self.assertIsNotNone(event.last_duplicate_at)
+
+    def test_webhook_registry_runner_executes_balance_handler(self):
+        """
+        Проверяет запуск balance webhook-сценария через реестр code -> handler.
+        """
+        webhook = {
+            "id": "wh_balance_1001",
+            "category_id_ext": "BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M",
+            "parsed_body": {
+                "phone": self.guest.phone,
+                "notificationType": 9,
+                "changeSum": "150",
+                "text": "Баланс изменён на 150",
+            },
+        }
+
+        created_tasks = run_webhook_scenario_by_code(
+            scenario_code=SCENARIO_CODE_BALANCE_CHANGED,
+            webhook=webhook,
+            is_enabled=True,
+            priority=DispatchTask.Priority.HIGH,
+            primary_only=True,
+        )
+
+        self.assertEqual(created_tasks, 1)
+        self.assertEqual(NotificationEvent.objects.count(), 1)
+        self.assertEqual(DispatchTask.objects.count(), 1)
+
+        event = NotificationEvent.objects.get()
+        task = DispatchTask.objects.get()
+        self.assertEqual(event.scenario.code, SCENARIO_CODE_BALANCE_CHANGED)
+        self.assertEqual(task.notification_event_id, event.id)
+
+    def test_webhook_registry_runner_returns_zero_for_unknown_code(self):
+        """
+        Для неизвестного webhook-кода реестр не падает и возвращает 0.
+        """
+        webhook = {
+            "id": "wh_unknown_2002",
+            "parsed_body": {"phone": self.guest.phone},
+        }
+        created_tasks = run_webhook_scenario_by_code(
+            scenario_code="unknown_webhook_code",
+            webhook=webhook,
+            is_enabled=True,
+            priority=DispatchTask.Priority.HIGH,
+            primary_only=True,
+        )
+
+        self.assertEqual(created_tasks, 0)
 
     def test_enqueue_notification_event_respects_cooldown_limit(self):
         """

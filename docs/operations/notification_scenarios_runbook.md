@@ -53,6 +53,8 @@ python manage.py run_notification_scenarios
 3. плановый сценарий неактивности через `run_scheduled_inactive_scenarios`.
 4. запуск плановых сценариев через реестр обработчиков `code -> handler`
    (`run_registered_schedule_scenarios`).
+5. запуск webhook-сценария `balance_changed` через реестр обработчиков
+   (`run_webhook_scenario_by_code`).
 
 Запуск:
 
