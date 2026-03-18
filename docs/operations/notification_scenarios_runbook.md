@@ -70,6 +70,9 @@ python manage.py run_notification_scenarios
    (`run_registered_schedule_scenarios`).
 5. запуск webhook-сценария `balance_changed` через реестр обработчиков
    (`run_webhook_scenario_by_code`).
+6. проверка границы `handle_api_webhook`:
+   - `notificationType=1` и `notificationType=5` не создают `DispatchTask`;
+   - эти типы выполняют только бизнес-обновления данных (`VisitHistory`/категории).
 
 Запуск:
 

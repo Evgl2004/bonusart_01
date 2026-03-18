@@ -12,9 +12,11 @@ from django.utils import timezone
 from guests.admin import NotificationScenarioAdminForm
 from guests.models import (
     BotProfile,
+    Category,
     DispatchTask,
     Guest,
     GuestBotBinding,
+    GuestCategory,
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
@@ -273,6 +275,65 @@ class NotificationScenarioIntegrationTests(TestCase):
 
         self.assertTrue(assigned)
         self.assertIn("enqueued=0", reason)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_handle_api_webhook_notification_type_1_updates_visit_without_dispatch(self):
+        """
+        notificationType=1 обновляет VisitHistory и не создаёт задачи отправки.
+        """
+        restaurant = Restaurant.objects.create(
+            iiko_id="rest_nt1_001",
+            name="Ресторан nt1",
+        )
+        webhook = {
+            "id": "wh_nt1_4001",
+            "parsed_body": {
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": restaurant.iiko_id,
+                "changedOn": "2026-03-18T10:00:00+05:00",
+            },
+        }
+
+        assigned, reason = handle_api_webhook(webhook, send_balance_notification=True)
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(VisitHistory.objects.count(), 1)
+        visit = VisitHistory.objects.get()
+        self.assertEqual(visit.guest_id, self.guest.id)
+        self.assertEqual(visit.restaurant_id, restaurant.id)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_handle_api_webhook_notification_type_5_assigns_category_without_dispatch(self):
+        """
+        notificationType=5 назначает категорию и не создаёт задачи отправки.
+        """
+        category = Category.objects.create(
+            name="Любитель стейков",
+            external_id="cat_nt5_001",
+            is_active=True,
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        webhook = {
+            "id": "wh_nt5_5001",
+            "category_id_ext": category.external_id,
+            "parsed_body": {
+                "notificationType": 5,
+                "phone": self.guest.phone,
+                "changedOn": "2026-03-18T11:00:00+05:00",
+            },
+        }
+
+        assigned, reason = handle_api_webhook(webhook, send_balance_notification=True)
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(GuestCategory.objects.count(), 1)
+        guest_category = GuestCategory.objects.get()
+        self.assertEqual(guest_category.guest_id, self.guest.id)
+        self.assertEqual(guest_category.category_id, category.id)
         self.assertEqual(NotificationEvent.objects.count(), 0)
         self.assertEqual(DispatchTask.objects.count(), 0)
 
