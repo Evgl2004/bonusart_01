@@ -1,4 +1,5 @@
 import asyncio
+import math
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -17,9 +18,13 @@ from guests.services.universal_queue.redis_lanes import ProviderLaneQueue
 
 def _as_float(value, default: float) -> float:
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return default
+    # Защита от NaN/Inf из окружения: такие значения ломают лимиты и таймеры.
+    if not math.isfinite(parsed):
+        return default
+    return parsed
 
 
 class Command(BaseCommand):
@@ -102,8 +107,13 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         provider_type = str(options["provider"]).strip().lower()
-        redis_url = options["redis_url"]
-        namespace = options["namespace"]
+        redis_url = str(options["redis_url"]).strip()
+        namespace = str(options["namespace"]).strip()
+
+        if not redis_url:
+            raise CommandError("Пустой redis-url для provider-worker.")
+        if not namespace:
+            raise CommandError("Пустой namespace для provider-worker.")
 
         block_timeout = max(1, int(options["block_timeout"]))
         idle_sleep = max(0.05, float(options["idle_sleep"]))
