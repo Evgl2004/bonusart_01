@@ -34,6 +34,7 @@ from guests.services.notification_events import (
     enqueue_notification_event_from_scenario,
 )
 from guests.services.notification_scenarios import run_scheduled_inactive_scenarios
+from guests.services.webhooks import handle_api_webhook
 
 
 class NotificationScenarioIntegrationTests(TestCase):
@@ -222,6 +223,58 @@ class NotificationScenarioIntegrationTests(TestCase):
         )
 
         self.assertEqual(created_tasks, 0)
+
+    def test_handle_api_webhook_routes_balance_to_registry(self):
+        """
+        Центральный обработчик webhook должен вести balance-событие
+        через реестр `run_webhook_scenario_by_code`.
+        """
+        webhook = {
+            "id": "wh_balance_3003",
+            "category_id_ext": "BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M",
+            "parsed_body": {
+                "phone": self.guest.phone,
+                "notificationType": 9,
+                "changeSum": "200",
+                "text": "Баланс изменён на 200",
+            },
+        }
+
+        assigned, reason = handle_api_webhook(
+            webhook,
+            send_balance_notification=True,
+        )
+
+        self.assertTrue(assigned)
+        self.assertIn("balance webhook processed", reason)
+        self.assertEqual(NotificationEvent.objects.count(), 1)
+        self.assertEqual(DispatchTask.objects.count(), 1)
+
+    def test_handle_api_webhook_balance_respects_send_toggle(self):
+        """
+        При `send_balance_notification=False` вебхук считается обработанным,
+        но задачи доставки не создаются.
+        """
+        webhook = {
+            "id": "wh_balance_3004",
+            "category_id_ext": "BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M",
+            "parsed_body": {
+                "phone": self.guest.phone,
+                "notificationType": 9,
+                "changeSum": "250",
+                "text": "Баланс изменён на 250",
+            },
+        }
+
+        assigned, reason = handle_api_webhook(
+            webhook,
+            send_balance_notification=False,
+        )
+
+        self.assertTrue(assigned)
+        self.assertIn("enqueued=0", reason)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
 
     def test_enqueue_notification_event_respects_cooldown_limit(self):
         """

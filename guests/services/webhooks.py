@@ -3,8 +3,6 @@ import logging
 import requests
 import time
 import os
-import hashlib
-import json
 
 from datetime import datetime, timedelta
 
@@ -13,7 +11,7 @@ from django.utils import timezone
 
 from guests.models import Category, DispatchTask, Guest, GuestCategory, GuestCategoryAssignment, Restaurant, VisitHistory
 
-from guests.services.iiko_client import iiko_client
+from guests.services.balance_notifications import BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID, is_balance_webhook
 from guests.services.notification_handler_registry import run_webhook_scenario_by_code
 from guests.services.notification_registry import SCENARIO_CODE_BALANCE_CHANGED
 
@@ -30,7 +28,6 @@ SAGUR_PASSWORD = os.getenv("SAGUR_PASSWORD")
 
 PAGE_SIZE= 490
 LIMIT = 490
-BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID = "BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M"
 
 ACCESS_TOKEN = None
 TOKEN_EXPIRES_AT = 0  # Время последней проверки токена
@@ -238,6 +235,12 @@ def get_or_create_guest_from_iiko(phone: str) -> Guest | None:
     """
 
     if not phone:
+        return None
+
+    try:
+        from guests.services.iiko_client import iiko_client
+    except Exception as e:
+        logger.error("iiko-клиент недоступен: %s", e)
         return None
 
     # 1. Запрашиваем iiko API
@@ -641,94 +644,6 @@ def update_visit_history_from_event(event: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def _extract_balance_change_value(event: dict) -> str | None:
-    """
-    Возвращает ключевое значение изменения баланса из webhook-события.
-
-    В проде встречаются разные payload-форматы, поэтому проверяем
-    несколько наиболее частых полей.
-    """
-    for field_name in ("changeSum", "newBalance", "balance", "sum"):
-        value = event.get(field_name)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return None
-
-
-def _extract_category_external_id(webhook: dict, event: dict) -> str:
-    """
-    Извлекает внешний идентификатор категории из webhook.
-
-    В разных payload-версиях поле может называться по-разному, поэтому
-    проверяем несколько вариантов.
-    """
-    candidates = (
-        webhook.get("category_id_ext"),
-        event.get("category_id_ext"),
-        event.get("categoryExternalId"),
-        event.get("categoryId"),
-    )
-    for value in candidates:
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
-
-
-def _is_balance_webhook(webhook: dict, event: dict) -> bool:
-    """
-    Определяет, что webhook относится к сценарию «Баланс».
-
-    Критерий строгий и явный:
-    `category_external_id == BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID`.
-    """
-    category_external_id = _extract_category_external_id(webhook, event)
-    return category_external_id == BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID
-
-
-def _build_balance_notification_text(event: dict) -> str:
-    """
-    Формирует текст уведомления об изменении баланса.
-
-    Приоритет:
-    1. Явный текст из webhook;
-    2. Автогенерация из числового значения изменения баланса.
-    """
-    text = str(event.get("text") or "").strip()
-    if text:
-        return text
-
-    value = _extract_balance_change_value(event)
-    if value is not None:
-        return f"Изменение баланса: {value}"
-
-    return "Произошло изменение баланса."
-
-
-def _build_balance_dedupe_key(webhook: dict, event: dict, guest_id: int) -> str:
-    """
-    Формирует ключ дедупликации для balance-уведомления.
-
-    Правила:
-    1. если у webhook есть id -> используем его как самый надёжный источник идемпотентности;
-    2. если id отсутствует -> строим hash-ключ по стабильным полям события.
-    """
-    webhook_id = webhook.get("id")
-    if webhook_id:
-        return f"balance:webhook:{webhook_id}"
-
-    stable_payload = {
-        "guest_id": guest_id,
-        "category_id_ext": _extract_category_external_id(webhook, event),
-        "changed_on": str(event.get("changedOn") or ""),
-        "notification_type": str(event.get("notificationType") or ""),
-        "value": str(_extract_balance_change_value(event) or ""),
-    }
-    digest = hashlib.sha1(
-        json.dumps(stable_payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
-    ).hexdigest()
-    return f"balance:fallback:{digest}"
-
-
 def enqueue_balance_notification_from_webhook(
     webhook: dict,
     *,
@@ -783,10 +698,10 @@ def handle_api_webhook(
     event = webhook.get("parsed_body") or {}
     notif_type = event.get("notificationType")
     webhook_id = webhook.get("id")
-    is_balance_webhook = _is_balance_webhook(webhook, event if isinstance(event, dict) else {})
+    is_balance_event = is_balance_webhook(webhook, event if isinstance(event, dict) else {})
 
     # --- Явный balance-сценарий по фиксированному category external id ---
-    if is_balance_webhook:
+    if is_balance_event:
         try:
             enqueued_tasks = run_webhook_scenario_by_code(
                 scenario_code=SCENARIO_CODE_BALANCE_CHANGED,

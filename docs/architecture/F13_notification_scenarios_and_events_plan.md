@@ -90,3 +90,10 @@
 1. В момент создания `NotificationEvent` вычисляется `planned_send_at`.
 2. Затем создаётся `DispatchTask` с `available_at = planned_send_at`.
 3. Диспетчер забирает только задачи, у которых `available_at <= now()`.
+
+## Пост-стабилизация после закрытия шагов
+1. Удалены дубли balance-логики из `guests/services/webhooks.py`:
+   источник истины для balance-сценария теперь только `guests/services/balance_notifications.py`.
+2. В `webhooks.py` импорт `iiko_client` переведён в ленивый режим (внутри функции),
+   чтобы модуль безопасно импортировался в тестах и служебных сценариях без жёсткой
+   зависимости от iiko-настроек на этапе импорта.

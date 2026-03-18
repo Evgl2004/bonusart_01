@@ -41,6 +41,21 @@ python manage.py run_notification_scenarios
 1. `DispatchTask.notification_scenario` и `DispatchTask.notification_event` связывают доставку с первопричиной события;
 2. для маркетинговых кампаний по-прежнему используется `DispatchTask.mailing_guest`.
 
+## Как работает webhook-поток сейчас
+Центральная точка: `guests.services.webhooks.handle_api_webhook`.
+
+Маршрутизация:
+1. `category_id_ext == BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M` (`balance_changed`) ->
+   `run_webhook_scenario_by_code("balance_changed", ...)` ->
+   `NotificationEvent -> DispatchTask`.
+2. `notificationType=1` -> обновление `VisitHistory` (без постановки задач отправки).
+3. `notificationType=5` -> назначение категории гостю (без постановки задач отправки).
+4. остальные типы -> диагностический лог, спец-обработка не выполняется.
+
+Параметр `send_balance_notification=False`:
+1. отключает только enqueue balance-уведомления;
+2. не отключает общую бизнес-обработку webhook.
+
 ## Ограничение текущего каркаса
 Сценарий `inactive_30d_coupon` пока не интегрирован с реальной выдачей купонов iiko:
 1. если `coupon_required=True` и купон не получен, событие пропускается;
