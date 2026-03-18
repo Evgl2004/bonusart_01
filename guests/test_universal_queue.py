@@ -16,8 +16,9 @@ import os
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
 from asgiref.sync import async_to_sync
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from guests.models import BotProfile, DispatchTask, Guest, GuestBotBinding
@@ -703,6 +704,32 @@ class ProviderClientHelpersTests(SimpleTestCase):
         def resolve_token(self) -> str:
             return self._token
 
+    @staticmethod
+    def _response(
+        status_code: int,
+        *,
+        json_data=None,
+        text: str = "",
+        headers: dict | None = None,
+    ) -> httpx.Response:
+        """
+        Строит httpx.Response с привязанным request для корректной работы `.text/.json`.
+        """
+        request = httpx.Request("POST", "https://provider.example/send")
+        if json_data is not None:
+            return httpx.Response(
+                status_code=status_code,
+                json=json_data,
+                headers=headers or {},
+                request=request,
+            )
+        return httpx.Response(
+            status_code=status_code,
+            text=text,
+            headers=headers or {},
+            request=request,
+        )
+
     def test_build_provider_sender_factory(self):
         """
         Фабрика sender должна возвращать корректные классы.
@@ -742,6 +769,197 @@ class ProviderClientHelpersTests(SimpleTestCase):
             task_4 = self._TaskStub(bot_profile=self._BotProfileStub(""), payload={})
             token_4 = async_to_sync(_resolve_bot_token)(task_4, "UNIVERSAL_QUEUE_TELEGRAM_FALLBACK_TOKEN")
             self.assertEqual(token_4, "from-env")
+
+    def test_telegram_sender_send_success_with_optional_payload(self):
+        """
+        Telegram sender должен корректно собирать request body и возвращать message_id.
+        """
+        sender = TelegramAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(
+                200,
+                json_data={"ok": True, "result": {"message_id": 12345}},
+            )
+        )
+        task = self._TaskStub(
+            bot_profile=self._BotProfileStub("tg_token_1"),
+            payload={"parse_mode": "HTML", "disable_web_page_preview": True},
+        )
+
+        result = async_to_sync(sender.send)(task, "777000", "Тест")
+
+        self.assertEqual(result.provider_message_id, "12345")
+        self.assertIn("/bottg_token_1/sendMessage", sender.client.post.call_args.args[0])
+        request_json = sender.client.post.call_args.kwargs["json"]
+        self.assertEqual(request_json["chat_id"], "777000")
+        self.assertEqual(request_json["text"], "Тест")
+        self.assertEqual(request_json["parse_mode"], "HTML")
+        self.assertTrue(request_json["disable_web_page_preview"])
+
+    def test_telegram_sender_raises_rate_limit_from_payload_retry_after(self):
+        """
+        При HTTP 429 Telegram sender должен поднимать ProviderRateLimitError.
+        """
+        sender = TelegramAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(
+                429,
+                json_data={"ok": False, "parameters": {"retry_after": 9}},
+            )
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("tg_token_2"))
+
+        with self.assertRaises(ProviderRateLimitError) as exc:
+            async_to_sync(sender.send)(task, "777001", "Тест 429")
+
+        self.assertEqual(exc.exception.retry_after_seconds, 9.0)
+
+    def test_telegram_sender_raises_blocked_on_api_error_code_403(self):
+        """
+        При ok=False и error_code=403 Telegram sender должен считать чат заблокированным.
+        """
+        sender = TelegramAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(
+                200,
+                json_data={
+                    "ok": False,
+                    "error_code": 403,
+                    "description": "Forbidden: bot was blocked by the user",
+                },
+            )
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("tg_token_3"))
+
+        with self.assertRaises(ProviderBlockedError):
+            async_to_sync(sender.send)(task, "777002", "Тест blocked")
+
+    @override_settings(MAX_API_AUTH_PREFIX="Bearer", MAX_API_BASE_URL="https://platform-api.max.ru")
+    def test_max_sender_send_success_uses_user_id_and_auth_prefix(self):
+        """
+        MAX sender должен использовать user_id из payload и корректно формировать Authorization.
+        """
+        sender = MaxAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(200, json_data={"id": "max_msg_1"})
+        )
+        task = self._TaskStub(
+            bot_profile=self._BotProfileStub("max_token_1"),
+            payload={"max_user_id": "user-100"},
+        )
+
+        result = async_to_sync(sender.send)(task, "chat-ignored", "MAX text")
+
+        self.assertEqual(result.provider_message_id, "max_msg_1")
+        call_kwargs = sender.client.post.call_args.kwargs
+        self.assertEqual(call_kwargs["params"], {"user_id": "user-100"})
+        self.assertEqual(call_kwargs["headers"]["Authorization"], "Bearer max_token_1")
+
+    def test_max_sender_raises_blocked_for_404(self):
+        """
+        HTTP 404 от MAX трактуется как недоступный чат/пользователь.
+        """
+        sender = MaxAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(404, json_data={"message": "not found"})
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("max_token_2"))
+
+        with self.assertRaises(ProviderBlockedError):
+            async_to_sync(sender.send)(task, "chat-404", "MAX blocked")
+
+    def test_max_sender_raises_rate_limit_from_retry_after_header(self):
+        """
+        MAX sender должен читать Retry-After из HTTP-заголовка при 429.
+        """
+        sender = MaxAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(
+                429,
+                json_data={"error": "too many requests"},
+                headers={"Retry-After": "4"},
+            )
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("max_token_3"))
+
+        with self.assertRaises(ProviderRateLimitError) as exc:
+            async_to_sync(sender.send)(task, "chat-429", "MAX retry")
+
+        self.assertEqual(exc.exception.retry_after_seconds, 4.0)
+
+    def test_vk_sender_send_success_returns_message_id(self):
+        """
+        VK sender должен отдавать message_id из response и передавать random_id.
+        """
+        sender = VkAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(200, json_data={"response": {"message_id": 6789}})
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("vk_token_1"))
+
+        with patch("guests.services.universal_queue.provider_clients.random.randint", return_value=77):
+            result = async_to_sync(sender.send)(task, "2000000001", "VK text")
+
+        self.assertEqual(result.provider_message_id, "6789")
+        request_data = sender.client.post.call_args.kwargs["data"]
+        self.assertEqual(request_data["peer_id"], "2000000001")
+        self.assertEqual(request_data["random_id"], 77)
+        self.assertEqual(request_data["message"], "VK text")
+
+    def test_vk_sender_raises_rate_limit_for_error_code_6(self):
+        """
+        VK error_code=6 должен превращаться в ProviderRateLimitError.
+        """
+        sender = VkAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(
+                200,
+                json_data={"error": {"error_code": 6, "error_msg": "Too many requests"}},
+            )
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("vk_token_2"))
+
+        with self.assertRaises(ProviderRateLimitError) as exc:
+            async_to_sync(sender.send)(task, "2000000002", "VK rate")
+
+        self.assertEqual(exc.exception.retry_after_seconds, 1.0)
+
+    def test_vk_sender_raises_blocked_for_error_code_901(self):
+        """
+        VK error_code=901 должен трактоваться как блокировка/недоступность получателя.
+        """
+        sender = VkAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(
+                200,
+                json_data={"error": {"error_code": 901, "error_msg": "Can't send messages to this user"}},
+            )
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("vk_token_3"))
+
+        with self.assertRaises(ProviderBlockedError):
+            async_to_sync(sender.send)(task, "2000000003", "VK blocked")
+
+    def test_vk_sender_raises_temporary_for_http_5xx(self):
+        """
+        Любой HTTP 5xx от VK должен считаться временной ошибкой провайдера.
+        """
+        sender = VkAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(return_value=self._response(503, text="Service unavailable"))
+        task = self._TaskStub(bot_profile=self._BotProfileStub("vk_token_4"))
+
+        with self.assertRaises(ProviderTemporaryError):
+            async_to_sync(sender.send)(task, "2000000004", "VK 503")
 
 
 class ProviderWorkerTests(TestCase):
