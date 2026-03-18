@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import signal
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -27,6 +28,7 @@ from guests.services.universal_queue.maintenance import UniversalQueueMaintenanc
 from guests.services.universal_queue.provider_clients import (
     MaxAsyncSender,
     ProviderBlockedError,
+    ProviderPermanentError,
     ProviderRateLimitError,
     ProviderSendResult,
     ProviderTemporaryError,
@@ -1127,3 +1129,288 @@ class ProviderWorkerTests(TestCase):
         self.assertIn("blocked", task.last_error or "")
         self.assertTrue(self.binding.is_stop_sending)
         self.assertFalse(self.binding.is_active)
+
+    def test_process_envelope_with_missing_chat_id_marks_failed(self):
+        """
+        Если chat_id отсутствует и в envelope, и в задаче — задача должна перейти в failed.
+        """
+        task = self._create_queued_task(external_chat_id="")
+        envelope = self._envelope_for_task(task)
+        worker, limiter = self._build_worker(sender=_SuccessSender())
+
+        async_to_sync(worker._process_envelope)("high", envelope)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, DispatchTask.Status.FAILED)
+        self.assertIn("external_chat_id", task.last_error or "")
+        self.assertEqual(limiter.acquire_calls, [])
+
+    def test_process_envelope_permanent_error_marks_failed(self):
+        """
+        Permanent ошибка провайдера должна переводить задачу в failed без requeue.
+        """
+        task = self._create_queued_task()
+        envelope = self._envelope_for_task(task)
+        sender = _ErrorSender(ProviderPermanentError("perm"))
+        worker, limiter = self._build_worker(sender=sender)
+
+        async_to_sync(worker._process_envelope)("normal", envelope)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, DispatchTask.Status.FAILED)
+        self.assertIn("permanent_error", task.last_error or "")
+        self.assertEqual(len(limiter.retry_after_calls), 0)
+
+    def test_process_envelope_unexpected_error_requeues(self):
+        """
+        Неожиданная ошибка при не исчерпанных попытках должна requeue задачу.
+        """
+        task = self._create_queued_task(attempt=0, max_attempts=3)
+        envelope = self._envelope_for_task(task)
+        sender = _ErrorSender(RuntimeError("boom"))
+        worker, limiter = self._build_worker(sender=sender)
+
+        async_to_sync(worker._process_envelope)("bulk", envelope)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, DispatchTask.Status.PENDING)
+        self.assertIn("unexpected_error", task.last_error or "")
+        self.assertEqual(len(limiter.retry_after_calls), 1)
+
+    def test_process_envelope_unexpected_error_exhausted_marks_failed(self):
+        """
+        Неожиданная ошибка при исчерпании попыток должна завершать задачу с failed.
+        """
+        task = self._create_queued_task(attempt=2, max_attempts=3)
+        envelope = self._envelope_for_task(task)
+        sender = _ErrorSender(RuntimeError("boom exhausted"))
+        worker, limiter = self._build_worker(sender=sender)
+
+        async_to_sync(worker._process_envelope)("high", envelope)
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, DispatchTask.Status.FAILED)
+        self.assertIn("unexpected_error_exhausted", task.last_error or "")
+        self.assertEqual(len(limiter.retry_after_calls), 1)
+
+    def test_process_envelope_when_task_not_claimed_does_nothing(self):
+        """
+        Если задача уже не в queued, воркер должен выйти без отправки.
+        """
+        task = self._create_queued_task()
+        task.status = DispatchTask.Status.DONE
+        task.save(update_fields=["status"])
+        envelope = self._envelope_for_task(task)
+        worker, limiter = self._build_worker(sender=_SuccessSender())
+
+        async_to_sync(worker._process_envelope)("high", envelope)
+
+        self.assertEqual(limiter.acquire_calls, [])
+
+    def test_claim_task_sync_returns_none_for_non_queued(self):
+        """
+        _claim_task_sync должен вернуть None, если статус задачи не queued.
+        """
+        task = self._create_queued_task()
+        task.status = DispatchTask.Status.PENDING
+        task.save(update_fields=["status"])
+
+        claimed = AsyncProviderWorker._claim_task_sync(task.id)
+        self.assertIsNone(claimed)
+
+    def test_mark_binding_blocked_sync_ignores_task_without_binding(self):
+        """
+        _mark_binding_blocked_sync не должен падать для задач без guest_binding.
+        """
+        task = self._create_queued_task()
+        task.guest_binding = None
+        task.save(update_fields=["guest_binding"])
+
+        AsyncProviderWorker._mark_binding_blocked_sync(task)
+        # Проверка на отсутствие исключения + исходная привязка не изменилась.
+        self.binding.refresh_from_db()
+        self.assertFalse(self.binding.is_stop_sending)
+
+
+class ProviderWorkerRuntimeTests(SimpleTestCase):
+    """
+    Тесты рантайм-логики воркера без обращения к БД.
+    """
+
+    @staticmethod
+    def _envelope(task_id: int = 1) -> QueueEnvelope:
+        return QueueEnvelope(
+            task_id=task_id,
+            task_uuid=f"uuid-{task_id}",
+            source_type="system",
+            provider_type="telegram",
+            priority="high",
+            message_text="runtime test",
+            payload={},
+            guest_id=None,
+            guest_binding_id=None,
+            external_chat_id="chat-runtime",
+            idempotency_key=f"idem-{task_id}",
+        )
+
+    @staticmethod
+    def _build_worker(*, once: bool = False, lane_queue=None):
+        sender = Mock()
+        sender.startup = AsyncMock(return_value=None)
+        sender.shutdown = AsyncMock(return_value=None)
+        sender.send = AsyncMock()
+        config = ProviderWorkerConfig(
+            provider_type="telegram",
+            once=once,
+            fair_policy=FairPolicy(high=1, normal=1, bulk=1),
+        )
+        with patch("guests.services.universal_queue.provider_worker.build_provider_sender", return_value=sender):
+            worker = AsyncProviderWorker(
+                lane_queue=lane_queue or Mock(),
+                rate_limiter=_FakeRateLimiter(),
+                config=config,
+            )
+        return worker, sender
+
+    def test_request_stop_and_signal_handler(self):
+        """
+        request_stop и signal-handler должны выставлять флаг остановки.
+        """
+        worker, _ = self._build_worker()
+        self.assertFalse(worker.should_stop)
+        worker.request_stop()
+        self.assertTrue(worker.should_stop)
+        worker.should_stop = False
+        worker._signal_handler(signal.SIGTERM, None)
+        self.assertTrue(worker.should_stop)
+
+    def test_bind_signal_handlers_registers_sigint_and_sigterm(self):
+        """
+        bind_signal_handlers должен регистрировать обработчики SIGINT/SIGTERM.
+        """
+        worker, _ = self._build_worker()
+        with patch("guests.services.universal_queue.provider_worker.signal.signal") as mocked_signal:
+            worker.bind_signal_handlers()
+
+        self.assertEqual(mocked_signal.call_count, 2)
+        first_call_args = mocked_signal.call_args_list[0].args
+        second_call_args = mocked_signal.call_args_list[1].args
+        self.assertEqual(first_call_args[0], signal.SIGINT)
+        self.assertEqual(second_call_args[0], signal.SIGTERM)
+
+    def test_next_fair_priority_cycles(self):
+        """
+        _next_fair_priority должен ходить по циклу и возвращаться в начало.
+        """
+        worker, _ = self._build_worker()
+        cycle = [worker._next_fair_priority() for _ in range(4)]
+        self.assertEqual(cycle, ["high", "normal", "bulk", "high"])
+
+    def test_pop_next_envelope_prefers_current_fair_lane(self):
+        """
+        Если в предпочитаемом lane есть задача, fallback не используется.
+        """
+        lane_queue = Mock()
+        lane_queue.pop_from_lane.side_effect = [self._envelope(1)]
+        worker, _ = self._build_worker(lane_queue=lane_queue)
+
+        priority, envelope = async_to_sync(worker._pop_next_envelope)()
+
+        self.assertEqual(priority, "high")
+        self.assertEqual(envelope.task_id, 1)
+        lane_queue.pop_for_provider.assert_not_called()
+
+    def test_pop_next_envelope_falls_back_to_other_priority(self):
+        """
+        При пустом preferred lane воркер должен проверить остальные приоритеты.
+        """
+        lane_queue = Mock()
+        lane_queue.pop_from_lane.side_effect = [
+            None,  # preferred high
+            None,  # high в fallback-цикле пропускается, сюда normal
+            self._envelope(2),  # bulk
+        ]
+        worker, _ = self._build_worker(lane_queue=lane_queue)
+
+        priority, envelope = async_to_sync(worker._pop_next_envelope)()
+
+        self.assertEqual(priority, "bulk")
+        self.assertEqual(envelope.task_id, 2)
+
+    def test_pop_next_envelope_uses_blpop_result(self):
+        """
+        Если lane-проверки пустые, воркер должен взять задачу из blocking pop.
+        """
+        lane_queue = Mock()
+        lane_queue.pop_from_lane.side_effect = [None, None, None]
+        lane_queue.pop_for_provider.return_value = ("uq:v1:telegram:normal", self._envelope(3))
+        worker, _ = self._build_worker(lane_queue=lane_queue)
+
+        priority, envelope = async_to_sync(worker._pop_next_envelope)()
+
+        self.assertEqual(priority, "normal")
+        self.assertEqual(envelope.task_id, 3)
+        lane_queue.pop_for_provider.assert_called_once()
+
+    def test_pop_next_envelope_returns_none_on_timeout(self):
+        """
+        Если blocking pop вернул None, воркер должен вернуть None.
+        """
+        lane_queue = Mock()
+        lane_queue.pop_from_lane.side_effect = [None, None, None]
+        lane_queue.pop_for_provider.return_value = None
+        worker, _ = self._build_worker(lane_queue=lane_queue)
+
+        result = async_to_sync(worker._pop_next_envelope)()
+        self.assertIsNone(result)
+
+    def test_run_once_with_empty_queue_sleeps_and_stops(self):
+        """
+        В режиме once при пустой очереди воркер должен сделать один sleep и завершиться.
+        """
+        worker, sender = self._build_worker(once=True)
+        worker._pop_next_envelope = AsyncMock(return_value=None)
+        worker._process_envelope = AsyncMock()
+
+        with patch("guests.services.universal_queue.provider_worker.asyncio.sleep", new=AsyncMock()) as mocked_sleep:
+            async_to_sync(worker.run)()
+
+        sender.startup.assert_awaited_once()
+        sender.shutdown.assert_awaited_once()
+        mocked_sleep.assert_awaited_once()
+        worker._process_envelope.assert_not_awaited()
+
+    def test_run_once_processes_single_item(self):
+        """
+        В режиме once воркер должен обработать ровно одну найденную задачу.
+        """
+        worker, sender = self._build_worker(once=True)
+        worker._pop_next_envelope = AsyncMock(return_value=("high", self._envelope(10)))
+        worker._process_envelope = AsyncMock()
+
+        async_to_sync(worker.run)()
+
+        sender.startup.assert_awaited_once()
+        sender.shutdown.assert_awaited_once()
+        worker._process_envelope.assert_awaited_once()
+
+    def test_run_idle_then_process_and_stop(self):
+        """
+        В обычном режиме воркер должен переживать idle-итерацию и продолжать цикл.
+        """
+        worker, sender = self._build_worker(once=False)
+        worker._pop_next_envelope = AsyncMock(side_effect=[None, ("normal", self._envelope(11))])
+
+        async def _process(*args, **kwargs):
+            worker.request_stop()
+            return None
+
+        worker._process_envelope = AsyncMock(side_effect=_process)
+
+        with patch("guests.services.universal_queue.provider_worker.asyncio.sleep", new=AsyncMock()) as mocked_sleep:
+            async_to_sync(worker.run)()
+
+        sender.startup.assert_awaited_once()
+        sender.shutdown.assert_awaited_once()
+        mocked_sleep.assert_awaited_once()
+        worker._process_envelope.assert_awaited_once()
