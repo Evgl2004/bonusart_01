@@ -318,12 +318,14 @@ class WebhookWorker:
         try:
             message = self._parse_message(message_bytes)
         except FatalMessageError as err:
+            self.metrics['messages_failed'] += 1
             logger.error(f"Неустранимая ошибка парсинга: {err}")
             self._send_to_dlq(message_bytes, reason=str(err))
             return
 
         # Проверка превышения лимита повторных попыток
         if message.retry_count >= self.max_retries:
+            self.metrics['messages_failed'] += 1
             logger.error(
                 f"Уведомление id={message.id} превысило лимит попыток "
                 f"({message.retry_count}/{self.max_retries}). Отправка в DLQ."
@@ -334,6 +336,7 @@ class WebhookWorker:
         try:
             self._process_single_message(message)
         except RetryableError as err:
+            self.metrics['messages_failed'] += 1
             # Временная ошибка - отправляем сообщение на повторную обработку
             logger.warning(
                 f"Временная ошибка обработки Уведомления id={message.id}: {err}. "
@@ -341,10 +344,12 @@ class WebhookWorker:
             )
             self._retry_message(message, message_bytes, str(err))
         except FatalMessageError as err:
+            self.metrics['messages_failed'] += 1
             # Неустранимая ошибка - отправляем в DLQ
             logger.error(f"Неустранимая ошибка обработки Уведомления id={message.id}: {err}")
             self._send_to_dlq(message_bytes, reason=str(err))
         except Exception as err:
+            self.metrics['messages_failed'] += 1
             # Непредвиденная ошибка - пытаемся повторить
             logger.exception(f"Непредвиденная ошибка обработки Уведомления id={message.id}")
             self._retry_message(message, message_bytes, f"Непредвиденная ошибка: {err}")
@@ -527,6 +532,7 @@ class WebhookWorker:
             }
             dlq_bytes = json.dumps(dlq_message).encode('utf-8')
             self.redis_client.rpush(self.dlq_name, dlq_bytes)
+            self.metrics['messages_dlq'] += 1
             logger.warning(f"Сообщение отправлено в DLQ. Причина: {reason}")
         except Exception as err:
             logger.error(f"Не удалось отправить сообщение в DLQ: {err}")
