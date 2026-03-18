@@ -1,4 +1,4 @@
-from django.db import models
+﻿from django.db import models
 from django.core.exceptions import ValidationError
 from django.utils import timezone
 import os
@@ -207,15 +207,15 @@ class Mailing(models.Model):
         managed = True  # таблица полностью управляется Django migrations
         constraints = [
             models.CheckConstraint(
-                check=models.Q(scheduled_time_begin__lte=models.F("scheduled_time_end")),
+                condition=models.Q(scheduled_time_begin__lte=models.F("scheduled_time_end")),
                 name="mailings_time_chk",
             ),
             models.CheckConstraint(
-                check=models.Q(target_mode__in=["primary_only", "all_bots"]),
+                condition=models.Q(target_mode__in=["primary_only", "all_bots"]),
                 name="mailings_target_mode_chk",
             ),
             models.CheckConstraint(
-                check=models.Q(queue_priority__in=["high", "normal", "bulk"]),
+                condition=models.Q(queue_priority__in=["high", "normal", "bulk"]),
                 name="mailings_queue_priority_chk",
             ),
         ]
@@ -316,7 +316,7 @@ class MailingGuest(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["mailing", "guest"], name="mailing_guests_uniq"),
             models.CheckConstraint(
-                check=models.Q(status__in=["planned", "in_progress", "done", "error"]),
+                condition=models.Q(status__in=["planned", "in_progress", "done", "error"]),
                 name="mailing_guests_status_chk",
             ),
         ]
@@ -580,15 +580,15 @@ class NotificationScenario(models.Model):
         verbose_name_plural = "Сценарии уведомлений"
         constraints = [
             models.CheckConstraint(
-                check=models.Q(priority__in=["high", "normal", "bulk"]),
+                condition=models.Q(priority__in=["high", "normal", "bulk"]),
                 name="ns_priority_chk",
             ),
             models.CheckConstraint(
-                check=models.Q(target_mode__in=["primary_only", "all_bots"]),
+                condition=models.Q(target_mode__in=["primary_only", "all_bots"]),
                 name="ns_target_mode_chk",
             ),
             models.CheckConstraint(
-                check=models.Q(distribution_mode__in=["immediate", "uniform"]),
+                condition=models.Q(distribution_mode__in=["immediate", "uniform"]),
                 name="ns_distribution_mode_chk",
             ),
         ]
@@ -916,7 +916,7 @@ class DispatchTask(models.Model):
         verbose_name_plural = "Задачи диспетчера"
         constraints = [
             models.CheckConstraint(
-                check=models.Q(attempt__lte=models.F("max_attempts")),
+                condition=models.Q(attempt__lte=models.F("max_attempts")),
                 name="dispatch_tasks_attempt_lte_max",
             ),
         ]
@@ -937,6 +937,7 @@ class DispatchTask(models.Model):
 
     def __str__(self):
         return f"task={self.id} provider={self.provider_type} priority={self.priority} status={self.status}"
+
 
 
 
