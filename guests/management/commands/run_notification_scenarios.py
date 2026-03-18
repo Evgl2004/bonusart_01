@@ -5,11 +5,11 @@ from typing import Dict, Iterable
 
 from django.core.management.base import BaseCommand
 
-from guests.services.notification_scenarios import (
-    DEFAULT_SCENARIO_CODES,
-    ScenarioRunStat,
-    run_scheduled_inactive_scenarios,
+from guests.services.notification_handler_registry import (
+    DEFAULT_SCHEDULE_SCENARIO_CODES,
+    run_registered_schedule_scenarios,
 )
+from guests.services.notification_scenarios import ScenarioRunStat
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class Command(BaseCommand):
 
     help = (
         "Плановый запуск автоматизированных сценариев уведомлений "
-        "(inactive_7d, inactive_30d_coupon)."
+        "через реестр обработчиков (code -> handler)."
     )
 
     def __init__(self, *args, **kwargs):
@@ -56,7 +56,7 @@ class Command(BaseCommand):
             default=[],
             help=(
                 "Код сценария для запуска. Можно передать параметр несколько раз. "
-                f"По умолчанию: {', '.join(DEFAULT_SCENARIO_CODES)}."
+                f"По умолчанию: {', '.join(DEFAULT_SCHEDULE_SCENARIO_CODES)}."
             ),
         )
 
@@ -87,10 +87,10 @@ class Command(BaseCommand):
         normalized = [str(code).strip() for code in raw_codes if str(code).strip()]
         if normalized:
             return normalized
-        return list(DEFAULT_SCENARIO_CODES)
+        return list(DEFAULT_SCHEDULE_SCENARIO_CODES)
 
     def _run_single_iteration(self, *, scenario_codes: list[str], limit_per_scenario: int) -> Dict[str, ScenarioRunStat]:
-        stats = run_scheduled_inactive_scenarios(
+        stats = run_registered_schedule_scenarios(
             scenario_codes=scenario_codes,
             limit_per_scenario=limit_per_scenario,
         )

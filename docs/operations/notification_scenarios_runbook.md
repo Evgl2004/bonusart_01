@@ -51,6 +51,8 @@ python manage.py run_notification_scenarios
 1. создание `NotificationEvent` и `DispatchTask` через `enqueue_notification_event_from_scenario`;
 2. дедупликация по `(scenario, dedupe_key)`;
 3. плановый сценарий неактивности через `run_scheduled_inactive_scenarios`.
+4. запуск плановых сценариев через реестр обработчиков `code -> handler`
+   (`run_registered_schedule_scenarios`).
 
 Запуск:
 

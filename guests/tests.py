@@ -25,6 +25,9 @@ from guests.services.notification_registry import (
     SCENARIO_CODE_BALANCE_CHANGED,
     get_registered_notification_scenario_code_choices,
 )
+from guests.services.notification_handler_registry import (
+    run_registered_schedule_scenarios,
+)
 from guests.services.notification_events import (
     SCENARIO_CODE_INACTIVE_7D,
     enqueue_notification_event_from_scenario,
@@ -351,6 +354,60 @@ class NotificationScenarioIntegrationTests(TestCase):
             DispatchTask.objects.filter(notification_scenario=scenario).count(),
             1,
         )
+
+    def test_schedule_registry_runner_executes_known_scenario(self):
+        """
+        Проверяет запуск schedule-сценария через реестр code -> handler.
+        """
+        restaurant = Restaurant.objects.create(
+            iiko_id="rest_002",
+            name="Тестовый ресторан №2",
+        )
+        VisitHistory.objects.create(
+            guest=self.guest,
+            restaurant=restaurant,
+            visit_date=timezone.now() - timedelta(days=8),
+            visit_count=1,
+        )
+        scenario = NotificationScenario.objects.get(code=SCENARIO_CODE_INACTIVE_7D)
+        scenario.template = self.template
+        scenario.trigger_type = NotificationScenario.TriggerType.SCHEDULE
+        scenario.distribution_mode = NotificationScenario.DistributionMode.IMMEDIATE
+        scenario.is_active = True
+        scenario.settings = {"inactive_days": 7, "coupon_required": False}
+        scenario.save(
+            update_fields=[
+                "template",
+                "trigger_type",
+                "distribution_mode",
+                "is_active",
+                "settings",
+                "updated_at",
+            ]
+        )
+
+        stats = run_registered_schedule_scenarios(
+            scenario_codes=[scenario.code],
+            limit_per_scenario=100,
+        )
+        scenario_stat = stats[scenario.code]
+
+        self.assertEqual(scenario_stat.created_tasks, 1)
+        self.assertGreaterEqual(scenario_stat.matched_guests, 1)
+
+    def test_schedule_registry_runner_returns_empty_stat_for_unknown_code(self):
+        """
+        Для неизвестного кода реестр возвращает пустую статистику без падения.
+        """
+        unknown_code = "unknown_schedule_code"
+        stats = run_registered_schedule_scenarios(
+            scenario_codes=[unknown_code],
+            limit_per_scenario=100,
+        )
+
+        self.assertIn(unknown_code, stats)
+        self.assertEqual(stats[unknown_code].created_tasks, 0)
+        self.assertEqual(stats[unknown_code].scenario_code, unknown_code)
 
 
 class NotificationScenarioCodeRegistryTests(TestCase):

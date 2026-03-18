@@ -4,7 +4,7 @@
 
 import logging
 
-from .services.notification_scenarios import run_scheduled_inactive_scenarios
+from .services.notification_handler_registry import run_registered_schedule_scenarios
 from .services.webhooks import process_recent_webhooks
 
 logger = logging.getLogger(__name__)
@@ -30,13 +30,13 @@ def fetch_pending_webhooks() -> int:
 
 def run_scheduled_notification_scenarios_task() -> int:
     """
-    Периодическая задача: запуск авто-сценариев неактивности гостей.
+    Периодическая задача: запуск авто-сценариев через реестр handlers.
 
     Возвращает суммарное количество созданных DispatchTask.
     """
     logger.info("Запуск периодического скана авто-сценариев уведомлений")
     try:
-        scenario_stats = run_scheduled_inactive_scenarios()
+        scenario_stats = run_registered_schedule_scenarios()
         total_created_tasks = sum(int(stat.created_tasks) for stat in scenario_stats.values())
         logger.info(
             "Авто-сценарии завершены: сценариев=%s, создано задач=%s",

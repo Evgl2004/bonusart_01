@@ -211,6 +211,135 @@ def _build_fallback_message(
     return f"Мы соскучились. Вы не были у нас {days_without_visits} дней."
 
 
+def run_scheduled_inactive_scenario(
+    *,
+    scenario_code: str,
+    limit_per_scenario: int = 1000,
+    coupon_resolver: Optional[CouponResolver] = None,
+    now: Optional[datetime] = None,
+) -> ScenarioRunStat:
+    """
+    Выполняет один schedule-сценарий неактивности по коду.
+
+    Возвращает агрегированную статистику по одному сценарию.
+    """
+    safe_code = str(scenario_code or "").strip()
+    if not safe_code:
+        return ScenarioRunStat(scenario_code="")
+
+    safe_limit = max(1, int(limit_per_scenario))
+    current_now = now or timezone.now()
+
+    scenario = (
+        NotificationScenario.objects.select_related("template")
+        .filter(
+            code=safe_code,
+            is_active=True,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+        )
+        .first()
+    )
+    if scenario is None:
+        logger.info(
+            "Сценарий %s не активен/не найден или не относится к trigger_type=schedule.",
+            safe_code,
+        )
+        return ScenarioRunStat(
+            scenario_code=safe_code,
+            inactive_days_threshold=_default_inactive_days_for_code(safe_code),
+        )
+
+    inactive_days = _extract_inactive_days(scenario)
+    stat = ScenarioRunStat(
+        scenario_code=scenario.code,
+        inactive_days_threshold=inactive_days,
+    )
+
+    guests = _collect_candidate_guests(
+        inactive_days=inactive_days,
+        limit=safe_limit,
+        now=current_now,
+    )
+
+    dedupe_bucket = _local_bucket_date_iso(scenario=scenario, now=current_now)
+    for guest in guests:
+        stat.scanned_guests += 1
+        last_visit_at = getattr(guest, "last_visit_at", None)
+        if last_visit_at is None:
+            continue
+
+        days_without_visits = max(0, int((current_now - last_visit_at).days))
+        if days_without_visits < inactive_days:
+            continue
+        stat.matched_guests += 1
+
+        coupon_payload = _build_coupon_payload(
+            guest=guest,
+            scenario=scenario,
+            coupon_resolver=coupon_resolver,
+        )
+        coupon_code = str(coupon_payload.get("coupon_code") or "").strip()
+        if _is_coupon_required(scenario) and not coupon_code:
+            stat.skipped_without_coupon += 1
+            continue
+
+        coupon_external_id = str(coupon_payload.get("coupon_external_id") or "").strip() or None
+        coupon_expires_at = _parse_coupon_expires_at(coupon_payload.get("coupon_expires_at"))
+
+        source_ref = f"scheduled:{scenario.code}:{dedupe_bucket}"
+        dedupe_key = f"{scenario.code}:{guest.id}:{dedupe_bucket}"
+        payload = {
+            "kind": scenario.code,
+            "source": "scheduled_inactive_scan",
+            "inactive_days_threshold": inactive_days,
+            "days_without_visits": days_without_visits,
+            "last_visit_at": last_visit_at.isoformat() if hasattr(last_visit_at, "isoformat") else str(last_visit_at),
+        }
+        template_context = {
+            "first_name": (guest.first_name or "").strip(),
+            "days_without_visits": days_without_visits,
+            "coupon_code": coupon_code,
+        }
+
+        created_tasks = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=guest,
+            dedupe_key=dedupe_key,
+            source_ref=source_ref,
+            event_source_type="schedule",
+            task_source_type=DispatchTask.SourceType.SYSTEM,
+            payload=payload,
+            template_context=template_context,
+            fallback_message_text=_build_fallback_message(
+                scenario=scenario,
+                days_without_visits=days_without_visits,
+                coupon_code=coupon_code,
+            ),
+            event_at=current_now,
+            coupon_code=coupon_code or None,
+            coupon_external_id=coupon_external_id,
+            coupon_expires_at=coupon_expires_at,
+        )
+
+        if created_tasks > 0:
+            stat.created_tasks += int(created_tasks)
+        else:
+            stat.skipped_duplicate_or_no_targets += 1
+
+    logger.info(
+        "Сценарий %s: threshold=%s scanned=%s matched=%s created_tasks=%s "
+        "skipped_without_coupon=%s skipped_duplicate_or_no_targets=%s",
+        stat.scenario_code,
+        stat.inactive_days_threshold,
+        stat.scanned_guests,
+        stat.matched_guests,
+        stat.created_tasks,
+        stat.skipped_without_coupon,
+        stat.skipped_duplicate_or_no_targets,
+    )
+    return stat
+
+
 def run_scheduled_inactive_scenarios(
     *,
     scenario_codes: Optional[Iterable[str]] = None,
@@ -230,119 +359,14 @@ def run_scheduled_inactive_scenarios(
     if not safe_codes:
         return {}
 
-    now = timezone.now()
-    scenarios = {
-        scenario.code: scenario
-        for scenario in NotificationScenario.objects.select_related("template").filter(
-            code__in=safe_codes,
-            is_active=True,
-            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
-        )
-    }
-
     result: Dict[str, ScenarioRunStat] = {}
+    now = timezone.now()
     for scenario_code in safe_codes:
-        scenario = scenarios.get(scenario_code)
-        if scenario is None:
-            result[scenario_code] = ScenarioRunStat(
-                scenario_code=scenario_code,
-                inactive_days_threshold=_default_inactive_days_for_code(scenario_code),
-            )
-            logger.info(
-                "Сценарий %s не активен/не найден или не относится к trigger_type=schedule.",
-                scenario_code,
-            )
-            continue
-
-        inactive_days = _extract_inactive_days(scenario)
-        stat = ScenarioRunStat(
-            scenario_code=scenario.code,
-            inactive_days_threshold=inactive_days,
-        )
-
-        guests = _collect_candidate_guests(
-            inactive_days=inactive_days,
-            limit=safe_limit,
+        result[scenario_code] = run_scheduled_inactive_scenario(
+            scenario_code=scenario_code,
+            limit_per_scenario=safe_limit,
+            coupon_resolver=coupon_resolver,
             now=now,
-        )
-
-        dedupe_bucket = _local_bucket_date_iso(scenario=scenario, now=now)
-        for guest in guests:
-            stat.scanned_guests += 1
-            last_visit_at = getattr(guest, "last_visit_at", None)
-            if last_visit_at is None:
-                continue
-
-            days_without_visits = max(0, int((now - last_visit_at).days))
-            if days_without_visits < inactive_days:
-                continue
-            stat.matched_guests += 1
-
-            coupon_payload = _build_coupon_payload(
-                guest=guest,
-                scenario=scenario,
-                coupon_resolver=coupon_resolver,
-            )
-            coupon_code = str(coupon_payload.get("coupon_code") or "").strip()
-            if _is_coupon_required(scenario) and not coupon_code:
-                stat.skipped_without_coupon += 1
-                continue
-
-            coupon_external_id = str(coupon_payload.get("coupon_external_id") or "").strip() or None
-            coupon_expires_at = _parse_coupon_expires_at(coupon_payload.get("coupon_expires_at"))
-
-            source_ref = f"scheduled:{scenario.code}:{dedupe_bucket}"
-            dedupe_key = f"{scenario.code}:{guest.id}:{dedupe_bucket}"
-            payload = {
-                "kind": scenario.code,
-                "source": "scheduled_inactive_scan",
-                "inactive_days_threshold": inactive_days,
-                "days_without_visits": days_without_visits,
-                "last_visit_at": last_visit_at.isoformat() if hasattr(last_visit_at, "isoformat") else str(last_visit_at),
-            }
-            template_context = {
-                "first_name": (guest.first_name or "").strip(),
-                "days_without_visits": days_without_visits,
-                "coupon_code": coupon_code,
-            }
-
-            created_tasks = enqueue_notification_event_from_scenario(
-                scenario_code=scenario.code,
-                guest=guest,
-                dedupe_key=dedupe_key,
-                source_ref=source_ref,
-                event_source_type="schedule",
-                task_source_type=DispatchTask.SourceType.SYSTEM,
-                payload=payload,
-                template_context=template_context,
-                fallback_message_text=_build_fallback_message(
-                    scenario=scenario,
-                    days_without_visits=days_without_visits,
-                    coupon_code=coupon_code,
-                ),
-                event_at=now,
-                coupon_code=coupon_code or None,
-                coupon_external_id=coupon_external_id,
-                coupon_expires_at=coupon_expires_at,
-            )
-
-            if created_tasks > 0:
-                stat.created_tasks += int(created_tasks)
-            else:
-                stat.skipped_duplicate_or_no_targets += 1
-
-        result[scenario_code] = stat
-
-        logger.info(
-            "Сценарий %s: threshold=%s scanned=%s matched=%s created_tasks=%s "
-            "skipped_without_coupon=%s skipped_duplicate_or_no_targets=%s",
-            stat.scenario_code,
-            stat.inactive_days_threshold,
-            stat.scanned_guests,
-            stat.matched_guests,
-            stat.created_tasks,
-            stat.skipped_without_coupon,
-            stat.skipped_duplicate_or_no_targets,
         )
 
     return result
