@@ -349,3 +349,76 @@ class GracefulSleepHelpersTests(SimpleTestCase):
             command._sleep_with_stop(300.0)
 
         mocked_sleep.assert_not_called()
+
+
+class SmokePostDeployCommandTests(SimpleTestCase):
+    """
+    Тесты orchestration-логики команды smoke_post_deploy.
+    """
+
+    def test_smoke_command_success_path(self):
+        """
+        При отсутствии ошибок команда должна завершаться успешно.
+        """
+        output = io.StringIO()
+        with (
+            patch("guests.management.commands.smoke_post_deploy.Command._check_django_system"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_databases"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_migrations"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_redis"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_notification_scenarios"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_active_bot_tokens"),
+        ):
+            call_command("smoke_post_deploy", stdout=output)
+
+        self.assertIn("Post-deploy smoke-check успешно завершён.", output.getvalue())
+
+    def test_smoke_command_raises_when_errors_present(self):
+        """
+        Если любая проверка добавляет ошибки, команда должна завершаться CommandError.
+        """
+        output = io.StringIO()
+
+        def _inject_error(errors):
+            errors.append("broken check")
+
+        with (
+            patch("guests.management.commands.smoke_post_deploy.Command._check_django_system", side_effect=_inject_error),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_databases"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_migrations"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_redis"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_notification_scenarios"),
+            patch("guests.management.commands.smoke_post_deploy.Command._check_active_bot_tokens"),
+        ):
+            with self.assertRaises(CommandError):
+                call_command("smoke_post_deploy", stdout=output, stderr=io.StringIO())
+
+    def test_smoke_command_skip_flags_bypass_checks(self):
+        """
+        Skip-флаги должны отключать соответствующие проверки.
+        """
+        with (
+            patch("guests.management.commands.smoke_post_deploy.Command._check_django_system") as mocked_django,
+            patch("guests.management.commands.smoke_post_deploy.Command._check_databases") as mocked_db,
+            patch("guests.management.commands.smoke_post_deploy.Command._check_migrations") as mocked_migrations,
+            patch("guests.management.commands.smoke_post_deploy.Command._check_redis") as mocked_redis,
+            patch("guests.management.commands.smoke_post_deploy.Command._check_notification_scenarios") as mocked_scenarios,
+            patch("guests.management.commands.smoke_post_deploy.Command._check_active_bot_tokens") as mocked_tokens,
+        ):
+            call_command(
+                "smoke_post_deploy",
+                "--skip-django-check",
+                "--skip-db",
+                "--skip-migrations",
+                "--skip-redis",
+                "--skip-scenarios",
+                "--skip-bot-tokens",
+                stdout=io.StringIO(),
+            )
+
+        mocked_django.assert_not_called()
+        mocked_db.assert_not_called()
+        mocked_migrations.assert_not_called()
+        mocked_redis.assert_not_called()
+        mocked_scenarios.assert_not_called()
+        mocked_tokens.assert_not_called()
