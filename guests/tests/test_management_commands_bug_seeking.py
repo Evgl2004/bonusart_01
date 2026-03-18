@@ -310,3 +310,42 @@ class RunNotificationScenariosCommandBugSeekingTests(SimpleTestCase):
             limit_per_scenario=100,
         )
         mocked_sleep.assert_not_called()
+
+
+class GracefulSleepHelpersTests(SimpleTestCase):
+    """
+    Тесты helper-пауз для быстрого завершения циклов по stop-флагу.
+    """
+
+    def test_dispatch_command_sleep_helper_returns_immediately_when_stopped(self):
+        from guests.management.commands.dispatch_universal_tasks import Command
+
+        command = Command()
+        command.should_stop = True
+
+        with patch("guests.management.commands.dispatch_universal_tasks.time.sleep") as mocked_sleep:
+            command._sleep_with_stop(10.0)
+
+        mocked_sleep.assert_not_called()
+
+    def test_monitor_command_sleep_helper_returns_immediately_when_stopped(self):
+        from guests.management.commands.run_universal_queue_monitor import Command
+
+        command = Command()
+        command.should_stop = True
+
+        with patch("guests.management.commands.run_universal_queue_monitor.time.sleep") as mocked_sleep:
+            command._sleep_with_stop(30.0)
+
+        mocked_sleep.assert_not_called()
+
+    def test_notification_scenarios_sleep_helper_returns_immediately_when_stopped(self):
+        from guests.management.commands.run_notification_scenarios import Command
+
+        command = Command()
+        command.should_stop = True
+
+        with patch("guests.management.commands.run_notification_scenarios.time.sleep") as mocked_sleep:
+            command._sleep_with_stop(300.0)
+
+        mocked_sleep.assert_not_called()

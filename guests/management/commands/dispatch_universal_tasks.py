@@ -98,6 +98,20 @@ class Command(BaseCommand):
         )
         return result.claimed
 
+    def _sleep_with_stop(self, total_seconds: float) -> None:
+        """
+        Пауза цикла с регулярной проверкой флага остановки.
+
+        Нужна для быстрого graceful shutdown в окружении Docker/K8s:
+        процесс не ждёт полный `time.sleep(...)`, а выходит из паузы
+        почти сразу после получения SIGTERM/SIGINT.
+        """
+        remaining = max(0.0, float(total_seconds))
+        while remaining > 0 and not self.should_stop:
+            step = min(0.5, remaining)
+            time.sleep(step)
+            remaining -= step
+
     def handle(self, *args, **options):
         """
         Точка входа management command.
@@ -131,7 +145,7 @@ class Command(BaseCommand):
             while not self.should_stop:
                 claimed = self._run_iteration(dispatcher=dispatcher, batch_size=batch_size)
                 if claimed == 0:
-                    time.sleep(sleep_seconds)
+                    self._sleep_with_stop(sleep_seconds)
 
         finally:
             if queue is not None:

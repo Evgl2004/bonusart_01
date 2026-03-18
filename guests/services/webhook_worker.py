@@ -260,7 +260,7 @@ class WebhookWorker:
                 # Временная потеря связи с Redis. Ждем и пробуем снова.
                 logger.error(f"Потеряно соединение с Redis: {err}. Повтор через {self.redis_retry_delay} сек.")
                 # Экспоненциальная задержка
-                time.sleep(self.redis_retry_delay)
+                self._sleep_with_stop(self.redis_retry_delay)
                 self.redis_retry_delay = min(self.redis_retry_delay * 2, self.max_retry_delay)
             except KeyboardInterrupt:
                 logger.info("Получен KeyboardInterrupt. Завершаем работу...")
@@ -268,11 +268,25 @@ class WebhookWorker:
             except Exception as err:
                 # Ловим все остальные исключения, чтобы Обработчик не упал.
                 logger.exception(f"Непредвиденная ошибка в главном цикле: {err}")
-                time.sleep(1)  # Пауза, чтобы не зациклить лог при постоянной ошибке.
+                # Пауза с проверкой флага остановки, чтобы быстрее завершаться по SIGTERM.
+                self._sleep_with_stop(1)
 
         logger.info("Корректное завершение работы: основной цикл Обработчика остановлен.")
         self._log_final_metrics()
         self._cleanup_resources()
+
+    def _sleep_with_stop(self, total_seconds: float) -> None:
+        """
+        Пауза с периодической проверкой `should_stop`.
+
+        Позволяет воркеру быстрее завершаться по внешнему сигналу
+        (например `docker compose stop`), не дожидаясь длинного sleep.
+        """
+        remaining = max(0.0, float(total_seconds))
+        while remaining > 0 and not self.should_stop:
+            step = min(0.5, remaining)
+            time.sleep(step)
+            remaining -= step
 
     def _log_final_metrics(self):
         """

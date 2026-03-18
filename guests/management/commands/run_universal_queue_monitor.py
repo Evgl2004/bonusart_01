@@ -97,6 +97,19 @@ class Command(BaseCommand):
                 f"[health:{provider}] redis={snapshot.redis_lane_lengths} db={snapshot.db_status_counts}"
             )
 
+    def _sleep_with_stop(self, total_seconds: float) -> None:
+        """
+        Пауза между циклами мониторинга с учётом graceful shutdown.
+
+        Разбивает длинный sleep на короткие шаги, чтобы процесс быстро
+        завершался по SIGTERM из Docker Compose.
+        """
+        remaining = max(0.0, float(total_seconds))
+        while remaining > 0 and not self.should_stop:
+            step = min(0.5, remaining)
+            time.sleep(step)
+            remaining -= step
+
     def handle(self, *args, **options):
         self._bind_signals()
 
@@ -143,6 +156,6 @@ class Command(BaseCommand):
 
                 if once:
                     break
-                time.sleep(interval_seconds)
+                self._sleep_with_stop(interval_seconds)
         finally:
             queue.close()

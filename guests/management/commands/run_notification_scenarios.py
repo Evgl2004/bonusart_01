@@ -97,6 +97,19 @@ class Command(BaseCommand):
         self._print_stats(stats)
         return stats
 
+    def _sleep_with_stop(self, total_seconds: float) -> None:
+        """
+        Пауза между проходами с регулярной проверкой `should_stop`.
+
+        Это уменьшает задержку graceful shutdown при длинных интервалах
+        (например `sleep_seconds=300`).
+        """
+        remaining = max(0.0, float(total_seconds))
+        while remaining > 0 and not self.should_stop:
+            step = min(0.5, remaining)
+            time.sleep(step)
+            remaining -= step
+
     def handle(self, *args, **options):
         self._setup_signal_handlers()
 
@@ -125,4 +138,4 @@ class Command(BaseCommand):
             )
             if self.should_stop:
                 break
-            time.sleep(sleep_seconds)
+            self._sleep_with_stop(sleep_seconds)

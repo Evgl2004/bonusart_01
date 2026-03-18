@@ -235,3 +235,15 @@ class WebhookWorkerServiceTests(SimpleTestCase):
 
         self.assertEqual(result["status"], "error")
         self.assertIn("boom", result["error"])
+
+    def test_sleep_with_stop_returns_immediately_when_should_stop_set(self):
+        """
+        При активном stop-флаге helper-пауза не должна вызывать time.sleep.
+        """
+        worker, _ = self._build_worker()
+        worker.should_stop = True
+
+        with patch("guests.services.webhook_worker.time.sleep") as mocked_sleep:
+            worker._sleep_with_stop(60.0)
+
+        mocked_sleep.assert_not_called()
