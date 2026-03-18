@@ -103,7 +103,15 @@ async def _resolve_bot_token(task: DispatchTask, fallback_env_name: str) -> str:
     3. fallback из env-переменной.
     """
     if task.bot_profile:
-        token = task.bot_profile.resolve_token()
+        try:
+            token = task.bot_profile.resolve_token()
+        except Exception as err:
+            logger.warning(
+                "Не удалось получить token через bot_profile.resolve_token() для task_id=%s: %s",
+                getattr(task, "id", None),
+                err,
+            )
+            token = ""
         if token:
             return token
 
