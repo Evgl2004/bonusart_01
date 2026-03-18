@@ -112,3 +112,18 @@ python manage.py init_schema --apply
     
  2) python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --bot-profile-id 1  (запуск и применением изменений)
 
+---
+Тестирование проекта
+
+Базовый запуск тестов Django:
+
+python manage.py test
+
+Запуск тестов через pytest:
+
+pytest
+
+Запуск pytest с покрытием кода:
+
+pytest --cov=guests --cov=loyalty_viewer --cov-report=term-missing --cov-report=html
+
