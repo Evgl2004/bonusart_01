@@ -24,7 +24,7 @@ from django.utils import timezone
 from guests.models import DispatchTask, Guest
 from guests.services.notification_events import (
     ScenarioNotConfiguredError,
-    enqueue_notification_event_from_scenario,
+    create_notification_event,
 )
 from guests.services.notification_registry import SCENARIO_CODE_BALANCE_CHANGED
 from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
@@ -202,7 +202,7 @@ def enqueue_balance_notification_from_webhook(
     }
 
     try:
-        return enqueue_notification_event_from_scenario(
+        return create_notification_event(
             scenario_code=SCENARIO_CODE_BALANCE_CHANGED,
             guest=guest,
             dedupe_key=dedupe_key,
@@ -216,6 +216,8 @@ def enqueue_balance_notification_from_webhook(
                 "balance_change_value": _extract_balance_change_value(event) or "",
             },
             fallback_message_text=message_text,
+            route_priority=priority,
+            route_target_mode="primary_only" if primary_only else "all_bots",
         )
     except ScenarioNotConfiguredError:
         logger.warning(

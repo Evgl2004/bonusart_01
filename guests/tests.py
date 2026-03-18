@@ -33,6 +33,7 @@ from guests.services.notification_handler_registry import (
 )
 from guests.services.notification_events import (
     SCENARIO_CODE_INACTIVE_7D,
+    create_notification_event,
     enqueue_notification_event_from_scenario,
 )
 from guests.services.notification_scenarios import run_scheduled_inactive_scenarios
@@ -84,6 +85,8 @@ class NotificationScenarioIntegrationTests(TestCase):
         settings: dict | None = None,
         cooldown_minutes: int = 0,
         max_per_day_per_guest: int | None = None,
+        priority: str = NotificationScenario.Priority.HIGH,
+        target_mode: str = NotificationScenario.TargetMode.PRIMARY_ONLY,
     ) -> NotificationScenario:
         """
         Создаёт NotificationScenario для тестового кейса.
@@ -96,8 +99,8 @@ class NotificationScenarioIntegrationTests(TestCase):
             is_system=False,
             trigger_type=trigger_type,
             template=self.template,
-            priority=NotificationScenario.Priority.HIGH,
-            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            priority=priority,
+            target_mode=target_mode,
             distribution_mode=distribution_mode,
             timezone="Asia/Yekaterinburg",
             cooldown_minutes=cooldown_minutes,
@@ -226,6 +229,55 @@ class NotificationScenarioIntegrationTests(TestCase):
 
         self.assertEqual(created_tasks, 0)
 
+    def test_webhook_registry_balance_call_overrides_scenario_routing(self):
+        """
+        Для balance-сценария параметры вызова должны иметь приоритет
+        над routing-настройками сценария из БД.
+        """
+        second_bot = BotProfile.objects.create(
+            code="tg_balance_override_bot",
+            name="Telegram Balance Override Bot",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=self.guest,
+            bot=second_bot,
+            external_chat_id="654321",
+            is_primary=False,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        scenario = NotificationScenario.objects.get(code=SCENARIO_CODE_BALANCE_CHANGED)
+        scenario.priority = NotificationScenario.Priority.BULK
+        scenario.target_mode = NotificationScenario.TargetMode.ALL_BOTS
+        scenario.save(update_fields=["priority", "target_mode", "updated_at"])
+
+        webhook = {
+            "id": "wh_balance_override_9001",
+            "category_id_ext": "BSamfrT83o4Cw5ZG1m4RU7N4CtW6WR2M",
+            "parsed_body": {
+                "phone": self.guest.phone,
+                "notificationType": 9,
+                "changeSum": "300",
+                "text": "Баланс изменён на 300",
+            },
+        }
+
+        created_tasks = run_webhook_scenario_by_code(
+            scenario_code=SCENARIO_CODE_BALANCE_CHANGED,
+            webhook=webhook,
+            is_enabled=True,
+            priority=DispatchTask.Priority.HIGH,
+            primary_only=True,
+        )
+
+        self.assertEqual(created_tasks, 1)
+        task = DispatchTask.objects.get()
+        self.assertEqual(task.priority, DispatchTask.Priority.HIGH)
+        self.assertEqual(task.external_chat_id, "123456")
+
     def test_handle_api_webhook_routes_balance_to_registry(self):
         """
         Центральный обработчик webhook должен вести balance-событие
@@ -277,6 +329,136 @@ class NotificationScenarioIntegrationTests(TestCase):
         self.assertIn("enqueued=0", reason)
         self.assertEqual(NotificationEvent.objects.count(), 0)
         self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_create_notification_event_uses_route_overrides(self):
+        """
+        Явные route-override должны иметь приоритет над настройками сценария из БД.
+        """
+        second_bot = BotProfile.objects.create(
+            code="tg_test_bot_second",
+            name="Telegram Test Bot 2",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=self.guest,
+            bot=second_bot,
+            external_chat_id="777777",
+            is_primary=False,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        scenario = self._create_scenario(
+            code="test_route_overrides",
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+        )
+
+        created_tasks = create_notification_event(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="route:override:1",
+            source_ref="route-override-1",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "routing_override"},
+            template_context={"first_name": "Иван", "message_text": "Проверка override"},
+            fallback_message_text="Проверка override",
+            route_priority=DispatchTask.Priority.HIGH,
+            route_target_mode=NotificationScenario.TargetMode.ALL_BOTS,
+        )
+
+        self.assertEqual(created_tasks, 2)
+        tasks = list(DispatchTask.objects.filter(notification_scenario=scenario).order_by("id"))
+        self.assertEqual(len(tasks), 2)
+        self.assertEqual({task.priority for task in tasks}, {DispatchTask.Priority.HIGH})
+        self.assertEqual({task.external_chat_id for task in tasks}, {"123456", "777777"})
+
+    def test_create_notification_event_without_override_uses_scenario_defaults(self):
+        """
+        Без route-override применяются значения priority/target_mode из сценария.
+        """
+        second_bot = BotProfile.objects.create(
+            code="tg_test_bot_third",
+            name="Telegram Test Bot 3",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=self.guest,
+            bot=second_bot,
+            external_chat_id="888888",
+            is_primary=False,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        scenario = self._create_scenario(
+            code="test_route_defaults",
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+        )
+
+        created_tasks = create_notification_event(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="route:default:1",
+            source_ref="route-default-1",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "routing_default"},
+            template_context={"first_name": "Иван", "message_text": "Проверка default"},
+            fallback_message_text="Проверка default",
+        )
+
+        self.assertEqual(created_tasks, 1)
+        task = DispatchTask.objects.get(notification_scenario=scenario)
+        self.assertEqual(task.priority, DispatchTask.Priority.NORMAL)
+        self.assertEqual(task.external_chat_id, "123456")
+
+    def test_create_notification_event_route_allowed_bot_profiles(self):
+        """
+        route_allowed_bot_profile_ids должен ограничивать отправку выбранными ботами.
+        """
+        second_bot = BotProfile.objects.create(
+            code="tg_test_bot_fourth",
+            name="Telegram Test Bot 4",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=self.guest,
+            bot=second_bot,
+            external_chat_id="999999",
+            is_primary=False,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        scenario = self._create_scenario(
+            code="test_route_allowed_bots",
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.ALL_BOTS,
+        )
+
+        created_tasks = create_notification_event(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="route:allowed:1",
+            source_ref="route-allowed-1",
+            event_source_type=NotificationEvent.SourceType.WEBHOOK,
+            task_source_type=DispatchTask.SourceType.WEBHOOK,
+            payload={"kind": "routing_allowed"},
+            template_context={"first_name": "Иван", "message_text": "Проверка allowed bots"},
+            fallback_message_text="Проверка allowed bots",
+            route_allowed_bot_profile_ids=[self.bot_profile.id],
+        )
+
+        self.assertEqual(created_tasks, 1)
+        task = DispatchTask.objects.get(notification_scenario=scenario)
+        self.assertEqual(task.bot_profile_id, self.bot_profile.id)
+        self.assertEqual(task.external_chat_id, "123456")
 
     def test_handle_api_webhook_notification_type_1_updates_visit_without_dispatch(self):
         """

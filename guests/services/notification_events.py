@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import random
 from datetime import datetime, time as dt_time, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import transaction
@@ -151,6 +151,113 @@ def _normalize_event_source_type(source_type: str) -> str:
     return value if value in allowed else NotificationEvent.SourceType.WEBHOOK
 
 
+def _normalize_route_priority(value: Optional[str]) -> Optional[str]:
+    """
+    Нормализует override-приоритет маршрутизации.
+    """
+    if value is None:
+        return None
+    normalized = str(value or "").strip().lower()
+    allowed = {
+        NotificationScenario.Priority.HIGH,
+        NotificationScenario.Priority.NORMAL,
+        NotificationScenario.Priority.BULK,
+    }
+    return normalized if normalized in allowed else None
+
+
+def _normalize_route_target_mode(value: Optional[str]) -> Optional[str]:
+    """
+    Нормализует override-режим выбора целей.
+    """
+    if value is None:
+        return None
+    normalized = str(value or "").strip().lower()
+    allowed = {
+        NotificationScenario.TargetMode.PRIMARY_ONLY,
+        NotificationScenario.TargetMode.ALL_BOTS,
+    }
+    return normalized if normalized in allowed else None
+
+
+def _normalize_route_bot_profile_ids(value: Optional[Iterable[int]]) -> Optional[list[int]]:
+    """
+    Нормализует список bot_profile_id для явного override.
+    """
+    if value is None:
+        return None
+
+    normalized: list[int] = []
+    for raw in value:
+        try:
+            bot_profile_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if bot_profile_id <= 0:
+            continue
+        if bot_profile_id not in normalized:
+            normalized.append(bot_profile_id)
+    return normalized
+
+
+def _resolve_effective_routing(
+    *,
+    scenario: NotificationScenario,
+    route_priority: Optional[str],
+    route_target_mode: Optional[str],
+    route_allowed_bot_profile_ids: Optional[Iterable[int]],
+) -> tuple[str, str, Optional[list[int]]]:
+    """
+    Возвращает эффективные параметры маршрутизации.
+
+    Правило приоритета:
+    1. Явный override из вызова (если валиден);
+    2. Значение из NotificationScenario.
+    """
+    effective_priority = scenario.priority
+    normalized_route_priority = _normalize_route_priority(route_priority)
+    if normalized_route_priority is not None:
+        effective_priority = normalized_route_priority
+    elif route_priority is not None:
+        logger.warning(
+            "Передан невалидный route_priority='%s' для scenario=%s. Используется приоритет сценария '%s'.",
+            route_priority,
+            scenario.code,
+            scenario.priority,
+        )
+
+    effective_target_mode = scenario.target_mode
+    normalized_route_target_mode = _normalize_route_target_mode(route_target_mode)
+    if normalized_route_target_mode is not None:
+        effective_target_mode = normalized_route_target_mode
+    elif route_target_mode is not None:
+        logger.warning(
+            "Передан невалидный route_target_mode='%s' для scenario=%s. Используется режим сценария '%s'.",
+            route_target_mode,
+            scenario.code,
+            scenario.target_mode,
+        )
+
+    scenario_bot_profile_ids = list(
+        scenario.bot_profile_links.values_list("bot_profile_id", flat=True)
+    )
+    effective_allowed_bot_profile_ids: Optional[list[int]] = (
+        scenario_bot_profile_ids if scenario_bot_profile_ids else None
+    )
+    normalized_route_bot_ids = _normalize_route_bot_profile_ids(route_allowed_bot_profile_ids)
+    if route_allowed_bot_profile_ids is not None:
+        if normalized_route_bot_ids:
+            effective_allowed_bot_profile_ids = normalized_route_bot_ids
+        else:
+            logger.warning(
+                "Передан пустой/некорректный route_allowed_bot_profile_ids для scenario=%s. "
+                "Используется список ботов сценария.",
+                scenario.code,
+            )
+
+    return effective_priority, effective_target_mode, effective_allowed_bot_profile_ids
+
+
 def _scenario_day_bounds(
     *,
     timezone_name: str | None,
@@ -235,7 +342,7 @@ def _apply_scenario_send_limits(
 
 
 @transaction.atomic
-def enqueue_notification_event_from_scenario(
+def create_notification_event(
     *,
     scenario_code: str,
     guest: Guest,
@@ -250,9 +357,17 @@ def enqueue_notification_event_from_scenario(
     coupon_code: Optional[str] = None,
     coupon_external_id: Optional[str] = None,
     coupon_expires_at: Optional[datetime] = None,
+    route_priority: Optional[str] = None,
+    route_target_mode: Optional[str] = None,
+    route_allowed_bot_profile_ids: Optional[Iterable[int]] = None,
 ) -> int:
     """
     Создаёт NotificationEvent и ставит задачи в DispatchTask по сценарию.
+
+    Режим маршрутизации:
+    1. По умолчанию используются настройки NotificationScenario из БД;
+    2. Любой параметр `route_*` (если передан и валиден) переопределяет
+       соответствующее значение сценария в рамках текущего вызова.
 
     Возвращает:
     1. `0`, если событие дублируется или нет целей отправки;
@@ -357,27 +472,35 @@ def enqueue_notification_event_from_scenario(
         )
         return 0
 
-    allowed_bot_profile_ids = list(
-        scenario.bot_profile_links.values_list("bot_profile_id", flat=True)
+    effective_priority, effective_target_mode, effective_allowed_bot_profile_ids = _resolve_effective_routing(
+        scenario=scenario,
+        route_priority=route_priority,
+        route_target_mode=route_target_mode,
+        route_allowed_bot_profile_ids=route_allowed_bot_profile_ids,
     )
 
     dispatch_payload = {
         **safe_payload,
         "notification_event_id": event.id,
         "notification_scenario_code": scenario.code,
+        "effective_routing": {
+            "priority": effective_priority,
+            "target_mode": effective_target_mode,
+            "allowed_bot_profile_ids": effective_allowed_bot_profile_ids or [],
+        },
     }
     created_count = enqueue_guest_notification_tasks(
         guest=guest,
         message_text=message_text,
         source_type=task_source_type,
         source_key=f"{scenario.code}:{safe_dedupe_key}",
-        priority=scenario.priority,
-        primary_only=(scenario.target_mode == NotificationScenario.TargetMode.PRIMARY_ONLY),
+        priority=effective_priority,
+        primary_only=(effective_target_mode == NotificationScenario.TargetMode.PRIMARY_ONLY),
         payload=dispatch_payload,
         notification_scenario=scenario,
         notification_event=event,
         available_at=planned_send_at,
-        allowed_bot_profile_ids=allowed_bot_profile_ids or None,
+        allowed_bot_profile_ids=effective_allowed_bot_profile_ids,
     )
 
     if created_count > 0:
@@ -388,3 +511,41 @@ def enqueue_notification_event_from_scenario(
         event.error_text = "Нет доступных целей отправки (binding/bot profile)."
     event.save(update_fields=["status", "error_text", "updated_at"])
     return created_count
+
+
+def enqueue_notification_event_from_scenario(
+    *,
+    scenario_code: str,
+    guest: Guest,
+    dedupe_key: str,
+    source_ref: str = "",
+    event_source_type: str = NotificationEvent.SourceType.WEBHOOK,
+    task_source_type: str = DispatchTask.SourceType.SYSTEM,
+    payload: Optional[Dict[str, Any]] = None,
+    template_context: Optional[Dict[str, Any]] = None,
+    fallback_message_text: str = "",
+    event_at: Optional[datetime] = None,
+    coupon_code: Optional[str] = None,
+    coupon_external_id: Optional[str] = None,
+    coupon_expires_at: Optional[datetime] = None,
+) -> int:
+    """
+    Совместимый адаптер старого API.
+
+    Использует только настройки сценария из БД (без явных route-override).
+    """
+    return create_notification_event(
+        scenario_code=scenario_code,
+        guest=guest,
+        dedupe_key=dedupe_key,
+        source_ref=source_ref,
+        event_source_type=event_source_type,
+        task_source_type=task_source_type,
+        payload=payload,
+        template_context=template_context,
+        fallback_message_text=fallback_message_text,
+        event_at=event_at,
+        coupon_code=coupon_code,
+        coupon_external_id=coupon_external_id,
+        coupon_expires_at=coupon_expires_at,
+    )
