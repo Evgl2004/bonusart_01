@@ -1,7 +1,10 @@
 from django.db import models
+from django.core.exceptions import ValidationError
 from django.utils import timezone
 import os
 import uuid
+
+from guests.services.notification_registry import is_registered_notification_scenario_code
 
 
 class Guest(models.Model):
@@ -593,6 +596,29 @@ class NotificationScenario(models.Model):
             models.Index(fields=["is_active", "trigger_type"], name="ns_active_trigger_idx"),
             models.Index(fields=["code"], name="ns_code_idx"),
         ]
+
+    def clean(self):
+        """
+        Проверяет, что код сценария зарегистрирован в реестре допустимых кодов.
+
+        Валидация вызывается формами (в том числе Django Admin) и защищает
+        от сохранения сценариев с опечатками в `code`.
+        """
+        super().clean()
+        normalized_code = str(self.code or "").strip()
+        if not normalized_code:
+            return
+
+        if not is_registered_notification_scenario_code(normalized_code):
+            raise ValidationError(
+                {
+                    "code": (
+                        f"Код сценария '{normalized_code}' не зарегистрирован. "
+                        "Выберите значение из списка поддерживаемых кодов."
+                    )
+                }
+            )
+        self.code = normalized_code
 
     def __str__(self):
         return f"{self.code} ({self.name})"

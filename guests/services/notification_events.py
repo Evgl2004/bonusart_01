@@ -20,14 +20,14 @@ from django.db.models import F
 from django.utils import timezone
 
 from guests.models import DispatchTask, Guest, NotificationEvent, NotificationScenario
+from guests.services.notification_registry import (
+    SCENARIO_CODE_BALANCE_CHANGED,
+    SCENARIO_CODE_INACTIVE_30D_COUPON,
+    SCENARIO_CODE_INACTIVE_7D,
+)
 from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
 
 logger = logging.getLogger(__name__)
-
-
-SCENARIO_CODE_BALANCE_CHANGED = "balance_changed"
-SCENARIO_CODE_INACTIVE_7D = "inactive_7d"
-SCENARIO_CODE_INACTIVE_30D_COUPON = "inactive_30d_coupon"
 
 
 class ScenarioNotConfiguredError(RuntimeError):

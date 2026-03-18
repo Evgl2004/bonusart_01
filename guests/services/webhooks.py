@@ -14,8 +14,8 @@ from django.utils import timezone
 from guests.models import Category, DispatchTask, Guest, GuestCategory, GuestCategoryAssignment, Restaurant, VisitHistory
 
 from guests.services.iiko_client import iiko_client
+from guests.services.notification_registry import SCENARIO_CODE_BALANCE_CHANGED
 from guests.services.notification_events import (
-    SCENARIO_CODE_BALANCE_CHANGED,
     ScenarioNotConfiguredError,
     enqueue_notification_event_from_scenario,
 )

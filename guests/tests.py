@@ -5,9 +5,11 @@ NotificationScenario -> NotificationEvent -> DispatchTask.
 
 from datetime import timedelta
 
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from django.utils import timezone
 
+from guests.admin import NotificationScenarioAdminForm
 from guests.models import (
     BotProfile,
     DispatchTask,
@@ -18,6 +20,10 @@ from guests.models import (
     NotificationScenario,
     Restaurant,
     VisitHistory,
+)
+from guests.services.notification_registry import (
+    SCENARIO_CODE_BALANCE_CHANGED,
+    get_registered_notification_scenario_code_choices,
 )
 from guests.services.notification_events import (
     SCENARIO_CODE_INACTIVE_7D,
@@ -345,3 +351,54 @@ class NotificationScenarioIntegrationTests(TestCase):
             DispatchTask.objects.filter(notification_scenario=scenario).count(),
             1,
         )
+
+
+class NotificationScenarioCodeRegistryTests(TestCase):
+    """
+    Проверки реестра кодов сценариев и валидации в админ-форме/модели.
+    """
+
+    def setUp(self):
+        self.template = MessageTemplate.objects.create(
+            name="REGISTRY_TEMPLATE",
+            description="Шаблон для проверки реестра",
+            message_text="Тестовое сообщение",
+            created_by="test",
+            is_active=True,
+        )
+
+    def test_notification_scenario_model_rejects_unknown_code_on_full_clean(self):
+        """
+        Модель не должна проходить full_clean() с незарегистрированным code.
+        """
+        scenario = NotificationScenario(
+            code="unknown_scenario_code",
+            name="Unknown scenario",
+            trigger_type=NotificationScenario.TriggerType.WEBHOOK,
+            template=self.template,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+        )
+
+        with self.assertRaises(ValidationError) as exc:
+            scenario.full_clean()
+
+        self.assertIn("code", exc.exception.message_dict)
+
+    def test_notification_scenario_model_accepts_registered_code(self):
+        """
+        Модель должна проходить full_clean() с кодом из реестра.
+        """
+        scenario = NotificationScenario.objects.get(code=SCENARIO_CODE_BALANCE_CHANGED)
+        scenario.full_clean()
+
+    def test_admin_form_code_field_uses_registered_choices(self):
+        """
+        Поле code в админ-форме должно использовать список кодов из реестра.
+        """
+        form = NotificationScenarioAdminForm()
+        form_codes = {value for value, _ in form.fields["code"].choices}
+        registry_codes = {value for value, _ in get_registered_notification_scenario_code_choices()}
+        self.assertEqual(form_codes, registry_codes)

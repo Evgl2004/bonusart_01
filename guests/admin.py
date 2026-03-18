@@ -1,6 +1,7 @@
 ﻿import os
 from datetime import timedelta
 
+from django import forms
 from django.contrib import admin, messages
 from django.db.models import Count
 from django.utils import timezone
@@ -20,6 +21,10 @@ from .models import (
     NotificationScenarioBotProfileLink,
     Restaurant,
     VisitHistory,
+)
+from guests.services.notification_registry import (
+    get_registered_notification_scenario_code_choices,
+    is_registered_notification_scenario_code,
 )
 
 
@@ -227,6 +232,46 @@ class MailingGuestAdmin(admin.ModelAdmin):
         return int(getattr(obj, "dispatch_tasks_total", 0))
 
 
+class NotificationScenarioAdminForm(forms.ModelForm):
+    """
+    Форма админки для сценариев уведомлений с выбором кода из реестра.
+    """
+
+    code = forms.ChoiceField(
+        label="Код сценария",
+        choices=(),
+        required=True,
+    )
+
+    class Meta:
+        model = NotificationScenario
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        choices = list(get_registered_notification_scenario_code_choices())
+        instance_code = str(getattr(self.instance, "code", "") or "").strip()
+
+        # Если в БД уже есть незарегистрированный код, показываем его в списке,
+        # чтобы карточка открылась и пользователь смог выбрать корректное значение.
+        if instance_code and not any(value == instance_code for value, _ in choices):
+            choices.append((instance_code, f"{instance_code} (не зарегистрирован)"))
+
+        self.fields["code"].choices = choices
+        self.fields["code"].help_text = (
+            "Выберите код сценария из зарегистрированного списка. "
+            "Свободный ввод кода запрещён."
+        )
+
+    def clean_code(self) -> str:
+        code = str(self.cleaned_data.get("code") or "").strip()
+        if not is_registered_notification_scenario_code(code):
+            raise forms.ValidationError(
+                f"Код сценария '{code}' не зарегистрирован. Выберите значение из списка."
+            )
+        return code
+
+
 class NotificationScenarioBotProfileLinkInline(admin.TabularInline):
     """
     Связь сценария авто-уведомления с разрешёнными ботами.
@@ -245,6 +290,7 @@ class NotificationScenarioAdmin(admin.ModelAdmin):
     Техническая панель управления правилами авто-уведомлений.
     """
 
+    form = NotificationScenarioAdminForm
     list_display = (
         "id",
         "code",

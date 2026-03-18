@@ -25,9 +25,11 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from guests.models import DispatchTask, Guest, NotificationScenario, VisitHistory
-from guests.services.notification_events import (
+from guests.services.notification_registry import (
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
+)
+from guests.services.notification_events import (
     enqueue_notification_event_from_scenario,
 )
 
