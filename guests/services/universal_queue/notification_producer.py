@@ -30,6 +30,54 @@ def _normalize_priority(priority: str, default: str = DispatchTask.Priority.HIGH
     return value if value in allowed else default
 
 
+def _normalize_allowed_bot_profile_ids(allowed_bot_profile_ids: Optional[Iterable[int]]) -> Optional[List[int]]:
+    """
+    Нормализует фильтр bot_profile_id для безопасной маршрутизации.
+
+    Правила:
+    1. `None` -> фильтр не задан;
+    2. Невалидные/неположительные значения отбрасываются;
+    3. Дубли удаляются с сохранением порядка.
+    """
+    if allowed_bot_profile_ids is None:
+        return None
+
+    normalized: List[int] = []
+    for raw_id in allowed_bot_profile_ids:
+        try:
+            bot_profile_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if bot_profile_id <= 0:
+            continue
+        if bot_profile_id not in normalized:
+            normalized.append(bot_profile_id)
+    return normalized
+
+
+def _normalize_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Безопасно нормализует payload для сохранения в JSONField.
+
+    Если payload не является словарём, возвращаем диагностический безопасный
+    контейнер, чтобы не падать в рантайме и не терять факт события.
+    """
+    if payload is None:
+        return {}
+    if isinstance(payload, dict):
+        return dict(payload)
+
+    logger.warning(
+        "Notification enqueue: payload имеет неподдерживаемый тип '%s', используется fallback-структура.",
+        type(payload).__name__,
+    )
+    return {
+        "payload_error": "invalid_payload_type",
+        "payload_type": type(payload).__name__,
+        "payload_preview": str(payload)[:500],
+    }
+
+
 def _collect_targets_from_bindings(
     guest: Guest,
     primary_only: bool,
@@ -53,10 +101,14 @@ def _collect_targets_from_bindings(
     )
     if primary_only:
         query = query.filter(is_primary=True)
+    normalized_bot_ids = _normalize_allowed_bot_profile_ids(allowed_bot_profile_ids)
     if allowed_bot_profile_ids is not None:
-        bot_ids = [int(bot_id) for bot_id in allowed_bot_profile_ids]
-        if bot_ids:
-            query = query.filter(bot_id__in=bot_ids)
+        if not normalized_bot_ids:
+            logger.warning(
+                "Notification enqueue: передан пустой/некорректный список allowed_bot_profile_ids, цели отправки не выбраны."
+            )
+            return []
+        query = query.filter(bot_id__in=normalized_bot_ids)
 
     targets: List[Dict[str, Any]] = []
     for binding in query:
@@ -103,7 +155,7 @@ def enqueue_guest_notification_tasks(
     if not safe_message:
         return 0
 
-    safe_payload: Dict[str, Any] = dict(payload or {})
+    safe_payload = _normalize_payload(payload)
     safe_priority = _normalize_priority(priority=priority, default=DispatchTask.Priority.HIGH)
 
     targets = _collect_targets_from_bindings(

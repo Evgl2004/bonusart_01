@@ -187,8 +187,13 @@ def _normalize_route_bot_profile_ids(value: Optional[Iterable[int]]) -> Optional
     if value is None:
         return None
 
+    if isinstance(value, (int, str)):
+        raw_values: Iterable[Any] = [value]
+    else:
+        raw_values = value
+
     normalized: list[int] = []
-    for raw in value:
+    for raw in raw_values:
         try:
             bot_profile_id = int(raw)
         except (TypeError, ValueError):
@@ -256,6 +261,29 @@ def _resolve_effective_routing(
             )
 
     return effective_priority, effective_target_mode, effective_allowed_bot_profile_ids
+
+
+def _normalize_event_payload(payload: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Нормализует payload события в безопасный словарь для JSONField.
+
+    Если передан неподдерживаемый тип, сохраняем диагностическую структуру,
+    чтобы не ронять создание события и сохранить контекст в БД.
+    """
+    if payload is None:
+        return {}
+    if isinstance(payload, dict):
+        return dict(payload)
+
+    logger.warning(
+        "NotificationEvent payload имеет неподдерживаемый тип '%s', используется fallback-структура.",
+        type(payload).__name__,
+    )
+    return {
+        "payload_error": "invalid_payload_type",
+        "payload_type": type(payload).__name__,
+        "payload_preview": str(payload)[:500],
+    }
 
 
 def _scenario_day_bounds(
@@ -399,7 +427,7 @@ def create_notification_event(
         safe_event_at = timezone.make_aware(safe_event_at, timezone.get_current_timezone())
 
     planned_send_at = _calculate_planned_send_at(scenario=scenario, now=now)
-    safe_payload = dict(payload or {})
+    safe_payload = _normalize_event_payload(payload)
     safe_event_source_type = _normalize_event_source_type(event_source_type)
 
     event_defaults = {
