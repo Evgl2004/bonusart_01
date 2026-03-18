@@ -64,7 +64,6 @@ class UniversalTaskDispatcher:
         with transaction.atomic():
             queryset = (
                 DispatchTask.objects.select_for_update(skip_locked=True)
-                .select_related("guest_binding")
                 .filter(
                     status=DispatchTask.Status.PENDING,
                     enqueued_at__isnull=True,
@@ -76,6 +75,9 @@ class UniversalTaskDispatcher:
             if self.provider_type:
                 queryset = queryset.filter(provider_type=self.provider_type)
 
+            # Важно: здесь нельзя делать `select_related("guest_binding")`,
+            # т.к. `guest_binding` nullable и PostgreSQL не разрешает
+            # `FOR UPDATE` на NULL-содержащей стороне OUTER JOIN.
             tasks = list(
                 queryset
                 .annotate(priority_rank=self._priority_order_expression())
@@ -93,7 +95,14 @@ class UniversalTaskDispatcher:
                 updated_at=claim_time,
                 last_error=None,
             )
-            return tasks, claim_time
+            # Подгружаем `guest_binding` отдельным запросом уже без lock-join.
+            tasks_with_binding = list(
+                DispatchTask.objects.select_related("guest_binding")
+                .filter(id__in=task_ids)
+                .annotate(priority_rank=self._priority_order_expression())
+                .order_by("priority_rank", "available_at", "id")
+            )
+            return tasks_with_binding, claim_time
 
     @staticmethod
     def _resolve_external_chat_id(task: DispatchTask) -> str:
