@@ -466,6 +466,164 @@ class GuestBotBinding(models.Model):
         return f"guest={self.guest_id} bot={self.bot_id} chat={self.external_chat_id}"
 
 
+class OlapCheckSyncJournal(models.Model):
+    """
+    Журнал синхронизации чеков с OLAP.
+
+    Таблица хранит задания на дозагрузку чеков из OLAP и служебный статус обработки.
+    Важно: `idempotency_key` защищает от повторной постановки одной и той же задачи.
+    """
+
+    class Status(models.TextChoices):
+        NEW = "new", "Новая"
+        IN_PROGRESS = "in_progress", "В работе"
+        LOADED = "loaded", "Загружена"
+        RETRY = "retry", "Повторить позже"
+        FAILED = "failed", "Ошибка"
+        SKIPPED = "skipped", "Пропущена"
+
+    idempotency_key = models.CharField(
+        max_length=150,
+        unique=True,
+        db_index=True,
+        help_text="Детерминированный ключ задачи для защиты от дублей.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NEW,
+        db_index=True,
+    )
+
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="olap_check_sync_rows",
+        help_text="Гость, для которого требуется дозагрузка чека (если определён).",
+    )
+    source_webhook_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+
+    organization_id = models.CharField(max_length=64, blank=True, null=True)
+    terminal_group_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+
+    order_number = models.BigIntegerField(blank=True, null=True, db_index=True)
+    order_external_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    transaction_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+
+    event_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    business_date = models.DateField(blank=True, null=True, db_index=True)
+
+    department_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    department_code = models.CharField(max_length=32, blank=True, null=True)
+    restoraunt_group_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+
+    attempt_count = models.PositiveIntegerField(default=0)
+    next_try_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    last_error = models.TextField(blank=True, null=True)
+
+    locked_at = models.DateTimeField(blank=True, null=True)
+    loaded_at = models.DateTimeField(blank=True, null=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "olap_check_sync_journal"
+        verbose_name = "Журнал синхронизации чеков с OLAP"
+        verbose_name_plural = "Журнал синхронизации чеков с OLAP"
+        indexes = [
+            models.Index(fields=["status", "next_try_at"], name="ocsj_status_next_idx"),
+            models.Index(fields=["order_number", "business_date"], name="ocsj_ord_date_idx"),
+            models.Index(fields=["terminal_group_id", "business_date"], name="ocsj_term_date_idx"),
+            models.Index(fields=["guest", "business_date"], name="ocsj_guest_date_idx"),
+        ]
+
+    def __str__(self):
+        return f"sync={self.id} status={self.status} order={self.order_number}"
+
+
+class OlapSalesRawLine(models.Model):
+    """
+    Сырые строки OLAP по позициям чека.
+
+    Таблица хранит данные «как пришли» из OLAP для аудита и повторных пересчётов.
+    Поле `row_fingerprint` используется как идемпотентный ключ строки позиции.
+    """
+
+    row_fingerprint = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text="SHA-256 ключ строки позиции для защиты от дублей.",
+    )
+
+    sync_journal = models.ForeignKey(
+        "OlapCheckSyncJournal",
+        on_delete=models.CASCADE,
+        related_name="raw_lines",
+    )
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="olap_sales_raw_lines",
+    )
+
+    business_date = models.DateField(db_index=True)
+
+    department_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    department_code = models.CharField(max_length=32, blank=True, null=True)
+    department_name = models.CharField(max_length=255, blank=True, null=True)
+
+    restaurant_section_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    restoraunt_group_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    restoraunt_group_name = models.CharField(max_length=255, blank=True, null=True)
+
+    order_number = models.BigIntegerField(db_index=True)
+    uniq_order_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    item_sale_event_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+
+    dish_code = models.CharField(max_length=100, blank=True, null=True)
+    dish_name = models.CharField(max_length=255, blank=True, null=True)
+    dish_category_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    dish_category_name = models.CharField(max_length=255, blank=True, null=True)
+    dish_group_id = models.CharField(max_length=100, blank=True, null=True)
+    dish_group_name = models.CharField(max_length=255, blank=True, null=True)
+
+    dish_amount = models.DecimalField(max_digits=14, decimal_places=3, blank=True, null=True)
+    dish_sum_before_discount = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    dish_sum_after_discount = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    discount_sum = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+    bonus_sum = models.DecimalField(max_digits=14, decimal_places=2, blank=True, null=True)
+
+    coupon_series = models.CharField(max_length=100, blank=True, null=True)
+    coupon_number = models.CharField(max_length=100, blank=True, null=True)
+
+    raw_payload = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Оригинальная строка OLAP-ответа для аудита и повторной обработки.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "olap_sales_raw_line"
+        verbose_name = "Сырая строка OLAP"
+        verbose_name_plural = "Сырые строки OLAP"
+        indexes = [
+            models.Index(fields=["guest", "business_date"], name="osrl_guest_date_idx"),
+            models.Index(fields=["department_id", "business_date"], name="osrl_dept_date_idx"),
+            models.Index(fields=["order_number", "business_date"], name="osrl_ord_date_idx"),
+            models.Index(fields=["dish_category_id", "business_date"], name="osrl_cat_date_idx"),
+        ]
+
+    def __str__(self):
+        return f"raw={self.id} order={self.order_number} dish={self.dish_code}"
+
+
 class NotificationScenario(models.Model):
     """
     Правило автоматизированного уведомления.
