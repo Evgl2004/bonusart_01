@@ -10,8 +10,12 @@ from .models import (
     BotProfile,
     Category,
     DispatchTask,
+    FocusCategory,
+    FocusCategoryNomenclatureResolved,
     Guest,
     GuestBotBinding,
+    GuestRestaurantDailyCategoryFact,
+    GuestRestaurantWindowMetrics,
     GuestCategory,
     Mailing,
     MailingBotProfileLink,
@@ -19,7 +23,13 @@ from .models import (
     NotificationEvent,
     NotificationScenario,
     NotificationScenarioBotProfileLink,
+    OlapCategoryDict,
+    OlapCheckSyncJournal,
+    OlapNomenclatureDict,
+    OlapSalesRawLine,
+    OrderFact,
     Restaurant,
+    VirtualCategory,
     VisitHistory,
 )
 from guests.services.notification_registry import (
@@ -230,6 +240,256 @@ class MailingGuestAdmin(admin.ModelAdmin):
     @admin.display(description="Задач DispatchTask")
     def dispatch_tasks_count(self, obj: MailingGuest) -> int:
         return int(getattr(obj, "dispatch_tasks_total", 0))
+
+
+@admin.register(OlapCheckSyncJournal)
+class OlapCheckSyncJournalAdmin(admin.ModelAdmin):
+    """
+    Журнал дозагрузки чеков из OLAP.
+    """
+
+    list_display = (
+        "id",
+        "status",
+        "guest_id",
+        "order_number",
+        "business_date",
+        "department_id",
+        "attempt_count",
+        "next_try_at",
+        "loaded_at",
+        "created_at",
+        "last_error_short",
+    )
+    list_filter = ("status", "business_date", "department_id", "created_at")
+    search_fields = (
+        "idempotency_key",
+        "source_webhook_id",
+        "transaction_id",
+        "order_external_id",
+        "order_number",
+        "terminal_group_id",
+        "last_error",
+    )
+    raw_id_fields = ("guest",)
+    readonly_fields = ("created_at", "updated_at", "loaded_at", "last_error_short")
+    list_per_page = 100
+    actions = ("action_requeue_now", "action_mark_skipped")
+
+    @admin.display(description="Краткая ошибка")
+    def last_error_short(self, obj: OlapCheckSyncJournal) -> str:
+        text = (obj.last_error or "").strip()
+        if not text:
+            return "—"
+        if len(text) <= 250:
+            return text
+        return text[:250] + "..."
+
+    @admin.action(description="Вернуть в retry (запуск сейчас)")
+    def action_requeue_now(self, request, queryset):
+        updated = queryset.update(
+            status=OlapCheckSyncJournal.Status.RETRY,
+            next_try_at=timezone.now(),
+            locked_at=None,
+        )
+        self.message_user(request, f"Переведено в retry: {updated}", level=messages.SUCCESS)
+
+    @admin.action(description="Пометить как skipped")
+    def action_mark_skipped(self, request, queryset):
+        updated = queryset.update(
+            status=OlapCheckSyncJournal.Status.SKIPPED,
+            next_try_at=None,
+            locked_at=None,
+        )
+        self.message_user(request, f"Помечено как skipped: {updated}", level=messages.WARNING)
+
+
+@admin.register(OlapSalesRawLine)
+class OlapSalesRawLineAdmin(admin.ModelAdmin):
+    """
+    Сырой слой OLAP-позиций чека.
+    """
+
+    list_display = (
+        "id",
+        "business_date",
+        "department_id",
+        "order_number",
+        "dish_code",
+        "dish_category_name",
+        "guest_id",
+        "sync_journal_id",
+        "created_at",
+    )
+    list_filter = ("business_date", "department_id", "dish_category_name", "created_at")
+    search_fields = (
+        "row_fingerprint",
+        "order_number",
+        "uniq_order_id",
+        "dish_code",
+        "dish_name",
+        "dish_category_id",
+        "coupon_number",
+    )
+    raw_id_fields = ("sync_journal", "guest")
+    readonly_fields = (
+        "row_fingerprint",
+        "sync_journal",
+        "guest",
+        "business_date",
+        "department_id",
+        "department_code",
+        "department_name",
+        "restaurant_section_id",
+        "restoraunt_group_id",
+        "restoraunt_group_name",
+        "order_number",
+        "uniq_order_id",
+        "item_sale_event_id",
+        "dish_code",
+        "dish_name",
+        "dish_category_id",
+        "dish_category_name",
+        "dish_group_id",
+        "dish_group_name",
+        "dish_amount",
+        "dish_sum_before_discount",
+        "dish_sum_after_discount",
+        "discount_sum",
+        "bonus_sum",
+        "coupon_series",
+        "coupon_number",
+        "raw_payload",
+        "created_at",
+    )
+    list_per_page = 100
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(OlapCategoryDict)
+class OlapCategoryDictAdmin(admin.ModelAdmin):
+    list_display = ("id", "iiko_category_external_id", "category_name", "is_active", "last_seen_at")
+    list_filter = ("is_active",)
+    search_fields = ("iiko_category_external_id", "category_name")
+    readonly_fields = ("created_at", "updated_at", "first_seen_at", "last_seen_at")
+
+
+@admin.register(OlapNomenclatureDict)
+class OlapNomenclatureDictAdmin(admin.ModelAdmin):
+    list_display = ("id", "iiko_nomenclature_external_id", "nomenclature_name", "olap_category", "is_active")
+    list_filter = ("is_active", "olap_category")
+    search_fields = ("iiko_nomenclature_external_id", "nomenclature_name", "olap_category__category_name")
+    raw_id_fields = ("olap_category",)
+    readonly_fields = ("created_at", "updated_at", "first_seen_at", "last_seen_at")
+
+
+@admin.register(VirtualCategory)
+class VirtualCategoryAdmin(admin.ModelAdmin):
+    list_display = ("id", "code", "name", "is_active", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = ("code", "name", "description")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(FocusCategory)
+class FocusCategoryAdmin(admin.ModelAdmin):
+    list_display = ("id", "code", "name", "source_type", "is_enabled", "priority_weight", "updated_at")
+    list_filter = ("source_type", "is_enabled")
+    search_fields = ("code", "name", "tag_code", "comment")
+    raw_id_fields = ("olap_category", "virtual_category")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(FocusCategoryNomenclatureResolved)
+class FocusCategoryNomenclatureResolvedAdmin(admin.ModelAdmin):
+    list_display = ("id", "focus_category", "nomenclature", "source_reason", "updated_at")
+    list_filter = ("source_reason", "focus_category")
+    search_fields = (
+        "focus_category__code",
+        "focus_category__name",
+        "nomenclature__iiko_nomenclature_external_id",
+        "nomenclature__nomenclature_name",
+    )
+    raw_id_fields = ("focus_category", "nomenclature")
+    readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(OrderFact)
+class OrderFactAdmin(admin.ModelAdmin):
+    """
+    Агрегаты по заказам (один факт = один чек).
+    """
+
+    list_display = (
+        "id",
+        "business_date",
+        "department_id",
+        "guest_id",
+        "order_number",
+        "net_sum",
+        "items_count",
+        "categories_count",
+        "coupon_used",
+        "is_delivery",
+        "updated_at",
+    )
+    list_filter = ("business_date", "department_id", "coupon_used", "is_delivery")
+    search_fields = ("order_number", "uniq_order_id", "department_id", "guest__phone", "coupon_number")
+    raw_id_fields = ("guest",)
+    readonly_fields = ("created_at", "updated_at", "first_seen_at")
+    list_per_page = 100
+
+
+@admin.register(GuestRestaurantDailyCategoryFact)
+class GuestRestaurantDailyCategoryFactAdmin(admin.ModelAdmin):
+    """
+    Дневной слой по гостю/заведению/фокусной категории.
+    """
+
+    list_display = (
+        "id",
+        "business_date",
+        "guest_id",
+        "department_id",
+        "focus_category",
+        "orders_count",
+        "items_count",
+        "sum_net",
+        "updated_at",
+    )
+    list_filter = ("business_date", "department_id", "focus_category")
+    search_fields = ("guest__phone", "department_id", "focus_category__code", "focus_category__name")
+    raw_id_fields = ("guest", "focus_category")
+    readonly_fields = ("updated_at",)
+    list_per_page = 100
+
+
+@admin.register(GuestRestaurantWindowMetrics)
+class GuestRestaurantWindowMetricsAdmin(admin.ModelAdmin):
+    """
+    Оконные агрегаты и рейтинг гостя.
+    """
+
+    list_display = (
+        "id",
+        "as_of_date",
+        "guest_id",
+        "department_id",
+        "window_days",
+        "orders_count",
+        "visits_count",
+        "avg_check_net",
+        "rating_score",
+        "last_visit_at",
+        "updated_at",
+    )
+    list_filter = ("as_of_date", "window_days", "department_id")
+    search_fields = ("guest__phone", "department_id")
+    raw_id_fields = ("guest",)
+    readonly_fields = ("updated_at",)
+    list_per_page = 100
 
 
 class NotificationScenarioAdminForm(forms.ModelForm):
