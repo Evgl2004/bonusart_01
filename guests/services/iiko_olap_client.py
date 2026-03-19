@@ -100,6 +100,12 @@ class IikoOlapClient:
     def report_url(self) -> str:
         return f"{self.base_url}/v2/reports/olap"
 
+    def close(self) -> None:
+        """
+        Закрывает HTTP-сессию клиента.
+        """
+        self._session.close()
+
     def _is_key_alive(self) -> bool:
         return bool(self._auth_key and time.time() < self._auth_key_expires_at)
 

@@ -321,6 +321,79 @@ class SyncOlapCatalogsCommandTests(SimpleTestCase):
         mocked_resolved_rebuild.assert_not_called()
 
 
+class RunOlapSyncWorkerCommandTests(SimpleTestCase):
+    """
+    Тесты команды run_olap_sync_worker.
+    """
+
+    def test_handle_once_runs_single_iteration_and_closes_client(self):
+        """
+        В режиме --once команда должна сделать один проход и закрыть OLAP-клиент.
+        """
+        output = io.StringIO()
+        fake_client = Mock()
+        fake_service = Mock()
+        fake_service.run_iteration.return_value = SimpleNamespace(
+            claimed_rows=3,
+            recovered_stale_rows=1,
+            processed_groups=2,
+            loaded_rows=2,
+            retry_rows=1,
+            failed_rows=0,
+            skipped_rows=0,
+            raw_rows_planned=5,
+            raw_rows_created=4,
+            raw_rows_duplicates=1,
+            requested_portions=2,
+            successful_portions=2,
+            failed_portions=0,
+        )
+
+        with (
+            patch("guests.management.commands.run_olap_sync_worker.signal.signal"),
+            patch(
+                "guests.management.commands.run_olap_sync_worker.build_iiko_olap_client_from_settings",
+                return_value=fake_client,
+            ),
+            patch(
+                "guests.management.commands.run_olap_sync_worker.OlapCheckSyncWorkerService",
+                return_value=fake_service,
+            ) as mocked_service_cls,
+        ):
+            call_command(
+                "run_olap_sync_worker",
+                "--once",
+                "--claim-limit=50",
+                "--portion-size=75",
+                "--max-attempts=6",
+                "--retry-base-seconds=30",
+                "--lock-timeout-seconds=1200",
+                stdout=output,
+            )
+
+        mocked_service_cls.assert_called_once_with(
+            client=fake_client,
+            claim_limit=50,
+            portion_size=75,
+            max_attempts=6,
+            retry_base_seconds=30,
+            lock_timeout_seconds=1200,
+        )
+        fake_service.run_iteration.assert_called_once()
+        fake_client.close.assert_called_once()
+
+    def test_signal_handler_sets_stop_flag(self):
+        """
+        Обработчик сигнала должен выставлять флаг should_stop.
+        """
+        from guests.management.commands.run_olap_sync_worker import Command
+
+        command = Command()
+        self.assertFalse(command.should_stop)
+        command._signal_handler(signal.SIGTERM, None)
+        self.assertTrue(command.should_stop)
+
+
 class RunWebhookWorkerCommandTests(SimpleTestCase):
     """
     Тесты команды run_webhook_worker.
