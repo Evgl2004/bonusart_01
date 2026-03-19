@@ -400,3 +400,61 @@ try:
     IIKO_OLAP_PORTION_SIZE = int(os.getenv("IIKO_OLAP_PORTION_SIZE", "200"))
 except ValueError:
     IIKO_OLAP_PORTION_SIZE = 200
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """
+    Безопасно читает bool-переменную окружения.
+
+    Поддерживаемые значения True: 1, true, yes, on.
+    """
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int_set(name: str, default_csv: str) -> set[int]:
+    """
+    Читает CSV-список целых чисел из env в `set[int]`.
+
+    Если значение пустое или содержит ошибки, возвращается набор по умолчанию.
+    """
+    raw_value = str(os.getenv(name, default_csv) or "").strip()
+    parsed_values: set[int] = set()
+
+    for item in raw_value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        try:
+            parsed_values.add(int(token))
+        except ValueError:
+            continue
+
+    if parsed_values:
+        return parsed_values
+
+    fallback_values: set[int] = set()
+    for item in default_csv.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        try:
+            fallback_values.add(int(token))
+        except ValueError:
+            continue
+    return fallback_values or {1}
+
+
+# Live-мост webhook -> olap_check_sync_journal.
+# По умолчанию выключен, чтобы безопасно выкатывать функционал по флагу.
+OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE = _env_bool(
+    "OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE",
+    False,
+)
+# Разрешённые notificationType для live-моста (CSV, например: "1,9").
+OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES = _env_int_set(
+    "OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES",
+    "1",
+)

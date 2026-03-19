@@ -10,10 +10,18 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 import requests
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
-from guests.models import Category, Guest, GuestCategory, GuestCategoryAssignment, Restaurant, VisitHistory
+from guests.models import (
+    Category,
+    Guest,
+    GuestCategory,
+    GuestCategoryAssignment,
+    OlapCheckSyncJournal,
+    Restaurant,
+    VisitHistory,
+)
 from guests.services import webhooks
 
 
@@ -376,6 +384,157 @@ class WebhookGuestAndCategoryTests(TestCase):
         )
         self.assertFalse(assigned)
         self.assertIn("Неизвестный notificationType", reason)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=False,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_disabled(self):
+        """
+        При выключенном флаге live-моста notificationType=1 не должен создавать запись в OLAP-журнале.
+        """
+        assigned, reason = webhooks.handle_api_webhook(
+            {
+                "id": "wh-nt1-off",
+                "parsed_body": {
+                    "id": "evt-1001",
+                    "notificationType": 1,
+                    "phone": self.guest.phone,
+                    "terminalGroupId": self.restaurant.iiko_id,
+                    "changedOn": "2026-03-18T10:00:00+05:00",
+                    "orderNumber": 53110,
+                    "orderId": "order-off-1",
+                    "transactionId": "tx-off-1",
+                    "organizationId": "org-off-1",
+                },
+            }
+        )
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(VisitHistory.objects.count(), 1)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_enabled_creates_journal(self):
+        """
+        При включённом live-мосте notificationType=1 должен ставить задачу в OlapCheckSyncJournal.
+        """
+        webhook = {
+            "id": "wh-nt1-on",
+            "parsed_body": {
+                "id": "evt-2001",
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": self.restaurant.iiko_id,
+                "changedOn": "2026-03-18T11:00:00+05:00",
+                "orderNumber": 698698,
+                "orderId": "order-on-1",
+                "transactionId": "tx-on-1",
+                "organizationId": "org-on-1",
+            },
+        }
+
+        assigned, reason = webhooks.handle_api_webhook(webhook)
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(VisitHistory.objects.count(), 1)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 1)
+
+        row = OlapCheckSyncJournal.objects.get()
+        self.assertEqual(row.order_number, 698698)
+        self.assertEqual(row.order_external_id, "order-on-1")
+        self.assertEqual(row.transaction_id, "tx-on-1")
+        self.assertEqual(row.terminal_group_id, self.restaurant.iiko_id)
+        self.assertEqual(row.organization_id, "org-on-1")
+        self.assertEqual(row.source_webhook_id, "wh-nt1-on")
+        self.assertEqual(row.status, OlapCheckSyncJournal.Status.NEW)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_is_idempotent(self):
+        """
+        Повторный webhook с теми же ключевыми полями не должен создавать дубль в OLAP-журнале.
+        """
+        webhook = {
+            "id": "wh-nt1-idem",
+            "parsed_body": {
+                "id": "evt-3001",
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": self.restaurant.iiko_id,
+                "changedOn": "2026-03-18T12:00:00+05:00",
+                "orderNumber": 700001,
+                "orderId": "order-idem-1",
+                "transactionId": "tx-idem-1",
+                "organizationId": "org-idem-1",
+            },
+        }
+
+        first_assigned, _ = webhooks.handle_api_webhook(webhook)
+        second_assigned, _ = webhooks.handle_api_webhook(webhook)
+
+        self.assertTrue(first_assigned)
+        self.assertTrue(second_assigned)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 1)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_skips_without_order_number(self):
+        """
+        Если в webhook нет orderNumber, live-мост должен пропустить постановку задачи без падения обработки.
+        """
+        assigned, reason = webhooks.handle_api_webhook(
+            {
+                "id": "wh-nt1-no-order",
+                "parsed_body": {
+                    "id": "evt-4001",
+                    "notificationType": 1,
+                    "phone": self.guest.phone,
+                    "terminalGroupId": self.restaurant.iiko_id,
+                    "changedOn": "2026-03-18T13:00:00+05:00",
+                    "organizationId": "org-no-order",
+                },
+            }
+        )
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(VisitHistory.objects.count(), 1)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_skips_staff_events(self):
+        """
+        Для staff-уведомления (customerId без phone) мост не должен создавать OLAP-задачу.
+        """
+        assigned, reason = webhooks.handle_api_webhook(
+            {
+                "id": "wh-nt1-staff",
+                "parsed_body": {
+                    "id": "evt-staff-1",
+                    "notificationType": 1,
+                    "phone": None,
+                    "customerId": "staff-customer-1",
+                    "terminalGroupId": self.restaurant.iiko_id,
+                    "orderNumber": 53110,
+                    "organizationId": "org-staff-1",
+                },
+            }
+        )
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertIn("сотрудник", reason.lower())
+        self.assertEqual(VisitHistory.objects.count(), 0)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
 
 
 class WebhookProcessRecentTests(SimpleTestCase):

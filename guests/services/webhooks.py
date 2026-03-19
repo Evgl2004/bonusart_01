@@ -6,6 +6,7 @@ import os
 
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -14,6 +15,7 @@ from guests.models import Category, DispatchTask, Guest, GuestCategory, GuestCat
 from guests.services.balance_notifications import BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID, is_balance_webhook
 from guests.services.notification_handler_registry import run_webhook_scenario_by_code
 from guests.services.notification_registry import SCENARIO_CODE_BALANCE_CHANGED
+from guests.services.olap_webhook_bridge import enqueue_olap_sync_from_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -672,6 +674,30 @@ def enqueue_balance_notification_from_webhook(
     )
 
 
+def _is_live_olap_bridge_enabled_for_notification(notification_type: int | None) -> bool:
+    """
+    Проверяет, включён ли live-мост webhook -> OlapCheckSyncJournal для данного типа уведомления.
+
+    Логика:
+    1. общий флаг `OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE` должен быть включён;
+    2. `notification_type` должен входить в разрешённый список
+       `OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES`.
+    """
+    if not bool(getattr(settings, "OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE", False)):
+        return False
+
+    allowed_types = getattr(settings, "OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES", {1}) or {1}
+    if not isinstance(allowed_types, (set, list, tuple)):
+        return False
+
+    try:
+        normalized_types = {int(item) for item in allowed_types}
+    except (TypeError, ValueError):
+        normalized_types = {1}
+
+    return notification_type in normalized_types
+
+
 def handle_api_webhook(
     webhook: dict,
     *,
@@ -725,13 +751,37 @@ def handle_api_webhook(
             )
             return False, "balance enqueue error"
 
-    # --- notificationType = 1: обновляем историю посещений ---
+    # --- notificationType = 1: обновляем историю посещений (+ live-мост в OLAP при включённом флаге) ---
     if notif_type == 1:
         logger.info(
             "Webhook id=%s: notificationType=1, обновляем историю посещений",
             webhook_id,
         )
-        return update_visit_history_from_event(event)
+        success, reason = update_visit_history_from_event(event)
+        if not success:
+            return success, reason
+        if reason:
+            logger.info(
+                "Webhook id=%s: VisitHistory обработан без постановки OLAP-задачи (%s)",
+                webhook_id,
+                reason,
+            )
+            return success, reason
+
+        if _is_live_olap_bridge_enabled_for_notification(notif_type):
+            bridge_result = enqueue_olap_sync_from_webhook(
+                webhook=webhook,
+                guest=find_guest(event),
+            )
+            logger.info(
+                "Webhook id=%s: live-мост OLAP выполнен (created=%s, row_id=%s, reason=%s)",
+                webhook_id,
+                bridge_result.created,
+                bridge_result.row_id,
+                bridge_result.reason,
+            )
+
+        return success, reason
 
     # --- notificationType = 5: назначаем категорию ---
     if notif_type == 5:

@@ -57,6 +57,20 @@ class WebhookWorkerParseMessageTests(SimpleTestCase):
         self.assertEqual(parsed.parsed_body, {"guest_id": "abc"})
         self.assertEqual(parsed.retry_count, 1)
 
+    def test_parse_message_cp1251_fallback_preserves_cyrillic(self):
+        payload = {
+            "id": "124",
+            "category": "balance",
+            "parsed_body": {"message": "Баланс обновлён"},
+            "retry_count": 0,
+        }
+        message_bytes = json.dumps(payload, ensure_ascii=False).encode("cp1251")
+
+        parsed = WebhookWorker._parse_message(message_bytes)
+
+        self.assertEqual(parsed.id, "124")
+        self.assertEqual(parsed.parsed_body["message"], "Баланс обновлён")
+
     def test_parse_message_invalid_utf8_raises_fatal(self):
         with self.assertRaises(FatalMessageError):
             WebhookWorker._parse_message(b"\xff\xfe\xfd")

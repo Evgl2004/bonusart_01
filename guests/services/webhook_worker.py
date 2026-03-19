@@ -369,6 +369,33 @@ class WebhookWorker:
             self._retry_message(message, message_bytes, f"Непредвиденная ошибка: {err}")
 
     @staticmethod
+    def _decode_message_bytes(message_bytes: bytes) -> str:
+        """
+        Безопасно декодирует байты входящего webhook-сообщения.
+
+        Порядок попыток:
+        1. `utf-8` (основной стандарт проекта);
+        2. `utf-8-sig` (если есть BOM);
+        3. `cp1251` (fallback для исторических сообщений).
+        """
+        decode_attempts: list[tuple[str, str]] = []
+
+        for encoding in ("utf-8", "utf-8-sig", "cp1251"):
+            try:
+                decoded = message_bytes.decode(encoding)
+                if encoding != "utf-8":
+                    logger.warning(
+                        "Webhook message decoded using fallback encoding=%s (historical compatibility mode).",
+                        encoding,
+                    )
+                return decoded
+            except UnicodeDecodeError as err:
+                decode_attempts.append((encoding, str(err)))
+
+        details = "; ".join(f"{encoding}: {error}" for encoding, error in decode_attempts)
+        raise FatalMessageError(f"Не удалось декодировать сообщение: {details}")
+
+    @staticmethod
     def _parse_message(message_bytes: bytes) -> WebhookMessage:
         """
         Парсинг сырых байтов из Redis в структурированный WebhookMessage.
@@ -376,11 +403,8 @@ class WebhookWorker:
         """
 
         try:
-            # Попытка декодирования в UTF-8, затем в latin-1 как fallback
-            try:
-                message_str = message_bytes.decode('utf-8')
-            except UnicodeDecodeError as err:
-                raise FatalMessageError(f"Не удалось декодировать сообщение: {err}")
+            # Декодирование и защита от проблем исторической кодировки.
+            message_str = WebhookWorker._decode_message_bytes(message_bytes)
 
             # Парсинг JSON
             message_dict = json.loads(message_str)
@@ -517,7 +541,7 @@ class WebhookWorker:
             message_dict['metadata']['retry_count'] = message.retry_count
 
             # Сериализация и отправка обратно в очередь
-            retry_message = json.dumps(message_dict).encode('utf-8')
+            retry_message = json.dumps(message_dict, ensure_ascii=False).encode('utf-8')
             self.redis_client.rpush(self.queue_name, retry_message)
 
             logger.info(
@@ -544,7 +568,7 @@ class WebhookWorker:
                 'timestamp_human': time.strftime('%Y-%m-%d %H:%M:%S'),
                 'queue_source': self.queue_name
             }
-            dlq_bytes = json.dumps(dlq_message).encode('utf-8')
+            dlq_bytes = json.dumps(dlq_message, ensure_ascii=False).encode('utf-8')
             self.redis_client.rpush(self.dlq_name, dlq_bytes)
             self.metrics['messages_dlq'] += 1
             logger.warning(f"Сообщение отправлено в DLQ. Причина: {reason}")
