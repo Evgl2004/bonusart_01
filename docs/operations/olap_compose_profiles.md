@@ -45,3 +45,4 @@ docker compose -f docker-compose.prod.yaml logs -f webhook-backfill-bonus
 1. Расписание OLAP-задач управляется env-переменными в `.env` (`OLAP_SYNC_*`, `OLAP_REBUILD_*`), а не через вечные циклы контейнеров.
 2. `webhook-backfill-bonus` нужен только на период исторического прогона.
 3. Такая схема упрощает эксплуатацию: меньше процессов, прозрачный контроль времени запусков и нагрузки на OLAP.
+4. Пошаговый запуск по фазам A/B/C/D описан в `docs/operations/olap_f18_6_controlled_rollout.md`.
