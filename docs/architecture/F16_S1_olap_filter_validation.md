@@ -58,3 +58,41 @@
 2. При формировании запросов в OLAP использовать `Department.Id` как первичный фильтр.
 3. Логи синхронизации должны фиксировать, каким полем выполнялся фактический отбор.
 
+## Верифицированное сопоставление из webhook-файла `iiko_card_balans_53110.txt`
+Источник webhook:
+1. `orderNumber = 698698`
+2. `orderId = 51ed1890-ab9f-4626-b889-4df9a06e179e`
+3. `organizationId = b5529c0c-420c-11e8-80e0-d8d38565926f`
+4. `terminalGroupId = 3c9e75bc-24f3-41ad-8fc0-0af8fa8e09d6`
+5. `changedOn = 2026-03-18T11:56:03.3940651+05:00` (дата для OLAP: `2026-03-18`)
+
+Результат сопоставления с OLAP:
+1. `department_name = Узбечка`
+2. `department_id = b6e067a9-6f0f-4cf7-a349-0c235bf2232a`
+3. `department_code = 9`
+4. `restaurant_section_id = 336e1780-2a64-4f99-bafd-3b5e3cbc1a25`
+5. `restoraunt_group_id = 3c9e75bc-24f3-41ad-8fc0-0af8fa8e09d6`
+6. `uniq_order_id = 51ed1890-ab9f-4626-b889-4df9a06e179e`
+
+Проверки целостности:
+1. `terminalGroupId == RestorauntGroup.Id` -> `True`
+2. `webhook.orderId == OLAP.UniqOrderId.Id` -> `True`
+
+## Рекомендация для будущей таблицы сопоставления заведений
+Минимальные поля:
+1. `organization_id`
+2. `terminal_group_id`
+3. `restoraunt_group_id`
+4. `department_id`
+5. `department_code`
+6. `department_name`
+7. `restaurant_section_id`
+8. `is_active`
+9. `verified_at`
+10. `source_order_num`
+11. `source_business_date`
+
+Ограничения:
+1. уникальность на `(organization_id, terminal_group_id)`
+2. индекс на `department_id`
+3. индекс на `restoraunt_group_id`
