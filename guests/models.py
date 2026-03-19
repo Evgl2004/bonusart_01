@@ -624,6 +624,88 @@ class OlapSalesRawLine(models.Model):
         return f"raw={self.id} order={self.order_number} dish={self.dish_code}"
 
 
+class OrderFact(models.Model):
+    """
+    Факт чека (одна строка = один заказ).
+
+    Модель предназначена для быстрых аналитических срезов:
+    1. средний чек;
+    2. частота визитов;
+    3. купоны/скидки;
+    4. базовые агрегаты по заведению и гостю.
+    """
+
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="order_facts",
+    )
+    business_date = models.DateField(db_index=True)
+
+    department_id = models.CharField(
+        max_length=64,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Идентификатор заведения (Department.Id) из OLAP.",
+    )
+    department_name = models.CharField(max_length=255, blank=True, null=True)
+
+    order_number = models.BigIntegerField(db_index=True)
+    uniq_order_id = models.CharField(
+        max_length=100,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Уникальный идентификатор заказа из OLAP (если передан).",
+    )
+
+    gross_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    net_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    discount_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    items_count = models.PositiveIntegerField(default=0)
+    categories_count = models.PositiveIntegerField(default=0)
+
+    coupon_used = models.BooleanField(default=False, db_index=True)
+    coupon_series = models.CharField(max_length=100, blank=True, null=True)
+    coupon_number = models.CharField(max_length=100, blank=True, null=True)
+
+    order_type = models.CharField(max_length=64, blank=True, null=True)
+    is_delivery = models.BooleanField(default=False, db_index=True)
+
+    first_seen_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Когда заказ впервые был замечен в сыром OLAP-слое.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "order_fact"
+        verbose_name = "Факт чека"
+        verbose_name_plural = "Факты чеков"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_date", "department_id", "order_number", "uniq_order_id"],
+                name="order_fact_order_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["guest", "business_date"], name="of_guest_date_idx"),
+            models.Index(fields=["department_id", "business_date"], name="of_dept_date_idx"),
+            models.Index(fields=["business_date", "order_number"], name="of_date_order_idx"),
+        ]
+
+    def __str__(self):
+        return f"order_fact={self.id} order={self.order_number} date={self.business_date}"
+
+
 class OlapCategoryDict(models.Model):
     """
     Справочник категорий из OLAP.

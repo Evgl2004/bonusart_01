@@ -163,6 +163,9 @@
 Коммит:
 1. `feat(analytics): построение факта чека из сырых строк OLAP`
 
+Статус:
+1. `completed` — добавлены модель/миграция `OrderFact`, сервис `guests/services/order_fact.py` и команда `sync_order_fact` с тестами.
+
 ### S7. Дневной слой по категориям
 Задачи:
 1. Добавить таблицу `guest_restaurant_daily_category_fact`.
