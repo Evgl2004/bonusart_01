@@ -228,6 +228,99 @@ class RunNotificationScenariosCommandTests(SimpleTestCase):
         )
 
 
+class SyncOlapCatalogsCommandTests(SimpleTestCase):
+    """
+    Тесты команды sync_olap_catalogs.
+    """
+
+    def test_handle_once_runs_catalog_and_resolved_services(self):
+        """
+        В режиме --once команда должна вызвать синхронизацию справочников
+        и пересборку resolved-связей.
+        """
+        output = io.StringIO()
+        fake_catalog_stats = SimpleNamespace(
+            scanned_raw_lines=10,
+            categories_created=2,
+            categories_updated=1,
+            nomenclatures_created=8,
+            nomenclatures_updated=3,
+            skipped_without_category=0,
+            skipped_without_nomenclature=1,
+        )
+        fake_resolved_stats = SimpleNamespace(
+            scanned_focus_categories=4,
+            rebuilt_focus_categories=3,
+            disabled_focus_categories_cleared=1,
+            written_links=25,
+            deleted_links=8,
+            skipped_invalid_focus_categories=0,
+        )
+
+        with (
+            patch("guests.management.commands.sync_olap_catalogs.signal.signal"),
+            patch(
+                "guests.management.commands.sync_olap_catalogs.sync_olap_catalogs_from_raw_lines",
+                return_value=fake_catalog_stats,
+            ) as mocked_catalog_sync,
+            patch(
+                "guests.management.commands.sync_olap_catalogs.rebuild_focus_category_nomenclature_resolved",
+                return_value=fake_resolved_stats,
+            ) as mocked_resolved_rebuild,
+        ):
+            call_command(
+                "sync_olap_catalogs",
+                "--once",
+                "--raw-line-id-from=100",
+                "--raw-line-id-to=200",
+                "--batch-size=500",
+                "--focus-code=meat_focus",
+                stdout=output,
+            )
+
+        mocked_catalog_sync.assert_called_once_with(
+            raw_line_id_from=100,
+            raw_line_id_to=200,
+            batch_size=500,
+        )
+        mocked_resolved_rebuild.assert_called_once_with(focus_codes=["meat_focus"])
+
+    def test_handle_once_allows_skip_rebuild(self):
+        """
+        Флаг --skip-rebuild-resolved должен пропускать этап пересборки resolved.
+        """
+        output = io.StringIO()
+        fake_catalog_stats = SimpleNamespace(
+            scanned_raw_lines=0,
+            categories_created=0,
+            categories_updated=0,
+            nomenclatures_created=0,
+            nomenclatures_updated=0,
+            skipped_without_category=0,
+            skipped_without_nomenclature=0,
+        )
+
+        with (
+            patch("guests.management.commands.sync_olap_catalogs.signal.signal"),
+            patch(
+                "guests.management.commands.sync_olap_catalogs.sync_olap_catalogs_from_raw_lines",
+                return_value=fake_catalog_stats,
+            ) as mocked_catalog_sync,
+            patch(
+                "guests.management.commands.sync_olap_catalogs.rebuild_focus_category_nomenclature_resolved",
+            ) as mocked_resolved_rebuild,
+        ):
+            call_command(
+                "sync_olap_catalogs",
+                "--once",
+                "--skip-rebuild-resolved",
+                stdout=output,
+            )
+
+        mocked_catalog_sync.assert_called_once()
+        mocked_resolved_rebuild.assert_not_called()
+
+
 class RunWebhookWorkerCommandTests(SimpleTestCase):
     """
     Тесты команды run_webhook_worker.
