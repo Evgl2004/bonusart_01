@@ -32,10 +32,10 @@
 2. Простой контроль и предсказуемая скорость прогона.
 
 ### 2) Дозагрузка чеков из iiko OLAP
-1. `orders_per_request = 50` чеков на один OLAP-запрос.
-2. `max_requests_per_minute = 20`.
-3. `concurrency = 1` (на старте).
-4. Повторы: `retry_base = 2s`, `retry_max = 120s`, `max_retries = 5`.
+1. `portion_size = 50` чеков на один OLAP-запрос (`OLAP_SYNC_SCHEDULE_PORTION_SIZE`).
+2. `claim_limit = 100` записей журнала на один one-shot запуск (`OLAP_SYNC_SCHEDULE_CLAIM_LIMIT`).
+3. Частота запуска `sync = 30` минут (`OLAP_SYNC_SCHEDULE_MINUTES`) только в рабочем окне.
+4. Повторы: `retry_base = 120s`, `max_retries = 5`.
 
 Итог:
 1. Риск перегрузки iiko минимален.
@@ -83,12 +83,11 @@
    3. ночных/периодических пересчётов.
 
 ### F18.5. Обновление docker-compose (prod)
-1. Добавить сервисы:
-   1. `webhook-backfill-worker` (исторический прогон);
-   2. `olap-sync-worker` (дозагрузка из журнала);
-   3. `analytics-rebuild-worker` (пересчёты агрегатов).
-2. Добавить healthcheck и restart policy.
-3. Чётко разделить профили запуска: `live`, `backfill`, `rebuild`.
+1. Добавить только временный сервис `webhook-backfill-worker` (профиль `backfill`).
+2. Для штатного режима использовать `task-bonus` (Django Q) и one-shot задачи по расписанию:
+   1. `run_olap_sync_scheduled_task` (раз в N минут, в рабочее окно);
+   2. `run_olap_rebuild_scheduled_task` (ночной cron).
+3. Не добавлять отдельные постоянные контейнеры под `sync/rebuild`, чтобы не держать лишние циклы `sleep`.
 
 ### F18.6. Контролируемый ввод в эксплуатацию
 1. Фаза A: `dry-run` на диапазоне 1 день.
@@ -109,9 +108,14 @@
 10. `OLAP_BACKFILL_SLEEP_BETWEEN_CYCLES_SECONDS=20`
 11. `OLAP_BACKFILL_PAUSE_QUEUE_GT=5000`
 12. `OLAP_BACKFILL_RESUME_QUEUE_LT=2000`
-13. `IIKO_OLAP_ORDERS_PER_REQUEST=50`
-14. `IIKO_OLAP_MAX_REQUESTS_PER_MINUTE=20`
-15. `IIKO_OLAP_CONCURRENCY=1`
+13. `OLAP_SYNC_SCHEDULE_ENABLED=false`
+14. `OLAP_SYNC_SCHEDULE_MINUTES=30`
+15. `OLAP_SYNC_WINDOW_START_LOCAL=12:00`
+16. `OLAP_SYNC_WINDOW_END_LOCAL=01:00`
+17. `OLAP_SYNC_SCHEDULE_CLAIM_LIMIT=100`
+18. `OLAP_SYNC_SCHEDULE_PORTION_SIZE=50`
+19. `OLAP_REBUILD_SCHEDULE_ENABLED=false`
+20. `OLAP_REBUILD_SCHEDULE_CRON=30 2 * * *`
 
 ## Метрики контроля
 1. Скорость intake webhook (записей/мин).

@@ -418,6 +418,20 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int, *, min_value: int | None = None) -> int:
+    """
+    Безопасно читает целое число из env с опциональной нижней границей.
+    """
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = int(default)
+
+    if min_value is not None:
+        value = max(int(min_value), value)
+    return value
+
+
 def _env_int_set(name: str, default_csv: str) -> set[int]:
     """
     Читает CSV-список целых чисел из env в `set[int]`.
@@ -520,3 +534,98 @@ try:
     )
 except ValueError:
     OLAP_BACKFILL_REQUEST_TIMEOUT_SECONDS = 20.0
+
+# Плановый OLAP sync (one-shot) через Django Q.
+OLAP_SYNC_SCHEDULE_ENABLED = _env_bool("OLAP_SYNC_SCHEDULE_ENABLED", False)
+OLAP_SYNC_SCHEDULE_MINUTES = _env_int(
+    "OLAP_SYNC_SCHEDULE_MINUTES",
+    30,
+    min_value=1,
+)
+OLAP_SYNC_WINDOW_START_LOCAL = str(
+    os.getenv("OLAP_SYNC_WINDOW_START_LOCAL", "12:00") or "12:00"
+).strip()
+OLAP_SYNC_WINDOW_END_LOCAL = str(
+    os.getenv("OLAP_SYNC_WINDOW_END_LOCAL", "01:00") or "01:00"
+).strip()
+OLAP_SYNC_SCHEDULE_CLAIM_LIMIT = _env_int(
+    "OLAP_SYNC_SCHEDULE_CLAIM_LIMIT",
+    100,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_PORTION_SIZE = _env_int(
+    "OLAP_SYNC_SCHEDULE_PORTION_SIZE",
+    50,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_MAX_ATTEMPTS = _env_int(
+    "OLAP_SYNC_SCHEDULE_MAX_ATTEMPTS",
+    5,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_RETRY_BASE_SECONDS = _env_int(
+    "OLAP_SYNC_SCHEDULE_RETRY_BASE_SECONDS",
+    120,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_LOCK_TIMEOUT_SECONDS = _env_int(
+    "OLAP_SYNC_SCHEDULE_LOCK_TIMEOUT_SECONDS",
+    900,
+    min_value=60,
+)
+
+# Плановый пересчет витрин OLAP (one-shot) через Django Q.
+OLAP_REBUILD_SCHEDULE_ENABLED = _env_bool("OLAP_REBUILD_SCHEDULE_ENABLED", False)
+OLAP_REBUILD_SCHEDULE_CRON = str(
+    os.getenv("OLAP_REBUILD_SCHEDULE_CRON", "30 2 * * *") or "30 2 * * *"
+).strip()
+OLAP_REBUILD_SCHEDULE_CONTINUE_ON_STEP_ERROR = _env_bool(
+    "OLAP_REBUILD_SCHEDULE_CONTINUE_ON_STEP_ERROR",
+    True,
+)
+OLAP_REBUILD_SCHEDULE_BATCH_SIZE = _env_int(
+    "OLAP_REBUILD_SCHEDULE_BATCH_SIZE",
+    2000,
+    min_value=100,
+)
+OLAP_REBUILD_SCHEDULE_WINDOW_DAYS = str(
+    os.getenv("OLAP_REBUILD_SCHEDULE_WINDOW_DAYS", "7,14,30,60,180") or "7,14,30,60,180"
+).strip()
+OLAP_REBUILD_SCHEDULE_USE_TODAY_AS_OF_DATE = _env_bool(
+    "OLAP_REBUILD_SCHEDULE_USE_TODAY_AS_OF_DATE",
+    True,
+)
+OLAP_REBUILD_SCHEDULE_DEPARTMENT_ID = str(
+    os.getenv("OLAP_REBUILD_SCHEDULE_DEPARTMENT_ID", "") or ""
+).strip()
+
+
+def _register_olap_schedule_tasks() -> None:
+    """
+    Регистрирует OLAP-задачи в Django Q по env-флагам.
+
+    Это позволяет включать/выключать OLAP-контур без правки кода:
+    1. sync-задача раз в N минут в рабочее окно;
+    2. rebuild-задача по cron-расписанию.
+    """
+    schedule_map = Q_CLUSTER.setdefault("schedule", {})
+
+    if OLAP_SYNC_SCHEDULE_ENABLED:
+        schedule_map["run_olap_sync_windowed"] = {
+            "func": "guests.tasks.run_olap_sync_scheduled_task",
+            "minutes": OLAP_SYNC_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_olap_sync_windowed", None)
+
+    if OLAP_REBUILD_SCHEDULE_ENABLED:
+        schedule_map["run_olap_rebuild_nightly"] = {
+            "func": "guests.tasks.run_olap_rebuild_scheduled_task",
+            "schedule_type": "C",
+            "cron": OLAP_REBUILD_SCHEDULE_CRON,
+        }
+    else:
+        schedule_map.pop("run_olap_rebuild_nightly", None)
+
+
+_register_olap_schedule_tasks()

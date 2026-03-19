@@ -3,8 +3,15 @@
 """
 
 import logging
+from datetime import datetime, time as dt_time
+
+from django.conf import settings
+from django.core.management import call_command
+from django.utils import timezone
 
 from .services.notification_handler_registry import run_registered_schedule_scenarios
+from .services.iiko_olap_client import build_iiko_olap_client_from_settings
+from .services.olap_check_sync import OlapCheckSyncWorkerService
 from .services.webhooks import process_recent_webhooks
 
 logger = logging.getLogger(__name__)
@@ -46,4 +53,175 @@ def run_scheduled_notification_scenarios_task() -> int:
         return total_created_tasks
     except Exception as err:
         logger.exception("Ошибка выполнения авто-сценариев уведомлений: %s", err)
+        return 0
+
+
+def _parse_hhmm(value: str, *, default: dt_time) -> dt_time:
+    """
+    Возвращает время в формате HH:MM.
+
+    Если формат некорректный, возвращает `default`, чтобы не падать
+    на ошибке конфигурации расписания.
+    """
+    raw_value = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(raw_value, "%H:%M")
+    except ValueError:
+        return default
+    return parsed.time()
+
+
+def _is_time_in_window(
+    *,
+    now_value: dt_time,
+    start_value: dt_time,
+    end_value: dt_time,
+) -> bool:
+    """
+    Проверяет, попадает ли текущее локальное время в рабочее окно.
+
+    Поддерживает переход через полночь:
+    1. `12:00 -> 23:00` — обычное окно;
+    2. `12:00 -> 01:00` — окно с переходом через 00:00.
+    """
+    if start_value <= end_value:
+        return start_value <= now_value <= end_value
+    return now_value >= start_value or now_value <= end_value
+
+
+def _parse_int_csv(raw_value: str) -> list[int]:
+    """
+    Читает CSV-список целых чисел, убирает дубликаты и невалидные токены.
+    """
+    values: list[int] = []
+    for item in str(raw_value or "").split(","):
+        token = item.strip()
+        if not token:
+            continue
+        try:
+            parsed = int(token)
+        except ValueError:
+            continue
+        if parsed <= 0 or parsed in values:
+            continue
+        values.append(parsed)
+    return values
+
+
+def run_olap_sync_scheduled_task() -> int:
+    """
+    Плановая задача дозагрузки OLAP.
+
+    Логика:
+    1. Проверяет включение флагом и рабочее окно времени;
+    2. Делает ровно один проход (`one-shot`);
+    3. Возвращает число обработанных записей журнала.
+    """
+    if not bool(getattr(settings, "OLAP_SYNC_SCHEDULE_ENABLED", False)):
+        logger.info("OLAP sync (schedule): выключено флагом OLAP_SYNC_SCHEDULE_ENABLED.")
+        return 0
+
+    now_local = timezone.localtime()
+    start_time = _parse_hhmm(
+        str(getattr(settings, "OLAP_SYNC_WINDOW_START_LOCAL", "12:00")),
+        default=dt_time(12, 0),
+    )
+    end_time = _parse_hhmm(
+        str(getattr(settings, "OLAP_SYNC_WINDOW_END_LOCAL", "01:00")),
+        default=dt_time(1, 0),
+    )
+
+    if not _is_time_in_window(
+        now_value=now_local.time(),
+        start_value=start_time,
+        end_value=end_time,
+    ):
+        logger.info(
+            "OLAP sync (schedule): вне рабочего окна, now=%s window=%s-%s.",
+            now_local.strftime("%H:%M"),
+            start_time.strftime("%H:%M"),
+            end_time.strftime("%H:%M"),
+        )
+        return 0
+
+    client = build_iiko_olap_client_from_settings()
+    worker_service = OlapCheckSyncWorkerService(
+        client=client,
+        claim_limit=max(1, int(getattr(settings, "OLAP_SYNC_SCHEDULE_CLAIM_LIMIT", 100))),
+        portion_size=max(1, int(getattr(settings, "OLAP_SYNC_SCHEDULE_PORTION_SIZE", 50))),
+        max_attempts=max(1, int(getattr(settings, "OLAP_SYNC_SCHEDULE_MAX_ATTEMPTS", 5))),
+        retry_base_seconds=max(
+            1,
+            int(getattr(settings, "OLAP_SYNC_SCHEDULE_RETRY_BASE_SECONDS", 120)),
+        ),
+        lock_timeout_seconds=max(
+            60,
+            int(getattr(settings, "OLAP_SYNC_SCHEDULE_LOCK_TIMEOUT_SECONDS", 900)),
+        ),
+    )
+    try:
+        stats = worker_service.run_iteration()
+        logger.info(
+            (
+                "OLAP sync (schedule): claimed=%s loaded=%s retry=%s failed=%s skipped=%s "
+                "raw_created=%s raw_duplicates=%s portions_ok=%s portions_fail=%s"
+            ),
+            stats.claimed_rows,
+            stats.loaded_rows,
+            stats.retry_rows,
+            stats.failed_rows,
+            stats.skipped_rows,
+            stats.raw_rows_created,
+            stats.raw_rows_duplicates,
+            stats.successful_portions,
+            stats.failed_portions,
+        )
+        return int(stats.claimed_rows)
+    except Exception as err:
+        logger.exception("OLAP sync (schedule): ошибка one-shot прохода: %s", err)
+        return 0
+    finally:
+        client.close()
+
+
+def run_olap_rebuild_scheduled_task() -> int:
+    """
+    Плановый пересчёт аналитических витрин OLAP (one-shot).
+
+    Для стабильной эксплуатации используется `run_olap_pipeline --once`
+    с отключённым шагом OLAP sync (`--skip-olap-sync`), так как дозагрузка
+    выполняется отдельной плановой задачей.
+    """
+    if not bool(getattr(settings, "OLAP_REBUILD_SCHEDULE_ENABLED", False)):
+        logger.info("OLAP rebuild (schedule): выключено флагом OLAP_REBUILD_SCHEDULE_ENABLED.")
+        return 0
+
+    call_options = {
+        "once": True,
+        "skip_olap_sync": True,
+        "continue_on_step_error": bool(
+            getattr(settings, "OLAP_REBUILD_SCHEDULE_CONTINUE_ON_STEP_ERROR", True)
+        ),
+        "batch_size": max(100, int(getattr(settings, "OLAP_REBUILD_SCHEDULE_BATCH_SIZE", 2000))),
+    }
+
+    department_id = str(getattr(settings, "OLAP_REBUILD_SCHEDULE_DEPARTMENT_ID", "") or "").strip()
+    if department_id:
+        call_options["department_id"] = department_id
+
+    window_days = _parse_int_csv(
+        str(getattr(settings, "OLAP_REBUILD_SCHEDULE_WINDOW_DAYS", "7,14,30,60,180"))
+    )
+    if window_days:
+        call_options["window_days"] = [str(value) for value in window_days]
+
+    if bool(getattr(settings, "OLAP_REBUILD_SCHEDULE_USE_TODAY_AS_OF_DATE", True)):
+        call_options["as_of_date"] = timezone.localdate().isoformat()
+
+    try:
+        call_command("run_olap_pipeline", **call_options)
+        logger.info("OLAP rebuild (schedule): витрины пересчитаны успешно.")
+        return 1
+    except Exception as err:
+        logger.exception("OLAP rebuild (schedule): ошибка пересчёта витрин: %s", err)
         return 0

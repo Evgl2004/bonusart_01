@@ -1,95 +1,20 @@
 diff --git a/docker-compose.prod.yaml b/docker-compose.prod.yaml
-index bfefb9a..f18f50a 100644
+index bfefb9a..f18f52a 100644
 --- a/docker-compose.prod.yaml
 +++ b/docker-compose.prod.yaml
-@@ -330,6 +330,8 @@ services:
-     stop_grace_period: 30s
-     healthcheck:
-       test: [ "CMD", "pgrep", "-f", "mailing_worker" ]
-+    profiles:
-+      - live
-     networks:
-       - app_network
- 
-@@ -357,6 +359,8 @@ services:
-     stop_grace_period: 30s
-     healthcheck:
-       test: [ "CMD", "pgrep", "-f", "dispatch_universal_tasks" ]
-+    profiles:
-+      - live
-     networks:
-       - app_network
- 
-@@ -384,6 +388,8 @@ services:
-     stop_grace_period: 30s
-     healthcheck:
-       test: [ "CMD", "pgrep", "-f", "run_provider_worker" ]
-+    profiles:
-+      - live
-     networks:
-       - app_network
- 
-@@ -411,6 +417,8 @@ services:
-     stop_grace_period: 30s
-     healthcheck:
-       test: [ "CMD", "pgrep", "-f", "run_provider_worker" ]
-+    profiles:
-+      - live
-     networks:
-       - app_network
- 
-@@ -438,6 +446,8 @@ services:
-     stop_grace_period: 30s
-     healthcheck:
-       test: [ "CMD", "pgrep", "-f", "run_provider_worker" ]
-+    profiles:
-+      - live
-     networks:
-       - app_network
- 
-@@ -465,6 +475,101 @@ services:
-     stop_grace_period: 30s
+@@ -465,6 +465,46 @@ services:
      healthcheck:
        test: [ "CMD", "pgrep", "-f", "run_universal_queue_monitor" ]
-+    profiles:
-+      - live
-+    networks:
-+      - app_network
-+
-+  # app_loyalty_olap_sync
-+  olap-sync-bonus:
-+    build: ./loyalty_service
-+    env_file:
-+      - ./loyalty_service/.env
-+    environment:
-+      - DJANGO_SETTINGS_MODULE=loyalty_viewer.settings
-+      - TZ=UTC
-+    command: python manage.py run_olap_sync_worker --sleep-seconds=15
-+    volumes:
-+      - /var/log/loyalty_app/olap_sync:/app/logs
-+    user: "1000:1000"
-+    depends_on:
-+      db:
-+        condition: service_healthy
-+      redis:
-+        condition: service_healthy
-+      app-bonus:
-+        condition: service_started
-+    restart: unless-stopped
-+    stop_grace_period: 45s
-+    healthcheck:
-+      test: [ "CMD", "pgrep", "-f", "run_olap_sync_worker" ]
-+      interval: 60s
-+      timeout: 5s
-+      retries: 3
-+      start_period: 10s
-+    profiles:
-+      - live
-+      - backfill
-+    networks:
-+      - app_network
+       interval: 60s
+       timeout: 5s
+       retries: 3
+       start_period: 10s
+     networks:
+       - app_network
 +
 +  # app_loyalty_webhook_backfill
++  # Временный сервис только для исторического прогона webhook -> OLAP журнал.
++  # Запускать по профилю backfill, в штатном режиме не поднимать.
 +  webhook-backfill-bonus:
 +    build: ./loyalty_service
 +    env_file:
@@ -120,35 +45,4 @@ index bfefb9a..f18f50a 100644
 +      - backfill
 +    networks:
 +      - app_network
-+
-+  # app_loyalty_analytics_rebuild
-+  analytics-rebuild-bonus:
-+    build: ./loyalty_service
-+    env_file:
-+      - ./loyalty_service/.env
-+    environment:
-+      - DJANGO_SETTINGS_MODULE=loyalty_viewer.settings
-+      - TZ=UTC
-+    command: python manage.py run_olap_pipeline --skip-olap-sync --sleep-seconds=1800 --continue-on-step-error
-+    volumes:
-+      - /var/log/loyalty_app/analytics_rebuild:/app/logs
-+    user: "1000:1000"
-+    depends_on:
-+      db:
-+        condition: service_healthy
-+      redis:
-+        condition: service_healthy
-+      app-bonus:
-+        condition: service_started
-+    restart: unless-stopped
-+    stop_grace_period: 45s
-+    healthcheck:
-+      test: [ "CMD", "pgrep", "-f", "run_olap_pipeline" ]
-+      interval: 60s
-+      timeout: 5s
-+      retries: 3
-+      start_period: 10s
-+    profiles:
-+      - rebuild
-     networks:
-       - app_network
+
