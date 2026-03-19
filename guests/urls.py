@@ -20,6 +20,7 @@ from .views import (
     MailingUpdateView,
 
 )
+from .views_analytics import AnalyticsDashboardView
 
 urlpatterns = [
     # главная страница сайта: список гостей
@@ -54,5 +55,6 @@ urlpatterns = [
 
     path("mailings/<int:pk>/import-phones/", MailingImportPhonesView.as_view(), name="mailing_import_phones"),
     path("mailings/import-template.xlsx", MailingImportTemplateDownloadView.as_view(), name="mailing_import_template"),
+    path("analytics/", AnalyticsDashboardView.as_view(), name="analytics_dashboard"),
 
 ]
