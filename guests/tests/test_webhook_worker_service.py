@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from unittest.mock import Mock, patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 from guests.services.webhook_worker import (
     FatalMessageError,
@@ -206,6 +206,25 @@ class WebhookWorkerServiceTests(SimpleTestCase):
         ):
             with self.assertRaises(RetryableError):
                 worker._process_single_message(message)
+
+    @override_settings(BALANCE_WEBHOOK_NOTIFY_ENABLED=False)
+    def test_process_single_message_passes_balance_notify_flag_from_settings(self):
+        """
+        Воркер должен прокидывать флаг BALANCE_WEBHOOK_NOTIFY_ENABLED в handle_api_webhook.
+        """
+        worker, _ = self._build_worker()
+        message = WebhookMessage(id=55, category="balance", parsed_body={})
+
+        with (
+            patch("guests.services.webhook_worker.handle_api_webhook", return_value=(True, "ok")) as mocked_handle,
+            patch("guests.services.webhook_worker._get_sagur_access_token_cached", return_value="token"),
+            patch("guests.services.webhook_worker._update_webhook_business_status"),
+        ):
+            worker._process_single_message(message)
+
+        call_kwargs = mocked_handle.call_args.kwargs
+        self.assertIn("send_balance_notification", call_kwargs)
+        self.assertFalse(call_kwargs["send_balance_notification"])
 
     def test_process_single_message_nonretryable_error_becomes_fatal(self):
         worker, _ = self._build_worker()

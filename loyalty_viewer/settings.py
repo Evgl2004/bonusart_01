@@ -465,6 +465,14 @@ def _env_int_set(name: str, default_csv: str) -> set[int]:
     return fallback_values or {1}
 
 
+# Управление отправкой balance-уведомлений в ботов из webhook-контура.
+# Позволяет включать/выключать создание DispatchTask без изменений кода.
+BALANCE_WEBHOOK_NOTIFY_ENABLED = _env_bool(
+    "BALANCE_WEBHOOK_NOTIFY_ENABLED",
+    True,
+)
+
+
 # Live-мост webhook -> olap_check_sync_journal.
 # По умолчанию выключен, чтобы безопасно выкатывать функционал по флагу.
 OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE = _env_bool(

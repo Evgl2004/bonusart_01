@@ -464,9 +464,10 @@ class WebhookWorker:
 
         # Основная обработка Уведомлений
         try:
+            notify_balance = bool(getattr(settings, "BALANCE_WEBHOOK_NOTIFY_ENABLED", True))
             processed_successfully, result_message = handle_api_webhook(
                 webhook_data,
-                send_balance_notification=True,
+                send_balance_notification=notify_balance,
             )
             if result_message:
                 logger.info(f"Уведомление с id={webhook_id_int} обработано: успешно! Результат: {result_message }")

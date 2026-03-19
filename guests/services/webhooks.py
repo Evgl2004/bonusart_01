@@ -834,6 +834,7 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
 
     processed_count = 0  # сколько реально назначено категорий (complete)
     seen_count = 0       # сколько всего вебхуков мы посмотрели в этом запуске
+    notify_balance = bool(getattr(settings, "BALANCE_WEBHOOK_NOTIFY_ENABLED", True))
 
     for webhook in _iter_pending_webhooks(access_token, page_size=PAGE_SIZE):
         if seen_count >= LIMIT:
@@ -845,7 +846,7 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
         try:
             assigned, reason = handle_api_webhook(
                 webhook,
-                send_balance_notification=True,
+                send_balance_notification=notify_balance,
             )
 
             if assigned:

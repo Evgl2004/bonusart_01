@@ -591,3 +591,24 @@ class WebhookProcessRecentTests(SimpleTestCase):
 
         self.assertEqual(processed, 1)
         mocked_handle.assert_called_once()
+
+    @override_settings(BALANCE_WEBHOOK_NOTIFY_ENABLED=False)
+    def test_process_recent_webhooks_passes_balance_notify_flag_from_settings(self):
+        """
+        Оркестратор должен передавать в handle_api_webhook флаг BALANCE_WEBHOOK_NOTIFY_ENABLED.
+        """
+        pending = [{"id": 77}]
+
+        with (
+            patch("guests.services.webhooks._get_sagur_access_token_cached", return_value="token"),
+            patch("guests.services.webhooks._iter_pending_webhooks", return_value=pending),
+            patch("guests.services.webhooks.handle_api_webhook", return_value=(True, "ok")) as mocked_handle,
+            patch("guests.services.webhooks._update_webhook_business_status"),
+        ):
+            processed = webhooks.process_recent_webhooks()
+
+        self.assertEqual(processed, 1)
+        mocked_handle.assert_called_once_with(
+            pending[0],
+            send_balance_notification=False,
+        )
