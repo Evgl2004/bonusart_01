@@ -24,10 +24,17 @@ from django.db.models import OuterRef, Subquery
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from guests.models import DispatchTask, Guest, NotificationScenario, VisitHistory
+from guests.models import (
+    DispatchTask,
+    Guest,
+    GuestRestaurantWindowMetrics,
+    NotificationScenario,
+    VisitHistory,
+)
 from guests.services.notification_registry import (
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
+    SCENARIO_CODE_MEAT_LOVER_30D,
 )
 from guests.services.notification_events import (
     enqueue_notification_event_from_scenario,
@@ -39,6 +46,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_SCENARIO_CODES = (
     SCENARIO_CODE_INACTIVE_7D,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
+    SCENARIO_CODE_MEAT_LOVER_30D,
 )
 
 
@@ -209,6 +217,155 @@ def _build_fallback_message(
         return f"Мы соскучились. Вы не были у нас {days_without_visits} дней."
 
     return f"Мы соскучились. Вы не были у нас {days_without_visits} дней."
+
+
+def _extract_positive_int_setting(settings: dict, key: str, default: int) -> int:
+    raw_value = settings.get(key, default)
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+def _extract_decimal_setting(settings: dict, key: str, default: float) -> float:
+    raw_value = settings.get(key, default)
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        return float(default)
+    return value if value >= 0 else float(default)
+
+
+def run_scheduled_meat_lover_scenario(
+    *,
+    scenario_code: str,
+    limit_per_scenario: int = 1000,
+    now: Optional[datetime] = None,
+) -> ScenarioRunStat:
+    """
+    Выполняет schedule-сценарий сегментации "любитель мяса".
+
+    Отбор выполняется по `guest_restaurant_window_metrics`:
+    1. окно `window_days` (по умолчанию 30);
+    2. минимальное число заказов `min_orders_count`;
+    3. минимальный средний чек `min_avg_check_net`.
+    """
+    safe_code = str(scenario_code or "").strip()
+    if not safe_code:
+        return ScenarioRunStat(scenario_code="")
+
+    safe_limit = max(1, int(limit_per_scenario))
+    current_now = now or timezone.now()
+    scenario = (
+        NotificationScenario.objects.select_related("template")
+        .filter(
+            code=safe_code,
+            is_active=True,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+        )
+        .first()
+    )
+    if scenario is None:
+        logger.info(
+            "Сценарий %s не активен/не найден или не относится к trigger_type=schedule.",
+            safe_code,
+        )
+        return ScenarioRunStat(scenario_code=safe_code)
+
+    settings_payload = scenario.settings or {}
+    window_days = _extract_positive_int_setting(settings_payload, "window_days", 30)
+    min_orders_count = _extract_positive_int_setting(settings_payload, "min_orders_count", 3)
+    min_avg_check_net = _extract_decimal_setting(settings_payload, "min_avg_check_net", 5000.0)
+    department_id = str(settings_payload.get("department_id") or "").strip()
+
+    stat = ScenarioRunStat(
+        scenario_code=safe_code,
+        inactive_days_threshold=window_days,
+    )
+    as_of_date = timezone.localdate()
+    metrics_query = (
+        GuestRestaurantWindowMetrics.objects.select_related("guest")
+        .filter(
+            as_of_date=as_of_date,
+            window_days=window_days,
+            orders_count__gte=min_orders_count,
+            avg_check_net__gte=min_avg_check_net,
+        )
+        .order_by("id")
+    )
+    if department_id:
+        metrics_query = metrics_query.filter(department_id=department_id)
+
+    dedupe_bucket = _local_bucket_date_iso(scenario=scenario, now=current_now)
+    for metric in metrics_query[:safe_limit]:
+        if metric.guest_id is None:
+            continue
+
+        stat.scanned_guests += 1
+        guest = metric.guest
+        if guest is None:
+            continue
+        stat.matched_guests += 1
+
+        source_ref = f"scheduled:{scenario.code}:{metric.department_id}:{dedupe_bucket}"
+        dedupe_key = (
+            f"{scenario.code}:{guest.id}:{metric.department_id}:"
+            f"window{window_days}:{dedupe_bucket}"
+        )
+        payload = {
+            "kind": scenario.code,
+            "source": "scheduled_window_metrics",
+            "window_days": window_days,
+            "department_id": metric.department_id,
+            "orders_count": metric.orders_count,
+            "visits_count": metric.visits_count,
+            "avg_check_net": str(metric.avg_check_net),
+            "rating_score": str(metric.rating_score),
+            "as_of_date": as_of_date.isoformat(),
+        }
+        template_context = {
+            "first_name": (guest.first_name or "").strip(),
+            "orders_count": metric.orders_count,
+            "avg_check_net": str(metric.avg_check_net),
+            "window_days": window_days,
+            "department_id": metric.department_id,
+            "rating_score": str(metric.rating_score),
+        }
+
+        created_tasks = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=guest,
+            dedupe_key=dedupe_key,
+            source_ref=source_ref,
+            event_source_type="schedule",
+            task_source_type=DispatchTask.SourceType.SYSTEM,
+            payload=payload,
+            template_context=template_context,
+            fallback_message_text=(
+                f"У вас {metric.orders_count} заказа(ов) за {window_days} дней. "
+                f"Средний чек: {metric.avg_check_net}. Приглашаем на вечер шашлыка."
+            ),
+            event_at=current_now,
+        )
+
+        if created_tasks > 0:
+            stat.created_tasks += int(created_tasks)
+        else:
+            stat.skipped_duplicate_or_no_targets += 1
+
+    logger.info(
+        "Сценарий %s: window_days=%s min_orders=%s min_avg_check=%s scanned=%s matched=%s created_tasks=%s skipped=%s",
+        stat.scenario_code,
+        window_days,
+        min_orders_count,
+        min_avg_check_net,
+        stat.scanned_guests,
+        stat.matched_guests,
+        stat.created_tasks,
+        stat.skipped_duplicate_or_no_targets,
+    )
+    return stat
 
 
 def run_scheduled_inactive_scenario(

@@ -16,6 +16,7 @@ from guests.services import notification_scenarios
 from guests.services.notification_registry import (
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
+    SCENARIO_CODE_MEAT_LOVER_30D,
 )
 
 
@@ -320,3 +321,57 @@ class NotificationScenarioRunnerBranchesTests(TestCase):
             limit_per_scenario=100,
         )
         self.assertEqual(result, {})
+
+    def test_run_scheduled_meat_lover_scenario_creates_tasks_from_window_metrics(self):
+        """
+        Сценарий meat_lover_30d должен формировать задачи по данным оконных метрик.
+        """
+        scenario = self._prepare_schedule_scenario(
+            SCENARIO_CODE_MEAT_LOVER_30D,
+            settings={
+                "window_days": 30,
+                "min_orders_count": 3,
+                "min_avg_check_net": 5000,
+            },
+        )
+        now = timezone.now()
+        metric_guest = SimpleNamespace(id=77, first_name="MeatFan")
+        metric_rows = [
+            SimpleNamespace(
+                id=1,
+                guest_id=77,
+                guest=metric_guest,
+                department_id="dept-1",
+                orders_count=5,
+                visits_count=4,
+                avg_check_net=6000,
+                rating_score=95,
+            )
+        ]
+        fake_queryset = metric_rows
+
+        with (
+            patch(
+                "guests.services.notification_scenarios.GuestRestaurantWindowMetrics.objects.select_related",
+                return_value=SimpleNamespace(
+                    filter=lambda **kwargs: SimpleNamespace(
+                        order_by=lambda *a, **k: fake_queryset
+                    )
+                ),
+            ),
+            patch(
+                "guests.services.notification_scenarios.enqueue_notification_event_from_scenario",
+                return_value=1,
+            ) as mocked_enqueue,
+        ):
+            stat = notification_scenarios.run_scheduled_meat_lover_scenario(
+                scenario_code=scenario.code,
+                limit_per_scenario=100,
+                now=now,
+            )
+
+        self.assertEqual(stat.scenario_code, SCENARIO_CODE_MEAT_LOVER_30D)
+        self.assertEqual(stat.scanned_guests, 1)
+        self.assertEqual(stat.matched_guests, 1)
+        self.assertEqual(stat.created_tasks, 1)
+        mocked_enqueue.assert_called_once()
