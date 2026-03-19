@@ -763,6 +763,67 @@ class GuestRestaurantDailyCategoryFact(models.Model):
         )
 
 
+class GuestRestaurantWindowMetrics(models.Model):
+    """
+    Оконные метрики гостя по заведению.
+
+    Формируется на основе дневного слоя по окнам `7/14/30/60/180` и служит
+    быстрым источником для сегментации и дашбордов.
+    """
+
+    as_of_date = models.DateField(db_index=True)
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.CASCADE,
+        related_name="window_metrics",
+    )
+    department_id = models.CharField(
+        max_length=64,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Идентификатор заведения (Department.Id) из OLAP.",
+    )
+    window_days = models.PositiveIntegerField(
+        db_index=True,
+        help_text="Размер окна в днях (например 7/14/30/60/180).",
+    )
+
+    orders_count = models.PositiveIntegerField(default=0)
+    visits_count = models.PositiveIntegerField(default=0)
+
+    avg_check_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sum_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_in_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_out_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    last_visit_at = models.DateField(blank=True, null=True, db_index=True)
+    rating_score = models.DecimalField(max_digits=14, decimal_places=2, default=0, db_index=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_restaurant_window_metrics"
+        verbose_name = "Оконная метрика гостя"
+        verbose_name_plural = "Оконные метрики гостей"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["as_of_date", "guest", "department_id", "window_days"],
+                name="grwm_unique_asof_guest_dept_window",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["department_id", "window_days", "rating_score"], name="grwm_dept_win_rating_idx"),
+            models.Index(fields=["guest", "window_days", "as_of_date"], name="grwm_guest_window_date_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"grwm={self.id} guest={self.guest_id} dept={self.department_id} "
+            f"window={self.window_days} as_of={self.as_of_date}"
+        )
+
+
 class OlapCategoryDict(models.Model):
     """
     Справочник категорий из OLAP.
