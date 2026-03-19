@@ -44,6 +44,15 @@ CREATE TABLE IF NOT EXISTS mailing_guests (
     mailing_id bigint NOT NULL
 );
 
+-- Если таблицы уже существовали в legacy-схеме (без нужных колонок),
+-- безопасно добавляем недостающие поля.
+ALTER TABLE mailings
+    ADD COLUMN IF NOT EXISTS template_id bigint;
+ALTER TABLE mailing_guests
+    ADD COLUMN IF NOT EXISTS guest_id bigint;
+ALTER TABLE mailing_guests
+    ADD COLUMN IF NOT EXISTS mailing_id bigint;
+
 DO $$
 BEGIN
     IF NOT EXISTS (

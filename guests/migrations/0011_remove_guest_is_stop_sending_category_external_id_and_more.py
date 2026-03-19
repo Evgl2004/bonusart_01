@@ -282,13 +282,56 @@ STATE_SYNC_OPERATIONS = [
 
 
 DATABASE_SYNC_OPERATIONS = [
-    operation
-    for operation in STATE_SYNC_OPERATIONS
-    if not (
-        isinstance(operation, migrations.AlterField)
-        and getattr(operation, "model_name", "") == "category"
-        and getattr(operation, "name", "") in {"created_at", "updated_at"}
-    )
+    # В legacy-базах часть колонок уже существует, часть отсутствует.
+    # Прямое применение AddField/Constraint приводит к падениям
+    # (duplicate column / missing column). Поэтому синхронизируем БД
+    # безопасным SQL, а состояние моделей фиксируем отдельно.
+    migrations.RunSQL(
+        sql="""
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS external_id varchar(50);
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS gender varchar(20);
+
+ALTER TABLE guest_categories ADD COLUMN IF NOT EXISTS assign_count integer;
+UPDATE guest_categories SET assign_count = 1 WHERE assign_count IS NULL;
+ALTER TABLE guest_categories ALTER COLUMN assign_count SET DEFAULT 1;
+ALTER TABLE guest_categories ADD COLUMN IF NOT EXISTS category_id bigint;
+ALTER TABLE guest_categories ADD COLUMN IF NOT EXISTS guest_id bigint;
+ALTER TABLE guest_categories ADD COLUMN IF NOT EXISTS last_assigned_at timestamp with time zone;
+
+ALTER TABLE guest_category_assignments ADD COLUMN IF NOT EXISTS category_id bigint;
+ALTER TABLE guest_category_assignments ADD COLUMN IF NOT EXISTS guest_id bigint;
+ALTER TABLE guest_category_assignments ADD COLUMN IF NOT EXISTS restaurant_id bigint;
+
+ALTER TABLE guest_channel_links ADD COLUMN IF NOT EXISTS channel_id bigint;
+ALTER TABLE guest_channel_links ADD COLUMN IF NOT EXISTS guest_id bigint;
+
+ALTER TABLE mailings ADD COLUMN IF NOT EXISTS template_id bigint;
+
+ALTER TABLE mailing_channel_links ADD COLUMN IF NOT EXISTS channel_id bigint;
+ALTER TABLE mailing_channel_links ADD COLUMN IF NOT EXISTS mailing_id bigint;
+
+ALTER TABLE mailing_guests ADD COLUMN IF NOT EXISTS guest_id bigint;
+ALTER TABLE mailing_guests ADD COLUMN IF NOT EXISTS mailing_id bigint;
+
+ALTER TABLE visit_history ADD COLUMN IF NOT EXISTS guest_id bigint;
+ALTER TABLE visit_history ADD COLUMN IF NOT EXISTS restaurant_id bigint;
+ALTER TABLE visit_history ADD COLUMN IF NOT EXISTS visit_count integer;
+UPDATE visit_history SET visit_count = 1 WHERE visit_count IS NULL;
+ALTER TABLE visit_history ALTER COLUMN visit_count SET DEFAULT 1;
+
+CREATE INDEX IF NOT EXISTS mcl_mailing_id_idx
+    ON mailing_channel_links (mailing_id);
+CREATE INDEX IF NOT EXISTS mcl_channel_id_idx
+    ON mailing_channel_links (channel_id);
+CREATE INDEX IF NOT EXISTS mailing_guests_mailing_id_idx
+    ON mailing_guests (mailing_id);
+CREATE INDEX IF NOT EXISTS mailing_guests_status_idx
+    ON mailing_guests (status);
+CREATE INDEX IF NOT EXISTS mailing_guests_scheduled_idx
+    ON mailing_guests (scheduled_datetime);
+""",
+        reverse_sql=migrations.RunSQL.noop,
+    ),
 ]
 
 
