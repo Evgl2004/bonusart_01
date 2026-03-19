@@ -367,3 +367,36 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 IIKO_API_KEY = os.getenv("IIKO_API_KEY")
 IIKO_API_BASE_URL = os.getenv("IIKO_API_BASE_URL")
 IIKO_ORGANIZATION_ID = os.getenv("IIKO_ORGANIZATION_ID")
+IIKO_OLAP_BASE_URL = os.getenv("IIKO_OLAP_BASE_URL", "").strip()
+IIKO_OLAP_LOGIN = os.getenv("IIKO_OLAP_LOGIN", "").strip()
+IIKO_OLAP_PASS_HASH = os.getenv("IIKO_OLAP_PASS_HASH", "").strip()
+
+try:
+    IIKO_OLAP_AUTH_TIMEOUT_SECONDS = float(os.getenv("IIKO_OLAP_AUTH_TIMEOUT_SECONDS", "10"))
+except ValueError:
+    IIKO_OLAP_AUTH_TIMEOUT_SECONDS = 10.0
+
+try:
+    IIKO_OLAP_REQUEST_TIMEOUT_SECONDS = float(os.getenv("IIKO_OLAP_REQUEST_TIMEOUT_SECONDS", "30"))
+except ValueError:
+    IIKO_OLAP_REQUEST_TIMEOUT_SECONDS = 30.0
+
+try:
+    IIKO_OLAP_KEY_TTL_SECONDS = int(os.getenv("IIKO_OLAP_KEY_TTL_SECONDS", "240"))
+except ValueError:
+    IIKO_OLAP_KEY_TTL_SECONDS = 240
+
+try:
+    IIKO_OLAP_MAX_RETRIES = int(os.getenv("IIKO_OLAP_MAX_RETRIES", "3"))
+except ValueError:
+    IIKO_OLAP_MAX_RETRIES = 3
+
+try:
+    IIKO_OLAP_RETRY_BASE_SECONDS = float(os.getenv("IIKO_OLAP_RETRY_BASE_SECONDS", "1"))
+except ValueError:
+    IIKO_OLAP_RETRY_BASE_SECONDS = 1.0
+
+try:
+    IIKO_OLAP_PORTION_SIZE = int(os.getenv("IIKO_OLAP_PORTION_SIZE", "200"))
+except ValueError:
+    IIKO_OLAP_PORTION_SIZE = 200

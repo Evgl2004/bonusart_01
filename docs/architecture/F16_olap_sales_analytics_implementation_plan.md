@@ -125,6 +125,9 @@
 Коммит:
 1. `feat(olap): клиент и сервис загрузки данных порциями`
 
+Статус:
+1. `completed` — добавлен клиент `guests/services/iiko_olap_client.py`, настройки `IIKO_OLAP_*` в `settings.py`/`.env.sample` и тесты `guests/tests/test_iiko_olap_client.py`.
+
 ### S5. Воркер дозагрузки чеков из журнала синхронизации
 Задачи:
 1. Добавить management-команду воркера дозагрузки.
