@@ -364,6 +364,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 #WEBHOOK_SERVICE_URL = "http://webhook-service:8000"
 
+SAGUR_BASE_URL = os.getenv("SAGUR_BASE_URL", "").strip()
+SAGUR_USERNAME = os.getenv("SAGUR_USERNAME", "").strip()
+SAGUR_PASSWORD = os.getenv("SAGUR_PASSWORD", "").strip()
+
 IIKO_API_KEY = os.getenv("IIKO_API_KEY")
 IIKO_API_BASE_URL = os.getenv("IIKO_API_BASE_URL")
 IIKO_ORGANIZATION_ID = os.getenv("IIKO_ORGANIZATION_ID")
@@ -458,3 +462,61 @@ OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES = _env_int_set(
     "OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES",
     "1",
 )
+
+# Исторический прогон webhook -> olap_check_sync_journal.
+OLAP_BACKFILL_ENABLE = _env_bool("OLAP_BACKFILL_ENABLE", False)
+OLAP_BACKFILL_DRY_RUN = _env_bool("OLAP_BACKFILL_DRY_RUN", True)
+OLAP_BACKFILL_DATE_FROM = str(
+    os.getenv("OLAP_BACKFILL_DATE_FROM", "2025-12-01T00:00:00Z") or ""
+).strip()
+OLAP_BACKFILL_DATE_TO = str(os.getenv("OLAP_BACKFILL_DATE_TO", "") or "").strip() or None
+
+try:
+    OLAP_BACKFILL_PAGE_SIZE = int(os.getenv("OLAP_BACKFILL_PAGE_SIZE", "100"))
+except ValueError:
+    OLAP_BACKFILL_PAGE_SIZE = 100
+
+try:
+    OLAP_BACKFILL_MAX_PAGES_PER_CYCLE = int(
+        os.getenv("OLAP_BACKFILL_MAX_PAGES_PER_CYCLE", "5")
+    )
+except ValueError:
+    OLAP_BACKFILL_MAX_PAGES_PER_CYCLE = 5
+
+try:
+    OLAP_BACKFILL_SLEEP_BETWEEN_PAGES_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_SLEEP_BETWEEN_PAGES_SECONDS", "1")
+    )
+except ValueError:
+    OLAP_BACKFILL_SLEEP_BETWEEN_PAGES_SECONDS = 1.0
+
+try:
+    OLAP_BACKFILL_SLEEP_BETWEEN_CYCLES_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_SLEEP_BETWEEN_CYCLES_SECONDS", "20")
+    )
+except ValueError:
+    OLAP_BACKFILL_SLEEP_BETWEEN_CYCLES_SECONDS = 20.0
+
+try:
+    OLAP_BACKFILL_PAUSE_QUEUE_GT = int(os.getenv("OLAP_BACKFILL_PAUSE_QUEUE_GT", "5000"))
+except ValueError:
+    OLAP_BACKFILL_PAUSE_QUEUE_GT = 5000
+
+try:
+    OLAP_BACKFILL_RESUME_QUEUE_LT = int(os.getenv("OLAP_BACKFILL_RESUME_QUEUE_LT", "2000"))
+except ValueError:
+    OLAP_BACKFILL_RESUME_QUEUE_LT = 2000
+
+try:
+    OLAP_BACKFILL_AUTH_TIMEOUT_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_AUTH_TIMEOUT_SECONDS", "10")
+    )
+except ValueError:
+    OLAP_BACKFILL_AUTH_TIMEOUT_SECONDS = 10.0
+
+try:
+    OLAP_BACKFILL_REQUEST_TIMEOUT_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_REQUEST_TIMEOUT_SECONDS", "20")
+    )
+except ValueError:
+    OLAP_BACKFILL_REQUEST_TIMEOUT_SECONDS = 20.0

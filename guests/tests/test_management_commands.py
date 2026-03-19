@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
 from guests.management.commands import (
@@ -392,6 +392,84 @@ class RunOlapSyncWorkerCommandTests(SimpleTestCase):
         self.assertFalse(command.should_stop)
         command._signal_handler(signal.SIGTERM, None)
         self.assertTrue(command.should_stop)
+
+
+class RunOlapWebhookBackfillCommandTests(SimpleTestCase):
+    """
+    Тесты команды run_olap_webhook_backfill.
+    """
+
+    @override_settings(
+        OLAP_BACKFILL_ENABLE=True,
+        OLAP_BACKFILL_DRY_RUN=True,
+        SAGUR_BASE_URL="https://sagur.example.com",
+        SAGUR_USERNAME="business_service",
+        SAGUR_PASSWORD="secret",
+    )
+    def test_handle_once_runs_single_cycle_and_closes_service(self):
+        """
+        В режиме --once команда должна выполнить один цикл и закрыть сервис backfill.
+        """
+        output = io.StringIO()
+        fake_service = Mock()
+        fake_service.run_cycle.return_value = SimpleNamespace(
+            queue_depth=0,
+            paused_by_backpressure=False,
+            pages_fetched=1,
+            webhooks_seen=3,
+            filtered_by_notification_type=1,
+            skipped_without_order_number=0,
+            would_enqueue=2,
+            created_rows=0,
+            duplicate_rows=0,
+            other_skipped_rows=0,
+            processing_errors=0,
+        )
+
+        with (
+            patch("guests.management.commands.run_olap_webhook_backfill.signal.signal"),
+            patch(
+                "guests.management.commands.run_olap_webhook_backfill.OlapWebhookBackfillService",
+                return_value=fake_service,
+            ),
+        ):
+            call_command(
+                "run_olap_webhook_backfill",
+                "--once",
+                "--date-from=2025-12-01T00:00:00Z",
+                "--max-pages-per-cycle=2",
+                "--page-size=50",
+                "--notification-type=1",
+                "--write",
+                stdout=output,
+            )
+
+        fake_service.run_cycle.assert_called_once()
+        call_kwargs = fake_service.run_cycle.call_args.kwargs
+        backfill_options = call_kwargs["options"]
+        self.assertFalse(backfill_options.dry_run)
+        self.assertEqual(backfill_options.page_size, 50)
+        self.assertEqual(backfill_options.max_pages_per_cycle, 2)
+        self.assertEqual(backfill_options.allowed_notification_types, {1})
+        fake_service.close.assert_called_once()
+
+    @override_settings(
+        OLAP_BACKFILL_ENABLE=False,
+        SAGUR_BASE_URL="https://sagur.example.com",
+        SAGUR_USERNAME="business_service",
+        SAGUR_PASSWORD="secret",
+    )
+    def test_handle_requires_enable_or_force_run(self):
+        """
+        Команда должна блокировать запуск, если OLAP_BACKFILL_ENABLE=False и не передан --force-run.
+        """
+        with self.assertRaises(CommandError):
+            call_command(
+                "run_olap_webhook_backfill",
+                "--once",
+                "--date-from=2025-12-01T00:00:00Z",
+                stdout=io.StringIO(),
+            )
 
 
 class SyncOrderFactCommandTests(SimpleTestCase):
