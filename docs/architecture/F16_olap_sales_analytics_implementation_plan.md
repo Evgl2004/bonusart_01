@@ -178,6 +178,9 @@
 Коммит:
 1. `feat(analytics): дневные итоги категорий по гостям и заведениям`
 
+Статус:
+1. `completed` — добавлены модель/миграция `GuestRestaurantDailyCategoryFact`, сервис `guests/services/daily_category_fact.py` и команда `sync_daily_category_fact` с тестами.
+
 ### S8. Оконные метрики и рейтинг гостя
 Задачи:
 1. Добавить таблицу `guest_restaurant_window_metrics`.

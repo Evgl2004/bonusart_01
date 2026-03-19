@@ -706,6 +706,63 @@ class OrderFact(models.Model):
         return f"order_fact={self.id} order={self.order_number} date={self.business_date}"
 
 
+class GuestRestaurantDailyCategoryFact(models.Model):
+    """
+    Дневной агрегат по гостю, заведению и фокусной категории.
+
+    Таблица используется как промежуточный слой для расчёта оконных метрик
+    (`7/14/30/60/180`) без сканирования всего сырого OLAP-слоя.
+    """
+
+    business_date = models.DateField(db_index=True)
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.CASCADE,
+        related_name="daily_category_facts",
+    )
+    department_id = models.CharField(
+        max_length=64,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Идентификатор заведения (Department.Id) из OLAP.",
+    )
+    focus_category = models.ForeignKey(
+        "FocusCategory",
+        on_delete=models.RESTRICT,
+        related_name="daily_guest_facts",
+    )
+
+    orders_count = models.PositiveIntegerField(default=0)
+    items_count = models.PositiveIntegerField(default=0)
+    sum_gross = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sum_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_restaurant_daily_category_fact"
+        verbose_name = "Дневной факт гостя по категории"
+        verbose_name_plural = "Дневные факты гостей по категориям"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_date", "guest", "department_id", "focus_category"],
+                name="grdcf_unique_day_guest_dept_focus",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["guest", "department_id", "business_date"], name="grdcf_guest_dept_date_idx"),
+            models.Index(fields=["focus_category", "business_date"], name="grdcf_focus_date_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"grdcf={self.id} guest={self.guest_id} dept={self.department_id} "
+            f"focus={self.focus_category_id} date={self.business_date}"
+        )
+
+
 class OlapCategoryDict(models.Model):
     """
     Справочник категорий из OLAP.

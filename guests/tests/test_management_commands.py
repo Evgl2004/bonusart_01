@@ -450,6 +450,62 @@ class SyncOrderFactCommandTests(SimpleTestCase):
         self.assertTrue(command.should_stop)
 
 
+class SyncDailyCategoryFactCommandTests(SimpleTestCase):
+    """
+    Тесты команды sync_daily_category_fact.
+    """
+
+    def test_handle_once_calls_rebuild_service(self):
+        """
+        В режиме --once команда должна вызвать сервис пересчёта дневного слоя.
+        """
+        output = io.StringIO()
+        fake_stats = SimpleNamespace(
+            scanned_raw_lines=50,
+            lines_without_focus_mapping=5,
+            grouped_rows=12,
+            created_rows=8,
+            updated_rows=3,
+        )
+
+        with (
+            patch("guests.management.commands.sync_daily_category_fact.signal.signal"),
+            patch(
+                "guests.management.commands.sync_daily_category_fact.rebuild_daily_category_fact_from_raw_lines",
+                return_value=fake_stats,
+            ) as mocked_rebuild,
+        ):
+            call_command(
+                "sync_daily_category_fact",
+                "--once",
+                "--raw-line-id-from=1",
+                "--raw-line-id-to=999",
+                "--business-date-from=2026-03-01",
+                "--business-date-to=2026-03-31",
+                "--batch-size=1800",
+                stdout=output,
+            )
+
+        mocked_rebuild.assert_called_once()
+        kwargs = mocked_rebuild.call_args.kwargs
+        self.assertEqual(kwargs["raw_line_id_from"], 1)
+        self.assertEqual(kwargs["raw_line_id_to"], 999)
+        self.assertEqual(str(kwargs["business_date_from"]), "2026-03-01")
+        self.assertEqual(str(kwargs["business_date_to"]), "2026-03-31")
+        self.assertEqual(kwargs["batch_size"], 1800)
+
+    def test_signal_handler_sets_stop_flag(self):
+        """
+        Обработчик сигнала должен выставлять флаг should_stop.
+        """
+        from guests.management.commands.sync_daily_category_fact import Command
+
+        command = Command()
+        self.assertFalse(command.should_stop)
+        command._signal_handler(signal.SIGTERM, None)
+        self.assertTrue(command.should_stop)
+
+
 class RunWebhookWorkerCommandTests(SimpleTestCase):
     """
     Тесты команды run_webhook_worker.
