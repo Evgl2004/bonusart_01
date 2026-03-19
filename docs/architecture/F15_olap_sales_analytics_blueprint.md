@@ -83,64 +83,108 @@
 3. индекс на `(dish_category_id, business_date)`
 4. уникальность строки позиции по устойчивому составному ключу заказа/позиции
 
-### 3) Справочник категорий номенклатуры из OLAP (`olap_dish_category_dict`)
-Назначение: единый каталог категорий, обнаруженных в OLAP.
+### 3) Справочник категорий из OLAP (`olap_category_dict`)
+Назначение: единый каталог категорий, обнаруженных в OLAP, с внешним идентификатором iiko.
 
 Поля:
 1. `id` (PK)
-2. `dish_category_id` (уникальный ID из OLAP)
-3. `dish_category_name`
+2. `iiko_category_external_id` (уникальный внешний ID категории из iiko)
+3. `category_name`
 4. `first_seen_at`, `last_seen_at`
 5. `is_active`
 6. `created_at`, `updated_at`
 
 Индексы/ограничения:
-1. уникальность на `dish_category_id`
-2. индекс на `dish_category_name`
+1. уникальность на `iiko_category_external_id`
+2. индекс на `category_name`
 
-### 4) Единый справочник категорий в фокусе (`focus_category`)
-Назначение: хранить единый бизнес-список категорий для аналитики и сценариев, независимо от источника (OLAP или виртуальная категория).
+### 3.1) Справочник номенклатуры из OLAP (`olap_nomenclature_dict`)
+Назначение: хранить блюда/позиции меню из OLAP и их связь с категорией.
 
 Поля:
 1. `id` (PK)
-2. `source_type` (`olap|virtual`)
-3. `code` (уникальный технический код категории)
-4. `name` (человеко-читаемое название)
-5. `is_enabled`
-6. `priority_weight` (вес категории в рейтингах)
-7. `tag_code` (технический код группы, например `meat`, `wine`)
-8. `comment`
-9. `created_at`, `updated_at`
+2. `iiko_nomenclature_external_id` (уникальный внешний ID номенклатуры)
+3. `nomenclature_name`
+4. `olap_category_id` (FK -> `olap_category_dict.id`)
+5. `iiko_dish_group_external_id`, `dish_group_name`
+6. `first_seen_at`, `last_seen_at`
+7. `is_active`
+8. `created_at`, `updated_at`
+
+Индексы/ограничения:
+1. уникальность на `iiko_nomenclature_external_id`
+2. индекс на `(olap_category_id, is_active)`
+
+### 4) Виртуальные категории (`virtual_category`)
+Назначение: пользовательские категории маркетолога, которые можно собирать из номенклатур и/или категорий OLAP.
+
+Поля:
+1. `id` (PK)
+2. `code` (уникальный технический код)
+3. `name`
+4. `description`
+5. `is_active`
+6. `created_at`, `updated_at`
 
 Индексы/ограничения:
 1. уникальность на `code`
-2. индекс на `(is_enabled, tag_code, source_type)`
+2. индекс на `(is_active, name)`
 
-### 4.1) Связь фокусной категории с OLAP-категориями (`focus_category_olap_link`)
-Назначение: описать, какие OLAP-категории входят в конкретную фокусную категорию.
+### 4.1) Состав виртуальной категории по номенклатурам (`virtual_category_nomenclature_link`)
+Назначение: перечислять конкретные номенклатуры, входящие в виртуальную категорию.
 
 Поля:
 1. `id` (PK)
-2. `focus_category_id` (FK -> `focus_category.id`)
-3. `olap_dish_category_id` (FK -> `olap_dish_category_dict.id`)
+2. `virtual_category_id` (FK -> `virtual_category.id`)
+3. `nomenclature_id` (FK -> `olap_nomenclature_dict.id`)
 4. `created_at`
 
 Индексы/ограничения:
-1. уникальность на `(focus_category_id, olap_dish_category_id)`
+1. уникальность на `(virtual_category_id, nomenclature_id)`
 
-### 4.2) Состав виртуальной категории по номенклатурам (`focus_category_dish_link`)
-Назначение: задавать вручную созданные категории через список блюд/номенклатур.
+### 4.2) Состав виртуальной категории по категориям OLAP (`virtual_category_olap_category_link`)
+Назначение: включать в виртуальную категорию целые категории OLAP.
+
+Поля:
+1. `id` (PK)
+2. `virtual_category_id` (FK -> `virtual_category.id`)
+3. `olap_category_id` (FK -> `olap_category_dict.id`)
+4. `created_at`
+
+Индексы/ограничения:
+1. уникальность на `(virtual_category_id, olap_category_id)`
+
+### 4.3) Единый справочник категорий в фокусе (`focus_category`)
+Назначение: единая точка аналитического отбора; категория может быть либо прямой OLAP-категорией, либо виртуальной категорией.
+
+Поля:
+1. `id` (PK)
+2. `source_type` (`olap_direct|virtual`)
+3. `code`, `name`
+4. `olap_category_id` (FK -> `olap_category_dict.id`, nullable)
+5. `virtual_category_id` (FK -> `virtual_category.id`, nullable)
+6. `is_enabled`
+7. `priority_weight`, `tag_code`, `comment`
+8. `created_at`, `updated_at`
+
+Индексы/ограничения:
+1. уникальность на `code`
+2. `CHECK` по `source_type` (заполнено ровно одно из полей `olap_category_id` / `virtual_category_id`)
+3. индекс на `(is_enabled, source_type, tag_code)`
+
+### 4.4) Предрассчитанный состав фокуса по номенклатурам (`focus_category_nomenclature_resolved`)
+Назначение: таблица ускорения ночных и оконных расчётов; хранит плоские пары `фокусная категория -> номенклатура`.
 
 Поля:
 1. `id` (PK)
 2. `focus_category_id` (FK -> `focus_category.id`)
-3. `dish_code` (код номенклатуры из OLAP/справочника блюд)
-4. `dish_name_snapshot` (служебный снимок названия на момент привязки)
-5. `created_at`
+3. `nomenclature_id` (FK -> `olap_nomenclature_dict.id`)
+4. `source_reason` (`direct_olap|virtual_nomenclature|virtual_olap_category`)
+5. `created_at`, `updated_at`
 
 Индексы/ограничения:
-1. уникальность на `(focus_category_id, dish_code)`
-2. индекс на `dish_code`
+1. уникальность на `(focus_category_id, nomenclature_id)`
+2. индекс на `(focus_category_id, source_reason)`
 
 ### 5) Факт чека (`order_fact`)
 Назначение: одна запись на чек для быстрых метрик среднего чека и частоты.

@@ -624,55 +624,371 @@ class OlapSalesRawLine(models.Model):
         return f"raw={self.id} order={self.order_number} dish={self.dish_code}"
 
 
-class OlapDishCategoryDict(models.Model):
+class OlapCategoryDict(models.Model):
     """
-    Справочник категорий номенклатуры из OLAP.
+    Справочник категорий из OLAP.
 
-    Таблица содержит все категории, обнаруженные при загрузке OLAP-данных.
-    Используется как единый источник для бизнес-отбора категорий.
+    Хранит категории номенклатуры, пришедшие из iiko OLAP, с внешним идентификатором.
+    Используется как первичный слой сопоставления категории из отчёта с внутренней аналитикой.
     """
 
-    dish_category_id = models.CharField(
+    iiko_category_external_id = models.CharField(
         max_length=100,
         unique=True,
         db_index=True,
-        help_text="Уникальный идентификатор категории блюда в OLAP.",
+        help_text="Внешний идентификатор категории из iiko OLAP.",
     )
-    dish_category_name = models.CharField(
+    category_name = models.CharField(
         max_length=255,
-        help_text="Название категории блюда из OLAP.",
+        help_text="Название категории из OLAP.",
     )
     first_seen_at = models.DateTimeField(
         blank=True,
         null=True,
         db_index=True,
-        help_text="Когда категория впервые встретилась в загруженных данных.",
+        help_text="Когда категория впервые встретилась в данных OLAP.",
     )
     last_seen_at = models.DateTimeField(
         blank=True,
         null=True,
         db_index=True,
-        help_text="Когда категория в последний раз встречалась в загруженных данных.",
+        help_text="Когда категория в последний раз встретилась в данных OLAP.",
     )
     is_active = models.BooleanField(
         default=True,
         db_index=True,
-        help_text="Признак активности категории в справочнике.",
+        help_text="Участвует ли категория в текущем справочнике.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = "olap_dish_category_dict"
+        db_table = "olap_category_dict"
         verbose_name = "Справочник категорий OLAP"
         verbose_name_plural = "Справочник категорий OLAP"
         indexes = [
-            models.Index(fields=["dish_category_name"], name="odcd_name_idx"),
-            models.Index(fields=["is_active", "dish_category_name"], name="odcd_active_name_idx"),
+            models.Index(fields=["category_name"], name="ocd_name_idx"),
+            models.Index(fields=["is_active", "category_name"], name="ocd_active_name_idx"),
         ]
 
     def __str__(self):
-        return f"{self.dish_category_name} ({self.dish_category_id})"
+        return f"{self.category_name} ({self.iiko_category_external_id})"
+
+
+class OlapNomenclatureDict(models.Model):
+    """
+    Справочник номенклатуры из OLAP.
+
+    Каждая запись соответствует конкретной позиции меню/блюду из OLAP и содержит
+    стабильный внешний идентификатор iiko.
+    """
+
+    iiko_nomenclature_external_id = models.CharField(
+        max_length=100,
+        unique=True,
+        db_index=True,
+        help_text="Внешний идентификатор номенклатуры (блюда) из iiko OLAP.",
+    )
+    nomenclature_name = models.CharField(
+        max_length=255,
+        help_text="Название номенклатуры (блюда) из OLAP.",
+    )
+    olap_category = models.ForeignKey(
+        "OlapCategoryDict",
+        on_delete=models.RESTRICT,
+        related_name="nomenclatures",
+        help_text="Категория OLAP, к которой относится номенклатура.",
+    )
+    iiko_dish_group_external_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Внешний идентификатор группы блюда из OLAP (если доступен).",
+    )
+    dish_group_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Название группы блюда из OLAP.",
+    )
+    first_seen_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Когда номенклатура впервые встретилась в данных OLAP.",
+    )
+    last_seen_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Когда номенклатура в последний раз встретилась в данных OLAP.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Участвует ли номенклатура в текущем справочнике.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "olap_nomenclature_dict"
+        verbose_name = "Справочник номенклатуры OLAP"
+        verbose_name_plural = "Справочник номенклатуры OLAP"
+        indexes = [
+            models.Index(fields=["olap_category", "is_active"], name="ond_cat_active_idx"),
+            models.Index(fields=["nomenclature_name"], name="ond_name_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.nomenclature_name} ({self.iiko_nomenclature_external_id})"
+
+
+class VirtualCategory(models.Model):
+    """
+    Пользовательская (виртуальная) категория.
+
+    Формируется маркетологом вручную из номенклатур и/или категорий OLAP.
+    Сама по себе не участвует в расчётах, пока не добавлена в focus_category.
+    """
+
+    code = models.SlugField(
+        max_length=80,
+        unique=True,
+        help_text="Уникальный технический код виртуальной категории.",
+    )
+    name = models.CharField(max_length=150, help_text="Название виртуальной категории.")
+    description = models.TextField(blank=True, null=True, help_text="Описание логики категории.")
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "virtual_category"
+        verbose_name = "Виртуальная категория"
+        verbose_name_plural = "Виртуальные категории"
+        indexes = [
+            models.Index(fields=["is_active", "name"], name="vc_active_name_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class VirtualCategoryNomenclatureLink(models.Model):
+    """
+    Состав виртуальной категории по номенклатурам.
+
+    Явная связь «виртуальная категория -> номенклатура OLAP».
+    """
+
+    virtual_category = models.ForeignKey(
+        "VirtualCategory",
+        on_delete=models.CASCADE,
+        related_name="nomenclature_links",
+    )
+    nomenclature = models.ForeignKey(
+        "OlapNomenclatureDict",
+        on_delete=models.RESTRICT,
+        related_name="virtual_category_links",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "virtual_category_nomenclature_link"
+        verbose_name = "Связь виртуальной категории с номенклатурой"
+        verbose_name_plural = "Связи виртуальной категории с номенклатурой"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["virtual_category", "nomenclature"],
+                name="vcnl_virtual_nomenclature_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["nomenclature"], name="vcnl_nomenclature_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.virtual_category_id}:{self.nomenclature_id}"
+
+
+class VirtualCategoryOlapCategoryLink(models.Model):
+    """
+    Состав виртуальной категории по категориям OLAP.
+
+    Связь нужна, когда маркетолог хочет включать в виртуальную категорию
+    сразу целые категории OLAP, а не перечислять номенклатуры вручную.
+    """
+
+    virtual_category = models.ForeignKey(
+        "VirtualCategory",
+        on_delete=models.CASCADE,
+        related_name="olap_category_links",
+    )
+    olap_category = models.ForeignKey(
+        "OlapCategoryDict",
+        on_delete=models.RESTRICT,
+        related_name="virtual_category_links",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "virtual_category_olap_category_link"
+        verbose_name = "Связь виртуальной категории с OLAP-категорией"
+        verbose_name_plural = "Связи виртуальной категории с OLAP-категориями"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["virtual_category", "olap_category"],
+                name="vcocl_virtual_olap_cat_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["olap_category"], name="vcocl_olap_category_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.virtual_category_id}:{self.olap_category_id}"
+
+
+class FocusCategory(models.Model):
+    """
+    Единый фокус-каталог категорий для аналитики и отбора.
+
+    Категория может ссылаться либо на категорию OLAP напрямую, либо на виртуальную
+    категорию. Ограничение целостности контролируется через source_type + CHECK.
+    """
+
+    class SourceType(models.TextChoices):
+        OLAP_DIRECT = "olap_direct", "Прямая категория OLAP"
+        VIRTUAL = "virtual", "Виртуальная категория"
+
+    code = models.SlugField(
+        max_length=80,
+        unique=True,
+        help_text="Уникальный технический код фокусной категории.",
+    )
+    name = models.CharField(max_length=150, help_text="Название фокусной категории.")
+    source_type = models.CharField(
+        max_length=20,
+        choices=SourceType.choices,
+        db_index=True,
+        help_text="Источник категории: прямая OLAP-категория или виртуальная категория.",
+    )
+    olap_category = models.ForeignKey(
+        "OlapCategoryDict",
+        on_delete=models.RESTRICT,
+        blank=True,
+        null=True,
+        related_name="focus_category_rows",
+        help_text="Ссылка на категорию OLAP (только для source_type=olap_direct).",
+    )
+    virtual_category = models.ForeignKey(
+        "VirtualCategory",
+        on_delete=models.RESTRICT,
+        blank=True,
+        null=True,
+        related_name="focus_category_rows",
+        help_text="Ссылка на виртуальную категорию (только для source_type=virtual).",
+    )
+    is_enabled = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Включена ли категория в расчёты и отборы.",
+    )
+    priority_weight = models.PositiveIntegerField(
+        default=1,
+        help_text="Вес категории в рейтинговых формулах.",
+    )
+    tag_code = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Технический тег для группировок (например: meat, wine).",
+    )
+    comment = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "focus_category"
+        verbose_name = "Фокусная категория"
+        verbose_name_plural = "Фокусные категории"
+        constraints = [
+            models.CheckConstraint(
+                name="focus_category_source_fk_chk",
+                condition=(
+                    (
+                        models.Q(source_type="olap_direct")
+                        & models.Q(olap_category__isnull=False)
+                        & models.Q(virtual_category__isnull=True)
+                    )
+                    | (
+                        models.Q(source_type="virtual")
+                        & models.Q(virtual_category__isnull=False)
+                        & models.Q(olap_category__isnull=True)
+                    )
+                ),
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["is_enabled", "source_type", "tag_code"], name="fc_enabled_src_tag_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class FocusCategoryNomenclatureResolved(models.Model):
+    """
+    Предрассчитанный состав фокусной категории по номенклатурам.
+
+    Таблица служит исключительно для ускорения ночных и оконных расчётов:
+    вместо сложных ветвлений выполняется прямой join по номенклатуре.
+    """
+
+    class SourceReason(models.TextChoices):
+        DIRECT_OLAP = "direct_olap", "Прямая категория OLAP"
+        VIRTUAL_NOMENCLATURE = "virtual_nomenclature", "Виртуальная категория по номенклатурам"
+        VIRTUAL_OLAP_CATEGORY = "virtual_olap_category", "Виртуальная категория по OLAP-категориям"
+
+    focus_category = models.ForeignKey(
+        "FocusCategory",
+        on_delete=models.CASCADE,
+        related_name="resolved_nomenclatures",
+    )
+    nomenclature = models.ForeignKey(
+        "OlapNomenclatureDict",
+        on_delete=models.RESTRICT,
+        related_name="resolved_focus_categories",
+    )
+    source_reason = models.CharField(
+        max_length=30,
+        choices=SourceReason.choices,
+        db_index=True,
+        help_text="Причина, по которой номенклатура вошла в фокусную категорию.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "focus_category_nomenclature_resolved"
+        verbose_name = "Предрассчитанная связь фокусной категории и номенклатуры"
+        verbose_name_plural = "Предрассчитанные связи фокусных категорий и номенклатур"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["focus_category", "nomenclature"],
+                name="fcnr_focus_nomenclature_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["nomenclature"], name="fcnr_nomenclature_idx"),
+            models.Index(fields=["focus_category", "source_reason"], name="fcnr_focus_reason_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.focus_category_id}:{self.nomenclature_id}"
 
 
 class NotificationScenario(models.Model):
