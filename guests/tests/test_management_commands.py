@@ -472,6 +472,255 @@ class RunOlapWebhookBackfillCommandTests(SimpleTestCase):
             )
 
 
+class RunOlapPipelineCommandTests(SimpleTestCase):
+    """
+    Тесты команды run_olap_pipeline (оркестратор полного OLAP-контура).
+    """
+
+    def test_handle_once_runs_pipeline_without_olap_sync(self):
+        """
+        В режиме --once команда должна выполнить шаги catalogs -> resolved -> order -> daily -> windows.
+        """
+        output = io.StringIO()
+        fake_catalog_stats = SimpleNamespace(
+            scanned_raw_lines=10,
+            categories_created=1,
+            categories_updated=2,
+            nomenclatures_created=3,
+            nomenclatures_updated=4,
+            skipped_without_category=0,
+            skipped_without_nomenclature=1,
+        )
+        fake_resolved_stats = SimpleNamespace(
+            scanned_focus_categories=2,
+            rebuilt_focus_categories=2,
+            disabled_focus_categories_cleared=0,
+            written_links=5,
+            deleted_links=1,
+            skipped_invalid_focus_categories=0,
+        )
+        fake_order_stats = SimpleNamespace(
+            scanned_raw_lines=8,
+            grouped_orders=3,
+            skipped_invalid_lines=0,
+            created_facts=2,
+            updated_facts=1,
+        )
+        fake_daily_stats = SimpleNamespace(
+            scanned_raw_lines=8,
+            grouped_rows=4,
+            lines_without_focus_mapping=1,
+            created_rows=3,
+            updated_rows=1,
+        )
+        fake_window_stats = SimpleNamespace(
+            as_of_date=timezone.localdate(),
+            windows_processed=2,
+            scanned_daily_rows=9,
+            grouped_rows=4,
+            created_rows=2,
+            updated_rows=2,
+        )
+
+        with (
+            patch("guests.management.commands.run_olap_pipeline.signal.signal"),
+            patch(
+                "guests.management.commands.run_olap_pipeline.sync_olap_catalogs_from_raw_lines",
+                return_value=fake_catalog_stats,
+            ) as mocked_catalog_sync,
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_focus_category_nomenclature_resolved",
+                return_value=fake_resolved_stats,
+            ) as mocked_resolved,
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_order_fact_from_raw_lines",
+                return_value=fake_order_stats,
+            ) as mocked_order,
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_daily_category_fact_from_raw_lines",
+                return_value=fake_daily_stats,
+            ) as mocked_daily,
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_window_metrics_from_daily_facts",
+                return_value=fake_window_stats,
+            ) as mocked_window,
+        ):
+            call_command(
+                "run_olap_pipeline",
+                "--once",
+                "--skip-olap-sync",
+                "--raw-line-id-from=100",
+                "--raw-line-id-to=200",
+                "--business-date-from=2026-03-01",
+                "--business-date-to=2026-03-19",
+                "--batch-size=500",
+                "--focus-code=meat_focus",
+                "--window-days=7",
+                "--window-days=30",
+                "--as-of-date=2026-03-19",
+                "--department-id=dept-a",
+                stdout=output,
+            )
+
+        mocked_catalog_sync.assert_called_once_with(
+            raw_line_id_from=100,
+            raw_line_id_to=200,
+            batch_size=500,
+        )
+        mocked_resolved.assert_called_once_with(focus_codes=["meat_focus"])
+        mocked_order.assert_called_once()
+        mocked_daily.assert_called_once()
+        mocked_window.assert_called_once()
+
+    def test_handle_once_with_olap_sync_runs_worker_and_closes_client(self):
+        """
+        При включенном шаге olap_sync команда должна запускать OlapCheckSyncWorkerService и закрывать клиент.
+        """
+        output = io.StringIO()
+        fake_client = Mock()
+        fake_worker = Mock()
+        fake_worker.run_iteration.return_value = SimpleNamespace(
+            claimed_rows=1,
+            recovered_stale_rows=0,
+            processed_groups=1,
+            loaded_rows=1,
+            retry_rows=0,
+            failed_rows=0,
+            skipped_rows=0,
+            raw_rows_created=2,
+            raw_rows_duplicates=0,
+        )
+        empty_catalog_stats = SimpleNamespace(
+            scanned_raw_lines=0,
+            categories_created=0,
+            categories_updated=0,
+            nomenclatures_created=0,
+            nomenclatures_updated=0,
+            skipped_without_category=0,
+            skipped_without_nomenclature=0,
+        )
+        empty_resolved_stats = SimpleNamespace(
+            scanned_focus_categories=0,
+            rebuilt_focus_categories=0,
+            disabled_focus_categories_cleared=0,
+            written_links=0,
+            deleted_links=0,
+            skipped_invalid_focus_categories=0,
+        )
+        empty_order_stats = SimpleNamespace(
+            scanned_raw_lines=0,
+            grouped_orders=0,
+            skipped_invalid_lines=0,
+            created_facts=0,
+            updated_facts=0,
+        )
+        empty_daily_stats = SimpleNamespace(
+            scanned_raw_lines=0,
+            grouped_rows=0,
+            lines_without_focus_mapping=0,
+            created_rows=0,
+            updated_rows=0,
+        )
+        empty_window_stats = SimpleNamespace(
+            as_of_date=timezone.localdate(),
+            windows_processed=0,
+            scanned_daily_rows=0,
+            grouped_rows=0,
+            created_rows=0,
+            updated_rows=0,
+        )
+
+        with (
+            patch("guests.management.commands.run_olap_pipeline.signal.signal"),
+            patch(
+                "guests.management.commands.run_olap_pipeline.build_iiko_olap_client_from_settings",
+                return_value=fake_client,
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.OlapCheckSyncWorkerService",
+                return_value=fake_worker,
+            ) as mocked_worker_cls,
+            patch(
+                "guests.management.commands.run_olap_pipeline.sync_olap_catalogs_from_raw_lines",
+                return_value=empty_catalog_stats,
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_focus_category_nomenclature_resolved",
+                return_value=empty_resolved_stats,
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_order_fact_from_raw_lines",
+                return_value=empty_order_stats,
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_daily_category_fact_from_raw_lines",
+                return_value=empty_daily_stats,
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_window_metrics_from_daily_facts",
+                return_value=empty_window_stats,
+            ),
+        ):
+            call_command(
+                "run_olap_pipeline",
+                "--once",
+                "--olap-claim-limit=50",
+                "--olap-portion-size=75",
+                "--olap-max-attempts=6",
+                "--olap-retry-base-seconds=30",
+                "--olap-lock-timeout-seconds=1200",
+                stdout=output,
+            )
+
+        mocked_worker_cls.assert_called_once_with(
+            client=fake_client,
+            claim_limit=50,
+            portion_size=75,
+            max_attempts=6,
+            retry_base_seconds=30,
+            lock_timeout_seconds=1200,
+        )
+        fake_worker.run_iteration.assert_called_once()
+        fake_client.close.assert_called_once()
+
+    def test_continue_on_step_error_allows_next_step(self):
+        """
+        При --continue-on-step-error ошибка одного шага не должна блокировать следующие шаги.
+        """
+        output = io.StringIO()
+        order_stats = SimpleNamespace(
+            scanned_raw_lines=0,
+            grouped_orders=0,
+            skipped_invalid_lines=0,
+            created_facts=0,
+            updated_facts=0,
+        )
+
+        with (
+            patch("guests.management.commands.run_olap_pipeline.signal.signal"),
+            patch(
+                "guests.management.commands.run_olap_pipeline.sync_olap_catalogs_from_raw_lines",
+                side_effect=RuntimeError("catalog error"),
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_order_fact_from_raw_lines",
+                return_value=order_stats,
+            ) as mocked_order,
+        ):
+            call_command(
+                "run_olap_pipeline",
+                "--once",
+                "--skip-olap-sync",
+                "--skip-resolved-rebuild",
+                "--skip-daily-fact",
+                "--skip-window-metrics",
+                "--continue-on-step-error",
+                stdout=output,
+            )
+
+        mocked_order.assert_called_once()
+
+
 class SyncOrderFactCommandTests(SimpleTestCase):
     """
     Тесты команды sync_order_fact.
