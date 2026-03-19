@@ -624,6 +624,57 @@ class OlapSalesRawLine(models.Model):
         return f"raw={self.id} order={self.order_number} dish={self.dish_code}"
 
 
+class OlapDishCategoryDict(models.Model):
+    """
+    Справочник категорий номенклатуры из OLAP.
+
+    Таблица содержит все категории, обнаруженные при загрузке OLAP-данных.
+    Используется как единый источник для бизнес-отбора категорий.
+    """
+
+    dish_category_id = models.CharField(
+        max_length=100,
+        unique=True,
+        db_index=True,
+        help_text="Уникальный идентификатор категории блюда в OLAP.",
+    )
+    dish_category_name = models.CharField(
+        max_length=255,
+        help_text="Название категории блюда из OLAP.",
+    )
+    first_seen_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Когда категория впервые встретилась в загруженных данных.",
+    )
+    last_seen_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Когда категория в последний раз встречалась в загруженных данных.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Признак активности категории в справочнике.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "olap_dish_category_dict"
+        verbose_name = "Справочник категорий OLAP"
+        verbose_name_plural = "Справочник категорий OLAP"
+        indexes = [
+            models.Index(fields=["dish_category_name"], name="odcd_name_idx"),
+            models.Index(fields=["is_active", "dish_category_name"], name="odcd_active_name_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.dish_category_name} ({self.dish_category_id})"
+
+
 class NotificationScenario(models.Model):
     """
     Правило автоматизированного уведомления.
