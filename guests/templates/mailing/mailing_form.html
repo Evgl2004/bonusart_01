@@ -1,0 +1,147 @@
+﻿{% extends "base.html" %}
+{% block title %}
+  {% if object and object.pk %}Редактировать рассылку{% else %}Создать рассылку{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h4 text-primary mb-0">
+      {% if object and object.pk %}Редактировать рассылку{% else %}Создать рассылку{% endif %}
+    </h1>
+    <a class="btn btn-outline-secondary" href="{% url 'mailings' %}">Назад</a>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+
+      <form method="post">
+        {% csrf_token %}
+
+        <div class="mb-3">
+          {{ form.name.label_tag }}
+          {{ form.name }}
+        </div>
+
+        <div class="mb-3">
+          {{ form.template.label_tag }}
+          {{ form.template }}
+        </div>
+
+        <div class="mb-3">
+          {{ form.scheduled_date.label_tag }}
+          {{ form.scheduled_date }}
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            {{ form.scheduled_time_begin.label_tag }}
+            {{ form.scheduled_time_begin }}
+          </div>
+          <div class="col-md-6 mb-3">
+            {{ form.scheduled_time_end.label_tag }}
+            {{ form.scheduled_time_end }}
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            {{ form.send_window_begin.label_tag }}
+            {{ form.send_window_begin }}
+          </div>
+          <div class="col-md-6 mb-3">
+            {{ form.send_window_end.label_tag }}
+            {{ form.send_window_end }}
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            {{ form.target_mode.label_tag }}
+            {{ form.target_mode }}
+          </div>
+          <div class="col-md-6 mb-3">
+            {{ form.queue_priority.label_tag }}
+            {{ form.queue_priority }}
+          </div>
+        </div>
+
+        <div class="mb-3">
+          {{ form.bot_profiles.label_tag }}
+          <div class="border rounded p-3">
+            {{ form.bot_profiles }}
+          </div>
+          <small class="text-muted">
+            Выберите конкретных активных ботов, через которых должна идти эта рассылка.
+          </small>
+        </div>
+
+        <button type="submit" class="btn btn-primary">
+          {% if object and object.pk %}Сохранить{% else %}Создать{% endif %}
+        </button>
+      </form>
+
+      {% if object and object.id %}
+        <hr>
+
+        <div class="mb-3 text-muted">
+          Сейчас гостей в рассылке: <b>{{ guests_count }}</b>
+        </div>
+
+        <div class="mb-3">
+          <a class="btn btn-outline-info" href="{% url 'mailing_logs' object.id %}">
+            Посмотреть логи отправки
+          </a>
+          <a class="btn btn-outline-primary" href="{% url 'mailing_logs_txt' object.id %}">
+            Скачать лог (.txt)
+          </a>
+        </div>
+
+        <hr>
+
+        <h5>Импорт гостей по телефонам (Excel)</h5>
+
+        <div class="mb-2">
+          <a class="btn btn-outline-secondary" href="{% url 'mailing_import_template' %}">
+            Скачать шаблон Excel
+          </a>
+        </div>
+
+        <form method="post" action="{% url 'mailing_import_phones' object.id %}" enctype="multipart/form-data">
+          {% csrf_token %}
+          <input type="file" name="file" accept=".xlsx" class="form-control" required style="max-width: 420px;">
+          <button class="btn btn-primary mt-2">Импортировать</button>
+        </form>
+
+        {% if request.session.mailing_import_report %}
+        <div id="import-report" class="alert alert-info mt-3">
+            <b>Отчёт импорта:</b><br>
+            Загружено строк: {{ request.session.mailing_import_report.total_loaded }}<br>
+            Уникальных телефонов: {{ request.session.mailing_import_report.unique_phones }}<br>
+            Найдено гостей в базе: {{ request.session.mailing_import_report.found }}<br>
+            Добавлено в рассылку: <b>{{ request.session.mailing_import_report.added }}</b><br>
+            Уже были в рассылке: {{ request.session.mailing_import_report.already }}<br>
+            Не найдено в базе: {{ request.session.mailing_import_report.not_found }}<br>
+          </div>
+        {% endif %}
+      {% endif %}
+
+    </div>
+  </div>
+</div>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const report = document.getElementById("import-report");
+    if (report) {
+      setTimeout(function () {
+        report.style.transition = "opacity 0.5s ease";
+        report.style.opacity = "0";
+        setTimeout(function () {
+          report.remove();
+        }, 500);
+      }, 10000);
+    }
+  });
+</script>
+{% endblock %}

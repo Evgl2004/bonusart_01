@@ -90,7 +90,40 @@ python manage.py runserver
 python manage.py qcluster
 
 Без запуска qcluster фоновые задачи и обработка вебхуков работать не будут.
+---
+Запуск фоновой рассылки
+
+python manage.py mailing_worker  
 
 ---
+Добавление таблиц в БД 
 
-Просто скажи, что нужно дальше.
+python manage.py migrate
+
+Команда `init_schema` оставлена только как совместимый alias и больше не применяет raw SQL:
+
+python manage.py init_schema
+python manage.py init_schema --apply
+
+---
+Добавление chat_id  в таблицу гостей 
+
+ 1) python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --bot-profile-id 1 --dry-run  ( посмотреть как отработает и не применять изменение)
+    
+ 2) python manage.py import_bot_user_phones --sqlite guests/management/commands/bot_requests.db --bot-profile-id 1  (запуск и применением изменений)
+
+---
+Тестирование проекта
+
+Базовый запуск тестов Django:
+
+python manage.py test
+
+Запуск тестов через pytest:
+
+pytest
+
+Запуск pytest с покрытием кода:
+
+pytest --cov=guests --cov=loyalty_viewer --cov-report=term-missing --cov-report=html
+

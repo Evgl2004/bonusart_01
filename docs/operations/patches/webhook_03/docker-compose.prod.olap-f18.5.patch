@@ -1,0 +1,48 @@
+diff --git a/docker-compose.prod.yaml b/docker-compose.prod.yaml
+index bfefb9a..f18f52a 100644
+--- a/docker-compose.prod.yaml
++++ b/docker-compose.prod.yaml
+@@ -465,6 +465,46 @@ services:
+     healthcheck:
+       test: [ "CMD", "pgrep", "-f", "run_universal_queue_monitor" ]
+       interval: 60s
+       timeout: 5s
+       retries: 3
+       start_period: 10s
+     networks:
+       - app_network
++
++  # app_loyalty_webhook_backfill
++  # Временный сервис только для исторического прогона webhook -> OLAP журнал.
++  # Запускать по профилю backfill, в штатном режиме не поднимать.
++  webhook-backfill-bonus:
++    build: ./loyalty_service
++    env_file:
++      - ./loyalty_service/.env
++    environment:
++      - DJANGO_SETTINGS_MODULE=loyalty_viewer.settings
++      - TZ=UTC
++    command: python manage.py run_olap_webhook_backfill --sleep-seconds=20 --notification-type=1
++    volumes:
++      - /var/log/loyalty_app/olap_backfill:/app/logs
++    user: "1000:1000"
++    depends_on:
++      db:
++        condition: service_healthy
++      redis:
++        condition: service_healthy
++      app-bonus:
++        condition: service_started
++    restart: unless-stopped
++    stop_grace_period: 45s
++    healthcheck:
++      test: [ "CMD", "pgrep", "-f", "run_olap_webhook_backfill" ]
++      interval: 60s
++      timeout: 5s
++      retries: 3
++      start_period: 10s
++    profiles:
++      - backfill
++    networks:
++      - app_network
+

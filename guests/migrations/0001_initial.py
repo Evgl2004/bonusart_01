@@ -23,7 +23,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'categories',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -43,7 +43,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'guests',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -53,7 +53,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'guest_categories',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -65,7 +65,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'restaurants',
-                'managed': False,
+                'managed': True,
             },
         ),
         migrations.CreateModel(
@@ -76,7 +76,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'visit_history',
-                'managed': False,
+                'managed': True,
             },
         ),
     ]

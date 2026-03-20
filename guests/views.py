@@ -1,18 +1,25 @@
 from datetime import datetime, timedelta
 
 from django.utils import timezone
-from django.views.generic import ListView, UpdateView, DeleteView, TemplateView
+from django.views.generic import ListView, UpdateView, DeleteView, CreateView,TemplateView
 from django.db.models import (
     Q, Count, Max, Case, When, Value, IntegerField, Sum
 )
-from django.shortcuts import redirect
+from django.shortcuts import redirect,get_object_or_404
 from django.urls import reverse_lazy
+from django.urls import reverse
 from django.db import transaction
 from django.views.generic import DetailView
+from django.views.decorators.http import require_POST
 
-from .models import Guest, GuestCategory, GuestCategoryAssignment, Category, Restaurant, VisitHistory
+from django.views import View
+from django.contrib import messages
 
-from .forms import CategoryForm
+from .models import Guest, GuestCategory, GuestCategoryAssignment, Category, Restaurant, VisitHistory,MessageTemplate
+from .models import GuestBotBinding, Mailing, MailingGuest
+
+from .forms import CategoryForm,MessageTemplateForm,MailingForm
+from .services.template_render import render_message_for_guest
 
 
 class GuestListView(ListView):
@@ -238,6 +245,84 @@ class GuestListView(ListView):
                         for g in guests_qs
                     ]
                 )
+         # 4) ДОБАВИТЬ В Рассылку
+        elif action == "add_to_mailing":
+            mailing_id = request.POST.get("mailing_id")
+            if not mailing_id:
+                return self.get(request, *args, **kwargs)
+
+            try:
+                mailing_id = int(mailing_id)
+            except (TypeError, ValueError):
+                return self.get(request, *args, **kwargs)
+
+            mailing = get_object_or_404(Mailing, pk=mailing_id)
+
+            select_all = request.session.get("guests_select_all", False)
+
+            if select_all:
+                guests_qs = self.get_queryset()
+            else:
+                selected_ids = request.POST.getlist("selected_guests")
+                if not selected_ids:
+                    return self.get(request, *args, **kwargs)
+                guests_qs = Guest.objects.filter(id__in=selected_ids)
+
+            now = timezone.now()
+
+            # 1) Активные боты, выбранные в настройках рассылки
+            selected_bot_ids = list(
+                mailing.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+            )
+            if not selected_bot_ids:
+                # Нет выбранных ботов — сбрасываем выбор и выходим.
+                request.session["guests_select_all"] = False
+                request.session["guests_selected_count"] = 0
+                request.session.modified = True
+                return self.get(request, *args, **kwargs)
+
+            # 2) Оставляем только гостей, у которых есть активные привязки к выбранным ботам.
+            base_guest_ids = list(guests_qs.values_list("id", flat=True))
+            if not base_guest_ids:
+                guests_qs = Guest.objects.none()
+            else:
+                eligible_bindings = (
+                    GuestBotBinding.objects
+                    .filter(
+                        guest_id__in=base_guest_ids,
+                        bot_id__in=selected_bot_ids,
+                        is_active=True,
+                        is_opt_in=True,
+                        is_stop_sending=False,
+                    )
+                    .exclude(external_chat_id__isnull=True)
+                    .exclude(external_chat_id="")
+                )
+
+                if mailing.target_mode == Mailing.TargetMode.PRIMARY_ONLY:
+                    eligible_guest_ids = eligible_bindings.filter(is_primary=True).values_list("guest_id", flat=True)
+                else:
+                    eligible_guest_ids = eligible_bindings.values_list("guest_id", flat=True)
+
+                guests_qs = Guest.objects.filter(id__in=eligible_guest_ids.distinct())
+
+            # 3) Создаём строки MailingGuest (как у тебя было)
+            rows = []
+            for g in guests_qs.only("id", "phone", "email", "first_name", "last_name"):
+                text = render_message_for_guest(mailing.template.message_text, g)
+                rows.append(MailingGuest(
+                    mailing=mailing,
+                    guest=g,
+                    phone=g.phone,
+                    email=g.email,
+                    text_mailing_list=text,
+                    scheduled_datetime=mailing.scheduled_time_begin,  # или now, как нужно
+                    status=MailingGuest.Status.PLANNED,
+                    created_at=now,
+                ))
+
+            with transaction.atomic():
+                MailingGuest.objects.bulk_create(rows, ignore_conflicts=True, batch_size=1000)
 
             # после операции сбрасываем режим выбора
             request.session["guests_select_all"] = False
@@ -334,6 +419,8 @@ class GuestListView(ListView):
             qs_params.pop("page")
         ctx["query_string"] = qs_params.urlencode()
 
+        ctx["message_templates"] = MessageTemplate.objects.filter(is_active=True).order_by("-created_at")
+        ctx["mailings"] = Mailing.objects.order_by("-created_at")[:200]
         return ctx
 
 
@@ -379,10 +466,6 @@ class CategoryDeleteView(DeleteView):
     template_name = "placeholders/category_confirm_delete.html"
     success_url = reverse_lazy("categories")
 
-
-class MailingListView(TemplateView):
-    template_name = "placeholders/mailings.html"
-
 class GuestDetailView(DetailView):
     model = Guest
     template_name = "guests/guest_detail.html"
@@ -412,3 +495,142 @@ class GuestDetailView(DetailView):
         # (опционально) список активных категорий, если захотите добавлять/снимать прямо из карточки
         ctx["all_categories"] = Category.objects.filter(is_active=True).order_by("name")
         return ctx
+class MailingsListView(ListView):
+    model = Mailing
+    template_name = "mailing/mailings.html"
+    context_object_name = "mailings"
+    paginate_by = 20
+
+    def get_queryset(self):
+        return (
+            Mailing.objects
+            .select_related("template")
+            .order_by("-created_at")
+        )
+class TemplatesListView(ListView):
+    model = MessageTemplate
+    template_name = "mailing/mailing_templates.html"
+    context_object_name = "templates"
+
+    def get_queryset(self):
+        qs = MessageTemplate.objects.order_by("-created_at")
+
+        show_inactive = self.request.GET.get("show_inactive")
+        if not show_inactive:
+            qs = qs.filter(is_active=True)
+
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["show_inactive"] = self.request.GET.get("show_inactive")
+        return ctx
+class MessageTemplateCreateView(CreateView):
+    model = MessageTemplate
+    form_class = MessageTemplateForm
+    template_name = "mailing/message_template_form.html"
+    success_url = reverse_lazy("message_templates")
+
+    def form_valid(self, form):
+        obj = form.save(commit=False)
+        obj.created_by = "test_user"   # тестово
+        obj.save()
+        return super().form_valid(form)
+class MessageTemplateDetailView(DetailView):
+    model = MessageTemplate
+    template_name = "mailing/message_template_detail.html"
+    context_object_name = "t"
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+
+        ctx["guests"] = Guest.objects.all()[:50]
+
+        guest_id = self.request.GET.get("guest_id")
+        if guest_id:
+            guest = Guest.objects.get(pk=guest_id)
+            ctx["preview_text"] = render_message_for_guest(self.object.message_text, guest)
+            ctx["preview_guest"] = guest
+
+        return ctx
+
+class MessageTemplateUpdateView(UpdateView):
+    model = MessageTemplate
+    form_class = MessageTemplateForm
+    template_name = "mailing/message_template_form.html"
+
+    def get_success_url(self):
+        return reverse_lazy("message_templates_detail", kwargs={"pk": self.object.pk})
+
+class MailingCreateView(CreateView):
+    model = Mailing
+    form_class = MailingForm
+    template_name = "mailing/mailing_form.html"
+    success_url = reverse_lazy("mailings")
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        # чтобы показывать только активные шаблоны
+        if "template" in form.fields:
+            form.fields["template"].queryset = MessageTemplate.objects.filter(is_active=True).order_by("-created_at")
+        return form
+
+    def form_valid(self, form):
+        self.object = form.save(commit=False)
+
+        self.object.is_active = False
+
+        now = timezone.now()
+
+        # если created_at / updated_at не auto_now*
+        if hasattr(self.object, "created_at") and not self.object.created_at:
+            self.object.created_at = now
+
+        if hasattr(self.object, "updated_at"):
+            self.object.updated_at = now
+
+        self.object.save()
+
+        # ВАЖНО: сохраняем many-to-many связи (включая bot_profiles).
+        form.save_m2m()
+
+        return redirect(self.success_url)
+
+
+class MailingUpdateView(UpdateView):
+    model = Mailing
+    form_class = MailingForm
+    template_name = "mailing/mailing_form.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["guests_count"] = self.object.guests_rows.count()
+        return ctx
+    def form_valid(self, form):
+        self.object = form.save(commit=False)
+
+        # обновляем updated_at
+        if hasattr(self.object, "updated_at"):
+            self.object.updated_at = timezone.now()
+
+        self.object.save()
+
+        # ВАЖНО: сохраняем many-to-many связи (включая bot_profiles).
+        form.save_m2m()
+
+        return redirect("mailings")
+
+@require_POST
+def mailing_toggle_active(request, pk):
+    mailing = get_object_or_404(Mailing, pk=pk)
+
+    # переключаем статус
+    mailing.is_active = not mailing.is_active
+
+    # если есть updated_at — обновим
+    if hasattr(mailing, "updated_at"):
+        mailing.updated_at = timezone.now()
+
+    mailing.save(update_fields=["is_active"] + (["updated_at"] if hasattr(mailing, "updated_at") else []))
+
+    # вернёмся на список рассылок
+    return redirect(reverse("mailings"))

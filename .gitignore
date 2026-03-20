@@ -3,5 +3,11 @@ __pycache__/
 *.pyc
 db.sqlite3
 venv/
+.venv/
+.tmp/
+.virtualenv-app-data/
 .idea/
 .vscode/
+.pytest_cache/
+.coverage
+htmlcov/

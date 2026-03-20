@@ -18,7 +18,7 @@ class Migration(migrations.Migration):
             ],
             options={
                 'db_table': 'guest_category_assignments',
-                'managed': False,
+                'managed': True,
             },
         ),
     ]

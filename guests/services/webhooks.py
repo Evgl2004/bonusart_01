@@ -6,12 +6,16 @@ import os
 
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from guests.models import Guest, Category, GuestCategory, Restaurant, VisitHistory, GuestCategoryAssignment
+from guests.models import Category, DispatchTask, Guest, GuestCategory, GuestCategoryAssignment, Restaurant, VisitHistory
 
-from guests.services.iiko_client import iiko_client
+from guests.services.balance_notifications import BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID, is_balance_webhook
+from guests.services.notification_handler_registry import run_webhook_scenario_by_code
+from guests.services.notification_registry import SCENARIO_CODE_BALANCE_CHANGED
+from guests.services.olap_webhook_bridge import enqueue_olap_sync_from_webhook
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +237,12 @@ def get_or_create_guest_from_iiko(phone: str) -> Guest | None:
     """
 
     if not phone:
+        return None
+
+    try:
+        from guests.services.iiko_client import iiko_client
+    except Exception as e:
+        logger.error("iiko-клиент недоступен: %s", e)
         return None
 
     # 1. Запрашиваем iiko API
@@ -636,30 +646,142 @@ def update_visit_history_from_event(event: dict) -> tuple[bool, str]:
     return True, ""
 
 
-def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
+def enqueue_balance_notification_from_webhook(
+    webhook: dict,
+    *,
+    is_enabled: bool = True,
+    priority: str = DispatchTask.Priority.HIGH,
+    primary_only: bool = True,
+) -> int:
     """
-    Центральный обработчик вебхука из SAGUR API.
+    Явный бизнес-вызов постановки уведомления о балансе в universal queue.
 
-    Внутри по notificationType решаем, что делать:
-      - 1  -> обновляем историю посещений (VisitHistory)
-      - 5  -> назначаем категорию гостю
-      - иначе -> пока ничего не делаем
+    Важно:
+    1. Параметр `is_enabled=False` отключает только отправку уведомления;
+       остальная бизнес-обработка webhook продолжает работать.
+    2. Параметры маршрутизации задаются явно из кода (без env-магии):
+       priority=high, primary_only=True.
+    """
+    from guests.services.balance_notifications import (
+        enqueue_balance_notification_from_webhook as _enqueue_balance_notification,
+    )
+
+    return _enqueue_balance_notification(
+        webhook=webhook,
+        is_enabled=is_enabled,
+        priority=priority,
+        primary_only=primary_only,
+    )
+
+
+def _is_live_olap_bridge_enabled_for_notification(notification_type: int | None) -> bool:
+    """
+    Проверяет, включён ли live-мост webhook -> OlapCheckSyncJournal для данного типа уведомления.
+
+    Логика:
+    1. общий флаг `OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE` должен быть включён;
+    2. `notification_type` должен входить в разрешённый список
+       `OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES`.
+    """
+    if not bool(getattr(settings, "OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE", False)):
+        return False
+
+    allowed_types = getattr(settings, "OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES", {1}) or {1}
+    if not isinstance(allowed_types, (set, list, tuple)):
+        return False
+
+    try:
+        normalized_types = {int(item) for item in allowed_types}
+    except (TypeError, ValueError):
+        normalized_types = {1}
+
+    return notification_type in normalized_types
+
+
+def handle_api_webhook(
+    webhook: dict,
+    *,
+    send_balance_notification: bool = True,
+) -> tuple[bool, str]:
+    """
+    Центральный обработчик webhook из SAGUR API.
+
+    Правила маршрутизации:
+    1. Если `category_id_ext` совпадает с категорией «Баланс»,
+       ставим high-priority задачу уведомления в universal queue.
+    2. `notificationType=1` -> обновляем историю посещений (VisitHistory).
+    3. `notificationType=5` -> назначаем категорию гостю.
+    4. Остальные типы пока не обрабатываем.
 
     Возвращает:
-        True  - вебхук считается успешно обработанным, можно ставить business_status='complete'
-        False - вебхук оставляем pending (например, гость/ресторан не найден, ошибка и т.п.)
+        True  - webhook обработан успешно, можно ставить `business_status=complete`.
+        False - webhook не обработан (ошибка/недостаток данных), ставим `business_status=failed`.
+
+    Параметры:
+        send_balance_notification: включать ли постановку balance-уведомления
+        в universal queue для данного вызова.
     """
     event = webhook.get("parsed_body") or {}
     notif_type = event.get("notificationType")
     webhook_id = webhook.get("id")
+    is_balance_event = is_balance_webhook(webhook, event if isinstance(event, dict) else {})
 
-    # --- notificationType = 1: обновляем историю посещений ---
+    # --- Явный balance-сценарий по фиксированному category external id ---
+    if is_balance_event:
+        try:
+            enqueued_tasks = run_webhook_scenario_by_code(
+                scenario_code=SCENARIO_CODE_BALANCE_CHANGED,
+                webhook=webhook,
+                is_enabled=send_balance_notification,
+                priority=DispatchTask.Priority.HIGH,
+                primary_only=True,
+            )
+            logger.info(
+                "Webhook id=%s: balance-событие обработано (category_ext_id=%s), "
+                "поставлено задач: %s",
+                webhook_id,
+                BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID,
+                enqueued_tasks,
+            )
+            return True, f"balance webhook processed, enqueued={enqueued_tasks}"
+        except Exception:
+            logger.exception(
+                "Webhook id=%s: ошибка постановки balance-задач в universal queue.",
+                webhook_id,
+            )
+            return False, "balance enqueue error"
+
+    # --- notificationType = 1: обновляем историю посещений (+ live-мост в OLAP при включённом флаге) ---
     if notif_type == 1:
         logger.info(
             "Webhook id=%s: notificationType=1, обновляем историю посещений",
             webhook_id,
         )
-        return update_visit_history_from_event(event)
+        success, reason = update_visit_history_from_event(event)
+        if not success:
+            return success, reason
+        if reason:
+            logger.info(
+                "Webhook id=%s: VisitHistory обработан без постановки OLAP-задачи (%s)",
+                webhook_id,
+                reason,
+            )
+            return success, reason
+
+        if _is_live_olap_bridge_enabled_for_notification(notif_type):
+            bridge_result = enqueue_olap_sync_from_webhook(
+                webhook=webhook,
+                guest=find_guest(event),
+            )
+            logger.info(
+                "Webhook id=%s: live-мост OLAP выполнен (created=%s, row_id=%s, reason=%s)",
+                webhook_id,
+                bridge_result.created,
+                bridge_result.row_id,
+                bridge_result.reason,
+            )
+
+        return success, reason
 
     # --- notificationType = 5: назначаем категорию ---
     if notif_type == 5:
@@ -678,7 +800,6 @@ def handle_api_webhook(webhook: dict) -> tuple[bool, str]:
     )
     return False, f"Неизвестный notificationType={notif_type}"
 
-
 # =====================================================================
 #        ОБРАБОТКА ВЕБ-ХУКОВ ЧЕРЕЗ SAGUR API (business_status=pending)
 # =====================================================================
@@ -690,8 +811,11 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
     Сейчас:
       - получаем список вебхуков из SAGUR API /api/internal/webhooks
         с business_status=pending
-      - обрабатываем каждый (назначаем категорию гостю ТОЛЬКО для notificationType=5)
-      - помечаем его в SAGUR как business_status='complete' (если категория назначена)
+      - обрабатываем каждый:
+          * balance-событие по category_id_ext -> enqueue уведомления в universal queue
+          * notificationType=1 -> обновление VisitHistory
+          * notificationType=5 -> назначение категории гостю
+      - помечаем его в SAGUR как business_status='complete' при успешной обработке
         или 'failed' при ошибке.
 
     ВАЖНО:
@@ -710,6 +834,7 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
 
     processed_count = 0  # сколько реально назначено категорий (complete)
     seen_count = 0       # сколько всего вебхуков мы посмотрели в этом запуске
+    notify_balance = bool(getattr(settings, "BALANCE_WEBHOOK_NOTIFY_ENABLED", True))
 
     for webhook in _iter_pending_webhooks(access_token, page_size=PAGE_SIZE):
         if seen_count >= LIMIT:
@@ -719,7 +844,10 @@ def process_recent_webhooks(period_minutes=10, using="webhooks", max_retries=3, 
         webhook_id = webhook.get("id")
 
         try:
-            assigned, reason = handle_api_webhook(webhook)
+            assigned, reason = handle_api_webhook(
+                webhook,
+                send_balance_notification=notify_balance,
+            )
 
             if assigned:
                 processed_count += 1

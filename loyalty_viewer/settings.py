@@ -60,8 +60,32 @@ DISALLOWED_USER_AGENTS = [
 CORS_ALLOW_ALL_ORIGINS = False
 
 # Защита от подделки межсайтовых запросов.
-CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
-CSRF_TRUSTED_ORIGINS = [host.strip() for host in CSRF_TRUSTED_ORIGINS]
+def _build_csrf_trusted_origins() -> list[str]:
+    """
+    Формирует и нормализует список доверенных origins для CSRF.
+
+    Поддерживаются оба варианта в .env:
+    1. Полный origin со схемой (`https://example.com`);
+    2. Только хост/домен (`example.com`) - в этом случае добавляется `https://`.
+    """
+    raw_value = os.getenv(
+        "CSRF_TRUSTED_ORIGINS",
+        "http://localhost,https://localhost,http://127.0.0.1,https://127.0.0.1",
+    )
+    origins: list[str] = []
+
+    for item in raw_value.split(","):
+        origin = item.strip().rstrip("/")
+        if not origin:
+            continue
+        if not (origin.startswith("http://") or origin.startswith("https://")):
+            origin = f"https://{origin}"
+        origins.append(origin)
+
+    return origins
+
+
+CSRF_TRUSTED_ORIGINS = _build_csrf_trusted_origins()
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -143,6 +167,10 @@ Q_CLUSTER = {
             "func": "guests.tasks.fetch_pending_webhooks",
             "minutes": 10,
         },
+        "run_notification_scenarios": {
+            "func": "guests.tasks.run_scheduled_notification_scenarios_task",
+            "minutes": 30,
+        },
         # # Ночная глобальная проверка в 22:00 по UTC
         # "nightly_health_check": {
         #     "func": "guests.tasks.nightly_health_check",
@@ -161,6 +189,101 @@ REDIS_QUEUE_NAME = os.getenv('REDIS_QUEUE_NAME', 'webhook_queue')
 
 # Имя специальной очереди для хранения сообщений, которые не удалось обработать после нескольких попыток.
 REDIS_DLQ_NAME = os.getenv('REDIS_DLQ_NAME', 'webhook_queue_dlq')
+
+# Настройки новой универсальной очереди (v1).
+# По умолчанию использует тот же Redis-инстанс, но отдельный namespace ключей.
+UNIVERSAL_QUEUE_REDIS_URL = os.getenv('UNIVERSAL_QUEUE_REDIS_URL', REDIS_QUEUE_URL)
+UNIVERSAL_QUEUE_NAMESPACE = os.getenv('UNIVERSAL_QUEUE_NAMESPACE', 'uq:v1')
+
+try:
+    UNIVERSAL_DISPATCH_BATCH_SIZE = int(os.getenv('UNIVERSAL_DISPATCH_BATCH_SIZE', '200'))
+except ValueError:
+    UNIVERSAL_DISPATCH_BATCH_SIZE = 200
+
+try:
+    UNIVERSAL_DISPATCH_SLEEP_SECONDS = float(os.getenv('UNIVERSAL_DISPATCH_SLEEP_SECONDS', '2'))
+except ValueError:
+    UNIVERSAL_DISPATCH_SLEEP_SECONDS = 2.0
+
+# Настройки async provider-worker (F5).
+try:
+    UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS = int(os.getenv("UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS", "2"))
+except ValueError:
+    UNIVERSAL_PROVIDER_BLOCK_TIMEOUT_SECONDS = 2
+
+try:
+    UNIVERSAL_PROVIDER_IDLE_SLEEP_SECONDS = float(os.getenv("UNIVERSAL_PROVIDER_IDLE_SLEEP_SECONDS", "0.2"))
+except ValueError:
+    UNIVERSAL_PROVIDER_IDLE_SLEEP_SECONDS = 0.2
+
+try:
+    UNIVERSAL_PROVIDER_RETRY_BASE_SECONDS = float(os.getenv("UNIVERSAL_PROVIDER_RETRY_BASE_SECONDS", "3"))
+except ValueError:
+    UNIVERSAL_PROVIDER_RETRY_BASE_SECONDS = 3.0
+
+try:
+    UNIVERSAL_PROVIDER_RETRY_MAX_SECONDS = float(os.getenv("UNIVERSAL_PROVIDER_RETRY_MAX_SECONDS", "300"))
+except ValueError:
+    UNIVERSAL_PROVIDER_RETRY_MAX_SECONDS = 300.0
+
+try:
+    UNIVERSAL_FAIR_HIGH = int(os.getenv("UNIVERSAL_FAIR_HIGH", "10"))
+except ValueError:
+    UNIVERSAL_FAIR_HIGH = 10
+
+try:
+    UNIVERSAL_FAIR_NORMAL = int(os.getenv("UNIVERSAL_FAIR_NORMAL", "3"))
+except ValueError:
+    UNIVERSAL_FAIR_NORMAL = 3
+
+try:
+    UNIVERSAL_FAIR_BULK = int(os.getenv("UNIVERSAL_FAIR_BULK", "1"))
+except ValueError:
+    UNIVERSAL_FAIR_BULK = 1
+
+# Централизованные лимиты отправки (сообщений в секунду) для Redis rate limiter.
+try:
+    UNIVERSAL_RATE_LIMIT_TELEGRAM_PER_SECOND = float(os.getenv("UNIVERSAL_RATE_LIMIT_TELEGRAM_PER_SECOND", "28"))
+except ValueError:
+    UNIVERSAL_RATE_LIMIT_TELEGRAM_PER_SECOND = 28.0
+
+try:
+    UNIVERSAL_RATE_LIMIT_MAX_PER_SECOND = float(os.getenv("UNIVERSAL_RATE_LIMIT_MAX_PER_SECOND", "20"))
+except ValueError:
+    UNIVERSAL_RATE_LIMIT_MAX_PER_SECOND = 20.0
+
+try:
+    UNIVERSAL_RATE_LIMIT_VK_PER_SECOND = float(os.getenv("UNIVERSAL_RATE_LIMIT_VK_PER_SECOND", "20"))
+except ValueError:
+    UNIVERSAL_RATE_LIMIT_VK_PER_SECOND = 20.0
+
+try:
+    UNIVERSAL_PROVIDER_HTTP_TIMEOUT = float(os.getenv("UNIVERSAL_PROVIDER_HTTP_TIMEOUT", "20"))
+except ValueError:
+    UNIVERSAL_PROVIDER_HTTP_TIMEOUT = 20.0
+
+# Базовые URL и параметры API провайдеров.
+TELEGRAM_API_BASE_URL = os.getenv("TELEGRAM_API_BASE_URL", "https://api.telegram.org").strip()
+MAX_API_BASE_URL = os.getenv("MAX_API_BASE_URL", "https://platform-api.max.ru").strip()
+MAX_API_AUTH_PREFIX = os.getenv("MAX_API_AUTH_PREFIX", "").strip()
+VK_API_BASE_URL = os.getenv("VK_API_BASE_URL", "https://api.vk.com/method").strip()
+VK_API_VERSION = os.getenv("VK_API_VERSION", "5.199").strip()
+
+# Настройки monitor-процесса universal queue (F6).
+try:
+    UNIVERSAL_MONITOR_INTERVAL_SECONDS = float(os.getenv("UNIVERSAL_MONITOR_INTERVAL_SECONDS", "60"))
+except ValueError:
+    UNIVERSAL_MONITOR_INTERVAL_SECONDS = 60.0
+
+try:
+    UNIVERSAL_STALE_QUEUED_SECONDS = int(os.getenv("UNIVERSAL_STALE_QUEUED_SECONDS", "180"))
+except ValueError:
+    UNIVERSAL_STALE_QUEUED_SECONDS = 180
+
+try:
+    UNIVERSAL_STALE_IN_PROGRESS_SECONDS = int(os.getenv("UNIVERSAL_STALE_IN_PROGRESS_SECONDS", "600"))
+except ValueError:
+    UNIVERSAL_STALE_IN_PROGRESS_SECONDS = 600
 
 # Количество повторных попыток для обработки одного сообщения из очереди.
 try:
@@ -226,10 +349,10 @@ LOGGING = {
     },
 }
 LANGUAGE_CODE = 'ru-ru'
-# Все даты в БД и логи будут храниться в UTC.
-TIME_ZONE = 'UTC'
-USE_I18N = True
+
 USE_TZ = True
+TIME_ZONE = "Asia/Yekaterinburg"
+#USE_I18N = True
 
 STATIC_URL = '/static/loyalty/'
 MEDIA_URL = '/media/loyalty/'
@@ -241,6 +364,276 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 #WEBHOOK_SERVICE_URL = "http://webhook-service:8000"
 
+SAGUR_BASE_URL = os.getenv("SAGUR_BASE_URL", "").strip()
+SAGUR_USERNAME = os.getenv("SAGUR_USERNAME", "").strip()
+SAGUR_PASSWORD = os.getenv("SAGUR_PASSWORD", "").strip()
+
 IIKO_API_KEY = os.getenv("IIKO_API_KEY")
 IIKO_API_BASE_URL = os.getenv("IIKO_API_BASE_URL")
 IIKO_ORGANIZATION_ID = os.getenv("IIKO_ORGANIZATION_ID")
+IIKO_OLAP_BASE_URL = os.getenv("IIKO_OLAP_BASE_URL", "").strip()
+IIKO_OLAP_LOGIN = os.getenv("IIKO_OLAP_LOGIN", "").strip()
+IIKO_OLAP_PASS_HASH = os.getenv("IIKO_OLAP_PASS_HASH", "").strip()
+
+try:
+    IIKO_OLAP_AUTH_TIMEOUT_SECONDS = float(os.getenv("IIKO_OLAP_AUTH_TIMEOUT_SECONDS", "10"))
+except ValueError:
+    IIKO_OLAP_AUTH_TIMEOUT_SECONDS = 10.0
+
+try:
+    IIKO_OLAP_REQUEST_TIMEOUT_SECONDS = float(os.getenv("IIKO_OLAP_REQUEST_TIMEOUT_SECONDS", "30"))
+except ValueError:
+    IIKO_OLAP_REQUEST_TIMEOUT_SECONDS = 30.0
+
+try:
+    IIKO_OLAP_KEY_TTL_SECONDS = int(os.getenv("IIKO_OLAP_KEY_TTL_SECONDS", "240"))
+except ValueError:
+    IIKO_OLAP_KEY_TTL_SECONDS = 240
+
+try:
+    IIKO_OLAP_MAX_RETRIES = int(os.getenv("IIKO_OLAP_MAX_RETRIES", "3"))
+except ValueError:
+    IIKO_OLAP_MAX_RETRIES = 3
+
+try:
+    IIKO_OLAP_RETRY_BASE_SECONDS = float(os.getenv("IIKO_OLAP_RETRY_BASE_SECONDS", "1"))
+except ValueError:
+    IIKO_OLAP_RETRY_BASE_SECONDS = 1.0
+
+try:
+    IIKO_OLAP_PORTION_SIZE = int(os.getenv("IIKO_OLAP_PORTION_SIZE", "200"))
+except ValueError:
+    IIKO_OLAP_PORTION_SIZE = 200
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    """
+    Безопасно читает bool-переменную окружения.
+
+    Поддерживаемые значения True: 1, true, yes, on.
+    """
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return str(raw_value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, min_value: int | None = None) -> int:
+    """
+    Безопасно читает целое число из env с опциональной нижней границей.
+    """
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = int(default)
+
+    if min_value is not None:
+        value = max(int(min_value), value)
+    return value
+
+
+def _env_int_set(name: str, default_csv: str) -> set[int]:
+    """
+    Читает CSV-список целых чисел из env в `set[int]`.
+
+    Если значение пустое или содержит ошибки, возвращается набор по умолчанию.
+    """
+    raw_value = str(os.getenv(name, default_csv) or "").strip()
+    parsed_values: set[int] = set()
+
+    for item in raw_value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        try:
+            parsed_values.add(int(token))
+        except ValueError:
+            continue
+
+    if parsed_values:
+        return parsed_values
+
+    fallback_values: set[int] = set()
+    for item in default_csv.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        try:
+            fallback_values.add(int(token))
+        except ValueError:
+            continue
+    return fallback_values or {1}
+
+
+# Управление отправкой balance-уведомлений в ботов из webhook-контура.
+# Позволяет включать/выключать создание DispatchTask без изменений кода.
+BALANCE_WEBHOOK_NOTIFY_ENABLED = _env_bool(
+    "BALANCE_WEBHOOK_NOTIFY_ENABLED",
+    True,
+)
+
+
+# Live-мост webhook -> olap_check_sync_journal.
+# По умолчанию выключен, чтобы безопасно выкатывать функционал по флагу.
+OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE = _env_bool(
+    "OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE",
+    False,
+)
+# Разрешённые notificationType для live-моста (CSV, например: "1,9").
+OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES = _env_int_set(
+    "OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES",
+    "1",
+)
+
+# Исторический прогон webhook -> olap_check_sync_journal.
+OLAP_BACKFILL_ENABLE = _env_bool("OLAP_BACKFILL_ENABLE", False)
+OLAP_BACKFILL_DRY_RUN = _env_bool("OLAP_BACKFILL_DRY_RUN", True)
+OLAP_BACKFILL_DATE_FROM = str(
+    os.getenv("OLAP_BACKFILL_DATE_FROM", "2025-12-01T00:00:00Z") or ""
+).strip()
+OLAP_BACKFILL_DATE_TO = str(os.getenv("OLAP_BACKFILL_DATE_TO", "") or "").strip() or None
+
+try:
+    OLAP_BACKFILL_PAGE_SIZE = int(os.getenv("OLAP_BACKFILL_PAGE_SIZE", "100"))
+except ValueError:
+    OLAP_BACKFILL_PAGE_SIZE = 100
+
+try:
+    OLAP_BACKFILL_MAX_PAGES_PER_CYCLE = int(
+        os.getenv("OLAP_BACKFILL_MAX_PAGES_PER_CYCLE", "5")
+    )
+except ValueError:
+    OLAP_BACKFILL_MAX_PAGES_PER_CYCLE = 5
+
+try:
+    OLAP_BACKFILL_SLEEP_BETWEEN_PAGES_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_SLEEP_BETWEEN_PAGES_SECONDS", "1")
+    )
+except ValueError:
+    OLAP_BACKFILL_SLEEP_BETWEEN_PAGES_SECONDS = 1.0
+
+try:
+    OLAP_BACKFILL_SLEEP_BETWEEN_CYCLES_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_SLEEP_BETWEEN_CYCLES_SECONDS", "20")
+    )
+except ValueError:
+    OLAP_BACKFILL_SLEEP_BETWEEN_CYCLES_SECONDS = 20.0
+
+try:
+    OLAP_BACKFILL_PAUSE_QUEUE_GT = int(os.getenv("OLAP_BACKFILL_PAUSE_QUEUE_GT", "5000"))
+except ValueError:
+    OLAP_BACKFILL_PAUSE_QUEUE_GT = 5000
+
+try:
+    OLAP_BACKFILL_RESUME_QUEUE_LT = int(os.getenv("OLAP_BACKFILL_RESUME_QUEUE_LT", "2000"))
+except ValueError:
+    OLAP_BACKFILL_RESUME_QUEUE_LT = 2000
+
+try:
+    OLAP_BACKFILL_AUTH_TIMEOUT_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_AUTH_TIMEOUT_SECONDS", "10")
+    )
+except ValueError:
+    OLAP_BACKFILL_AUTH_TIMEOUT_SECONDS = 10.0
+
+try:
+    OLAP_BACKFILL_REQUEST_TIMEOUT_SECONDS = float(
+        os.getenv("OLAP_BACKFILL_REQUEST_TIMEOUT_SECONDS", "20")
+    )
+except ValueError:
+    OLAP_BACKFILL_REQUEST_TIMEOUT_SECONDS = 20.0
+
+# Плановый OLAP sync (one-shot) через Django Q.
+OLAP_SYNC_SCHEDULE_ENABLED = _env_bool("OLAP_SYNC_SCHEDULE_ENABLED", False)
+OLAP_SYNC_SCHEDULE_MINUTES = _env_int(
+    "OLAP_SYNC_SCHEDULE_MINUTES",
+    30,
+    min_value=1,
+)
+OLAP_SYNC_WINDOW_START_LOCAL = str(
+    os.getenv("OLAP_SYNC_WINDOW_START_LOCAL", "12:00") or "12:00"
+).strip()
+OLAP_SYNC_WINDOW_END_LOCAL = str(
+    os.getenv("OLAP_SYNC_WINDOW_END_LOCAL", "01:00") or "01:00"
+).strip()
+OLAP_SYNC_SCHEDULE_CLAIM_LIMIT = _env_int(
+    "OLAP_SYNC_SCHEDULE_CLAIM_LIMIT",
+    100,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_PORTION_SIZE = _env_int(
+    "OLAP_SYNC_SCHEDULE_PORTION_SIZE",
+    50,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_MAX_ATTEMPTS = _env_int(
+    "OLAP_SYNC_SCHEDULE_MAX_ATTEMPTS",
+    5,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_RETRY_BASE_SECONDS = _env_int(
+    "OLAP_SYNC_SCHEDULE_RETRY_BASE_SECONDS",
+    120,
+    min_value=1,
+)
+OLAP_SYNC_SCHEDULE_LOCK_TIMEOUT_SECONDS = _env_int(
+    "OLAP_SYNC_SCHEDULE_LOCK_TIMEOUT_SECONDS",
+    900,
+    min_value=60,
+)
+
+# Плановый пересчет витрин OLAP (one-shot) через Django Q.
+OLAP_REBUILD_SCHEDULE_ENABLED = _env_bool("OLAP_REBUILD_SCHEDULE_ENABLED", False)
+OLAP_REBUILD_SCHEDULE_CRON = str(
+    os.getenv("OLAP_REBUILD_SCHEDULE_CRON", "30 2 * * *") or "30 2 * * *"
+).strip()
+OLAP_REBUILD_SCHEDULE_CONTINUE_ON_STEP_ERROR = _env_bool(
+    "OLAP_REBUILD_SCHEDULE_CONTINUE_ON_STEP_ERROR",
+    True,
+)
+OLAP_REBUILD_SCHEDULE_BATCH_SIZE = _env_int(
+    "OLAP_REBUILD_SCHEDULE_BATCH_SIZE",
+    2000,
+    min_value=100,
+)
+OLAP_REBUILD_SCHEDULE_WINDOW_DAYS = str(
+    os.getenv("OLAP_REBUILD_SCHEDULE_WINDOW_DAYS", "7,14,30,60,180") or "7,14,30,60,180"
+).strip()
+OLAP_REBUILD_SCHEDULE_USE_TODAY_AS_OF_DATE = _env_bool(
+    "OLAP_REBUILD_SCHEDULE_USE_TODAY_AS_OF_DATE",
+    True,
+)
+OLAP_REBUILD_SCHEDULE_DEPARTMENT_ID = str(
+    os.getenv("OLAP_REBUILD_SCHEDULE_DEPARTMENT_ID", "") or ""
+).strip()
+
+
+def _register_olap_schedule_tasks() -> None:
+    """
+    Регистрирует OLAP-задачи в Django Q по env-флагам.
+
+    Это позволяет включать/выключать OLAP-контур без правки кода:
+    1. sync-задача раз в N минут в рабочее окно;
+    2. rebuild-задача по cron-расписанию.
+    """
+    schedule_map = Q_CLUSTER.setdefault("schedule", {})
+
+    if OLAP_SYNC_SCHEDULE_ENABLED:
+        schedule_map["run_olap_sync_windowed"] = {
+            "func": "guests.tasks.run_olap_sync_scheduled_task",
+            "minutes": OLAP_SYNC_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_olap_sync_windowed", None)
+
+    if OLAP_REBUILD_SCHEDULE_ENABLED:
+        schedule_map["run_olap_rebuild_nightly"] = {
+            "func": "guests.tasks.run_olap_rebuild_scheduled_task",
+            "schedule_type": "C",
+            "cron": OLAP_REBUILD_SCHEDULE_CRON,
+        }
+    else:
+        schedule_map.pop("run_olap_rebuild_nightly", None)
+
+
+_register_olap_schedule_tasks()

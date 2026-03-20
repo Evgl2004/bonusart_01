@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+
+{% block title %}Аналитика гостей{% endblock %}
+
+{% block extra_css %}
+<style>
+  .analytics-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .analytics-muted {
+    color: #6b7280;
+    font-size: 0.9rem;
+  }
+
+  .kpi-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #ffffff;
+    padding: 1rem 1.1rem;
+    height: 100%;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+  }
+
+  .kpi-title {
+    color: #374151;
+    font-size: 0.92rem;
+    margin-bottom: 0.4rem;
+  }
+
+  .kpi-value {
+    color: #111827;
+    font-size: 1.6rem;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 0.3rem;
+  }
+
+  .kpi-description {
+    color: #6b7280;
+    font-size: 0.83rem;
+  }
+
+  .chart-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #ffffff;
+    padding: 0.9rem;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    height: 100%;
+  }
+
+  .chart-title {
+    color: #111827;
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0 0 0.7rem 0;
+  }
+
+  .chart-box {
+    width: 100%;
+    min-height: 320px;
+  }
+
+  @media (max-width: 992px) {
+    .chart-box {
+      min-height: 280px;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="analytics-header">
+  <div>
+    <h1 class="h3 mb-1">Дашборд аналитики гостей</h1>
+    <div class="analytics-muted">
+      Период: {{ dashboard_payload.filters.date_from }} - {{ dashboard_payload.filters.date_to }}
+    </div>
+  </div>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-4">
+  <div class="col-12 col-md-3">
+    <label class="form-label">Период, дней</label>
+    <select name="period_days" class="form-select">
+      {% for days in period_options %}
+        <option value="{{ days }}" {% if days == selected_period_days %}selected{% endif %}>{{ days }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-5">
+    <label class="form-label">Заведение</label>
+    <select name="department_id" class="form-select">
+      <option value="">Все заведения</option>
+      {% for dep in department_options %}
+        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>
+          {{ dep.name }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-2">
+    <button type="submit" class="btn btn-primary w-100">Применить</button>
+  </div>
+</form>
+
+<div class="row g-3 mb-4">
+  {% for kpi in dashboard_payload.kpis %}
+    <div class="col-12 col-md-6 col-xl-4">
+      <div class="kpi-card">
+        <div class="kpi-title">{{ kpi.title }}</div>
+        <div class="kpi-value">{{ kpi.value_display }}</div>
+        <div class="kpi-description">{{ kpi.description }}</div>
+      </div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="row g-3">
+  <div class="col-12">
+    <div class="chart-card">
+      <h2 class="chart-title">{{ dashboard_payload.charts.daily_dynamics.title }}</h2>
+      <div id="chart-daily-dynamics" class="chart-box"></div>
+    </div>
+  </div>
+  <div class="col-12 col-xl-6">
+    <div class="chart-card">
+      <h2 class="chart-title">{{ dashboard_payload.charts.department_revenue.title }}</h2>
+      <div id="chart-department-revenue" class="chart-box"></div>
+    </div>
+  </div>
+  <div class="col-12 col-xl-6">
+    <div class="chart-card">
+      <h2 class="chart-title">{{ dashboard_payload.charts.focus_categories.title }}</h2>
+      <div id="chart-focus-categories" class="chart-box"></div>
+    </div>
+  </div>
+</div>
+
+{{ dashboard_payload|json_script:"analytics-dashboard-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+  (function() {
+    const payloadNode = document.getElementById("analytics-dashboard-data");
+    if (!payloadNode) {
+      return;
+    }
+    const payload = JSON.parse(payloadNode.textContent || "{}");
+    const charts = [];
+
+    const axisLabelColor = "#374151";
+    const splitLineColor = "#e5e7eb";
+
+    function initChart(elementId) {
+      const element = document.getElementById(elementId);
+      if (!element) {
+        return null;
+      }
+      const chart = echarts.init(element);
+      charts.push(chart);
+      return chart;
+    }
+
+    function renderDailyDynamics() {
+      const chartData = payload.charts.daily_dynamics || {};
+      const chart = initChart("chart-daily-dynamics");
+      if (!chart) {
+        return;
+      }
+      chart.setOption({
+        tooltip: { trigger: "axis" },
+        legend: { data: ["Выручка", "Заказы"] },
+        grid: { left: 42, right: 24, top: 40, bottom: 28 },
+        xAxis: {
+          type: "category",
+          data: chartData.labels || [],
+          axisLabel: { color: axisLabelColor },
+          axisLine: { lineStyle: { color: splitLineColor } }
+        },
+        yAxis: [
+          {
+            type: "value",
+            name: "Рубли",
+            axisLabel: { color: axisLabelColor },
+            splitLine: { lineStyle: { color: splitLineColor } }
+          },
+          {
+            type: "value",
+            name: "Заказы",
+            axisLabel: { color: axisLabelColor },
+            splitLine: { show: false }
+          }
+        ],
+        series: [
+          {
+            name: "Выручка",
+            type: "bar",
+            yAxisIndex: 0,
+            itemStyle: { color: "#2563eb" },
+            data: chartData.revenue_series || []
+          },
+          {
+            name: "Заказы",
+            type: "line",
+            yAxisIndex: 1,
+            smooth: true,
+            lineStyle: { width: 2, color: "#059669" },
+            itemStyle: { color: "#059669" },
+            data: chartData.orders_series || []
+          }
+        ]
+      });
+    }
+
+    function renderDepartmentRevenue() {
+      const chartData = payload.charts.department_revenue || {};
+      const chart = initChart("chart-department-revenue");
+      if (!chart) {
+        return;
+      }
+      chart.setOption({
+        tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
+        grid: { left: 24, right: 18, top: 30, bottom: 70 },
+        xAxis: {
+          type: "category",
+          data: chartData.labels || [],
+          axisLabel: { rotate: 22, color: axisLabelColor },
+          axisLine: { lineStyle: { color: splitLineColor } }
+        },
+        yAxis: {
+          type: "value",
+          axisLabel: { color: axisLabelColor },
+          splitLine: { lineStyle: { color: splitLineColor } }
+        },
+        series: [
+          {
+            name: "Выручка",
+            type: "bar",
+            data: chartData.revenue_series || [],
+            itemStyle: { color: "#f59e0b" }
+          }
+        ]
+      });
+    }
+
+    function renderFocusCategories() {
+      const chartData = payload.charts.focus_categories || {};
+      const chart = initChart("chart-focus-categories");
+      if (!chart) {
+        return;
+      }
+      chart.setOption({
+        tooltip: { trigger: "item" },
+        legend: { top: "bottom" },
+        series: [
+          {
+            name: "Категории",
+            type: "pie",
+            radius: ["40%", "70%"],
+            avoidLabelOverlap: true,
+            itemStyle: { borderRadius: 6, borderColor: "#fff", borderWidth: 2 },
+            label: { show: true, formatter: "{b}: {d}%" },
+            data: chartData.pie_data || []
+          }
+        ]
+      });
+    }
+
+    renderDailyDynamics();
+    renderDepartmentRevenue();
+    renderFocusCategories();
+
+    window.addEventListener("resize", function() {
+      charts.forEach(function(chart) {
+        chart.resize();
+      });
+    });
+  })();
+</script>
+{% endblock %}

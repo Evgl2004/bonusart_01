@@ -260,7 +260,7 @@ class WebhookWorker:
                 # Временная потеря связи с Redis. Ждем и пробуем снова.
                 logger.error(f"Потеряно соединение с Redis: {err}. Повтор через {self.redis_retry_delay} сек.")
                 # Экспоненциальная задержка
-                time.sleep(self.redis_retry_delay)
+                self._sleep_with_stop(self.redis_retry_delay)
                 self.redis_retry_delay = min(self.redis_retry_delay * 2, self.max_retry_delay)
             except KeyboardInterrupt:
                 logger.info("Получен KeyboardInterrupt. Завершаем работу...")
@@ -268,11 +268,25 @@ class WebhookWorker:
             except Exception as err:
                 # Ловим все остальные исключения, чтобы Обработчик не упал.
                 logger.exception(f"Непредвиденная ошибка в главном цикле: {err}")
-                time.sleep(1)  # Пауза, чтобы не зациклить лог при постоянной ошибке.
+                # Пауза с проверкой флага остановки, чтобы быстрее завершаться по SIGTERM.
+                self._sleep_with_stop(1)
 
         logger.info("Корректное завершение работы: основной цикл Обработчика остановлен.")
         self._log_final_metrics()
         self._cleanup_resources()
+
+    def _sleep_with_stop(self, total_seconds: float) -> None:
+        """
+        Пауза с периодической проверкой `should_stop`.
+
+        Позволяет воркеру быстрее завершаться по внешнему сигналу
+        (например `docker compose stop`), не дожидаясь длинного sleep.
+        """
+        remaining = max(0.0, float(total_seconds))
+        while remaining > 0 and not self.should_stop:
+            step = min(0.5, remaining)
+            time.sleep(step)
+            remaining -= step
 
     def _log_final_metrics(self):
         """
@@ -318,12 +332,14 @@ class WebhookWorker:
         try:
             message = self._parse_message(message_bytes)
         except FatalMessageError as err:
+            self.metrics['messages_failed'] += 1
             logger.error(f"Неустранимая ошибка парсинга: {err}")
             self._send_to_dlq(message_bytes, reason=str(err))
             return
 
         # Проверка превышения лимита повторных попыток
         if message.retry_count >= self.max_retries:
+            self.metrics['messages_failed'] += 1
             logger.error(
                 f"Уведомление id={message.id} превысило лимит попыток "
                 f"({message.retry_count}/{self.max_retries}). Отправка в DLQ."
@@ -334,6 +350,7 @@ class WebhookWorker:
         try:
             self._process_single_message(message)
         except RetryableError as err:
+            self.metrics['messages_failed'] += 1
             # Временная ошибка - отправляем сообщение на повторную обработку
             logger.warning(
                 f"Временная ошибка обработки Уведомления id={message.id}: {err}. "
@@ -341,13 +358,42 @@ class WebhookWorker:
             )
             self._retry_message(message, message_bytes, str(err))
         except FatalMessageError as err:
+            self.metrics['messages_failed'] += 1
             # Неустранимая ошибка - отправляем в DLQ
             logger.error(f"Неустранимая ошибка обработки Уведомления id={message.id}: {err}")
             self._send_to_dlq(message_bytes, reason=str(err))
         except Exception as err:
+            self.metrics['messages_failed'] += 1
             # Непредвиденная ошибка - пытаемся повторить
             logger.exception(f"Непредвиденная ошибка обработки Уведомления id={message.id}")
             self._retry_message(message, message_bytes, f"Непредвиденная ошибка: {err}")
+
+    @staticmethod
+    def _decode_message_bytes(message_bytes: bytes) -> str:
+        """
+        Безопасно декодирует байты входящего webhook-сообщения.
+
+        Порядок попыток:
+        1. `utf-8` (основной стандарт проекта);
+        2. `utf-8-sig` (если есть BOM);
+        3. `cp1251` (fallback для исторических сообщений).
+        """
+        decode_attempts: list[tuple[str, str]] = []
+
+        for encoding in ("utf-8", "utf-8-sig", "cp1251"):
+            try:
+                decoded = message_bytes.decode(encoding)
+                if encoding != "utf-8":
+                    logger.warning(
+                        "Webhook message decoded using fallback encoding=%s (historical compatibility mode).",
+                        encoding,
+                    )
+                return decoded
+            except UnicodeDecodeError as err:
+                decode_attempts.append((encoding, str(err)))
+
+        details = "; ".join(f"{encoding}: {error}" for encoding, error in decode_attempts)
+        raise FatalMessageError(f"Не удалось декодировать сообщение: {details}")
 
     @staticmethod
     def _parse_message(message_bytes: bytes) -> WebhookMessage:
@@ -357,11 +403,8 @@ class WebhookWorker:
         """
 
         try:
-            # Попытка декодирования в UTF-8, затем в latin-1 как fallback
-            try:
-                message_str = message_bytes.decode('utf-8')
-            except UnicodeDecodeError as err:
-                raise FatalMessageError(f"Не удалось декодировать сообщение: {err}")
+            # Декодирование и защита от проблем исторической кодировки.
+            message_str = WebhookWorker._decode_message_bytes(message_bytes)
 
             # Парсинг JSON
             message_dict = json.loads(message_str)
@@ -421,7 +464,11 @@ class WebhookWorker:
 
         # Основная обработка Уведомлений
         try:
-            processed_successfully, result_message = handle_api_webhook(webhook_data)
+            notify_balance = bool(getattr(settings, "BALANCE_WEBHOOK_NOTIFY_ENABLED", True))
+            processed_successfully, result_message = handle_api_webhook(
+                webhook_data,
+                send_balance_notification=notify_balance,
+            )
             if result_message:
                 logger.info(f"Уведомление с id={webhook_id_int} обработано: успешно! Результат: {result_message }")
             else:
@@ -495,7 +542,7 @@ class WebhookWorker:
             message_dict['metadata']['retry_count'] = message.retry_count
 
             # Сериализация и отправка обратно в очередь
-            retry_message = json.dumps(message_dict).encode('utf-8')
+            retry_message = json.dumps(message_dict, ensure_ascii=False).encode('utf-8')
             self.redis_client.rpush(self.queue_name, retry_message)
 
             logger.info(
@@ -522,8 +569,9 @@ class WebhookWorker:
                 'timestamp_human': time.strftime('%Y-%m-%d %H:%M:%S'),
                 'queue_source': self.queue_name
             }
-            dlq_bytes = json.dumps(dlq_message).encode('utf-8')
+            dlq_bytes = json.dumps(dlq_message, ensure_ascii=False).encode('utf-8')
             self.redis_client.rpush(self.dlq_name, dlq_bytes)
+            self.metrics['messages_dlq'] += 1
             logger.warning(f"Сообщение отправлено в DLQ. Причина: {reason}")
         except Exception as err:
             logger.error(f"Не удалось отправить сообщение в DLQ: {err}")

@@ -1,0 +1,14 @@
+[run]
+branch = True
+source =
+    guests
+    loyalty_viewer
+omit =
+    */migrations/*
+    */tests.py
+    */test_*.py
+    manage.py
+
+[report]
+show_missing = True
+skip_empty = True
