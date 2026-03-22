@@ -29,6 +29,7 @@ from .models import (
     OlapSalesRawLine,
     OrderFact,
     Restaurant,
+    TerminalDepartmentMap,
     VirtualCategory,
     VisitHistory,
 )
@@ -42,6 +43,36 @@ from guests.services.notification_registry import (
 class RestaurantAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "iiko_id")
     search_fields = ("name", "iiko_id")
+
+
+@admin.register(TerminalDepartmentMap)
+class TerminalDepartmentMapAdmin(admin.ModelAdmin):
+    """
+    Техническая панель сопоставления terminalGroupId и Department.Id.
+    """
+
+    list_display = (
+        "id",
+        "terminal_group_id",
+        "department_id",
+        "department_code",
+        "department_name",
+        "organization_id",
+        "is_active",
+        "verified_at",
+        "updated_at",
+    )
+    list_filter = ("is_active", "organization_id", "department_id")
+    search_fields = (
+        "terminal_group_id",
+        "department_id",
+        "department_code",
+        "department_name",
+        "organization_id",
+        "restoraunt_group_id",
+    )
+    readonly_fields = ("created_at", "updated_at")
+    list_per_page = 100
 
 
 @admin.register(Category)

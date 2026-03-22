@@ -4,11 +4,8 @@
 Назначение:
 1. Принять webhook-событие о транзакции/балансе;
 2. Подготовить детерминированный idempotency_key;
-3. Идемпотентно создать запись в `OlapCheckSyncJournal`.
-
-Важно:
-- сервис не ломает основной поток обработки webhook;
-- при дубле запись не создаётся повторно, а возвращается статус `created=False`.
+3. Идемпотентно создать запись в `OlapCheckSyncJournal`;
+4. Восстановить `department_id` по `terminalGroupId`, если в webhook нет `departmentId`.
 """
 
 from __future__ import annotations
@@ -23,7 +20,7 @@ from typing import Any
 from django.db import IntegrityError
 from django.utils import timezone
 
-from guests.models import Guest, OlapCheckSyncJournal
+from guests.models import Guest, OlapCheckSyncJournal, TerminalDepartmentMap
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +45,20 @@ def _to_int(value: Any) -> int | None:
         return None
 
 
+def _normalize_text(value: Any) -> str | None:
+    """
+    Нормализует строковое поле: `None`/пустая строка -> `None`.
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _parse_event_at(changed_on: Any) -> datetime:
+    """
+    Парсит метку времени события webhook.
+    """
     if changed_on:
         try:
             event_at = datetime.fromisoformat(str(changed_on))
@@ -63,6 +73,9 @@ def _parse_event_at(changed_on: Any) -> datetime:
 
 
 def _build_idempotency_key(*, webhook_id: Any, event: dict[str, Any]) -> str:
+    """
+    Формирует детерминированный ключ задачи для защиты от дублей.
+    """
     canonical_payload = {
         "webhook_id": str(webhook_id or ""),
         "event_id": str(event.get("id") or ""),
@@ -77,22 +90,110 @@ def _build_idempotency_key(*, webhook_id: Any, event: dict[str, Any]) -> str:
     return f"webhook_nt1:{digest}"
 
 
+def _resolve_department_fields(event: dict[str, Any]) -> dict[str, Any]:
+    """
+    Возвращает поля заведения для `OlapCheckSyncJournal`.
+
+    Приоритет:
+    1. Значения из webhook (`departmentId`, `departmentCode`, `restaurantGroupId`);
+    2. Если `departmentId` отсутствует — активная запись из `TerminalDepartmentMap`
+       по `terminalGroupId`.
+    """
+    organization_id = _normalize_text(event.get("organizationId"))
+    terminal_group_id = _normalize_text(event.get("terminalGroupId"))
+
+    explicit_department_id = _normalize_text(event.get("departmentId"))
+    explicit_department_code = _normalize_text(event.get("departmentCode"))
+    explicit_rest_group_id = _normalize_text(
+        event.get("restaurantGroupId") or event.get("restorauntGroupId")
+    )
+
+    if explicit_department_id:
+        return {
+            "organization_id": organization_id,
+            "terminal_group_id": terminal_group_id,
+            "department_id": explicit_department_id,
+            "department_code": explicit_department_code,
+            "restoraunt_group_id": explicit_rest_group_id,
+            "mapping_used": False,
+        }
+
+    if not terminal_group_id:
+        return {
+            "organization_id": organization_id,
+            "terminal_group_id": None,
+            "department_id": None,
+            "department_code": explicit_department_code,
+            "restoraunt_group_id": explicit_rest_group_id,
+            "mapping_used": False,
+        }
+
+    mapping = (
+        TerminalDepartmentMap.objects.filter(
+            terminal_group_id=terminal_group_id,
+            is_active=True,
+        )
+        .order_by("-verified_at", "-updated_at", "-id")
+        .first()
+    )
+    if mapping is None:
+        return {
+            "organization_id": organization_id,
+            "terminal_group_id": terminal_group_id,
+            "department_id": None,
+            "department_code": explicit_department_code,
+            "restoraunt_group_id": explicit_rest_group_id,
+            "mapping_used": False,
+        }
+
+    mapping_organization_id = _normalize_text(mapping.organization_id)
+    if (
+        organization_id
+        and mapping_organization_id
+        and organization_id != mapping_organization_id
+    ):
+        logger.warning(
+            "OLAP bridge: mapping terminal=%s не применен из-за несовпадения "
+            "organization_id (webhook=%s, mapping=%s).",
+            terminal_group_id,
+            organization_id,
+            mapping_organization_id,
+        )
+        return {
+            "organization_id": organization_id,
+            "terminal_group_id": terminal_group_id,
+            "department_id": None,
+            "department_code": explicit_department_code,
+            "restoraunt_group_id": explicit_rest_group_id,
+            "mapping_used": False,
+        }
+
+    resolved_department_id = _normalize_text(mapping.department_id)
+    return {
+        "organization_id": organization_id or mapping_organization_id,
+        "terminal_group_id": terminal_group_id,
+        "department_id": resolved_department_id,
+        "department_code": explicit_department_code or _normalize_text(mapping.department_code),
+        "restoraunt_group_id": explicit_rest_group_id or _normalize_text(mapping.restoraunt_group_id),
+        "mapping_used": bool(resolved_department_id),
+    }
+
+
 def enqueue_olap_sync_from_webhook(
     *,
     webhook: dict[str, Any],
     guest: Guest | None = None,
 ) -> OlapWebhookBridgeResult:
     """
-    Ставит задачу дозагрузки чека в `OlapCheckSyncJournal` по webhook notificationType=1.
-
-    Параметры:
-    - webhook: исходный webhook-объект c `id` и `parsed_body`;
-    - guest: опционально уже найденный гость (чтобы не делать повторный поиск).
+    Ставит задачу дозагрузки чека в `OlapCheckSyncJournal` по webhook `notificationType=1`.
     """
-
     event = webhook.get("parsed_body") or {}
     if not isinstance(event, dict):
-        return OlapWebhookBridgeResult(created=False, row_id=None, reason="parsed_body не словарь")
+        return OlapWebhookBridgeResult(
+            created=False,
+            row_id=None,
+            reason="parsed_body не словарь",
+        )
 
     notification_type = _to_int(event.get("notificationType"))
     if notification_type != 1:
@@ -113,23 +214,22 @@ def enqueue_olap_sync_from_webhook(
     webhook_id = webhook.get("id")
     event_at = _parse_event_at(event.get("changedOn"))
     idempotency_key = _build_idempotency_key(webhook_id=webhook_id, event=event)
-    source_webhook_id = str(webhook_id or "").strip() or None
+    source_webhook_id = _normalize_text(webhook_id)
+    resolved_department = _resolve_department_fields(event)
 
     defaults = {
         "guest": guest,
         "source_webhook_id": source_webhook_id,
-        "organization_id": (str(event.get("organizationId") or "").strip() or None),
-        "terminal_group_id": (str(event.get("terminalGroupId") or "").strip() or None),
+        "organization_id": resolved_department["organization_id"],
+        "terminal_group_id": resolved_department["terminal_group_id"],
         "order_number": order_number,
-        "order_external_id": (str(event.get("orderId") or "").strip() or None),
-        "transaction_id": (str(event.get("transactionId") or "").strip() or None),
+        "order_external_id": _normalize_text(event.get("orderId")),
+        "transaction_id": _normalize_text(event.get("transactionId")),
         "event_at": event_at,
         "business_date": event_at.date(),
-        "department_id": (str(event.get("departmentId") or "").strip() or None),
-        "department_code": (str(event.get("departmentCode") or "").strip() or None),
-        "restoraunt_group_id": (
-            str(event.get("restaurantGroupId") or event.get("restorauntGroupId") or "").strip() or None
-        ),
+        "department_id": resolved_department["department_id"],
+        "department_code": resolved_department["department_code"],
+        "restoraunt_group_id": resolved_department["restoraunt_group_id"],
     }
 
     try:
@@ -146,13 +246,24 @@ def enqueue_olap_sync_from_webhook(
         )
 
     if created:
+        if resolved_department.get("mapping_used"):
+            logger.info(
+                "OLAP bridge: department_id восстановлен по mapping "
+                "terminalGroupId=%s -> department_id=%s",
+                defaults["terminal_group_id"],
+                defaults["department_id"],
+            )
         logger.info(
             "OLAP bridge: создана задача id=%s для webhook_id=%s order_number=%s",
             row.id,
             source_webhook_id,
             order_number,
         )
-        return OlapWebhookBridgeResult(created=True, row_id=row.id, reason="Задача создана")
+        return OlapWebhookBridgeResult(
+            created=True,
+            row_id=row.id,
+            reason="Задача создана",
+        )
 
     logger.info(
         "OLAP bridge: дубль задачи, пропуск (id=%s, webhook_id=%s, order_number=%s)",
@@ -160,4 +271,9 @@ def enqueue_olap_sync_from_webhook(
         source_webhook_id,
         order_number,
     )
-    return OlapWebhookBridgeResult(created=False, row_id=row.id, reason="Дубль задачи")
+    return OlapWebhookBridgeResult(
+        created=False,
+        row_id=row.id,
+        reason="Дубль задачи",
+    )
+

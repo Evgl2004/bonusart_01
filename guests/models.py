@@ -466,6 +466,97 @@ class GuestBotBinding(models.Model):
         return f"guest={self.guest_id} bot={self.bot_id} chat={self.external_chat_id}"
 
 
+class TerminalDepartmentMap(models.Model):
+    """
+    Сопоставление идентификатора терминала iiko (`terminalGroupId`) и `Department.Id` для OLAP.
+
+    Назначение:
+    1. заполнять `department_id` в задачах `OlapCheckSyncJournal`, когда в webhook нет `departmentId`;
+    2. хранить верифицированные технические идентификаторы заведения;
+    3. исключить ручные корректировки журнала при историческом прогоне.
+    """
+
+    organization_id = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Идентификатор организации iiko (organizationId).",
+    )
+    terminal_group_id = models.CharField(
+        max_length=64,
+        unique=True,
+        db_index=True,
+        help_text="Идентификатор терминальной группы iiko (terminalGroupId).",
+    )
+    restoraunt_group_id = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Идентификатор группы ресторана из OLAP (RestorauntGroup.Id).",
+    )
+    department_id = models.CharField(
+        max_length=64,
+        db_index=True,
+        help_text="Идентификатор заведения из OLAP (Department.Id).",
+    )
+    department_code = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+        help_text="Код заведения из OLAP (Department.Code).",
+    )
+    department_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Название заведения из OLAP (Department).",
+    )
+    restaurant_section_id = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        help_text="Идентификатор секции зала из OLAP (RestaurantSection.Id).",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Активность сопоставления для рабочего контура.",
+    )
+    verified_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Когда сопоставление было проверено вручную/операционно.",
+    )
+    source_order_num = models.BigIntegerField(
+        blank=True,
+        null=True,
+        help_text="Контрольный номер чека, по которому подтверждали сопоставление.",
+    )
+    source_business_date = models.DateField(
+        blank=True,
+        null=True,
+        help_text="Контрольная бизнес-дата проверки сопоставления.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "terminal_department_map"
+        verbose_name = "Сопоставление terminalGroupId -> Department.Id"
+        verbose_name_plural = "Сопоставления terminalGroupId -> Department.Id"
+        indexes = [
+            models.Index(fields=["organization_id", "is_active"], name="tdm_org_active_idx"),
+            models.Index(fields=["department_id", "is_active"], name="tdm_dept_active_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"terminal={self.terminal_group_id} -> department={self.department_id}"
+        )
+
+
 class OlapCheckSyncJournal(models.Model):
     """
     Журнал синхронизации чеков с OLAP.

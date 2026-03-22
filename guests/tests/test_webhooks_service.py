@@ -20,6 +20,7 @@ from guests.models import (
     GuestCategoryAssignment,
     OlapCheckSyncJournal,
     Restaurant,
+    TerminalDepartmentMap,
     VisitHistory,
 )
 from guests.services import webhooks
@@ -451,6 +452,49 @@ class WebhookGuestAndCategoryTests(TestCase):
         self.assertEqual(row.organization_id, "org-on-1")
         self.assertEqual(row.source_webhook_id, "wh-nt1-on")
         self.assertEqual(row.status, OlapCheckSyncJournal.Status.NEW)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_resolves_department_from_mapping(self):
+        """
+        Если в webhook нет `departmentId`, мост должен восстановить его по таблице
+        сопоставления `terminalGroupId -> Department.Id`.
+        """
+        TerminalDepartmentMap.objects.create(
+            organization_id="org-map-1",
+            terminal_group_id=self.restaurant.iiko_id,
+            restoraunt_group_id=self.restaurant.iiko_id,
+            department_id="dep-map-1",
+            department_code="11",
+            department_name="Тестовое заведение",
+            is_active=True,
+        )
+
+        webhook = {
+            "id": "wh-nt1-map",
+            "parsed_body": {
+                "id": "evt-map-1",
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": self.restaurant.iiko_id,
+                "changedOn": "2026-03-18T11:00:00+05:00",
+                "orderNumber": 700101,
+                "orderId": "order-map-1",
+                "transactionId": "tx-map-1",
+                "organizationId": "org-map-1",
+                # Важно: departmentId отсутствует
+            },
+        }
+
+        assigned, reason = webhooks.handle_api_webhook(webhook)
+
+        self.assertTrue(assigned, msg=reason)
+        row = OlapCheckSyncJournal.objects.get(order_number=700101)
+        self.assertEqual(row.department_id, "dep-map-1")
+        self.assertEqual(row.department_code, "11")
+        self.assertEqual(row.restoraunt_group_id, self.restaurant.iiko_id)
 
     @override_settings(
         OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
