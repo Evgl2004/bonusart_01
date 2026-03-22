@@ -94,10 +94,10 @@ def _resolve_department_fields(event: dict[str, Any]) -> dict[str, Any]:
     """
     Возвращает поля заведения для `OlapCheckSyncJournal`.
 
-    Приоритет:
-    1. Значения из webhook (`departmentId`, `departmentCode`, `restaurantGroupId`);
-    2. Если `departmentId` отсутствует — активная запись из `TerminalDepartmentMap`
-       по `terminalGroupId`.
+    Важно:
+    1. терминал должен присутствовать в активном справочнике `TerminalDepartmentMap`;
+    2. только такие терминалы попадают в OLAP-контур;
+    3. `departmentId` в приоритете из webhook, иначе берётся из mapping.
     """
     organization_id = _normalize_text(event.get("organizationId"))
     terminal_group_id = _normalize_text(event.get("terminalGroupId"))
@@ -108,16 +108,6 @@ def _resolve_department_fields(event: dict[str, Any]) -> dict[str, Any]:
         event.get("restaurantGroupId") or event.get("restorauntGroupId")
     )
 
-    if explicit_department_id:
-        return {
-            "organization_id": organization_id,
-            "terminal_group_id": terminal_group_id,
-            "department_id": explicit_department_id,
-            "department_code": explicit_department_code,
-            "restoraunt_group_id": explicit_rest_group_id,
-            "mapping_used": False,
-        }
-
     if not terminal_group_id:
         return {
             "organization_id": organization_id,
@@ -126,6 +116,7 @@ def _resolve_department_fields(event: dict[str, Any]) -> dict[str, Any]:
             "department_code": explicit_department_code,
             "restoraunt_group_id": explicit_rest_group_id,
             "mapping_used": False,
+            "terminal_allowed": False,
         }
 
     mapping = (
@@ -144,6 +135,7 @@ def _resolve_department_fields(event: dict[str, Any]) -> dict[str, Any]:
             "department_code": explicit_department_code,
             "restoraunt_group_id": explicit_rest_group_id,
             "mapping_used": False,
+            "terminal_allowed": False,
         }
 
     mapping_organization_id = _normalize_text(mapping.organization_id)
@@ -166,16 +158,18 @@ def _resolve_department_fields(event: dict[str, Any]) -> dict[str, Any]:
             "department_code": explicit_department_code,
             "restoraunt_group_id": explicit_rest_group_id,
             "mapping_used": False,
+            "terminal_allowed": False,
         }
 
-    resolved_department_id = _normalize_text(mapping.department_id)
+    resolved_department_id = explicit_department_id or _normalize_text(mapping.department_id)
     return {
         "organization_id": organization_id or mapping_organization_id,
         "terminal_group_id": terminal_group_id,
         "department_id": resolved_department_id,
         "department_code": explicit_department_code or _normalize_text(mapping.department_code),
         "restoraunt_group_id": explicit_rest_group_id or _normalize_text(mapping.restoraunt_group_id),
-        "mapping_used": bool(resolved_department_id),
+        "mapping_used": bool((not explicit_department_id) and resolved_department_id),
+        "terminal_allowed": True,
     }
 
 
@@ -216,6 +210,17 @@ def enqueue_olap_sync_from_webhook(
     idempotency_key = _build_idempotency_key(webhook_id=webhook_id, event=event)
     source_webhook_id = _normalize_text(webhook_id)
     resolved_department = _resolve_department_fields(event)
+
+    if not resolved_department.get("terminal_allowed"):
+        terminal_id = resolved_department.get("terminal_group_id")
+        return OlapWebhookBridgeResult(
+            created=False,
+            row_id=None,
+            reason=(
+                "Пропуск OLAP-задачи: terminalGroupId не входит в активный список заведений "
+                f"(terminalGroupId={terminal_id or '-'})"
+            ),
+        )
 
     defaults = {
         "guest": guest,
@@ -276,4 +281,3 @@ def enqueue_olap_sync_from_webhook(
         row_id=row.id,
         reason="Дубль задачи",
     )
-

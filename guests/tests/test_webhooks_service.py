@@ -183,6 +183,14 @@ class WebhookGuestAndCategoryTests(TestCase):
             updated_at=timezone.now(),
         )
         self.restaurant = Restaurant.objects.create(iiko_id="rest-1", name="Ресторан 1")
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id=self.restaurant.iiko_id,
+            restoraunt_group_id=self.restaurant.iiko_id,
+            department_id="dep-test-1",
+            department_code="01",
+            department_name="Restaurant 1",
+            is_active=True,
+        )
         self.category = Category.objects.create(name="Категория 1", external_id="cat-1", is_active=True)
 
     def test_find_guest_by_phone_text_and_customer_id(self):
@@ -462,14 +470,16 @@ class WebhookGuestAndCategoryTests(TestCase):
         Если в webhook нет `departmentId`, мост должен восстановить его по таблице
         сопоставления `terminalGroupId -> Department.Id`.
         """
-        TerminalDepartmentMap.objects.create(
-            organization_id="org-map-1",
+        TerminalDepartmentMap.objects.update_or_create(
             terminal_group_id=self.restaurant.iiko_id,
-            restoraunt_group_id=self.restaurant.iiko_id,
-            department_id="dep-map-1",
-            department_code="11",
-            department_name="Тестовое заведение",
-            is_active=True,
+            defaults={
+                "organization_id": "org-map-1",
+                "restoraunt_group_id": self.restaurant.iiko_id,
+                "department_id": "dep-map-1",
+                "department_code": "11",
+                "department_name": "Тестовое заведение",
+                "is_active": True,
+            },
         )
 
         webhook = {
@@ -495,6 +505,35 @@ class WebhookGuestAndCategoryTests(TestCase):
         self.assertEqual(row.department_id, "dep-map-1")
         self.assertEqual(row.department_code, "11")
         self.assertEqual(row.restoraunt_group_id, self.restaurant.iiko_id)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_skips_unknown_terminal(self):
+        """
+        Если terminalGroupId отсутствует в активной карте сопоставления,
+        OLAP-задача не должна создаваться.
+        """
+        webhook = {
+            "id": "wh-nt1-unknown-terminal",
+            "parsed_body": {
+                "id": "evt-unknown-terminal-1",
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": "terminal-unknown-1",
+                "changedOn": "2026-03-18T11:30:00+05:00",
+                "orderNumber": 700102,
+                "orderId": "order-unknown-1",
+                "transactionId": "tx-unknown-1",
+                "organizationId": "org-unknown-1",
+            },
+        }
+
+        assigned, reason = webhooks.handle_api_webhook(webhook)
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(OlapCheckSyncJournal.objects.filter(order_number=700102).count(), 0)
 
     @override_settings(
         OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,

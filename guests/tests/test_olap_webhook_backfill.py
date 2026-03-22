@@ -7,7 +7,7 @@ from __future__ import annotations
 from django.test import TestCase
 from django.utils import timezone
 
-from guests.models import Guest, OlapCheckSyncJournal, Restaurant
+from guests.models import Guest, OlapCheckSyncJournal, Restaurant, TerminalDepartmentMap
 from guests.services.olap_webhook_backfill import (
     OlapWebhookBackfillOptions,
     OlapWebhookBackfillService,
@@ -31,6 +31,15 @@ class OlapWebhookBackfillServiceTests(TestCase):
         self.restaurant = Restaurant.objects.create(
             iiko_id="rest-backfill-001",
             name="Ресторан backfill",
+        )
+        TerminalDepartmentMap.objects.create(
+            organization_id="org-backfill-001",
+            terminal_group_id=self.restaurant.iiko_id,
+            restoraunt_group_id=self.restaurant.iiko_id,
+            department_id="dep-backfill-001",
+            department_code="01",
+            department_name="Restaurant backfill",
+            is_active=True,
         )
 
     @staticmethod
@@ -116,6 +125,41 @@ class OlapWebhookBackfillServiceTests(TestCase):
         row = OlapCheckSyncJournal.objects.get()
         self.assertEqual(row.order_number, 698698)
         self.assertEqual(row.source_webhook_id, "wh-idem-1")
+
+    def test_run_cycle_skips_unknown_terminal_group(self):
+        """
+        Если terminalGroupId не входит в активный справочник сопоставления,
+        задача не должна создаваться.
+        """
+        service = OlapWebhookBackfillService(
+            base_url="https://example.com",
+            username="svc",
+            password="pwd",
+        )
+        options = self._build_options(dry_run=False)
+        pages = [[
+            {
+                "id": "wh-unknown-terminal-1",
+                "parsed_body": {
+                    "id": "evt-unknown-terminal-1",
+                    "notificationType": 1,
+                    "phone": self.guest.phone,
+                    "terminalGroupId": "terminal-unknown-1",
+                    "organizationId": "org-backfill-001",
+                    "transactionId": "tx-unknown-1",
+                    "orderId": "order-unknown-1",
+                    "orderNumber": 900001,
+                    "changedOn": "2026-03-18T11:56:03+05:00",
+                },
+            }
+        ]]
+
+        stats = service.run_cycle(options=options, pages_override=pages)
+        service.close()
+
+        self.assertEqual(stats.created_rows, 0)
+        self.assertEqual(stats.other_skipped_rows, 1)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
 
     def test_run_cycle_backpressure_pauses_and_then_resumes(self):
         """
