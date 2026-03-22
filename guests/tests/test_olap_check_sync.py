@@ -15,16 +15,35 @@ from guests.services.olap_check_sync import OlapCheckSyncWorkerService
 
 
 class _FakeOlapClient:
-    def __init__(self, *, rows=None, failed_order_number_portions=None, raise_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        rows=None,
+        failed_order_number_portions=None,
+        raise_error: Exception | None = None,
+        resolver=None,
+    ):
         self.rows = list(rows or [])
         self.failed_order_number_portions = list(failed_order_number_portions or [])
         self.raise_error = raise_error
+        self.resolver = resolver
         self.calls = []
 
     def fetch_sales_in_portions(self, **kwargs):
         self.calls.append(kwargs)
         if self.raise_error is not None:
             raise self.raise_error
+        if self.resolver is not None:
+            rows, failed_portions = self.resolver(kwargs)
+            stats = OlapPortionLoadStats(
+                requested_portions=1,
+                successful_portions=0 if failed_portions else 1,
+                failed_portions=1 if failed_portions else 0,
+                total_data_rows=len(rows),
+                total_summary_rows=0,
+                failed_order_number_portions=[list(part) for part in failed_portions],
+            )
+            return list(rows), [], stats
         stats = OlapPortionLoadStats(
             requested_portions=1,
             successful_portions=0 if self.failed_order_number_portions else 1,
@@ -57,6 +76,7 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
         key: str,
         order_number: int | None,
         business_day: date | None,
+        department_id: str | None = "dept-1",
         status: str = OlapCheckSyncJournal.Status.NEW,
         attempt_count: int = 0,
         next_try_at=None,
@@ -67,7 +87,7 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
             guest=self.guest,
             order_number=order_number,
             business_date=business_day,
-            department_id="dept-1",
+            department_id=department_id,
             attempt_count=attempt_count,
             next_try_at=next_try_at,
         )
@@ -126,6 +146,88 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
         self.assertEqual(stats.claimed_rows, 1)
         self.assertEqual(stats.loaded_rows, 1)
         self.assertEqual(stats.raw_rows_created, 1)
+
+    def test_run_iteration_uses_strict_plus_minus_one_window_for_date_shifted_order(self):
+        """
+        Воркер должен сразу запрашивать OLAP в окне business_date±1 день
+        и использовать обязательный фильтр Department.Id.
+        """
+        row = self._create_journal_row(
+            key="fallback-1",
+            order_number=94038,
+            business_day=date(2025, 12, 13),
+        )
+
+        def _resolver(kwargs):
+            date_from = kwargs["date_from"]
+            date_to = kwargs["date_to"]
+            self.assertEqual(str(date_from), "2025-12-12")
+            self.assertEqual(str(date_to), "2025-12-14")
+            self.assertEqual(kwargs["department_ids"], ["dept-1"])
+            return [
+                {
+                    "OpenDate.Typed": "2025-12-12",
+                    "OrderNum": 94038,
+                    "Department.Id": "dept-1",
+                    "Department.Code": "D01",
+                    "Department": "Тестовый департамент",
+                    "UniqOrderId.Id": "order-uuid-fallback",
+                    "ItemSaleEvent.Id": "event-fallback-1",
+                    "DishCode": "1001",
+                    "DishName": "Шашлык",
+                    "DishCategory.Id": "cat-meat",
+                    "DishCategory": "Мясо",
+                    "DishGroup.Id": "grp-meat",
+                    "DishGroup": "Гриль",
+                    "DishSumInt": 890,
+                }
+            ], []
+
+        fake_client = _FakeOlapClient(resolver=_resolver)
+        service = OlapCheckSyncWorkerService(
+            client=fake_client,
+            claim_limit=20,
+            portion_size=10,
+            max_attempts=3,
+            retry_base_seconds=1,
+        )
+
+        stats = service.run_iteration()
+        row.refresh_from_db()
+
+        self.assertEqual(row.status, OlapCheckSyncJournal.Status.LOADED)
+        self.assertEqual(stats.loaded_rows, 1)
+        self.assertEqual(stats.retry_rows, 0)
+        self.assertEqual(len(fake_client.calls), 1)
+
+    def test_run_iteration_requires_department_id_filter(self):
+        """
+        Если в журнале отсутствует Department.Id, OLAP-запрос не выполняется,
+        а задача уходит в retry с понятной ошибкой.
+        """
+        row = self._create_journal_row(
+            key="no-dept-1",
+            order_number=710001,
+            business_day=date(2026, 3, 18),
+            department_id=None,
+        )
+        fake_client = _FakeOlapClient(rows=[])
+        service = OlapCheckSyncWorkerService(
+            client=fake_client,
+            claim_limit=20,
+            portion_size=10,
+            max_attempts=3,
+            retry_base_seconds=1,
+        )
+
+        stats = service.run_iteration()
+        row.refresh_from_db()
+
+        self.assertEqual(row.status, OlapCheckSyncJournal.Status.RETRY)
+        self.assertEqual(row.attempt_count, 1)
+        self.assertIn("Department.Id", row.last_error or "")
+        self.assertEqual(len(fake_client.calls), 0)
+        self.assertEqual(stats.retry_rows, 1)
 
     def test_run_iteration_moves_not_found_to_retry_then_skipped(self):
         """
@@ -205,4 +307,3 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
         self.assertEqual(row.status, OlapCheckSyncJournal.Status.FAILED)
         self.assertEqual(row.attempt_count, 1)
         self.assertEqual(stats.failed_rows, 1)
-

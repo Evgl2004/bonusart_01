@@ -86,3 +86,24 @@ python manage.py run_olap_webhook_backfill ^
 1. текущая страница дочитывается;
 2. процесс завершает цикл;
 3. HTTP-сессия закрывается.
+
+## Прозрачная проверка загрузки в OLAP (run_olap_sync_worker)
+После того как backfill создал строки в `olap_check_sync_journal`, нужно запустить дозагрузку
+в сырой слой OLAP и сразу получить читаемый отчёт по изменённым строкам.
+
+Разовый запуск:
+
+```powershell
+python manage.py run_olap_sync_worker ^
+  --once ^
+  --claim-limit=200 ^
+  --portion-size=50 ^
+  --print-row-details-limit=50
+```
+
+Что важно:
+1. Воркер печатает сводку итерации (`claimed/loaded/retry/failed/portions`).
+2. Дополнительно печатаются изменённые строки журнала (`id/status/order/business_date/attempt/next_try_at/last_error`).
+3. Воркер сразу запрашивает OLAP в строгом окне `business_date ± 1 день`.
+4. Фильтр `Department.Id` обязателен и не снимается.
+5. Если строк по чеку нет, задача переводится в `retry` с диагностикой по фильтрам (`Department.Id` и окно дат).

@@ -291,13 +291,33 @@ class OlapCheckSyncWorkerService:
                 if department_id
             }
         )
+        if not department_ids:
+            for row in group_rows:
+                self._mark_retry_or_terminal(
+                    row=row,
+                    now=now,
+                    error_text=(
+                        "Чек не может быть запрошен в OLAP: не указан обязательный фильтр Department.Id "
+                        "в журнале синхронизации."
+                    ),
+                    not_found=False,
+                )
+                changed_rows[row.id] = row
+                if row.status == OlapCheckSyncJournal.Status.RETRY:
+                    stats.retry_rows += 1
+                else:
+                    stats.failed_rows += 1
+            return
+
+        date_from = business_day - timedelta(days=1)
+        date_to = business_day + timedelta(days=1)
 
         try:
             olap_rows, _summary_rows, portion_stats = self.client.fetch_sales_in_portions(
-                date_from=business_day,
-                date_to=business_day,
+                date_from=date_from,
+                date_to=date_to,
                 order_numbers=order_numbers,
-                department_ids=department_ids or None,
+                department_ids=department_ids,
                 portion_size=self.portion_size,
                 fail_fast=False,
             )
@@ -316,9 +336,7 @@ class OlapCheckSyncWorkerService:
                     stats.failed_rows += 1
             return
 
-        stats.requested_portions += int(portion_stats.requested_portions)
-        stats.successful_portions += int(portion_stats.successful_portions)
-        stats.failed_portions += int(portion_stats.failed_portions)
+        self._accumulate_portion_stats(stats=stats, portion_stats=portion_stats)
 
         failed_orders: set[int] = set()
         for failed_part in portion_stats.failed_order_number_portions:
@@ -357,10 +375,14 @@ class OlapCheckSyncWorkerService:
             matched_payloads = olap_rows_by_order.get(order_number, [])
             if not matched_payloads:
                 for row in order_rows:
+                    department_id_text = _normalize_text(row.department_id) or ", ".join(department_ids)
                     self._mark_retry_or_terminal(
                         row=row,
                         now=now,
-                        error_text=f"Чек {order_number}: в OLAP пока нет строк по этому заказу.",
+                        error_text=(
+                            f"Чек {order_number}: в OLAP нет строк по строгому фильтру "
+                            f"(Department.Id={department_id_text}, окно дат {date_from}..{date_to})."
+                        ),
                         not_found=True,
                     )
                     changed_rows[row.id] = row
@@ -384,6 +406,15 @@ class OlapCheckSyncWorkerService:
                 self._mark_loaded(row=row, now=now)
                 changed_rows[row.id] = row
                 stats.loaded_rows += 1
+
+    @staticmethod
+    def _accumulate_portion_stats(*, stats: OlapSyncIterationStats, portion_stats) -> None:
+        """
+        Суммирует метрики OLAP-порций в общий счётчик итерации.
+        """
+        stats.requested_portions += int(portion_stats.requested_portions)
+        stats.successful_portions += int(portion_stats.successful_portions)
+        stats.failed_portions += int(portion_stats.failed_portions)
 
     def _map_payloads_to_raw_lines(
         self,
@@ -562,4 +593,3 @@ class OlapCheckSyncWorkerService:
         delay_seconds = self.retry_base_seconds * (2 ** max(0, next_attempt - 1))
         row.status = OlapCheckSyncJournal.Status.RETRY
         row.next_try_at = now + timedelta(seconds=delay_seconds)
-
