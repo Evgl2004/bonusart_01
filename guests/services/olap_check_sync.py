@@ -96,6 +96,15 @@ def _row_value(row: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _to_local_date(value: datetime | None) -> date | None:
+    if value is None:
+        return None
+    current = value
+    if timezone.is_naive(current):
+        current = timezone.make_aware(current, timezone.get_current_timezone())
+    return timezone.localtime(current).date()
+
+
 def _build_row_fingerprint(*, business_date: date, row_payload: dict[str, Any]) -> str:
     """
     Возвращает идемпотентный отпечаток OLAP-строки.
@@ -343,12 +352,13 @@ class OlapCheckSyncWorkerService:
             for order_number in failed_part:
                 failed_orders.add(int(order_number))
 
-        olap_rows_by_order: dict[int, list[dict[str, Any]]] = defaultdict(list)
+        olap_rows_by_order: dict[int, list[tuple[date | None, dict[str, Any]]]] = defaultdict(list)
         for payload in olap_rows:
             order_number = _to_int(_row_value(payload, "OrderNum"))
             if order_number is None:
                 continue
-            olap_rows_by_order[order_number].append(payload)
+            payload_business_day = _to_date(_row_value(payload, "OpenDate.Typed"))
+            olap_rows_by_order[order_number].append((payload_business_day, payload))
 
         journal_rows_by_order: dict[int, list[OlapCheckSyncJournal]] = defaultdict(list)
         for row in group_rows:
@@ -372,8 +382,8 @@ class OlapCheckSyncWorkerService:
                         stats.failed_rows += 1
                 continue
 
-            matched_payloads = olap_rows_by_order.get(order_number, [])
-            if not matched_payloads:
+            payload_pairs = olap_rows_by_order.get(order_number, [])
+            if not payload_pairs:
                 for row in order_rows:
                     department_id_text = _normalize_text(row.department_id) or ", ".join(department_ids)
                     self._mark_retry_or_terminal(
@@ -394,15 +404,55 @@ class OlapCheckSyncWorkerService:
                         stats.failed_rows += 1
                 continue
 
-            owner_row = sorted(order_rows, key=lambda item: item.id)[0]
-            mapped_raw_lines = self._map_payloads_to_raw_lines(
-                owner_row=owner_row,
-                payload_rows=matched_payloads,
-            )
-            raw_lines_to_create.extend(mapped_raw_lines)
-            stats.raw_rows_planned += len(mapped_raw_lines)
-
             for row in order_rows:
+                selected_payloads, selection_error = self._select_payloads_for_journal_row(
+                    row=row,
+                    order_number=order_number,
+                    payload_pairs=payload_pairs,
+                )
+                if selection_error:
+                    self._mark_retry_or_terminal(
+                        row=row,
+                        now=now,
+                        error_text=selection_error,
+                        not_found=True,
+                    )
+                    changed_rows[row.id] = row
+                    if row.status == OlapCheckSyncJournal.Status.RETRY:
+                        stats.retry_rows += 1
+                    elif row.status == OlapCheckSyncJournal.Status.SKIPPED:
+                        stats.skipped_rows += 1
+                    else:
+                        stats.failed_rows += 1
+                    continue
+
+                if not selected_payloads:
+                    department_id_text = _normalize_text(row.department_id) or ", ".join(department_ids)
+                    self._mark_retry_or_terminal(
+                        row=row,
+                        now=now,
+                        error_text=(
+                            f"Чек {order_number}: в OLAP нет строк по строгому фильтру "
+                            f"(Department.Id={department_id_text}, окно дат {date_from}..{date_to})."
+                        ),
+                        not_found=True,
+                    )
+                    changed_rows[row.id] = row
+                    if row.status == OlapCheckSyncJournal.Status.RETRY:
+                        stats.retry_rows += 1
+                    elif row.status == OlapCheckSyncJournal.Status.SKIPPED:
+                        stats.skipped_rows += 1
+                    else:
+                        stats.failed_rows += 1
+                    continue
+
+                mapped_raw_lines = self._map_payloads_to_raw_lines(
+                    owner_row=row,
+                    payload_rows=selected_payloads,
+                )
+                raw_lines_to_create.extend(mapped_raw_lines)
+                stats.raw_rows_planned += len(mapped_raw_lines)
+
                 self._mark_loaded(row=row, now=now)
                 changed_rows[row.id] = row
                 stats.loaded_rows += 1
@@ -415,6 +465,47 @@ class OlapCheckSyncWorkerService:
         stats.requested_portions += int(portion_stats.requested_portions)
         stats.successful_portions += int(portion_stats.successful_portions)
         stats.failed_portions += int(portion_stats.failed_portions)
+
+    def _select_payloads_for_journal_row(
+        self,
+        *,
+        row: OlapCheckSyncJournal,
+        order_number: int,
+        payload_pairs: Sequence[tuple[date | None, dict[str, Any]]],
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """
+        Picks OLAP rows for a journal row when order numbers repeat across nearby days.
+
+        Priority:
+        1. Exact match by `row.business_date`;
+        2. Nearest `OpenDate.Typed` to `row.business_date`;
+        3. Ambiguous same-distance candidates -> return an explicit error.
+        """
+        if not payload_pairs:
+            return [], None
+
+        known_date_pairs = [(d, payload) for d, payload in payload_pairs if d is not None]
+        if not known_date_pairs:
+            return [payload for _, payload in payload_pairs], None
+
+        target_day = row.business_date or _to_local_date(row.event_at)
+        if target_day is None:
+            return [payload for _, payload in known_date_pairs], None
+
+        if any(day == target_day for day, _ in known_date_pairs):
+            selected_day = target_day
+        else:
+            candidate_days = sorted({day for day, _ in known_date_pairs})
+            min_distance = min(abs((day - target_day).days) for day in candidate_days)
+            closest_days = [day for day in candidate_days if abs((day - target_day).days) == min_distance]
+            if len(closest_days) > 1:
+                return [], (
+                    f"Чек {order_number}: найдено несколько дат в OLAP на одинаковом расстоянии "
+                    f"от business_date={target_day} ({', '.join(str(day) for day in closest_days)})."
+                )
+            selected_day = closest_days[0]
+
+        return [payload for day, payload in known_date_pairs if day == selected_day], None
 
     def _map_payloads_to_raw_lines(
         self,

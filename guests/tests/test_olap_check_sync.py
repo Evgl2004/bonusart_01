@@ -307,3 +307,116 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
         self.assertEqual(row.status, OlapCheckSyncJournal.Status.FAILED)
         self.assertEqual(row.attempt_count, 1)
         self.assertEqual(stats.failed_rows, 1)
+
+    def test_run_iteration_uses_only_exact_business_day_for_repeated_order_number(self):
+        """
+        If OLAP returns the same `OrderNum` for nearby days, worker must load only
+        rows for the journal `business_date`.
+        """
+        row = self._create_journal_row(
+            key="repeat-order-exact-day-1",
+            order_number=500,
+            business_day=date(2025, 12, 23),
+        )
+        fake_client = _FakeOlapClient(
+            rows=[
+                {
+                    "OpenDate.Typed": "2025-12-22",
+                    "OrderNum": 500,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-500-22",
+                    "ItemSaleEvent.Id": "event-22",
+                    "DishCode": "dish-22",
+                    "DishName": "Dish 22",
+                    "DishSumInt": 220,
+                },
+                {
+                    "OpenDate.Typed": "2025-12-23",
+                    "OrderNum": 500,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-500-23",
+                    "ItemSaleEvent.Id": "event-23",
+                    "DishCode": "dish-23",
+                    "DishName": "Dish 23",
+                    "DishSumInt": 230,
+                },
+                {
+                    "OpenDate.Typed": "2025-12-24",
+                    "OrderNum": 500,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-500-24",
+                    "ItemSaleEvent.Id": "event-24",
+                    "DishCode": "dish-24",
+                    "DishName": "Dish 24",
+                    "DishSumInt": 240,
+                },
+            ]
+        )
+        service = OlapCheckSyncWorkerService(
+            client=fake_client,
+            claim_limit=20,
+            portion_size=10,
+            max_attempts=3,
+            retry_base_seconds=1,
+        )
+
+        stats = service.run_iteration()
+        row.refresh_from_db()
+
+        self.assertEqual(row.status, OlapCheckSyncJournal.Status.LOADED)
+        self.assertEqual(stats.loaded_rows, 1)
+        lines = list(OlapSalesRawLine.objects.filter(sync_journal=row).order_by("id"))
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].business_date, date(2025, 12, 23))
+        self.assertEqual(lines[0].dish_code, "dish-23")
+
+    def test_run_iteration_marks_retry_when_repeated_order_dates_are_ambiguous(self):
+        """
+        If exact business day is absent and nearest OLAP dates are tied, row must
+        be marked as retry with explicit ambiguous-dates reason.
+        """
+        row = self._create_journal_row(
+            key="repeat-order-ambiguous-1",
+            order_number=700,
+            business_day=date(2025, 12, 23),
+        )
+        fake_client = _FakeOlapClient(
+            rows=[
+                {
+                    "OpenDate.Typed": "2025-12-22",
+                    "OrderNum": 700,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-700-22",
+                    "ItemSaleEvent.Id": "event-700-22",
+                    "DishCode": "dish-a",
+                    "DishName": "Dish A",
+                    "DishSumInt": 100,
+                },
+                {
+                    "OpenDate.Typed": "2025-12-24",
+                    "OrderNum": 700,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-700-24",
+                    "ItemSaleEvent.Id": "event-700-24",
+                    "DishCode": "dish-b",
+                    "DishName": "Dish B",
+                    "DishSumInt": 100,
+                },
+            ]
+        )
+        service = OlapCheckSyncWorkerService(
+            client=fake_client,
+            claim_limit=20,
+            portion_size=10,
+            max_attempts=3,
+            retry_base_seconds=1,
+        )
+
+        stats = service.run_iteration()
+        row.refresh_from_db()
+
+        self.assertEqual(row.status, OlapCheckSyncJournal.Status.RETRY)
+        self.assertEqual(row.attempt_count, 1)
+        self.assertIn("несколько дат", row.last_error or "")
+        self.assertEqual(stats.retry_rows, 1)
+        self.assertEqual(OlapSalesRawLine.objects.filter(sync_journal=row).count(), 0)
