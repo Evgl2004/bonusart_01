@@ -232,6 +232,36 @@ class OlapControlPullService:
     def _extract_row_phone(*, payload: dict[str, Any], phone_field: str) -> str | None:
         return _normalize_phone(_row_value(payload, phone_field))
 
+    def _get_or_create_guest_id_by_phone(self, normalized_phone: str) -> int | None:
+        """
+        Пытается восстановить гостя в локальной БД по телефону через iikoCard.
+
+        Используем существующую функцию из webhook-контура, чтобы не дублировать
+        логику разбора ответа iiko и создания/обновления Guest.
+        """
+        try:
+            from guests.services.webhooks import get_or_create_guest_from_iiko
+        except Exception as err:  # noqa: BLE001
+            logger.warning(
+                "OLAP control pull: не удалось импортировать get_or_create_guest_from_iiko: %s",
+                err,
+            )
+            return None
+
+        try:
+            guest = get_or_create_guest_from_iiko(normalized_phone)
+        except Exception as err:  # noqa: BLE001
+            logger.error(
+                "OLAP control pull: ошибка восстановления гостя из iiko по телефону %s: %s",
+                normalized_phone,
+                err,
+            )
+            return None
+
+        if guest is None:
+            return None
+        return int(guest.id)
+
     @staticmethod
     def _build_journal_defaults(
         *,
@@ -329,8 +359,13 @@ class OlapControlPullService:
                 phone10 = _phone10(normalized_phone)
                 guest_id = guest_phone10_map.get(phone10 or "")
                 if guest_id is None:
-                    stats.olap_rows_phone_without_guest += 1
-                    continue
+                    # fallback: если гостя нет локально, пробуем создать/обновить из iikoCard.
+                    guest_id = self._get_or_create_guest_id_by_phone(normalized_phone)
+                    if guest_id is not None and phone10:
+                        guest_phone10_map[phone10] = int(guest_id)
+                    else:
+                        stats.olap_rows_phone_without_guest += 1
+                        continue
 
                 idempotency_key = _build_control_pull_idempotency_key(
                     department_id=row_department_id,

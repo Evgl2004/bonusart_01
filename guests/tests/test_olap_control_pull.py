@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import date
+from unittest.mock import patch
 
 from django.test import TestCase
 
@@ -202,16 +203,54 @@ class OlapControlPullServiceTests(TestCase):
         )
         service = OlapControlPullService(client=client)
 
-        stats = service.run_cycle(
-            options=OlapControlPullOptions(
-                business_date_from=date(2026, 1, 3),
-                business_date_to=date(2026, 1, 3),
-                dry_run=True,
+        with patch.object(service, "_get_or_create_guest_id_by_phone", return_value=None):
+            stats = service.run_cycle(
+                options=OlapControlPullOptions(
+                    business_date_from=date(2026, 1, 3),
+                    business_date_to=date(2026, 1, 3),
+                    dry_run=True,
+                )
             )
-        )
 
         self.assertEqual(stats.olap_rows_seen, 3)
         self.assertEqual(stats.olap_rows_with_phone, 2)
         self.assertEqual(stats.olap_rows_without_phone, 1)
         self.assertEqual(stats.olap_rows_phone_without_guest, 1)
+        self.assertEqual(stats.would_create_journal_rows, 1)
+
+    def test_run_cycle_recovers_unknown_guest_by_phone(self):
+        client = _FakeOlapClient(
+            rows_by_department={
+                "dept-1": [
+                    {
+                        "OpenDate.Typed": "2026-01-04",
+                        "OrderNum": 4001,
+                        "UniqOrderId.Id": "u-4001",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "Delivery.CustomerPhone": "+79990004444",
+                    },
+                ]
+            }
+        )
+        service = OlapControlPullService(client=client)
+        restored_guest = Guest.objects.create(phone="+79990004444")
+
+        with patch.object(
+            service,
+            "_get_or_create_guest_id_by_phone",
+            return_value=restored_guest.id,
+        ) as mocked_restore:
+            stats = service.run_cycle(
+                options=OlapControlPullOptions(
+                    business_date_from=date(2026, 1, 4),
+                    business_date_to=date(2026, 1, 4),
+                    dry_run=True,
+                )
+            )
+
+        mocked_restore.assert_called_once_with("+79990004444")
+        self.assertEqual(stats.olap_rows_seen, 1)
+        self.assertEqual(stats.olap_rows_with_phone, 1)
+        self.assertEqual(stats.olap_rows_phone_without_guest, 0)
         self.assertEqual(stats.would_create_journal_rows, 1)
