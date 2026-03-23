@@ -8,7 +8,7 @@ from datetime import date
 
 from django.test import TestCase
 
-from guests.models import OlapCheckSyncJournal, TerminalDepartmentMap
+from guests.models import Guest, OlapCheckSyncJournal, TerminalDepartmentMap
 from guests.services.olap_control_pull import (
     OlapControlPullOptions,
     OlapControlPullService,
@@ -37,6 +37,8 @@ class OlapControlPullServiceTests(TestCase):
             department_code="D1",
             is_active=True,
         )
+        self.guest_one = Guest.objects.create(phone="+79990000001")
+        self.guest_two = Guest.objects.create(phone="+79990000002")
 
     def test_run_cycle_dry_run_counts_new_rows_without_writing(self):
         client = _FakeOlapClient(
@@ -48,6 +50,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-1001",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
+                        "ClientPhone": "+79990000001",
                     },
                     {
                         "OpenDate.Typed": "2026-01-01",
@@ -55,6 +58,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-1002",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
+                        "ClientPhone": "+79990000002",
                     },
                 ]
             }
@@ -71,6 +75,9 @@ class OlapControlPullServiceTests(TestCase):
 
         self.assertEqual(stats.departments_scanned, 1)
         self.assertEqual(stats.olap_rows_seen, 2)
+        self.assertEqual(stats.olap_rows_with_phone, 2)
+        self.assertEqual(stats.olap_rows_without_phone, 0)
+        self.assertEqual(stats.olap_rows_phone_without_guest, 0)
         self.assertEqual(stats.distinct_order_keys_seen, 2)
         self.assertEqual(stats.would_create_journal_rows, 2)
         self.assertEqual(stats.created_journal_rows, 0)
@@ -86,6 +93,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-2001",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
+                        "ClientPhone": "+79990000001",
                     },
                     {
                         "OpenDate.Typed": "2026-01-02",
@@ -93,6 +101,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-2002",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
+                        "ClientPhone": "+79990000002",
                     },
                 ]
             }
@@ -119,6 +128,57 @@ class OlapControlPullServiceTests(TestCase):
         self.assertEqual(second_stats.duplicate_journal_rows, 2)
         self.assertEqual(OlapCheckSyncJournal.objects.count(), 2)
         self.assertEqual(
+            OlapCheckSyncJournal.objects.filter(guest__isnull=False).count(),
+            2,
+        )
+        self.assertEqual(
             OlapCheckSyncJournal.objects.filter(source_webhook_id="control_pull").count(),
             2,
         )
+
+    def test_run_cycle_skips_rows_without_phone_or_unknown_guest(self):
+        client = _FakeOlapClient(
+            rows_by_department={
+                "dept-1": [
+                    {
+                        "OpenDate.Typed": "2026-01-03",
+                        "OrderNum": 3001,
+                        "UniqOrderId.Id": "u-3001",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "ClientPhone": "",
+                    },
+                    {
+                        "OpenDate.Typed": "2026-01-03",
+                        "OrderNum": 3002,
+                        "UniqOrderId.Id": "u-3002",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "ClientPhone": "+79990009999",
+                    },
+                    {
+                        "OpenDate.Typed": "2026-01-03",
+                        "OrderNum": 3003,
+                        "UniqOrderId.Id": "u-3003",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "ClientPhone": "+79990000001",
+                    },
+                ]
+            }
+        )
+        service = OlapControlPullService(client=client)
+
+        stats = service.run_cycle(
+            options=OlapControlPullOptions(
+                business_date_from=date(2026, 1, 3),
+                business_date_to=date(2026, 1, 3),
+                dry_run=True,
+            )
+        )
+
+        self.assertEqual(stats.olap_rows_seen, 3)
+        self.assertEqual(stats.olap_rows_with_phone, 2)
+        self.assertEqual(stats.olap_rows_without_phone, 1)
+        self.assertEqual(stats.olap_rows_phone_without_guest, 1)
+        self.assertEqual(stats.would_create_journal_rows, 1)

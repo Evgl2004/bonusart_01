@@ -157,12 +157,18 @@ class Command(BaseCommand):
         self.stdout.write(
             (
                 "[control_pull] departments={departments} failed_departments={failed_departments} "
-                "olap_rows={rows} distinct_orders={orders} skipped_invalid={skipped} "
+                "olap_rows={rows} with_phone={with_phone} without_phone={without_phone} "
+                "unknown_guest_phone={unknown_guest_phone} phone_fields={phone_fields} "
+                "distinct_orders={orders} skipped_invalid={skipped} "
                 "would_create={would_create} created={created} duplicates={duplicates}"
             ).format(
                 departments=stats.departments_scanned,
                 failed_departments=stats.departments_failed,
                 rows=stats.olap_rows_seen,
+                with_phone=stats.olap_rows_with_phone,
+                without_phone=stats.olap_rows_without_phone,
+                unknown_guest_phone=stats.olap_rows_phone_without_guest,
+                phone_fields=",".join(sorted(stats.phone_fields_used)) if stats.phone_fields_used else "-",
                 orders=stats.distinct_order_keys_seen,
                 skipped=stats.skipped_invalid_rows,
                 would_create=stats.would_create_journal_rows,

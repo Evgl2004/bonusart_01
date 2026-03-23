@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, time as dt_time
 import hashlib
 import json
@@ -19,7 +19,7 @@ from typing import Any
 from django.db import transaction
 from django.utils import timezone
 
-from guests.models import OlapCheckSyncJournal, TerminalDepartmentMap
+from guests.models import Guest, OlapCheckSyncJournal, TerminalDepartmentMap
 from guests.services.iiko_olap_client import IikoOlapClient
 
 logger = logging.getLogger(__name__)
@@ -46,11 +46,15 @@ class OlapControlPullStats:
     departments_scanned: int = 0
     departments_failed: int = 0
     olap_rows_seen: int = 0
+    olap_rows_with_phone: int = 0
+    olap_rows_without_phone: int = 0
+    olap_rows_phone_without_guest: int = 0
     distinct_order_keys_seen: int = 0
     skipped_invalid_rows: int = 0
     would_create_journal_rows: int = 0
     created_journal_rows: int = 0
     duplicate_journal_rows: int = 0
+    phone_fields_used: set[str] = field(default_factory=set)
 
 
 def _normalize_text(value: Any) -> str | None:
@@ -90,6 +94,51 @@ def _row_value(row: dict[str, Any], *keys: str) -> Any:
     return None
 
 
+def _normalize_phone(value: Any) -> str | None:
+    """
+    Приводит произвольный номер к формату +7XXXXXXXXXX.
+    """
+    if value is None:
+        return None
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    if len(digits) == 10:
+        digits = f"7{digits}"
+    elif len(digits) == 11 and digits.startswith("8"):
+        digits = f"7{digits[1:]}"
+    elif not (len(digits) == 11 and digits.startswith("7")):
+        return None
+    return f"+{digits}"
+
+
+def _phone10(value: Any) -> str | None:
+    normalized = _normalize_phone(value)
+    if not normalized:
+        return None
+    digits = "".join(ch for ch in normalized if ch.isdigit())
+    if len(digits) != 11 or not digits.startswith("7"):
+        return None
+    return digits[-10:]
+
+
+def _build_guest_phone10_map() -> dict[str, int]:
+    """
+    Строит справочник phone10 -> guest_id для быстрого связывания OLAP-строк с гостями.
+    При дублях phone10 оставляем первое соответствие.
+    """
+    result: dict[str, int] = {}
+    for row in (
+        Guest.objects.exclude(phone__isnull=True)
+        .exclude(phone="")
+        .values("id", "phone")
+        .iterator(chunk_size=5000)
+    ):
+        phone10 = _phone10(row.get("phone"))
+        if not phone10:
+            continue
+        result.setdefault(phone10, int(row["id"]))
+    return result
+
+
 def _build_control_pull_idempotency_key(
     *,
     department_id: str,
@@ -124,6 +173,12 @@ class OlapControlPullService:
         "RestorauntGroup.Id",
     ]
     ORDER_AGG_FIELDS = ["DishSumInt"]
+    PHONE_FIELD_CANDIDATES = (
+        "ClientPhone",
+        "Phone",
+        "GuestPhone",
+        "Client.Phone",
+    )
 
     def __init__(self, *, client: IikoOlapClient) -> None:
         self.client = client
@@ -159,24 +214,56 @@ class OlapControlPullService:
         department_id: str,
         business_date_from: date,
         business_date_to: date,
-    ) -> list[dict[str, Any]]:
-        payload = self.client.build_sales_payload_for_department_window(
-            date_from=business_date_from,
-            date_to=business_date_to,
-            department_ids=[department_id],
-            aggregate_fields=self.ORDER_AGG_FIELDS,
-            group_by_row_fields=self.ORDER_GROUP_FIELDS,
+    ) -> tuple[list[dict[str, Any]], str]:
+        last_error: Exception | None = None
+        for phone_field in self.PHONE_FIELD_CANDIDATES:
+            group_fields = [*self.ORDER_GROUP_FIELDS, phone_field]
+            payload = self.client.build_sales_payload_for_department_window(
+                date_from=business_date_from,
+                date_to=business_date_to,
+                department_ids=[department_id],
+                aggregate_fields=self.ORDER_AGG_FIELDS,
+                group_by_row_fields=group_fields,
+            )
+            try:
+                response = self.client.query_olap(payload)
+            except Exception as exc:  # noqa: BLE001
+                last_error = exc
+                logger.warning(
+                    "OLAP control pull: поле телефона %s не сработало для department_id=%s: %s",
+                    phone_field,
+                    department_id,
+                    exc,
+                )
+                continue
+
+            data_rows = response.get("data")
+            if isinstance(data_rows, list):
+                return data_rows, phone_field
+            return [], phone_field
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Не удалось выбрать поле телефона для OLAP control pull.")
+
+    @staticmethod
+    def _extract_row_phone(*, payload: dict[str, Any], phone_field: str) -> str | None:
+        return _normalize_phone(
+            _row_value(
+                payload,
+                phone_field,
+                "ClientPhone",
+                "Phone",
+                "GuestPhone",
+                "Client.Phone",
+            )
         )
-        response = self.client.query_olap(payload)
-        data_rows = response.get("data")
-        if isinstance(data_rows, list):
-            return data_rows
-        return []
 
     @staticmethod
     def _build_journal_defaults(
         *,
         scope_row: dict[str, Any],
+        guest_id: int,
         business_day: date,
         order_number: int,
         uniq_order_id: str | None,
@@ -189,6 +276,7 @@ class OlapControlPullService:
             timezone.get_current_timezone(),
         )
         return {
+            "guest_id": guest_id,
             "status": OlapCheckSyncJournal.Status.NEW,
             "source_webhook_id": "control_pull",
             "organization_id": _normalize_text(scope_row.get("organization_id")),
@@ -206,6 +294,7 @@ class OlapControlPullService:
     def run_cycle(self, *, options: OlapControlPullOptions) -> OlapControlPullStats:
         stats = OlapControlPullStats()
         scope_rows = self._resolve_department_scope(department_ids=options.department_ids)
+        guest_phone10_map = _build_guest_phone10_map()
 
         if not scope_rows:
             logger.info("OLAP control pull: активные department mapping не найдены, цикл пропущен.")
@@ -218,7 +307,7 @@ class OlapControlPullService:
 
             stats.departments_scanned += 1
             try:
-                data_rows = self._fetch_department_rows(
+                data_rows, used_phone_field = self._fetch_department_rows(
                     department_id=department_id,
                     business_date_from=options.business_date_from,
                     business_date_to=options.business_date_to,
@@ -232,6 +321,7 @@ class OlapControlPullService:
                 continue
 
             stats.olap_rows_seen += len(data_rows)
+            stats.phone_fields_used.add(used_phone_field)
             pending_create: dict[str, OlapCheckSyncJournal] = {}
 
             for payload in data_rows:
@@ -254,6 +344,21 @@ class OlapControlPullService:
                     stats.skipped_invalid_rows += 1
                     continue
 
+                normalized_phone = self._extract_row_phone(
+                    payload=payload,
+                    phone_field=used_phone_field,
+                )
+                if not normalized_phone:
+                    stats.olap_rows_without_phone += 1
+                    continue
+
+                stats.olap_rows_with_phone += 1
+                phone10 = _phone10(normalized_phone)
+                guest_id = guest_phone10_map.get(phone10 or "")
+                if guest_id is None:
+                    stats.olap_rows_phone_without_guest += 1
+                    continue
+
                 idempotency_key = _build_control_pull_idempotency_key(
                     department_id=row_department_id,
                     business_date=business_day,
@@ -267,6 +372,7 @@ class OlapControlPullService:
                     idempotency_key=idempotency_key,
                     **self._build_journal_defaults(
                         scope_row=scope_row,
+                        guest_id=int(guest_id),
                         business_day=business_day,
                         order_number=order_number,
                         uniq_order_id=uniq_order_id,
