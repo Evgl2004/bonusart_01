@@ -119,6 +119,9 @@ class DiagnoseOlapDataFlowCommandTests(TestCase):
         self.assertEqual(payload["counts"]["raw_rows"], 2)
         self.assertEqual(payload["counts"]["order_fact_rows"], 2)
         self.assertEqual(payload["counts"]["journal_rows_linked_from_raw"], 2)
+        self.assertEqual(payload["counts"]["journal_rows_without_raw"], 0)
+        self.assertEqual(payload["counts"]["journal_rows_linked_from_raw_outside_scope"], 1)
+        self.assertEqual(payload["counts"]["raw_rows_linked_to_journal_outside_scope"], 1)
 
         self.assertEqual(Decimal(payload["sums"]["raw_net"]), Decimal("5190.00"))
         self.assertEqual(Decimal(payload["sums"]["order_fact_net"]), Decimal("5190.00"))

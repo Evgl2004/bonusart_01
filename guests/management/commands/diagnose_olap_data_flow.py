@@ -247,6 +247,12 @@ class Command(BaseCommand):
 
         raw_sync_journal_ids = sorted(set(raw_qs.values_list("sync_journal_id", flat=True)))
         journal_linked_qs = OlapCheckSyncJournal.objects.filter(id__in=raw_sync_journal_ids).order_by("id")
+        journal_without_raw_qs = journal_qs.exclude(id__in=raw_sync_journal_ids).order_by("id")
+        journal_linked_outside_scope_qs = journal_linked_qs.exclude(journal_scope_q).order_by("id")
+        raw_linked_outside_scope_qs = raw_qs.exclude(
+            sync_journal__business_date__gte=date_from,
+            sync_journal__business_date__lte=date_to,
+        )
 
         dec_zero = Value(0, output_field=DecimalField(max_digits=18, decimal_places=2))
         raw_net = raw_qs.aggregate(
@@ -381,6 +387,9 @@ class Command(BaseCommand):
                 "mapping_rows": len(mapping_rows),
                 "journal_rows": journal_qs.count(),
                 "journal_rows_linked_from_raw": journal_linked_qs.count(),
+                "journal_rows_without_raw": journal_without_raw_qs.count(),
+                "journal_rows_linked_from_raw_outside_scope": journal_linked_outside_scope_qs.count(),
+                "raw_rows_linked_to_journal_outside_scope": raw_linked_outside_scope_qs.count(),
                 "raw_rows": raw_qs.count(),
                 "order_fact_rows": order_fact_qs.count(),
                 "daily_fact_rows": daily_qs.count(),
@@ -452,6 +461,47 @@ class Command(BaseCommand):
                         "loaded_at",
                     )[:max_journal_details]
                 ),
+                "journal_rows_without_raw_sample": list(
+                    journal_without_raw_qs.values(
+                        "id",
+                        "status",
+                        "source_webhook_id",
+                        "order_number",
+                        "business_date",
+                        "event_at",
+                        "department_id",
+                        "terminal_group_id",
+                        "created_at",
+                        "loaded_at",
+                    )[:max_journal_details]
+                ),
+                "journal_rows_linked_from_raw_outside_scope_sample": list(
+                    journal_linked_outside_scope_qs.values(
+                        "id",
+                        "status",
+                        "source_webhook_id",
+                        "order_number",
+                        "business_date",
+                        "event_at",
+                        "department_id",
+                        "terminal_group_id",
+                        "created_at",
+                        "loaded_at",
+                    )[:max_journal_details]
+                ),
+                "raw_rows_linked_to_journal_outside_scope_sample": list(
+                    raw_linked_outside_scope_qs.values(
+                        "id",
+                        "business_date",
+                        "order_number",
+                        "uniq_order_id",
+                        "department_id",
+                        "department_name",
+                        "sync_journal_id",
+                        "sync_journal__business_date",
+                        "sync_journal__event_at",
+                    )[:max_order_details]
+                ),
                 "raw_by_order_sample": raw_order_rows[:max_order_details],
                 "order_fact_by_order_sample": fact_order_rows[:max_order_details],
                 "daily_by_focus": daily_by_focus,
@@ -500,7 +550,9 @@ class Command(BaseCommand):
             f"keys_equal={payload['quality_checks']['raw_vs_order_fact_keys_equal']} "
             f"raw_only={payload['quality_checks']['raw_only_keys_count']} "
             f"fact_only={payload['quality_checks']['order_fact_only_keys_count']} "
-            f"journal_date_mismatch_rows={payload['quality_checks']['raw_rows_with_journal_business_date_mismatch_count']}"
+            f"journal_date_mismatch_rows={payload['quality_checks']['raw_rows_with_journal_business_date_mismatch_count']} "
+            f"journal_without_raw={payload['counts']['journal_rows_without_raw']} "
+            f"linked_outside_scope={payload['counts']['journal_rows_linked_from_raw_outside_scope']}"
         )
         if output_file:
             self.stdout.write(f"saved_json={output_file}")
