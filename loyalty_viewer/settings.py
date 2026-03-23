@@ -465,6 +465,33 @@ def _env_int_set(name: str, default_csv: str) -> set[int]:
     return fallback_values or {1}
 
 
+def _env_text_set(name: str, default_csv: str = "") -> set[str]:
+    """
+    Читает CSV-список строк из env в `set[str]`.
+
+    Пустые значения и дубликаты отбрасываются.
+    """
+    raw_value = str(os.getenv(name, default_csv) or "").strip()
+    parsed_values: set[str] = set()
+
+    for item in raw_value.split(","):
+        token = item.strip()
+        if not token:
+            continue
+        parsed_values.add(token)
+
+    if parsed_values:
+        return parsed_values
+
+    fallback_values: set[str] = set()
+    for item in str(default_csv or "").split(","):
+        token = item.strip()
+        if not token:
+            continue
+        fallback_values.add(token)
+    return fallback_values
+
+
 # Управление отправкой balance-уведомлений в ботов из webhook-контура.
 # Позволяет включать/выключать создание DispatchTask без изменений кода.
 BALANCE_WEBHOOK_NOTIFY_ENABLED = _env_bool(
@@ -701,6 +728,11 @@ OLAP_CONTROL_PULL_SCHEDULE_DRY_RUN = _env_bool(
 OLAP_CONTROL_PULL_SCHEDULE_DEPARTMENT_IDS = str(
     os.getenv("OLAP_CONTROL_PULL_SCHEDULE_DEPARTMENT_IDS", "") or ""
 ).strip()
+# CSV-список телефонов, которые нужно игнорировать в control pull (например, номера агрегаторов доставки).
+OLAP_CONTROL_PULL_PHONE_DENYLIST = _env_text_set(
+    "OLAP_CONTROL_PULL_PHONE_DENYLIST",
+    "",
+)
 
 
 def _register_olap_schedule_tasks() -> None:

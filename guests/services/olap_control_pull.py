@@ -48,6 +48,7 @@ class OlapControlPullStats:
     olap_rows_seen: int = 0
     olap_rows_with_phone: int = 0
     olap_rows_without_phone: int = 0
+    olap_rows_blacklisted_phone: int = 0
     olap_rows_phone_without_guest: int = 0
     distinct_order_keys_seen: int = 0
     skipped_invalid_rows: int = 0
@@ -179,8 +180,25 @@ class OlapControlPullService:
     CARD_FIELD = "Delivery.CustomerCardNumber"
     ORDER_AGG_FIELDS = ["DishSumInt"]
 
-    def __init__(self, *, client: IikoOlapClient) -> None:
+    def __init__(
+        self,
+        *,
+        client: IikoOlapClient,
+        phone_denylist: set[str] | None = None,
+    ) -> None:
         self.client = client
+        self._phone10_denylist: set[str] = {
+            phone10
+            for raw_phone in (phone_denylist or set())
+            for phone10 in [_phone10(raw_phone)]
+            if phone10
+        }
+
+    def _is_phone_denied(self, normalized_phone: str) -> bool:
+        phone10 = _phone10(normalized_phone)
+        if not phone10:
+            return False
+        return phone10 in self._phone10_denylist
 
     @staticmethod
     def _resolve_department_scope(*, department_ids: set[str] | None) -> list[dict[str, Any]]:
@@ -356,6 +374,9 @@ class OlapControlPullService:
                     continue
 
                 stats.olap_rows_with_phone += 1
+                if self._is_phone_denied(normalized_phone):
+                    stats.olap_rows_blacklisted_phone += 1
+                    continue
                 phone10 = _phone10(normalized_phone)
                 guest_id = guest_phone10_map.get(phone10 or "")
                 if guest_id is None:

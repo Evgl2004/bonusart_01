@@ -218,6 +218,50 @@ class OlapControlPullServiceTests(TestCase):
         self.assertEqual(stats.olap_rows_phone_without_guest, 1)
         self.assertEqual(stats.would_create_journal_rows, 1)
 
+    def test_run_cycle_skips_blacklisted_phone(self):
+        client = _FakeOlapClient(
+            rows_by_department={
+                "dept-1": [
+                    {
+                        "OpenDate.Typed": "2026-01-04",
+                        "OrderNum": 4001,
+                        "UniqOrderId.Id": "u-4001",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "Delivery.CustomerPhone": "+79990001111",
+                    },
+                    {
+                        "OpenDate.Typed": "2026-01-04",
+                        "OrderNum": 4002,
+                        "UniqOrderId.Id": "u-4002",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "Delivery.CustomerPhone": "+79990000001",
+                    },
+                ]
+            }
+        )
+        service = OlapControlPullService(
+            client=client,
+            phone_denylist={"+79990001111"},
+        )
+
+        with patch.object(service, "_get_or_create_guest_id_by_phone") as mocked_restore:
+            stats = service.run_cycle(
+                options=OlapControlPullOptions(
+                    business_date_from=date(2026, 1, 4),
+                    business_date_to=date(2026, 1, 4),
+                    dry_run=True,
+                )
+            )
+
+        mocked_restore.assert_not_called()
+        self.assertEqual(stats.olap_rows_seen, 2)
+        self.assertEqual(stats.olap_rows_with_phone, 2)
+        self.assertEqual(stats.olap_rows_blacklisted_phone, 1)
+        self.assertEqual(stats.olap_rows_phone_without_guest, 0)
+        self.assertEqual(stats.would_create_journal_rows, 1)
+
     def test_run_cycle_recovers_unknown_guest_by_phone(self):
         client = _FakeOlapClient(
             rows_by_department={

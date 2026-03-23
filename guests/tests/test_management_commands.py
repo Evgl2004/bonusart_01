@@ -489,6 +489,7 @@ class RunOlapControlPullCommandTests(SimpleTestCase):
             olap_rows_seen=20,
             olap_rows_with_phone=12,
             olap_rows_without_phone=8,
+            olap_rows_blacklisted_phone=1,
             olap_rows_phone_without_guest=2,
             phone_fields_used={"Delivery.CustomerPhone"},
             distinct_order_keys_seen=10,

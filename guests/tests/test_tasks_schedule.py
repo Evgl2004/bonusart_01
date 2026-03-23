@@ -264,6 +264,7 @@ class OlapDerivedScheduleTasksTests(SimpleTestCase):
             departments_scanned=2,
             departments_failed=0,
             olap_rows_seen=20,
+            olap_rows_blacklisted_phone=3,
             distinct_order_keys_seen=10,
             skipped_invalid_rows=0,
             would_create_journal_rows=0,

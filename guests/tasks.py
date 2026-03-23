@@ -407,7 +407,10 @@ def run_olap_control_pull_scheduled_task() -> int:
     )
 
     client = build_iiko_olap_client_from_settings()
-    service = OlapControlPullService(client=client)
+    service = OlapControlPullService(
+        client=client,
+        phone_denylist=set(getattr(settings, "OLAP_CONTROL_PULL_PHONE_DENYLIST", set()) or set()),
+    )
     try:
         stats = service.run_cycle(
             options=OlapControlPullOptions(
@@ -420,7 +423,7 @@ def run_olap_control_pull_scheduled_task() -> int:
         logger.info(
             (
                 "OLAP control pull (schedule): range=%s..%s departments=%s failed=%s rows=%s orders=%s "
-                "would_create=%s created=%s duplicates=%s skipped_invalid=%s dry_run=%s"
+                "would_create=%s created=%s duplicates=%s skipped_invalid=%s skipped_blacklist=%s dry_run=%s"
             ),
             date_from.isoformat(),
             date_to.isoformat(),
@@ -432,6 +435,7 @@ def run_olap_control_pull_scheduled_task() -> int:
             stats.created_journal_rows,
             stats.duplicate_journal_rows,
             stats.skipped_invalid_rows,
+            stats.olap_rows_blacklisted_phone,
             dry_run,
         )
         return int(stats.created_journal_rows if not dry_run else stats.would_create_journal_rows)
