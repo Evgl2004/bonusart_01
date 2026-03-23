@@ -174,9 +174,6 @@ class OlapControlPullService:
     ]
     # Берем идентификацию гостя по телефону клиента из доставки.
     PHONE_FIELD = "Delivery.CustomerPhone"
-    # Дополнительно читаем номер карты клиента для возможного будущего анализа.
-    # В текущую модель/таблицы это поле не сохраняется.
-    CARD_FIELD = "Delivery.CustomerCard"
     ORDER_AGG_FIELDS = ["DishSumInt"]
 
     def __init__(self, *, client: IikoOlapClient) -> None:
@@ -214,7 +211,7 @@ class OlapControlPullService:
         business_date_from: date,
         business_date_to: date,
     ) -> tuple[list[dict[str, Any]], str]:
-        group_fields = [*self.ORDER_GROUP_FIELDS, self.PHONE_FIELD, self.CARD_FIELD]
+        group_fields = [*self.ORDER_GROUP_FIELDS, self.PHONE_FIELD]
         payload = self.client.build_sales_payload_for_department_window(
             date_from=business_date_from,
             date_to=business_date_to,
