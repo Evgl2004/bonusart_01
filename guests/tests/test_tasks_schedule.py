@@ -233,3 +233,52 @@ class OlapDerivedScheduleTasksTests(SimpleTestCase):
             batch_size=1300,
             department_id="dept-77",
         )
+
+    @override_settings(OLAP_CONTROL_PULL_SCHEDULE_ENABLED=False)
+    @patch("guests.tasks.build_iiko_olap_client_from_settings")
+    def test_control_pull_task_returns_zero_when_disabled(self, mocked_builder):
+        result = tasks.run_olap_control_pull_scheduled_task()
+        self.assertEqual(result, 0)
+        mocked_builder.assert_not_called()
+
+    @override_settings(
+        OLAP_CONTROL_PULL_SCHEDULE_ENABLED=True,
+        OLAP_CONTROL_PULL_SCHEDULE_TAIL_DAYS=2,
+        OLAP_CONTROL_PULL_SCHEDULE_DRY_RUN=False,
+        OLAP_CONTROL_PULL_SCHEDULE_DEPARTMENT_IDS="dept-1,dept-2",
+    )
+    @patch("guests.tasks.OlapControlPullService")
+    @patch("guests.tasks.build_iiko_olap_client_from_settings")
+    @patch("guests.tasks.timezone.localdate")
+    def test_control_pull_task_runs_service_once(
+        self,
+        mocked_localdate,
+        mocked_builder,
+        mocked_service_cls,
+    ):
+        mocked_localdate.return_value = date(2026, 3, 23)
+        mocked_client = MagicMock()
+        mocked_builder.return_value = mocked_client
+        mocked_service = MagicMock()
+        mocked_service.run_cycle.return_value = SimpleNamespace(
+            departments_scanned=2,
+            departments_failed=0,
+            olap_rows_seen=20,
+            distinct_order_keys_seen=10,
+            skipped_invalid_rows=0,
+            would_create_journal_rows=0,
+            created_journal_rows=6,
+            duplicate_journal_rows=4,
+        )
+        mocked_service_cls.return_value = mocked_service
+
+        result = tasks.run_olap_control_pull_scheduled_task()
+
+        self.assertEqual(result, 6)
+        mocked_service.run_cycle.assert_called_once()
+        run_options = mocked_service.run_cycle.call_args.kwargs["options"]
+        self.assertEqual(run_options.business_date_from, date(2026, 3, 22))
+        self.assertEqual(run_options.business_date_to, date(2026, 3, 23))
+        self.assertEqual(run_options.department_ids, {"dept-1", "dept-2"})
+        self.assertFalse(run_options.dry_run)
+        mocked_client.close.assert_called_once()

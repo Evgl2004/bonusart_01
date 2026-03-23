@@ -313,6 +313,57 @@ class IikoOlapClient:
             "filters": filters,
         }
 
+    def build_sales_payload_for_department_window(
+        self,
+        *,
+        date_from: date | str,
+        date_to: date | str,
+        department_ids: Sequence[str],
+        aggregate_fields: Sequence[str] | None = None,
+        group_by_row_fields: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Формирует OLAP-запрос SALES по диапазону дат и списку Department.Id.
+
+        Используется для контрольной ночной дозагрузки, где нужен полный срез
+        заказов по заведению, а не выборка по конкретным order_numbers.
+        """
+        cleaned_department_ids = [str(item).strip() for item in department_ids if str(item).strip()]
+        if not cleaned_department_ids:
+            raise ValueError("department_ids пустой, нечего запрашивать в OLAP.")
+
+        agg_fields = list(aggregate_fields or ["DishSumInt"])
+        group_fields = list(
+            group_by_row_fields
+            or [
+                "OpenDate.Typed",
+                "OrderNum",
+                "UniqOrderId.Id",
+                "Department.Id",
+                "Department.Code",
+                "RestorauntGroup.Id",
+            ]
+        )
+
+        return {
+            "reportType": "SALES",
+            "aggregateFields": agg_fields,
+            "groupByRowFields": group_fields,
+            "filters": {
+                "OpenDate.Typed": {
+                    "filterType": "DateRange",
+                    "periodType": "CUSTOM",
+                    "from": _normalize_date(date_from),
+                    "to": _normalize_date(date_to),
+                    "includeHigh": True,
+                },
+                "Department.Id": {
+                    "filterType": "IncludeValues",
+                    "values": cleaned_department_ids,
+                },
+            },
+        }
+
     def fetch_sales_in_portions(
         self,
         *,

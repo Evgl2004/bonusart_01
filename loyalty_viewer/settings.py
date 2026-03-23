@@ -681,6 +681,27 @@ OLAP_WINDOW_METRICS_SCHEDULE_DEPARTMENT_ID = str(
     os.getenv("OLAP_WINDOW_METRICS_SCHEDULE_DEPARTMENT_ID", "") or ""
 ).strip()
 
+# Плановый контрольный pull из OLAP (по Department.Id и диапазону business_date).
+OLAP_CONTROL_PULL_SCHEDULE_ENABLED = _env_bool(
+    "OLAP_CONTROL_PULL_SCHEDULE_ENABLED",
+    False,
+)
+OLAP_CONTROL_PULL_SCHEDULE_CRON = str(
+    os.getenv("OLAP_CONTROL_PULL_SCHEDULE_CRON", "0 6 * * *") or "0 6 * * *"
+).strip()
+OLAP_CONTROL_PULL_SCHEDULE_TAIL_DAYS = _env_int(
+    "OLAP_CONTROL_PULL_SCHEDULE_TAIL_DAYS",
+    2,
+    min_value=1,
+)
+OLAP_CONTROL_PULL_SCHEDULE_DRY_RUN = _env_bool(
+    "OLAP_CONTROL_PULL_SCHEDULE_DRY_RUN",
+    False,
+)
+OLAP_CONTROL_PULL_SCHEDULE_DEPARTMENT_IDS = str(
+    os.getenv("OLAP_CONTROL_PULL_SCHEDULE_DEPARTMENT_IDS", "") or ""
+).strip()
+
 
 def _register_olap_schedule_tasks() -> None:
     """
@@ -692,6 +713,7 @@ def _register_olap_schedule_tasks() -> None:
     3. order_fact tail-задача по минутному расписанию;
     4. daily_fact tail-задача по минутному расписанию;
     5. window_metrics-задача по минутному расписанию.
+    6. control_pull-задача по cron (контрольная постановка пропущенных задач в journal).
     """
     schedule_map = Q_CLUSTER.setdefault("schedule", {})
 
@@ -735,6 +757,15 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_window_metrics_hourly", None)
+
+    if OLAP_CONTROL_PULL_SCHEDULE_ENABLED:
+        schedule_map["run_olap_control_pull_daily"] = {
+            "func": "guests.tasks.run_olap_control_pull_scheduled_task",
+            "schedule_type": "C",
+            "cron": OLAP_CONTROL_PULL_SCHEDULE_CRON,
+        }
+    else:
+        schedule_map.pop("run_olap_control_pull_daily", None)
 
 
 _register_olap_schedule_tasks()

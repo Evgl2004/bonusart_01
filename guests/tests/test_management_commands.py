@@ -10,6 +10,7 @@ import io
 import sqlite3
 import signal
 import tempfile
+from datetime import date
 from datetime import time
 from datetime import timedelta
 from pathlib import Path
@@ -468,6 +469,65 @@ class RunOlapWebhookBackfillCommandTests(SimpleTestCase):
                 "run_olap_webhook_backfill",
                 "--once",
                 "--date-from=2025-12-01T00:00:00Z",
+                stdout=io.StringIO(),
+            )
+
+
+class RunOlapControlPullCommandTests(SimpleTestCase):
+    """
+    Тесты команды run_olap_control_pull.
+    """
+
+    @override_settings(OLAP_CONTROL_PULL_SCHEDULE_DRY_RUN=True)
+    def test_handle_once_runs_single_cycle_and_closes_client(self):
+        output = io.StringIO()
+        fake_client = Mock()
+        fake_service = Mock()
+        fake_service.run_cycle.return_value = SimpleNamespace(
+            departments_scanned=2,
+            departments_failed=0,
+            olap_rows_seen=20,
+            distinct_order_keys_seen=10,
+            skipped_invalid_rows=0,
+            would_create_journal_rows=6,
+            created_journal_rows=0,
+            duplicate_journal_rows=4,
+        )
+
+        with (
+            patch("guests.management.commands.run_olap_control_pull.signal.signal"),
+            patch(
+                "guests.management.commands.run_olap_control_pull.build_iiko_olap_client_from_settings",
+                return_value=fake_client,
+            ),
+            patch(
+                "guests.management.commands.run_olap_control_pull.OlapControlPullService",
+                return_value=fake_service,
+            ),
+        ):
+            call_command(
+                "run_olap_control_pull",
+                "--once",
+                "--business-date-from=2026-01-01",
+                "--business-date-to=2026-01-02",
+                "--department-id=dept-1",
+                stdout=output,
+            )
+
+        fake_service.run_cycle.assert_called_once()
+        run_options = fake_service.run_cycle.call_args.kwargs["options"]
+        self.assertEqual(run_options.business_date_from, date(2026, 1, 1))
+        self.assertEqual(run_options.business_date_to, date(2026, 1, 2))
+        self.assertEqual(run_options.department_ids, {"dept-1"})
+        self.assertTrue(run_options.dry_run)
+        fake_client.close.assert_called_once()
+
+    def test_handle_raises_for_incomplete_date_range(self):
+        with self.assertRaises(CommandError):
+            call_command(
+                "run_olap_control_pull",
+                "--once",
+                "--business-date-from=2026-01-01",
                 stdout=io.StringIO(),
             )
 

@@ -167,3 +167,21 @@ class IikoOlapClientTests(SimpleTestCase):
         self.assertEqual(stats.failed_portions, 1)
         self.assertEqual(stats.failed_order_number_portions, [[12, 13]])
         self.assertEqual(len(rows), 1)
+
+    def test_build_sales_payload_for_department_window_has_no_order_filter(self):
+        """
+        Контрольный payload по Department.Id не должен содержать фильтр OrderNum.
+        """
+        session = Mock()
+        client = self._build_client(session=session)
+
+        payload = client.build_sales_payload_for_department_window(
+            date_from="2026-03-01",
+            date_to="2026-03-02",
+            department_ids=["dept-1"],
+        )
+
+        self.assertEqual(payload["reportType"], "SALES")
+        self.assertIn("Department.Id", payload["filters"])
+        self.assertNotIn("OrderNum", payload["filters"])
+        self.assertEqual(payload["filters"]["Department.Id"]["values"], ["dept-1"])

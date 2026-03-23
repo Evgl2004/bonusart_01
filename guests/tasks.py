@@ -12,6 +12,7 @@ from django.utils import timezone
 from .services.notification_handler_registry import run_registered_schedule_scenarios
 from .services.iiko_olap_client import build_iiko_olap_client_from_settings
 from .services.olap_check_sync import OlapCheckSyncWorkerService
+from .services.olap_control_pull import OlapControlPullOptions, OlapControlPullService
 from .services.webhooks import process_recent_webhooks
 
 logger = logging.getLogger(__name__)
@@ -105,6 +106,19 @@ def _parse_int_csv(raw_value: str) -> list[int]:
         if parsed <= 0 or parsed in values:
             continue
         values.append(parsed)
+    return values
+
+
+def _parse_text_csv(raw_value: str) -> list[str]:
+    """
+    Читает CSV-список строк, убирает пустые значения и дубликаты с сохранением порядка.
+    """
+    values: list[str] = []
+    for item in str(raw_value or "").split(","):
+        token = str(item).strip()
+        if not token or token in values:
+            continue
+        values.append(token)
     return values
 
 
@@ -369,3 +383,65 @@ def run_window_metrics_scheduled_task() -> int:
             err,
         )
         return 0
+
+
+def run_olap_control_pull_scheduled_task() -> int:
+    """
+    Плановая контрольная дозагрузка OLAP-журнала по прямому OLAP-срезу.
+
+    Логика:
+    1. Берёт активные Department.Id из mapping (или фильтр из env);
+    2. Загружает заказы за tail-окно последних N дней;
+    3. Ставит недостающие задачи в `olap_check_sync_journal`.
+    """
+    if not bool(getattr(settings, "OLAP_CONTROL_PULL_SCHEDULE_ENABLED", False)):
+        logger.info("OLAP control pull (schedule): disabled by OLAP_CONTROL_PULL_SCHEDULE_ENABLED.")
+        return 0
+
+    tail_days = max(1, int(getattr(settings, "OLAP_CONTROL_PULL_SCHEDULE_TAIL_DAYS", 2)))
+    date_to = timezone.localdate()
+    date_from = date_to - timedelta(days=tail_days - 1)
+    dry_run = bool(getattr(settings, "OLAP_CONTROL_PULL_SCHEDULE_DRY_RUN", False))
+    department_ids = set(
+        _parse_text_csv(str(getattr(settings, "OLAP_CONTROL_PULL_SCHEDULE_DEPARTMENT_IDS", "") or ""))
+    )
+
+    client = build_iiko_olap_client_from_settings()
+    service = OlapControlPullService(client=client)
+    try:
+        stats = service.run_cycle(
+            options=OlapControlPullOptions(
+                business_date_from=date_from,
+                business_date_to=date_to,
+                department_ids=(department_ids or None),
+                dry_run=dry_run,
+            )
+        )
+        logger.info(
+            (
+                "OLAP control pull (schedule): range=%s..%s departments=%s failed=%s rows=%s orders=%s "
+                "would_create=%s created=%s duplicates=%s skipped_invalid=%s dry_run=%s"
+            ),
+            date_from.isoformat(),
+            date_to.isoformat(),
+            stats.departments_scanned,
+            stats.departments_failed,
+            stats.olap_rows_seen,
+            stats.distinct_order_keys_seen,
+            stats.would_create_journal_rows,
+            stats.created_journal_rows,
+            stats.duplicate_journal_rows,
+            stats.skipped_invalid_rows,
+            dry_run,
+        )
+        return int(stats.created_journal_rows if not dry_run else stats.would_create_journal_rows)
+    except Exception as err:
+        logger.exception(
+            "OLAP control pull (schedule): failed for range %s..%s: %s",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            err,
+        )
+        return 0
+    finally:
+        client.close()
