@@ -138,3 +138,98 @@ class OlapScheduleTasksTests(SimpleTestCase):
             window_days=["7", "30", "180"],
             as_of_date="2026-03-19",
         )
+
+
+class OlapDerivedScheduleTasksTests(SimpleTestCase):
+    """
+    Проверяет расписание инкрементальных витрин (order/daily/window).
+    """
+
+    @override_settings(OLAP_ORDER_FACT_SCHEDULE_ENABLED=False)
+    @patch("guests.tasks.call_command")
+    def test_order_fact_task_returns_zero_when_disabled(self, mocked_call_command):
+        result = tasks.run_order_fact_scheduled_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        OLAP_ORDER_FACT_SCHEDULE_ENABLED=True,
+        OLAP_ORDER_FACT_SCHEDULE_TAIL_DAYS=3,
+        OLAP_ORDER_FACT_SCHEDULE_END_LAG_DAYS=1,
+        OLAP_ORDER_FACT_SCHEDULE_BATCH_SIZE=1500,
+    )
+    @patch("guests.tasks.timezone.localdate")
+    @patch("guests.tasks.call_command")
+    def test_order_fact_task_calls_sync_once(self, mocked_call_command, mocked_localdate):
+        mocked_localdate.return_value = date(2026, 3, 23)
+
+        result = tasks.run_order_fact_scheduled_task()
+
+        self.assertEqual(result, 1)
+        mocked_call_command.assert_called_once_with(
+            "sync_order_fact",
+            once=True,
+            business_date_from="2026-03-20",
+            business_date_to="2026-03-22",
+            batch_size=1500,
+        )
+
+    @override_settings(OLAP_DAILY_FACT_SCHEDULE_ENABLED=False)
+    @patch("guests.tasks.call_command")
+    def test_daily_fact_task_returns_zero_when_disabled(self, mocked_call_command):
+        result = tasks.run_daily_fact_scheduled_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        OLAP_DAILY_FACT_SCHEDULE_ENABLED=True,
+        OLAP_DAILY_FACT_SCHEDULE_TAIL_DAYS=2,
+        OLAP_DAILY_FACT_SCHEDULE_END_LAG_DAYS=0,
+        OLAP_DAILY_FACT_SCHEDULE_BATCH_SIZE=1200,
+    )
+    @patch("guests.tasks.timezone.localdate")
+    @patch("guests.tasks.call_command")
+    def test_daily_fact_task_calls_sync_once(self, mocked_call_command, mocked_localdate):
+        mocked_localdate.return_value = date(2026, 3, 23)
+
+        result = tasks.run_daily_fact_scheduled_task()
+
+        self.assertEqual(result, 1)
+        mocked_call_command.assert_called_once_with(
+            "sync_daily_category_fact",
+            once=True,
+            business_date_from="2026-03-22",
+            business_date_to="2026-03-23",
+            batch_size=1200,
+        )
+
+    @override_settings(OLAP_WINDOW_METRICS_SCHEDULE_ENABLED=False)
+    @patch("guests.tasks.call_command")
+    def test_window_metrics_task_returns_zero_when_disabled(self, mocked_call_command):
+        result = tasks.run_window_metrics_scheduled_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        OLAP_WINDOW_METRICS_SCHEDULE_ENABLED=True,
+        OLAP_WINDOW_METRICS_SCHEDULE_AS_OF_LAG_DAYS=1,
+        OLAP_WINDOW_METRICS_SCHEDULE_BATCH_SIZE=1300,
+        OLAP_WINDOW_METRICS_SCHEDULE_WINDOW_DAYS="7,14,30",
+        OLAP_WINDOW_METRICS_SCHEDULE_DEPARTMENT_ID="dept-77",
+    )
+    @patch("guests.tasks.timezone.localdate")
+    @patch("guests.tasks.call_command")
+    def test_window_metrics_task_calls_sync_once(self, mocked_call_command, mocked_localdate):
+        mocked_localdate.return_value = date(2026, 3, 23)
+
+        result = tasks.run_window_metrics_scheduled_task()
+
+        self.assertEqual(result, 1)
+        mocked_call_command.assert_called_once_with(
+            "sync_window_metrics",
+            once=True,
+            as_of_date="2026-03-22",
+            window_days=["7", "14", "30"],
+            batch_size=1300,
+            department_id="dept-77",
+        )

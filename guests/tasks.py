@@ -3,7 +3,7 @@
 """
 
 import logging
-from datetime import datetime, time as dt_time
+from datetime import datetime, timedelta, time as dt_time
 
 from django.conf import settings
 from django.core.management import call_command
@@ -224,4 +224,148 @@ def run_olap_rebuild_scheduled_task() -> int:
         return 1
     except Exception as err:
         logger.exception("OLAP rebuild (schedule): ошибка пересчёта витрин: %s", err)
+        return 0
+
+
+def _build_tail_window_dates(*, tail_days: int, end_lag_days: int):
+    """
+    Build date window [date_from, date_to] for incremental recalculation.
+    """
+    safe_tail_days = max(1, int(tail_days))
+    safe_end_lag_days = max(0, int(end_lag_days))
+
+    date_to = timezone.localdate() - timedelta(days=safe_end_lag_days)
+    date_from = date_to - timedelta(days=safe_tail_days - 1)
+    return date_from, date_to
+
+
+def run_order_fact_scheduled_task() -> int:
+    """
+    Scheduled one-shot order_fact rebuild for the latest N-day tail.
+    """
+    if not bool(getattr(settings, "OLAP_ORDER_FACT_SCHEDULE_ENABLED", False)):
+        logger.info("Order fact (schedule): disabled by OLAP_ORDER_FACT_SCHEDULE_ENABLED.")
+        return 0
+
+    tail_days = max(1, int(getattr(settings, "OLAP_ORDER_FACT_SCHEDULE_TAIL_DAYS", 3)))
+    end_lag_days = max(0, int(getattr(settings, "OLAP_ORDER_FACT_SCHEDULE_END_LAG_DAYS", 0)))
+    batch_size = max(100, int(getattr(settings, "OLAP_ORDER_FACT_SCHEDULE_BATCH_SIZE", 2000)))
+    date_from, date_to = _build_tail_window_dates(tail_days=tail_days, end_lag_days=end_lag_days)
+
+    try:
+        call_command(
+            "sync_order_fact",
+            once=True,
+            business_date_from=date_from.isoformat(),
+            business_date_to=date_to.isoformat(),
+            batch_size=batch_size,
+        )
+        logger.info(
+            "Order fact (schedule): completed for range %s..%s (tail_days=%s, end_lag_days=%s).",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            tail_days,
+            end_lag_days,
+        )
+        return 1
+    except Exception as err:
+        logger.exception(
+            "Order fact (schedule): failed for range %s..%s: %s",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            err,
+        )
+        return 0
+
+
+def run_daily_fact_scheduled_task() -> int:
+    """
+    Scheduled one-shot daily category fact rebuild for the latest N-day tail.
+    """
+    if not bool(getattr(settings, "OLAP_DAILY_FACT_SCHEDULE_ENABLED", False)):
+        logger.info("Daily fact (schedule): disabled by OLAP_DAILY_FACT_SCHEDULE_ENABLED.")
+        return 0
+
+    tail_days = max(1, int(getattr(settings, "OLAP_DAILY_FACT_SCHEDULE_TAIL_DAYS", 3)))
+    end_lag_days = max(0, int(getattr(settings, "OLAP_DAILY_FACT_SCHEDULE_END_LAG_DAYS", 0)))
+    batch_size = max(100, int(getattr(settings, "OLAP_DAILY_FACT_SCHEDULE_BATCH_SIZE", 2000)))
+    date_from, date_to = _build_tail_window_dates(tail_days=tail_days, end_lag_days=end_lag_days)
+
+    try:
+        call_command(
+            "sync_daily_category_fact",
+            once=True,
+            business_date_from=date_from.isoformat(),
+            business_date_to=date_to.isoformat(),
+            batch_size=batch_size,
+        )
+        logger.info(
+            "Daily fact (schedule): completed for range %s..%s (tail_days=%s, end_lag_days=%s).",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            tail_days,
+            end_lag_days,
+        )
+        return 1
+    except Exception as err:
+        logger.exception(
+            "Daily fact (schedule): failed for range %s..%s: %s",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            err,
+        )
+        return 0
+
+
+def run_window_metrics_scheduled_task() -> int:
+    """
+    Scheduled one-shot rebuild of rolling window metrics.
+    """
+    if not bool(getattr(settings, "OLAP_WINDOW_METRICS_SCHEDULE_ENABLED", False)):
+        logger.info("Window metrics (schedule): disabled by OLAP_WINDOW_METRICS_SCHEDULE_ENABLED.")
+        return 0
+
+    as_of_lag_days = max(
+        0,
+        int(getattr(settings, "OLAP_WINDOW_METRICS_SCHEDULE_AS_OF_LAG_DAYS", 0)),
+    )
+    as_of_date = timezone.localdate() - timedelta(days=as_of_lag_days)
+    batch_size = max(
+        100,
+        int(getattr(settings, "OLAP_WINDOW_METRICS_SCHEDULE_BATCH_SIZE", 2000)),
+    )
+
+    window_days = _parse_int_csv(
+        str(getattr(settings, "OLAP_WINDOW_METRICS_SCHEDULE_WINDOW_DAYS", "7,14,30,60,180"))
+    )
+    if not window_days:
+        window_days = [7, 14, 30, 60, 180]
+
+    call_options = {
+        "once": True,
+        "as_of_date": as_of_date.isoformat(),
+        "window_days": [str(value) for value in window_days],
+        "batch_size": batch_size,
+    }
+
+    department_id = str(
+        getattr(settings, "OLAP_WINDOW_METRICS_SCHEDULE_DEPARTMENT_ID", "") or ""
+    ).strip()
+    if department_id:
+        call_options["department_id"] = department_id
+
+    try:
+        call_command("sync_window_metrics", **call_options)
+        logger.info(
+            "Window metrics (schedule): completed as_of=%s windows=%s.",
+            as_of_date.isoformat(),
+            ",".join(str(value) for value in window_days),
+        )
+        return 1
+    except Exception as err:
+        logger.exception(
+            "Window metrics (schedule): failed as_of=%s: %s",
+            as_of_date.isoformat(),
+            err,
+        )
         return 0
