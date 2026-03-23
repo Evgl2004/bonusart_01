@@ -405,7 +405,7 @@ class OlapCheckSyncWorkerService:
                 continue
 
             for row in order_rows:
-                selected_payloads, selection_error = self._select_payloads_for_journal_row(
+                selected_payloads, selected_business_day, selection_error = self._select_payloads_for_journal_row(
                     row=row,
                     order_number=order_number,
                     payload_pairs=payload_pairs,
@@ -453,6 +453,11 @@ class OlapCheckSyncWorkerService:
                 raw_lines_to_create.extend(mapped_raw_lines)
                 stats.raw_rows_planned += len(mapped_raw_lines)
 
+                # OLAP business day is authoritative for already selected payloads.
+                # This keeps journal date aligned with the raw layer and diagnostics.
+                if selected_business_day is not None:
+                    row.business_date = selected_business_day
+
                 self._mark_loaded(row=row, now=now)
                 changed_rows[row.id] = row
                 stats.loaded_rows += 1
@@ -472,7 +477,7 @@ class OlapCheckSyncWorkerService:
         row: OlapCheckSyncJournal,
         order_number: int,
         payload_pairs: Sequence[tuple[date | None, dict[str, Any]]],
-    ) -> tuple[list[dict[str, Any]], str | None]:
+    ) -> tuple[list[dict[str, Any]], date | None, str | None]:
         """
         Picks OLAP rows for a journal row when order numbers repeat across nearby days.
 
@@ -482,15 +487,17 @@ class OlapCheckSyncWorkerService:
         3. Ambiguous same-distance candidates -> return an explicit error.
         """
         if not payload_pairs:
-            return [], None
+            return [], None, None
 
         known_date_pairs = [(d, payload) for d, payload in payload_pairs if d is not None]
         if not known_date_pairs:
-            return [payload for _, payload in payload_pairs], None
+            fallback_day = row.business_date or _to_local_date(row.event_at)
+            return [payload for _, payload in payload_pairs], fallback_day, None
 
         target_day = row.business_date or _to_local_date(row.event_at)
         if target_day is None:
-            return [payload for _, payload in known_date_pairs], None
+            selected_day = known_date_pairs[0][0]
+            return [payload for _, payload in known_date_pairs], selected_day, None
 
         if any(day == target_day for day, _ in known_date_pairs):
             selected_day = target_day
@@ -499,13 +506,13 @@ class OlapCheckSyncWorkerService:
             min_distance = min(abs((day - target_day).days) for day in candidate_days)
             closest_days = [day for day in candidate_days if abs((day - target_day).days) == min_distance]
             if len(closest_days) > 1:
-                return [], (
+                return [], None, (
                     f"Чек {order_number}: найдено несколько дат в OLAP на одинаковом расстоянии "
                     f"от business_date={target_day} ({', '.join(str(day) for day in closest_days)})."
                 )
             selected_day = closest_days[0]
 
-        return [payload for day, payload in known_date_pairs if day == selected_day], None
+        return [payload for day, payload in known_date_pairs if day == selected_day], selected_day, None
 
     def _map_payloads_to_raw_lines(
         self,

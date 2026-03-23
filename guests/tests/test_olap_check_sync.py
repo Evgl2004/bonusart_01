@@ -420,3 +420,56 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
         self.assertIn("несколько дат", row.last_error or "")
         self.assertEqual(stats.retry_rows, 1)
         self.assertEqual(OlapSalesRawLine.objects.filter(sync_journal=row).count(), 0)
+
+    def test_run_iteration_updates_journal_business_day_to_nearest_olap_day(self):
+        """
+        If exact business day is absent but nearest OLAP day is unique, worker
+        should load that day and update journal business_date to OLAP day.
+        """
+        row = self._create_journal_row(
+            key="repeat-order-nearest-day-1",
+            order_number=900,
+            business_day=date(2025, 12, 23),
+        )
+        fake_client = _FakeOlapClient(
+            rows=[
+                {
+                    "OpenDate.Typed": "2025-12-24",
+                    "OrderNum": 900,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-900-24",
+                    "ItemSaleEvent.Id": "event-900-24",
+                    "DishCode": "dish-nearest",
+                    "DishName": "Dish nearest",
+                    "DishSumInt": 300,
+                },
+                {
+                    "OpenDate.Typed": "2025-12-25",
+                    "OrderNum": 900,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-900-25",
+                    "ItemSaleEvent.Id": "event-900-25",
+                    "DishCode": "dish-far",
+                    "DishName": "Dish far",
+                    "DishSumInt": 500,
+                },
+            ]
+        )
+        service = OlapCheckSyncWorkerService(
+            client=fake_client,
+            claim_limit=20,
+            portion_size=10,
+            max_attempts=3,
+            retry_base_seconds=1,
+        )
+
+        stats = service.run_iteration()
+        row.refresh_from_db()
+
+        self.assertEqual(row.status, OlapCheckSyncJournal.Status.LOADED)
+        self.assertEqual(row.business_date, date(2025, 12, 24))
+        self.assertEqual(stats.loaded_rows, 1)
+        lines = list(OlapSalesRawLine.objects.filter(sync_journal=row).order_by("id"))
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].business_date, date(2025, 12, 24))
+        self.assertEqual(lines[0].dish_code, "dish-nearest")
