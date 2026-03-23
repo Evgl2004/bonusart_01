@@ -4,7 +4,9 @@ import time
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
+from guests.models import OlapCheckSyncJournal
 from guests.services.iiko_olap_client import build_iiko_olap_client_from_settings
 from guests.services.olap_check_sync import OlapCheckSyncWorkerService
 
@@ -73,6 +75,15 @@ class Command(BaseCommand):
             default=900,
             help="Тайм-аут блокировки для реанимации зависших in_progress строк.",
         )
+        parser.add_argument(
+            "--print-row-details-limit",
+            type=int,
+            default=20,
+            help=(
+                "Сколько последних изменённых строк журнала печатать после прохода "
+                "(полезно для прозрачного операционного разбора). 0 = не печатать."
+            ),
+        )
 
     def _setup_signal_handlers(self) -> None:
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -116,6 +127,53 @@ class Command(BaseCommand):
             )
         )
 
+    def _print_recent_journal_rows(self, *, started_at, limit: int) -> None:
+        """
+        Печатает детальный срез строк журнала, изменённых после начала итерации.
+        """
+        safe_limit = max(0, int(limit))
+        if safe_limit <= 0:
+            return
+
+        rows = list(
+            OlapCheckSyncJournal.objects.filter(updated_at__gte=started_at)
+            .order_by("-updated_at", "-id")[:safe_limit]
+            .values(
+                "id",
+                "status",
+                "order_number",
+                "business_date",
+                "attempt_count",
+                "next_try_at",
+                "loaded_at",
+                "last_error",
+                "updated_at",
+            )
+        )
+
+        if not rows:
+            return
+
+        self.stdout.write(f"[journal] изменённые строки за проход: {len(rows)}")
+        for item in rows:
+            self.stdout.write(
+                (
+                    "[row] id={id} status={status} order={order} business_date={bdate} "
+                    "attempt={attempt} next_try_at={next_try_at} loaded_at={loaded_at} "
+                    "updated_at={updated_at} error={error}"
+                ).format(
+                    id=item["id"],
+                    status=item["status"],
+                    order=item["order_number"],
+                    bdate=item["business_date"],
+                    attempt=item["attempt_count"],
+                    next_try_at=item["next_try_at"],
+                    loaded_at=item["loaded_at"],
+                    updated_at=item["updated_at"],
+                    error=(item["last_error"] or "-"),
+                )
+            )
+
     def handle(self, *args, **options):
         self._setup_signal_handlers()
 
@@ -126,6 +184,7 @@ class Command(BaseCommand):
         max_attempts = max(1, int(options["max_attempts"]))
         retry_base_seconds = max(1, int(options["retry_base_seconds"]))
         lock_timeout_seconds = max(60, int(options["lock_timeout_seconds"]))
+        print_row_details_limit = max(0, int(options["print_row_details_limit"]))
 
         self.stdout.write(self.style.SUCCESS("Запущен run_olap_sync_worker"))
         self.stdout.write(f"mode={'once' if once_mode else 'loop'}")
@@ -135,6 +194,7 @@ class Command(BaseCommand):
         self.stdout.write(f"max_attempts={max_attempts}")
         self.stdout.write(f"retry_base_seconds={retry_base_seconds}")
         self.stdout.write(f"lock_timeout_seconds={lock_timeout_seconds}")
+        self.stdout.write(f"print_row_details_limit={print_row_details_limit}")
 
         client = build_iiko_olap_client_from_settings()
         worker_service = OlapCheckSyncWorkerService(
@@ -148,16 +208,25 @@ class Command(BaseCommand):
 
         try:
             if once_mode:
+                started_at = timezone.now()
                 stats = worker_service.run_iteration()
                 self._print_iteration_stats(stats)
+                self._print_recent_journal_rows(
+                    started_at=started_at,
+                    limit=print_row_details_limit,
+                )
                 return
 
             while not self.should_stop:
+                started_at = timezone.now()
                 stats = worker_service.run_iteration()
                 self._print_iteration_stats(stats)
+                self._print_recent_journal_rows(
+                    started_at=started_at,
+                    limit=print_row_details_limit,
+                )
                 if self.should_stop:
                     break
                 self._sleep_with_stop(sleep_seconds)
         finally:
             client.close()
-
