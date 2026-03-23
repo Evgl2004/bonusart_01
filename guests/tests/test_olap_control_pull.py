@@ -18,8 +18,10 @@ from guests.services.olap_control_pull import (
 class _FakeOlapClient:
     def __init__(self, rows_by_department: dict[str, list[dict]]):
         self.rows_by_department = rows_by_department
+        self.payloads: list[dict] = []
 
     def build_sales_payload_for_department_window(self, **kwargs):
+        self.payloads.append(dict(kwargs))
         return kwargs
 
     def query_olap(self, payload):
@@ -82,6 +84,37 @@ class OlapControlPullServiceTests(TestCase):
         self.assertEqual(stats.would_create_journal_rows, 2)
         self.assertEqual(stats.created_journal_rows, 0)
         self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
+
+    def test_run_cycle_requests_phone_and_card_fields(self):
+        client = _FakeOlapClient(
+            rows_by_department={
+                "dept-1": [
+                    {
+                        "OpenDate.Typed": "2026-01-01",
+                        "OrderNum": 1001,
+                        "UniqOrderId.Id": "u-1001",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "Delivery.CustomerPhone": "+79990000001",
+                        "Delivery.CustomerCardNumber": "CARD-001",
+                    },
+                ]
+            }
+        )
+        service = OlapControlPullService(client=client)
+
+        service.run_cycle(
+            options=OlapControlPullOptions(
+                business_date_from=date(2026, 1, 1),
+                business_date_to=date(2026, 1, 1),
+                dry_run=True,
+            )
+        )
+
+        self.assertEqual(len(client.payloads), 1)
+        group_fields = client.payloads[0]["group_by_row_fields"]
+        self.assertIn("Delivery.CustomerPhone", group_fields)
+        self.assertIn("Delivery.CustomerCardNumber", group_fields)
 
     def test_run_cycle_write_is_idempotent_for_same_rows(self):
         client = _FakeOlapClient(
