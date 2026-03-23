@@ -490,7 +490,7 @@ class RunOlapControlPullCommandTests(SimpleTestCase):
             olap_rows_with_phone=12,
             olap_rows_without_phone=8,
             olap_rows_phone_without_guest=2,
-            phone_fields_used={"ClientPhone"},
+            phone_fields_used={"Delivery.CustomerPhone"},
             distinct_order_keys_seen=10,
             skipped_invalid_rows=0,
             would_create_journal_rows=6,

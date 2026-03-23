@@ -50,7 +50,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-1001",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
-                        "ClientPhone": "+79990000001",
+                        "Delivery.CustomerPhone": "+79990000001",
                     },
                     {
                         "OpenDate.Typed": "2026-01-01",
@@ -58,7 +58,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-1002",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
-                        "ClientPhone": "+79990000002",
+                        "Delivery.CustomerPhone": "+79990000002",
                     },
                 ]
             }
@@ -93,7 +93,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-2001",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
-                        "ClientPhone": "+79990000001",
+                        "Delivery.CustomerPhone": "+79990000001",
                     },
                     {
                         "OpenDate.Typed": "2026-01-02",
@@ -101,7 +101,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-2002",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
-                        "ClientPhone": "+79990000002",
+                        "Delivery.CustomerPhone": "+79990000002",
                     },
                 ]
             }
@@ -146,7 +146,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-3001",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
-                        "ClientPhone": "",
+                        "Delivery.CustomerPhone": "",
                     },
                     {
                         "OpenDate.Typed": "2026-01-03",
@@ -154,7 +154,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-3002",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
-                        "ClientPhone": "+79990009999",
+                        "Delivery.CustomerPhone": "+79990009999",
                     },
                     {
                         "OpenDate.Typed": "2026-01-03",
@@ -162,7 +162,7 @@ class OlapControlPullServiceTests(TestCase):
                         "UniqOrderId.Id": "u-3003",
                         "Department.Id": "dept-1",
                         "Department.Code": "D1",
-                        "ClientPhone": "+79990000001",
+                        "Delivery.CustomerPhone": "+79990000001",
                     },
                 ]
             }

@@ -172,13 +172,12 @@ class OlapControlPullService:
         "Department.Code",
         "RestorauntGroup.Id",
     ]
+    # Берем идентификацию гостя по телефону клиента из доставки.
+    PHONE_FIELD = "Delivery.CustomerPhone"
+    # Дополнительно читаем номер карты клиента для возможного будущего анализа.
+    # В текущую модель/таблицы это поле не сохраняется.
+    CARD_FIELD = "Delivery.CustomerCard"
     ORDER_AGG_FIELDS = ["DishSumInt"]
-    PHONE_FIELD_CANDIDATES = (
-        "ClientPhone",
-        "Phone",
-        "GuestPhone",
-        "Client.Phone",
-    )
 
     def __init__(self, *, client: IikoOlapClient) -> None:
         self.client = client
@@ -215,49 +214,23 @@ class OlapControlPullService:
         business_date_from: date,
         business_date_to: date,
     ) -> tuple[list[dict[str, Any]], str]:
-        last_error: Exception | None = None
-        for phone_field in self.PHONE_FIELD_CANDIDATES:
-            group_fields = [*self.ORDER_GROUP_FIELDS, phone_field]
-            payload = self.client.build_sales_payload_for_department_window(
-                date_from=business_date_from,
-                date_to=business_date_to,
-                department_ids=[department_id],
-                aggregate_fields=self.ORDER_AGG_FIELDS,
-                group_by_row_fields=group_fields,
-            )
-            try:
-                response = self.client.query_olap(payload)
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-                logger.warning(
-                    "OLAP control pull: поле телефона %s не сработало для department_id=%s: %s",
-                    phone_field,
-                    department_id,
-                    exc,
-                )
-                continue
-
-            data_rows = response.get("data")
-            if isinstance(data_rows, list):
-                return data_rows, phone_field
-            return [], phone_field
-
-        if last_error is not None:
-            raise last_error
-        raise RuntimeError("Не удалось выбрать поле телефона для OLAP control pull.")
+        group_fields = [*self.ORDER_GROUP_FIELDS, self.PHONE_FIELD, self.CARD_FIELD]
+        payload = self.client.build_sales_payload_for_department_window(
+            date_from=business_date_from,
+            date_to=business_date_to,
+            department_ids=[department_id],
+            aggregate_fields=self.ORDER_AGG_FIELDS,
+            group_by_row_fields=group_fields,
+        )
+        response = self.client.query_olap(payload)
+        data_rows = response.get("data")
+        if isinstance(data_rows, list):
+            return data_rows, self.PHONE_FIELD
+        return [], self.PHONE_FIELD
 
     @staticmethod
     def _extract_row_phone(*, payload: dict[str, Any], phone_field: str) -> str | None:
-        return _normalize_phone(
-            _row_value(
-                payload,
-                phone_field,
-                "ClientPhone",
-                "Phone",
-                "GuestPhone",
-                "Client.Phone",
-            )
-        )
+        return _normalize_phone(_row_value(payload, phone_field))
 
     @staticmethod
     def _build_journal_defaults(
