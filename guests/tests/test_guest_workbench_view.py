@@ -15,6 +15,9 @@ from guests.models import (
     Guest,
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantWindowMetrics,
+    Mailing,
+    MailingGuest,
+    MessageTemplate,
     OlapCategoryDict,
     OrderFact,
 )
@@ -28,6 +31,12 @@ class GuestsWorkbenchViewTests(TestCase):
     def setUp(self):
         self.guest_1 = Guest.objects.create(phone="+79990001111", first_name="Анна")
         self.guest_2 = Guest.objects.create(phone="+79990002222", first_name="Иван")
+        self.template = MessageTemplate.objects.create(
+            name="Тестовый шаблон",
+            message_text="Привет, {{first_name}}",
+            created_by="tests",
+            is_active=True,
+        )
         self.as_of_date = date(2026, 3, 23)
         self.department_id = "dep-1"
         self.focus_beer = self._create_focus_category("beer_ermolaev", "Пиво Ермолаевъ")
@@ -219,6 +228,35 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
         self.assertContains(response, 'data-segment-code="active_30d"')
         self.assertContains(response, 'data-focus-category-code="beer_ermolaev"')
+
+    def test_create_mailing_draft_from_workbench_selection(self):
+        """
+        Быстрое действие должно создавать черновик рассылки по отобранным гостям.
+        """
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+                "focus_category_code": "beer_ermolaev",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        self.assertEqual(mailing.template_id, self.template.id)
+        self.assertEqual(
+            response.url,
+            reverse("mailing_edit", kwargs={"pk": mailing.id}),
+        )
+
+        rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].guest_id, self.guest_1.id)
 
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """

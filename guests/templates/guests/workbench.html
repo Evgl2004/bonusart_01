@@ -360,6 +360,19 @@
         Показаны первые {{ payload.selected_guests.limit }} записей.
       {% endif %}
     </p>
+    <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_mailing_draft">
+      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+      <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+      <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+      <button type="submit" class="btn btn-outline-primary"
+              {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
+        Создать черновик рассылки по отбору
+      </button>
+    </form>
     <div class="wb-table-wrap">
       <table class="table table-sm align-middle mb-0">
         <thead>

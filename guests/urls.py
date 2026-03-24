@@ -19,6 +19,7 @@ from .views_analytics import AnalyticsDashboardView
 from .views_mailings_import import MailingImportPhonesView, MailingImportTemplateDownloadView
 from .views_mailings_logs import MailingLogsDownloadTxtView, MailingLogsView
 from .views_guest_workbench import GuestsWorkbenchView
+from .views_guest_workbench_actions import GuestsWorkbenchActionsView
 from .views_navigation import (
     FocusCategoriesWorkbenchView,
     ReportsWorkbenchView,
@@ -38,6 +39,7 @@ urlpatterns = [
 
     # Гости.
     path("guests/workbench/", GuestsWorkbenchView.as_view(), name="guests_workbench"),
+    path("guests/workbench/actions/", GuestsWorkbenchActionsView.as_view(), name="guests_workbench_actions"),
     path("guests/", GuestListView.as_view(), name="guests"),
     path("guests/<int:pk>/", GuestDetailView.as_view(), name="guest_detail"),
 
