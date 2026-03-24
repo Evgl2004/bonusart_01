@@ -319,7 +319,7 @@ class OlapControlPullServiceTests(TestCase):
             }
         )
         service = OlapControlPullService(client=client)
-        restored_guest = Guest.objects.create(phone="+79990004444")
+        restored_guest = Guest.objects.create(phone="+79990005555")
 
         with patch.object(
             service,

@@ -231,6 +231,7 @@ class OlapCheckSyncWorkerService:
             OlapCheckSyncJournal.objects.bulk_update(
                 list(changed_rows.values()),
                 fields=[
+                    "business_date",
                     "status",
                     "attempt_count",
                     "next_try_at",
