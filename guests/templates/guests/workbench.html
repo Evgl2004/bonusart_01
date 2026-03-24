@@ -158,12 +158,46 @@
       </div>
     </form>
 
-    <div class="d-flex flex-wrap gap-2">
+    <div class="d-flex flex-column gap-2">
       {% for preset in payload.filters.saved_presets %}
-        <a class="btn btn-sm btn-outline-primary"
-           href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}">
-          {{ preset.name }}
-        </a>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <a class="btn btn-sm btn-outline-primary"
+             href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}">
+            {{ preset.name }}
+          </a>
+          <span class="text-muted small">
+            {{ preset.department_name }} · {{ preset.segment_name }} · {{ preset.focus_category_name }}
+          </span>
+
+          <form method="post" action="{% url 'guests_workbench_actions' %}" class="d-flex gap-1">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="rename_filter_preset">
+            <input type="hidden" name="preset_id" value="{{ preset.id }}">
+            <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+            <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+            <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+            <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+            <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+            <input type="text" name="new_name" class="form-control form-control-sm"
+                   value="{{ preset.name }}" maxlength="120" style="min-width: 220px;">
+            <button type="submit" class="btn btn-sm btn-outline-secondary">Переименовать</button>
+          </form>
+
+          <form method="post" action="{% url 'guests_workbench_actions' %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="delete_filter_preset">
+            <input type="hidden" name="preset_id" value="{{ preset.id }}">
+            <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+            <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+            <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+            <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+            <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+            <button type="submit" class="btn btn-sm btn-outline-danger"
+                    onclick="return confirm('Удалить пресет {{ preset.name|escapejs }}?');">
+              Удалить
+            </button>
+          </form>
+        </div>
       {% empty %}
         <span class="text-muted small">Пока нет сохранённых пресетов.</span>
       {% endfor %}

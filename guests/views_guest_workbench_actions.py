@@ -42,6 +42,10 @@ class GuestsWorkbenchActionsView(View):
 
     def post(self, request, *args, **kwargs):
         action = (request.POST.get("action") or "").strip()
+        if action == "rename_filter_preset":
+            return self._rename_filter_preset(request)
+        if action == "delete_filter_preset":
+            return self._delete_filter_preset(request)
         if action == "save_filter_preset":
             return self._save_filter_preset(request)
         if action == "create_mailing_draft":
@@ -184,6 +188,59 @@ class GuestsWorkbenchActionsView(View):
             messages.success(request, f"Пресет «{preset.name}» сохранён.")
         else:
             messages.success(request, f"Пресет «{preset.name}» обновлён.")
+        return redirect(self._build_workbench_redirect_url(request))
+
+    def _rename_filter_preset(self, request):
+        """
+        Переименовывает пресет фильтра по его ID.
+        """
+        preset_id = request.POST.get("preset_id")
+        new_name = (request.POST.get("new_name") or "").strip()
+        if not preset_id:
+            messages.error(request, "Не указан ID пресета для переименования.")
+            return redirect(self._build_workbench_redirect_url(request))
+        if not new_name:
+            messages.error(request, "Укажите новое имя пресета.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        try:
+            preset = GuestWorkbenchFilterPreset.objects.get(pk=int(preset_id), is_active=True)
+        except (ValueError, GuestWorkbenchFilterPreset.DoesNotExist):
+            messages.error(request, "Пресет не найден.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        duplicate_exists = (
+            GuestWorkbenchFilterPreset.objects.filter(name=new_name, is_active=True)
+            .exclude(pk=preset.pk)
+            .exists()
+        )
+        if duplicate_exists:
+            messages.error(request, f"Пресет с именем «{new_name}» уже существует.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        preset.name = new_name
+        preset.save(update_fields=["name", "updated_at"])
+        messages.success(request, f"Пресет переименован: «{new_name}».")
+        return redirect(self._build_workbench_redirect_url(request))
+
+    def _delete_filter_preset(self, request):
+        """
+        Мягко удаляет пресет фильтра (деактивация).
+        """
+        preset_id = request.POST.get("preset_id")
+        if not preset_id:
+            messages.error(request, "Не указан ID пресета для удаления.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        try:
+            preset = GuestWorkbenchFilterPreset.objects.get(pk=int(preset_id), is_active=True)
+        except (ValueError, GuestWorkbenchFilterPreset.DoesNotExist):
+            messages.error(request, "Пресет не найден.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        preset.is_active = False
+        preset.save(update_fields=["is_active", "updated_at"])
+        messages.success(request, f"Пресет «{preset.name}» удалён.")
         return redirect(self._build_workbench_redirect_url(request))
 
     @staticmethod

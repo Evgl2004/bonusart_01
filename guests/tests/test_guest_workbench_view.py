@@ -286,6 +286,67 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(preset.segment_code, "cooling_30_60d")
         self.assertEqual(preset.focus_category_code, "wine")
 
+    def test_rename_filter_preset_from_workbench(self):
+        """
+        Действие rename_filter_preset должно менять имя активного пресета.
+        """
+        preset = GuestWorkbenchFilterPreset.objects.create(
+            name="Старое имя",
+            window_days=30,
+            department_id=self.department_id,
+            segment_code="active_30d",
+            focus_category_code="beer_ermolaev",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "rename_filter_preset",
+                "preset_id": preset.id,
+                "new_name": "Новое имя",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+                "focus_category_code": "beer_ermolaev",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        preset.refresh_from_db()
+        self.assertEqual(preset.name, "Новое имя")
+
+    def test_delete_filter_preset_from_workbench(self):
+        """
+        Действие delete_filter_preset должно деактивировать пресет.
+        """
+        preset = GuestWorkbenchFilterPreset.objects.create(
+            name="Удаляемый пресет",
+            window_days=30,
+            department_id=self.department_id,
+            segment_code="active_30d",
+            focus_category_code="beer_ermolaev",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "delete_filter_preset",
+                "preset_id": preset.id,
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+                "focus_category_code": "beer_ermolaev",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        preset.refresh_from_db()
+        self.assertFalse(preset.is_active)
+
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """
         Создаёт минимальный набор сущностей для активной фокусной категории.
