@@ -1,0 +1,306 @@
+{% extends "base.html" %}
+
+{% block title %}Гости: рабочий экран{% endblock %}
+
+{% block extra_css %}
+<style>
+  .wb-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    height: 100%;
+  }
+
+  .wb-card .card-body {
+    padding: 1rem 1.1rem;
+  }
+
+  .wb-kpi-title {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-bottom: 0.3rem;
+  }
+
+  .wb-kpi-value {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: #111827;
+  }
+
+  .wb-table-wrap {
+    max-height: 420px;
+    overflow: auto;
+  }
+
+  .wb-chart {
+    min-height: 360px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">Гости: рабочий экран</h1>
+    <div class="text-muted small">
+      Срез метрик по состоянию на {{ payload.filters.as_of_date|default:"—" }}
+    </div>
+  </div>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-4">
+  <div class="col-12 col-md-3">
+    <label class="form-label">Дата среза</label>
+    <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
+  </div>
+  <div class="col-12 col-md-3">
+    <label class="form-label">Окно (дней)</label>
+    <select name="window_days" class="form-select">
+      {% for item in payload.filters.window_options %}
+        <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-4">
+    <label class="form-label">Заведение</label>
+    <select name="department_id" class="form-select">
+      <option value="">Все заведения</option>
+      {% for dep in payload.filters.department_options %}
+        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-2">
+    <button type="submit" class="btn btn-primary w-100">Применить</button>
+  </div>
+</form>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Гостей</div>
+      <div class="wb-kpi-value">{{ payload.cards.guests_total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Заказов</div>
+      <div class="wb-kpi-value">{{ payload.cards.orders_total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Сумма (нетто)</div>
+      <div class="wb-kpi-value">{{ payload.cards.net_total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Средний рейтинг</div>
+      <div class="wb-kpi-value">{{ payload.cards.avg_rating }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Начислено бонусов</div>
+      <div class="wb-kpi-value">{{ payload.cards.bonus_in_total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Списано бонусов</div>
+      <div class="wb-kpi-value">{{ payload.cards.bonus_out_total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Активные 30д (2+ визита)</div>
+      <div class="wb-kpi-value">{{ payload.segments.active_30d }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="wb-card"><div class="card-body">
+      <div class="wb-kpi-title">Остывшие 30-60д</div>
+      <div class="wb-kpi-value">{{ payload.segments.cooling_30_60d }}</div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-xl-6">
+    <div class="wb-card">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Рейтинг гостей</h2>
+        <div class="wb-table-wrap">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Телефон</th>
+                <th>Заказов</th>
+                <th>Визитов</th>
+                <th>Сумма</th>
+                <th>Рейтинг</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in payload.top_rating %}
+                <tr>
+                  <td>{{ row.phone|default:"—" }}</td>
+                  <td>{{ row.orders_count }}</td>
+                  <td>{{ row.visits_count }}</td>
+                  <td>{{ row.sum_net }}</td>
+                  <td><strong>{{ row.rating_score }}</strong></td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-6">
+    <div class="wb-card">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Антирейтинг гостей</h2>
+        <div class="wb-table-wrap">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Телефон</th>
+                <th>Заказов</th>
+                <th>Визитов</th>
+                <th>Сумма</th>
+                <th>Рейтинг</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in payload.anti_rating %}
+                <tr>
+                  <td>{{ row.phone|default:"—" }}</td>
+                  <td>{{ row.orders_count }}</td>
+                  <td>{{ row.visits_count }}</td>
+                  <td>{{ row.sum_net }}</td>
+                  <td><strong>{{ row.rating_score }}</strong></td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="wb-card">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Рейтинг заведений (внутри сети)</h2>
+        <div class="wb-table-wrap">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Заведение</th>
+                <th>Гостей</th>
+                <th>Сумма</th>
+                <th>Средний рейтинг</th>
+                <th>Начислено</th>
+                <th>Списано</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in payload.department_competition %}
+                <tr>
+                  <td>{{ row.department_name }}</td>
+                  <td>{{ row.guests_count }}</td>
+                  <td>{{ row.net_total }}</td>
+                  <td>{{ row.avg_rating }}</td>
+                  <td>{{ row.bonus_in_total }}</td>
+                  <td>{{ row.bonus_out_total }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="6" class="text-muted">Нет данных</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wb-card">
+  <div class="card-body">
+    <h2 class="h6 mb-3">Визуализация гостей: частота × средний чек</h2>
+    <div id="guests-scatter" class="wb-chart"></div>
+  </div>
+</div>
+
+{{ payload|json_script:"guest-workbench-payload" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+  (function() {
+    const node = document.getElementById("guest-workbench-payload");
+    const chartNode = document.getElementById("guests-scatter");
+    if (!node || !chartNode) {
+      return;
+    }
+
+    const payload = JSON.parse(node.textContent || "{}");
+    const points = (payload.visualization && payload.visualization.scatter_points) || [];
+    const data = points.map(function(item) {
+      return [item.visits_count || 0, item.avg_check_net || 0, item.rating_score || 0, item.phone || ""];
+    });
+
+    const chart = echarts.init(chartNode);
+    chart.setOption({
+      tooltip: {
+        trigger: "item",
+        formatter: function(params) {
+          const value = params.value || [];
+          return [
+            "Телефон: " + (value[3] || "—"),
+            "Визитов: " + (value[0] || 0),
+            "Средний чек: " + (value[1] || 0),
+            "Рейтинг: " + (value[2] || 0)
+          ].join("<br>");
+        }
+      },
+      xAxis: {
+        name: "Визитов",
+        type: "value"
+      },
+      yAxis: {
+        name: "Средний чек",
+        type: "value"
+      },
+      series: [{
+        type: "scatter",
+        data: data,
+        symbolSize: function(value) {
+          const rating = value[2] || 0;
+          return Math.max(8, Math.min(28, 8 + rating / 10));
+        },
+        itemStyle: {
+          color: "#2563eb",
+          opacity: 0.8
+        }
+      }]
+    });
+
+    window.addEventListener("resize", function() {
+      chart.resize();
+    });
+  })();
+</script>
+{% endblock %}
+

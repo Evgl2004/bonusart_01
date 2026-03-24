@@ -18,6 +18,7 @@ from .views import (
 from .views_analytics import AnalyticsDashboardView
 from .views_mailings_import import MailingImportPhonesView, MailingImportTemplateDownloadView
 from .views_mailings_logs import MailingLogsDownloadTxtView, MailingLogsView
+from .views_guest_workbench import GuestsWorkbenchView
 from .views_navigation import (
     FocusCategoriesWorkbenchView,
     ReportsWorkbenchView,
@@ -36,6 +37,7 @@ urlpatterns = [
     path("reports/", ReportsWorkbenchView.as_view(), name="reports"),
 
     # Гости.
+    path("guests/workbench/", GuestsWorkbenchView.as_view(), name="guests_workbench"),
     path("guests/", GuestListView.as_view(), name="guests"),
     path("guests/<int:pk>/", GuestDetailView.as_view(), name="guest_detail"),
 
@@ -63,4 +65,3 @@ urlpatterns = [
     # Legacy URL дашборда (историческая ссылка).
     path("analytics/", AnalyticsDashboardView.as_view(), name="analytics_dashboard"),
 ]
-

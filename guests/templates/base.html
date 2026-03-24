@@ -104,8 +104,8 @@
         </a>
 
         <a
-          href="{% url 'guests' %}"
-          class="{% if current == 'home' or current == 'guests' or current == 'guest_detail' %}active{% endif %}"
+          href="{% url 'guests_workbench' %}"
+          class="{% if current == 'guests_workbench' or current == 'home' or current == 'guests' or current == 'guest_detail' %}active{% endif %}"
         >
           Гости
         </a>
@@ -142,6 +142,12 @@
               Legacy: Категории
             </a>
             <a
+              href="{% url 'guests' %}"
+              class="{% if current == 'guests' or current == 'home' %}active{% endif %}"
+            >
+              Legacy: Список гостей
+            </a>
+            <a
               href="{% url 'analytics_dashboard' %}"
               class="{% if current == 'analytics_dashboard' %}active{% endif %}"
             >
@@ -161,4 +167,3 @@
     {% block extra_js %}{% endblock %}
   </body>
 </html>
-

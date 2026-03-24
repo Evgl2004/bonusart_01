@@ -24,7 +24,7 @@ class NavigationMenuTests(TestCase):
         """
         Новые разделы должны отвечать со статусом 200.
         """
-        for route_name in ("dashboard", "segments", "focus_categories", "reports"):
+        for route_name in ("dashboard", "segments", "focus_categories", "reports", "guests_workbench"):
             response = self.client.get(reverse(route_name), secure=True)
             self.assertEqual(response.status_code, 200, msg=f"Route `{route_name}` is unavailable")
 
@@ -35,7 +35,7 @@ class NavigationMenuTests(TestCase):
         response = self.client.get(reverse("segments"), secure=True)
         self.assertEqual(response.status_code, 200)
 
-        for route_name in ("dashboard", "segments", "guests", "focus_categories", "mailings", "reports"):
+        for route_name in ("dashboard", "segments", "guests_workbench", "focus_categories", "mailings", "reports"):
             self.assertContains(response, f'href="{reverse(route_name)}"', html=False)
 
     def test_sidebar_hides_legacy_block_for_regular_user(self):
