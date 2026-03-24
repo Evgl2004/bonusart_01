@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="card shadow-sm border-0">
+    <div class="card-body p-4">
+      <h1 class="h4 mb-3">{{ page_title }}</h1>
+      <p class="text-muted mb-4">{{ page_description }}</p>
+
+      {% if page_next_steps %}
+        <h2 class="h6 text-uppercase text-secondary mb-3">Ближайшие доработки</h2>
+        <ul class="mb-0">
+          {% for step in page_next_steps %}
+            <li class="mb-2">{{ step }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}
+
