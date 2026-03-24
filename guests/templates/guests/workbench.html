@@ -82,11 +82,11 @@
 </div>
 
 <form method="get" class="row g-2 align-items-end mb-4">
-  <div class="col-12 col-md-3">
+  <div class="col-12 col-md-2">
     <label class="form-label">Дата среза</label>
     <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
   </div>
-  <div class="col-12 col-md-3">
+  <div class="col-12 col-md-2">
     <label class="form-label">Окно (дней)</label>
     <select name="window_days" class="form-select">
       {% for item in payload.filters.window_options %}
@@ -94,7 +94,7 @@
       {% endfor %}
     </select>
   </div>
-  <div class="col-12 col-md-4">
+  <div class="col-12 col-md-3">
     <label class="form-label">Заведение</label>
     <select name="department_id" class="form-select">
       <option value="">Все заведения</option>
@@ -104,6 +104,24 @@
     </select>
   </div>
   <div class="col-12 col-md-2">
+    <label class="form-label">Сегмент</label>
+    <select name="segment_code" class="form-select">
+      <option value="">Все сегменты</option>
+      {% for seg in payload.filters.segment_options %}
+        <option value="{{ seg.code }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-2">
+    <label class="form-label">Фокусная категория</label>
+    <select name="focus_category_code" class="form-select">
+      <option value="">Все категории</option>
+      {% for cat in payload.filters.focus_category_options %}
+        <option value="{{ cat.code }}" {% if cat.code == selected_focus_category_code %}selected{% endif %}>{{ cat.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-1">
     <button type="submit" class="btn btn-primary w-100">Применить</button>
   </div>
 </form>
@@ -311,6 +329,48 @@
           </table>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="wb-card mb-4">
+  <div class="card-body">
+    <h2 class="h6 mb-1">Гости по выбранным фильтрам</h2>
+    <p class="text-muted small mb-3">
+      Найдено: {{ payload.selected_guests.total }}.
+      {% if payload.selected_guests.is_truncated %}
+        Показаны первые {{ payload.selected_guests.limit }} записей.
+      {% endif %}
+    </p>
+    <div class="wb-table-wrap">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Телефон</th>
+            <th>Сегмент</th>
+            <th>Заказов</th>
+            <th>Визитов</th>
+            <th>Сумма (нетто)</th>
+            <th>Средний чек</th>
+            <th>Рейтинг</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payload.selected_guests.rows %}
+            <tr>
+              <td>{{ row.phone|default:"—" }}</td>
+              <td>{{ row.segment_name }}</td>
+              <td>{{ row.orders_count }}</td>
+              <td>{{ row.visits_count }}</td>
+              <td>{{ row.sum_net }}</td>
+              <td>{{ row.avg_check_net }}</td>
+              <td><strong>{{ row.rating_score }}</strong></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7" class="text-muted">Нет гостей под выбранные условия</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 </div>

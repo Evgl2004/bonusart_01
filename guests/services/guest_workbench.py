@@ -33,6 +33,8 @@ SEGMENT_DEFINITIONS = (
     ("cooling_30_60d", "Остывшие 30-60д"),
     ("lost_60d_plus", "Потерянные 60+д"),
 )
+SEGMENT_NAMES_MAP = dict(SEGMENT_DEFINITIONS)
+SELECTED_GUESTS_LIMIT = 200
 
 
 def normalize_window_days(raw_value: int | str | None) -> int:
@@ -48,17 +50,29 @@ def normalize_window_days(raw_value: int | str | None) -> int:
     return value
 
 
+def normalize_segment_code(raw_value: str | None) -> str:
+    """
+    Нормализует код сегмента из UI-фильтра.
+    """
+    value = (raw_value or "").strip()
+    return value if value in SEGMENT_NAMES_MAP else ""
+
+
 def build_guest_workbench_payload(
     *,
     as_of_date: date | None = None,
     window_days: int | str | None = None,
     department_id: str | None = None,
+    segment_code: str | None = None,
+    focus_category_code: str | None = None,
 ) -> dict[str, Any]:
     """
     Формирует payload для страницы `guests/workbench`.
     """
     selected_window_days = normalize_window_days(window_days)
     selected_department_id = (department_id or "").strip()
+    selected_segment_code = normalize_segment_code(segment_code)
+    selected_focus_category_code_raw = (focus_category_code or "").strip()
 
     target_as_of = as_of_date
     if target_as_of is None:
@@ -71,6 +85,8 @@ def build_guest_workbench_payload(
             as_of_date=None,
             selected_window_days=selected_window_days,
             selected_department_id=selected_department_id,
+            selected_segment_code=selected_segment_code,
+            selected_focus_category_code=selected_focus_category_code_raw,
         )
 
     base_scope = GuestRestaurantWindowMetrics.objects.filter(as_of_date=target_as_of)
@@ -122,12 +138,32 @@ def build_guest_workbench_payload(
     ]
 
     segmentation, segment_by_key = _build_segmentation_state(base_scope)
-    segment_focus_matrix = _build_segment_focus_matrix(
+    segment_focus_matrix, focus_guest_keys_by_code = _build_segment_focus_matrix(
         as_of_date=target_as_of,
         selected_window_days=selected_window_days,
         selected_department_id=selected_department_id,
         segment_by_key=segment_by_key,
         segment_totals=segmentation,
+    )
+    focus_category_options = [
+        {
+            "code": (col.get("focus_category_code") or "").strip(),
+            "name": (col.get("focus_category_name") or "").strip(),
+        }
+        for col in segment_focus_matrix.get("columns", [])
+        if (col.get("focus_category_code") or "").strip()
+    ]
+    focus_codes = {item["code"] for item in focus_category_options}
+    selected_focus_category_code = (
+        selected_focus_category_code_raw if selected_focus_category_code_raw in focus_codes else ""
+    )
+    selected_guests = _build_selected_guests_rows(
+        work_scope=work_scope,
+        segment_by_key=segment_by_key,
+        focus_guest_keys_by_code=focus_guest_keys_by_code,
+        segment_code=selected_segment_code,
+        focus_category_code=selected_focus_category_code,
+        limit=SELECTED_GUESTS_LIMIT,
     )
     scatter_points = _build_scatter_points(work_scope)
 
@@ -138,6 +174,10 @@ def build_guest_workbench_payload(
             "window_options": list(WINDOW_OPTIONS),
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
+            "segment_code": selected_segment_code,
+            "segment_options": _build_segment_options(),
+            "focus_category_code": selected_focus_category_code,
+            "focus_category_options": focus_category_options,
         },
         "cards": {
             "guests_total": int(cards_agg["guests_total"] or 0),
@@ -152,6 +192,7 @@ def build_guest_workbench_payload(
         "segment_focus_matrix": segment_focus_matrix,
         "top_rating": [_serialize_metric_row(row) for row in top_rating_rows],
         "anti_rating": [_serialize_metric_row(row) for row in anti_rating_rows],
+        "selected_guests": selected_guests,
         "department_competition": department_competition,
         "visualization": {
             "scatter_points": scatter_points,
@@ -164,6 +205,8 @@ def _build_empty_payload(
     as_of_date: date | None,
     selected_window_days: int,
     selected_department_id: str,
+    selected_segment_code: str,
+    selected_focus_category_code: str,
 ) -> dict[str, Any]:
     """
     Строит пустой payload, если оконных данных еще нет.
@@ -175,6 +218,10 @@ def _build_empty_payload(
             "window_options": list(WINDOW_OPTIONS),
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
+            "segment_code": selected_segment_code,
+            "segment_options": _build_segment_options(),
+            "focus_category_code": selected_focus_category_code,
+            "focus_category_options": [],
         },
         "cards": {
             "guests_total": 0,
@@ -206,6 +253,12 @@ def _build_empty_payload(
         },
         "top_rating": [],
         "anti_rating": [],
+        "selected_guests": {
+            "total": 0,
+            "limit": SELECTED_GUESTS_LIMIT,
+            "is_truncated": False,
+            "rows": [],
+        },
         "department_competition": [],
         "visualization": {"scatter_points": []},
     }
@@ -229,6 +282,13 @@ def _build_department_options() -> list[dict[str, str]]:
         dep_name = (row.get("department_name") or "").strip() or dep_id
         result.append({"id": dep_id, "name": dep_name})
     return result
+
+
+def _build_segment_options() -> list[dict[str, str]]:
+    """
+    Формирует справочник сегментов для фильтра на экране workbench.
+    """
+    return [{"code": code, "name": name} for code, name in SEGMENT_DEFINITIONS]
 
 
 def _load_department_names() -> dict[str, str]:
@@ -308,7 +368,7 @@ def _build_segment_focus_matrix(
     selected_department_id: str,
     segment_by_key: dict[tuple[int, str], str],
     segment_totals: dict[str, int],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, set[tuple[int, str]]]]:
     """
     Формирует матрицу «Сегменты × фокусные категории» для наглядного покрытия.
 
@@ -323,19 +383,22 @@ def _build_segment_focus_matrix(
         .order_by("name", "id")
     )
     if not focus_rows:
-        return {
-            "rows": [
-                {
-                    "segment_code": code,
-                    "segment_name": name,
-                    "guests_total": int(segment_totals.get(code, 0)),
-                    "cells": [],
-                }
-                for code, name in SEGMENT_DEFINITIONS
-            ],
-            "columns": [],
-            "heatmap": {"max_value": 0, "items": []},
-        }
+        return (
+            {
+                "rows": [
+                    {
+                        "segment_code": code,
+                        "segment_name": name,
+                        "guests_total": int(segment_totals.get(code, 0)),
+                        "cells": [],
+                    }
+                    for code, name in SEGMENT_DEFINITIONS
+                ],
+                "columns": [],
+                "heatmap": {"max_value": 0, "items": []},
+            },
+            {},
+        )
 
     focus_ids = [int(row["id"]) for row in focus_rows]
     range_start = as_of_date - timedelta(days=max(selected_window_days, 1) - 1)
@@ -363,12 +426,15 @@ def _build_segment_focus_matrix(
         category_sets[focus_id].add(guest_key)
 
     columns: list[dict[str, Any]] = []
+    focus_code_by_id: dict[int, str] = {}
     for row in focus_rows:
         focus_id = int(row["id"])
+        focus_code = (row.get("code") or "").strip()
+        focus_code_by_id[focus_id] = focus_code
         columns.append(
             {
                 "focus_category_id": focus_id,
-                "focus_category_code": (row.get("code") or "").strip(),
+                "focus_category_code": focus_code,
                 "focus_category_name": (row.get("name") or "").strip() or f"Категория {focus_id}",
                 "guests_total": len(category_sets.get(focus_id, set())),
             }
@@ -413,11 +479,20 @@ def _build_segment_focus_matrix(
             }
         )
 
-    return {
-        "rows": rows,
-        "columns": columns,
-        "heatmap": {"max_value": max_value, "items": heatmap_items},
-    }
+    focus_guest_keys_by_code: dict[str, set[tuple[int, str]]] = {}
+    for focus_id, guest_keys in category_sets.items():
+        code = focus_code_by_id.get(focus_id, "")
+        if code:
+            focus_guest_keys_by_code[code] = guest_keys
+
+    return (
+        {
+            "rows": rows,
+            "columns": columns,
+            "heatmap": {"max_value": max_value, "items": heatmap_items},
+        },
+        focus_guest_keys_by_code,
+    )
 
 
 def _build_scatter_points(scope_qs) -> list[dict[str, Any]]:
@@ -437,6 +512,46 @@ def _build_scatter_points(scope_qs) -> list[dict[str, Any]]:
             }
         )
     return points
+
+
+def _build_selected_guests_rows(
+    *,
+    work_scope,
+    segment_by_key: dict[tuple[int, str], str],
+    focus_guest_keys_by_code: dict[str, set[tuple[int, str]]],
+    segment_code: str,
+    focus_category_code: str,
+    limit: int,
+) -> dict[str, Any]:
+    """
+    Строит список гостей для выбранных фильтров сегмента и фокусной категории.
+    """
+    rows: list[dict[str, Any]] = []
+    total = 0
+    focus_keys = focus_guest_keys_by_code.get(focus_category_code, set()) if focus_category_code else None
+
+    for row in work_scope.order_by("-rating_score", "-sum_net", "guest_id"):
+        key = (int(row.guest_id), _normalize_department_id(row.department_id))
+        row_segment_code = segment_by_key.get(key, "")
+
+        if segment_code and row_segment_code != segment_code:
+            continue
+        if focus_keys is not None and key not in focus_keys:
+            continue
+
+        total += 1
+        if len(rows) < limit:
+            item = _serialize_metric_row(row)
+            item["segment_code"] = row_segment_code
+            item["segment_name"] = SEGMENT_NAMES_MAP.get(row_segment_code, "Вне сегмента")
+            rows.append(item)
+
+    return {
+        "total": total,
+        "limit": limit,
+        "is_truncated": total > limit,
+        "rows": rows,
+    }
 
 
 def _serialize_metric_row(row: GuestRestaurantWindowMetrics) -> dict[str, Any]:

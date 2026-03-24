@@ -178,6 +178,7 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["segments"]["active_30d"], 1)
         self.assertEqual(payload["segments"]["cooling_30_60d"], 1)
         self.assertEqual(payload["cards"]["guests_total"], 2)
+        self.assertEqual(payload["selected_guests"]["total"], 2)
 
         matrix = payload["segment_focus_matrix"]
         col_index = {col["focus_category_code"]: idx for idx, col in enumerate(matrix["columns"])}
@@ -192,6 +193,30 @@ class GuestsWorkbenchViewTests(TestCase):
         cooling_wine_cell = row_index["cooling_30_60d"]["cells"][col_index["wine"]]
         self.assertEqual(active_beer_cell["guests_count"], 1)
         self.assertEqual(cooling_wine_cell["guests_count"], 1)
+
+    def test_workbench_filters_by_segment_and_focus_category(self):
+        """
+        Фильтр по сегменту и фокусной категории должен возвращать целевого гостя.
+        """
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+                "focus_category_code": "beer_ermolaev",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["segment_code"], "active_30d")
+        self.assertEqual(payload["filters"]["focus_category_code"], "beer_ermolaev")
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(len(payload["selected_guests"]["rows"]), 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
 
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """

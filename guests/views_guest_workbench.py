@@ -27,6 +27,8 @@ class GuestsWorkbenchView(TemplateView):
         raw_as_of_date = (self.request.GET.get("as_of_date") or "").strip()
         raw_window_days = self.request.GET.get("window_days")
         selected_department_id = (self.request.GET.get("department_id") or "").strip()
+        selected_segment_code = (self.request.GET.get("segment_code") or "").strip()
+        selected_focus_category_code = (self.request.GET.get("focus_category_code") or "").strip()
 
         as_of_value = _parse_iso_date(raw_as_of_date)
         selected_window_days = normalize_window_days(raw_window_days)
@@ -35,12 +37,16 @@ class GuestsWorkbenchView(TemplateView):
             as_of_date=as_of_value,
             window_days=selected_window_days,
             department_id=selected_department_id,
+            segment_code=selected_segment_code,
+            focus_category_code=selected_focus_category_code,
         )
 
         context["payload"] = payload
         context["selected_as_of_date"] = payload["filters"]["as_of_date"]
         context["selected_window_days"] = payload["filters"]["window_days"]
         context["selected_department_id"] = payload["filters"]["department_id"]
+        context["selected_segment_code"] = payload["filters"]["segment_code"]
+        context["selected_focus_category_code"] = payload["filters"]["focus_category_code"]
         return context
 
 
@@ -54,4 +60,3 @@ def _parse_iso_date(raw_value: str) -> date | None:
         return date.fromisoformat(raw_value)
     except ValueError:
         return None
-
