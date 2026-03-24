@@ -423,7 +423,8 @@ def run_olap_control_pull_scheduled_task() -> int:
         logger.info(
             (
                 "OLAP control pull (schedule): range=%s..%s departments=%s failed=%s rows=%s orders=%s "
-                "would_create=%s created=%s duplicates=%s skipped_invalid=%s skipped_blacklist=%s dry_run=%s"
+                "would_create=%s created=%s duplicates=%s skipped_invalid=%s skipped_deleted=%s "
+                "skipped_blacklist=%s dry_run=%s"
             ),
             date_from.isoformat(),
             date_to.isoformat(),
@@ -435,6 +436,7 @@ def run_olap_control_pull_scheduled_task() -> int:
             stats.created_journal_rows,
             stats.duplicate_journal_rows,
             stats.skipped_invalid_rows,
+            stats.olap_rows_deleted_with_writeoff,
             stats.olap_rows_blacklisted_phone,
             dry_run,
         )

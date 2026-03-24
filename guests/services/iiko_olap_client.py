@@ -259,7 +259,7 @@ class IikoOlapClient:
         if not normalized_orders:
             raise ValueError("order_numbers пустой, нечего запрашивать в OLAP.")
 
-        agg_fields = list(aggregate_fields or ["DishSumInt", "UniqOrderId"])
+        agg_fields = list(aggregate_fields or ["DishSumInt", "DishDiscountSumInt", "UniqOrderId"])
         group_fields = list(
             group_by_row_fields
             or [
@@ -279,6 +279,7 @@ class IikoOlapClient:
                 "DishCategory",
                 "DishGroup.Id",
                 "DishGroup",
+                "DeletedWithWriteoff",
                 "CouponInfo.Series",
                 "CouponInfo.Number",
             ]
@@ -342,6 +343,7 @@ class IikoOlapClient:
                 "Department.Id",
                 "Department.Code",
                 "RestorauntGroup.Id",
+                "DeletedWithWriteoff",
             ]
         )
 

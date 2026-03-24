@@ -168,6 +168,22 @@ class IikoOlapClientTests(SimpleTestCase):
         self.assertEqual(stats.failed_order_number_portions, [[12, 13]])
         self.assertEqual(len(rows), 1)
 
+    def test_build_sales_payload_includes_discount_and_deleted_defaults(self):
+        """
+        Базовый payload для SALES должен запрашивать сумму после скидки и признак удаления строки.
+        """
+        session = Mock()
+        client = self._build_client(session=session)
+
+        payload = client.build_sales_payload(
+            date_from="2026-03-18",
+            date_to="2026-03-18",
+            order_numbers=[1],
+        )
+
+        self.assertIn("DishDiscountSumInt", payload["aggregateFields"])
+        self.assertIn("DeletedWithWriteoff", payload["groupByRowFields"])
+
     def test_build_sales_payload_for_department_window_has_no_order_filter(self):
         """
         Контрольный payload по Department.Id не должен содержать фильтр OrderNum.
@@ -185,3 +201,4 @@ class IikoOlapClientTests(SimpleTestCase):
         self.assertIn("Department.Id", payload["filters"])
         self.assertNotIn("OrderNum", payload["filters"])
         self.assertEqual(payload["filters"]["Department.Id"]["values"], ["dept-1"])
+        self.assertIn("DeletedWithWriteoff", payload["groupByRowFields"])

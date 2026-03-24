@@ -116,6 +116,7 @@ class OlapControlPullServiceTests(TestCase):
         group_fields = client.payloads[0]["group_by_row_fields"]
         self.assertIn("Delivery.CustomerPhone", group_fields)
         self.assertIn("Delivery.CustomerCardNumber", group_fields)
+        self.assertIn("DeletedWithWriteoff", group_fields)
 
     def test_run_cycle_write_is_idempotent_for_same_rows(self):
         client = _FakeOlapClient(
@@ -260,6 +261,46 @@ class OlapControlPullServiceTests(TestCase):
         self.assertEqual(stats.olap_rows_with_phone, 2)
         self.assertEqual(stats.olap_rows_blacklisted_phone, 1)
         self.assertEqual(stats.olap_rows_phone_without_guest, 0)
+        self.assertEqual(stats.would_create_journal_rows, 1)
+
+    def test_run_cycle_skips_deleted_with_writeoff_rows(self):
+        client = _FakeOlapClient(
+            rows_by_department={
+                "dept-1": [
+                    {
+                        "OpenDate.Typed": "2026-01-04",
+                        "OrderNum": 4101,
+                        "UniqOrderId.Id": "u-4101",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "DeletedWithWriteoff": "DELETED_WITHOUT_WRITEOFF",
+                        "Delivery.CustomerPhone": "+79990000001",
+                    },
+                    {
+                        "OpenDate.Typed": "2026-01-04",
+                        "OrderNum": 4102,
+                        "UniqOrderId.Id": "u-4102",
+                        "Department.Id": "dept-1",
+                        "Department.Code": "D1",
+                        "DeletedWithWriteoff": "NOT_DELETED",
+                        "Delivery.CustomerPhone": "+79990000001",
+                    },
+                ]
+            }
+        )
+        service = OlapControlPullService(client=client)
+
+        stats = service.run_cycle(
+            options=OlapControlPullOptions(
+                business_date_from=date(2026, 1, 4),
+                business_date_to=date(2026, 1, 4),
+                dry_run=True,
+            )
+        )
+
+        self.assertEqual(stats.olap_rows_seen, 2)
+        self.assertEqual(stats.olap_rows_deleted_with_writeoff, 1)
+        self.assertEqual(stats.olap_rows_with_phone, 1)
         self.assertEqual(stats.would_create_journal_rows, 1)
 
     def test_run_cycle_recovers_unknown_guest_by_phone(self):

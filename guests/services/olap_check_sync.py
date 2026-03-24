@@ -28,6 +28,9 @@ from guests.services.iiko_olap_client import IikoOlapClient, IikoOlapError
 
 logger = logging.getLogger(__name__)
 
+DELETED_WITH_WRITEOFF_FIELD = "DeletedWithWriteoff"
+DELETED_WITH_WRITEOFF_NOT_DELETED = "NOT_DELETED"
+
 
 @dataclass
 class OlapSyncIterationStats:
@@ -94,6 +97,19 @@ def _row_value(row: dict[str, Any], *keys: str) -> Any:
         if key in row:
             return row.get(key)
     return None
+
+
+def _is_deleted_with_writeoff_row(row: dict[str, Any]) -> bool:
+    """
+    Возвращает True, если строка OLAP помечена как удалённая.
+
+    В iiko OLAP рабочие (видимые в пользовательском отчёте) позиции идут с
+    `DeletedWithWriteoff=NOT_DELETED`. Остальные статусы не должны попадать в raw.
+    """
+    status = _normalize_text(_row_value(row, DELETED_WITH_WRITEOFF_FIELD))
+    if status is None:
+        return False
+    return status != DELETED_WITH_WRITEOFF_NOT_DELETED
 
 
 def _to_local_date(value: datetime | None) -> date | None:
@@ -450,6 +466,25 @@ class OlapCheckSyncWorkerService:
                     owner_row=row,
                     payload_rows=selected_payloads,
                 )
+                if not mapped_raw_lines:
+                    self._mark_retry_or_terminal(
+                        row=row,
+                        now=now,
+                        error_text=(
+                            f"Чек {order_number}: все найденные строки OLAP помечены как удалённые "
+                            f"({DELETED_WITH_WRITEOFF_FIELD}!={DELETED_WITH_WRITEOFF_NOT_DELETED})."
+                        ),
+                        not_found=True,
+                    )
+                    changed_rows[row.id] = row
+                    if row.status == OlapCheckSyncJournal.Status.RETRY:
+                        stats.retry_rows += 1
+                    elif row.status == OlapCheckSyncJournal.Status.SKIPPED:
+                        stats.skipped_rows += 1
+                    else:
+                        stats.failed_rows += 1
+                    continue
+
                 raw_lines_to_create.extend(mapped_raw_lines)
                 stats.raw_rows_planned += len(mapped_raw_lines)
 
@@ -524,6 +559,9 @@ class OlapCheckSyncWorkerService:
         default_business_date = owner_row.business_date or timezone.localdate()
 
         for payload in payload_rows:
+            if _is_deleted_with_writeoff_row(payload):
+                continue
+
             business_day = _to_date(_row_value(payload, "OpenDate.Typed")) or default_business_date
             order_number = _to_int(_row_value(payload, "OrderNum")) or int(owner_row.order_number or 0)
             uniq_order_id = _normalize_text(_row_value(payload, "UniqOrderId.Id", "UniqOrderId"))
@@ -547,8 +585,19 @@ class OlapCheckSyncWorkerService:
             restoraunt_group_name = _normalize_text(_row_value(payload, "RestorauntGroup"))
 
             dish_amount = _to_decimal(_row_value(payload, "DishAmountInt", "DishAmount"))
-            dish_sum_int = _to_decimal(_row_value(payload, "DishSumInt"))
-            discount_sum = _to_decimal(_row_value(payload, "DishDiscountSumInt", "DiscountSumInt"))
+            dish_sum_before_discount = _to_decimal(_row_value(payload, "DishSumInt"))
+            dish_sum_after_discount = _to_decimal(
+                _row_value(payload, "DishDiscountSumInt", "DishSumAfterDiscountInt")
+            )
+            if dish_sum_after_discount is None:
+                dish_sum_after_discount = dish_sum_before_discount
+
+            explicit_discount_sum = _to_decimal(_row_value(payload, "DiscountSumInt"))
+            discount_sum = None
+            if dish_sum_before_discount is not None and dish_sum_after_discount is not None:
+                discount_sum = dish_sum_before_discount - dish_sum_after_discount
+            elif explicit_discount_sum is not None:
+                discount_sum = explicit_discount_sum
             bonus_sum = _to_decimal(_row_value(payload, "PayedByBonus", "PayedByBonuses"))
 
             coupon_series = _normalize_text(_row_value(payload, "CouponInfo.Series"))
@@ -566,7 +615,16 @@ class OlapCheckSyncWorkerService:
                 "RestaurantSectionId": restaurant_section_id,
                 "RestorauntGroupId": restoraunt_group_id,
                 "DishAmount": str(dish_amount) if dish_amount is not None else None,
-                "DishSumInt": str(dish_sum_int) if dish_sum_int is not None else None,
+                "DishSumBeforeDiscount": (
+                    str(dish_sum_before_discount)
+                    if dish_sum_before_discount is not None
+                    else None
+                ),
+                "DishSumAfterDiscount": (
+                    str(dish_sum_after_discount)
+                    if dish_sum_after_discount is not None
+                    else None
+                ),
                 "DiscountSum": str(discount_sum) if discount_sum is not None else None,
                 "BonusSum": str(bonus_sum) if bonus_sum is not None else None,
                 "CouponSeries": coupon_series,
@@ -600,8 +658,8 @@ class OlapCheckSyncWorkerService:
                     dish_group_id=dish_group_id,
                     dish_group_name=dish_group_name,
                     dish_amount=dish_amount,
-                    dish_sum_before_discount=dish_sum_int,
-                    dish_sum_after_discount=dish_sum_int,
+                    dish_sum_before_discount=dish_sum_before_discount,
+                    dish_sum_after_discount=dish_sum_after_discount,
                     discount_sum=discount_sum,
                     bonus_sum=bonus_sum,
                     coupon_series=coupon_series,

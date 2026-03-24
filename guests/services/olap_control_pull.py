@@ -48,6 +48,7 @@ class OlapControlPullStats:
     olap_rows_seen: int = 0
     olap_rows_with_phone: int = 0
     olap_rows_without_phone: int = 0
+    olap_rows_deleted_with_writeoff: int = 0
     olap_rows_blacklisted_phone: int = 0
     olap_rows_phone_without_guest: int = 0
     distinct_order_keys_seen: int = 0
@@ -172,7 +173,10 @@ class OlapControlPullService:
         "Department.Id",
         "Department.Code",
         "RestorauntGroup.Id",
+        "DeletedWithWriteoff",
     ]
+    DELETED_WITH_WRITEOFF_FIELD = "DeletedWithWriteoff"
+    DELETED_WITH_WRITEOFF_NOT_DELETED = "NOT_DELETED"
     # Берем идентификацию гостя по телефону клиента из доставки.
     PHONE_FIELD = "Delivery.CustomerPhone"
     # Техполе карты клиента из OLAP (для диагностики/будущего использования).
@@ -249,6 +253,13 @@ class OlapControlPullService:
     @staticmethod
     def _extract_row_phone(*, payload: dict[str, Any], phone_field: str) -> str | None:
         return _normalize_phone(_row_value(payload, phone_field))
+
+    @classmethod
+    def _is_deleted_with_writeoff_row(cls, *, payload: dict[str, Any]) -> bool:
+        status = _normalize_text(_row_value(payload, cls.DELETED_WITH_WRITEOFF_FIELD))
+        if status is None:
+            return False
+        return status != cls.DELETED_WITH_WRITEOFF_NOT_DELETED
 
     def _get_or_create_guest_id_by_phone(self, normalized_phone: str) -> int | None:
         """
@@ -363,6 +374,10 @@ class OlapControlPullService:
 
                 if order_number is None or business_day is None or not row_department_id:
                     stats.skipped_invalid_rows += 1
+                    continue
+
+                if self._is_deleted_with_writeoff_row(payload=payload):
+                    stats.olap_rows_deleted_with_writeoff += 1
                     continue
 
                 normalized_phone = self._extract_row_phone(

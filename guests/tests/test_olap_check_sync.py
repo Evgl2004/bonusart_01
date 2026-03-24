@@ -119,6 +119,8 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
                     "DishGroup.Id": "grp-1",
                     "DishGroup": "Комплексы",
                     "DishSumInt": 490,
+                    "DishDiscountSumInt": 450,
+                    "DeletedWithWriteoff": "NOT_DELETED",
                     "CouponInfo.Series": None,
                     "CouponInfo.Number": None,
                 }
@@ -141,11 +143,58 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
         raw_line = OlapSalesRawLine.objects.get(sync_journal=row)
         self.assertEqual(raw_line.order_number, 698698)
         self.assertEqual(raw_line.dish_code, "54768")
+        self.assertEqual(raw_line.dish_sum_before_discount, 490)
+        self.assertEqual(raw_line.dish_sum_after_discount, 450)
+        self.assertEqual(raw_line.discount_sum, 40)
         self.assertEqual(raw_line.dish_category_name, "Бизнес-ланч")
 
         self.assertEqual(stats.claimed_rows, 1)
         self.assertEqual(stats.loaded_rows, 1)
         self.assertEqual(stats.raw_rows_created, 1)
+
+    def test_run_iteration_skips_deleted_rows_and_sets_retry_when_no_active_lines(self):
+        """
+        Если по чеку пришли только удалённые строки OLAP (DeletedWithWriteoff!=NOT_DELETED),
+        raw не пишется, а задача переводится в retry/skipped по общим правилам ретрая.
+        """
+        row = self._create_journal_row(
+            key="deleted-only-1",
+            order_number=798001,
+            business_day=date(2026, 3, 18),
+        )
+        fake_client = _FakeOlapClient(
+            rows=[
+                {
+                    "OpenDate.Typed": "2026-03-18",
+                    "OrderNum": 798001,
+                    "Department.Id": "dept-1",
+                    "UniqOrderId.Id": "order-uuid-deleted-only",
+                    "ItemSaleEvent.Id": "event-deleted-only",
+                    "DishCode": "deleted-1",
+                    "DishName": "Deleted line",
+                    "DishSumInt": 100,
+                    "DishDiscountSumInt": 0,
+                    "DeletedWithWriteoff": "DELETED_WITHOUT_WRITEOFF",
+                }
+            ]
+        )
+
+        service = OlapCheckSyncWorkerService(
+            client=fake_client,
+            claim_limit=20,
+            portion_size=10,
+            max_attempts=3,
+            retry_base_seconds=1,
+        )
+        stats = service.run_iteration()
+
+        row.refresh_from_db()
+        self.assertEqual(row.status, OlapCheckSyncJournal.Status.RETRY)
+        self.assertEqual(row.attempt_count, 1)
+        self.assertIn("DeletedWithWriteoff", row.last_error or "")
+        self.assertEqual(OlapSalesRawLine.objects.filter(sync_journal=row).count(), 0)
+        self.assertEqual(stats.loaded_rows, 0)
+        self.assertEqual(stats.retry_rows, 1)
 
     def test_run_iteration_uses_strict_plus_minus_one_window_for_date_shifted_order(self):
         """

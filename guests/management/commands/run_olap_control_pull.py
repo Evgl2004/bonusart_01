@@ -158,7 +158,8 @@ class Command(BaseCommand):
             (
                 "[control_pull] departments={departments} failed_departments={failed_departments} "
                 "olap_rows={rows} with_phone={with_phone} without_phone={without_phone} "
-                "skipped_blacklist={skipped_blacklist} unknown_guest_phone={unknown_guest_phone} phone_fields={phone_fields} "
+                "skipped_deleted={skipped_deleted} skipped_blacklist={skipped_blacklist} "
+                "unknown_guest_phone={unknown_guest_phone} phone_fields={phone_fields} "
                 "distinct_orders={orders} skipped_invalid={skipped} "
                 "would_create={would_create} created={created} duplicates={duplicates}"
             ).format(
@@ -167,6 +168,7 @@ class Command(BaseCommand):
                 rows=stats.olap_rows_seen,
                 with_phone=stats.olap_rows_with_phone,
                 without_phone=stats.olap_rows_without_phone,
+                skipped_deleted=stats.olap_rows_deleted_with_writeoff,
                 skipped_blacklist=stats.olap_rows_blacklisted_phone,
                 unknown_guest_phone=stats.olap_rows_phone_without_guest,
                 phone_fields=",".join(sorted(stats.phone_fields_used)) if stats.phone_fields_used else "-",
