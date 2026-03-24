@@ -17,8 +17,19 @@ from django.urls import reverse
 from django.utils import timezone
 from django.views import View
 
-from guests.models import Guest, Mailing, MailingGuest, MessageTemplate
-from guests.services.guest_workbench import build_guest_workbench_payload
+from guests.models import (
+    FocusCategory,
+    Guest,
+    GuestWorkbenchFilterPreset,
+    Mailing,
+    MailingGuest,
+    MessageTemplate,
+)
+from guests.services.guest_workbench import (
+    build_guest_workbench_payload,
+    normalize_segment_code,
+    normalize_window_days,
+)
 from guests.services.template_render import render_message_for_guest
 
 
@@ -31,6 +42,8 @@ class GuestsWorkbenchActionsView(View):
 
     def post(self, request, *args, **kwargs):
         action = (request.POST.get("action") or "").strip()
+        if action == "save_filter_preset":
+            return self._save_filter_preset(request)
         if action == "create_mailing_draft":
             return self._create_mailing_draft(request)
 
@@ -137,6 +150,42 @@ class GuestsWorkbenchActionsView(View):
         )
         return redirect(reverse("mailing_edit", kwargs={"pk": mailing.id}))
 
+    def _save_filter_preset(self, request):
+        """
+        Сохраняет или обновляет пресет текущих фильтров workbench.
+        """
+        preset_name = (request.POST.get("preset_name") or "").strip()
+        if not preset_name:
+            messages.error(request, "Укажите имя пресета перед сохранением.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        window_days = normalize_window_days((request.POST.get("window_days") or "").strip())
+        department_id = (request.POST.get("department_id") or "").strip()
+        segment_code = normalize_segment_code((request.POST.get("segment_code") or "").strip())
+
+        focus_category_code = (request.POST.get("focus_category_code") or "").strip()
+        if focus_category_code and not FocusCategory.objects.filter(
+            code=focus_category_code, is_enabled=True
+        ).exists():
+            focus_category_code = ""
+
+        preset, created = GuestWorkbenchFilterPreset.objects.update_or_create(
+            name=preset_name,
+            defaults={
+                "window_days": window_days,
+                "department_id": department_id,
+                "segment_code": segment_code,
+                "focus_category_code": focus_category_code,
+                "is_active": True,
+            },
+        )
+
+        if created:
+            messages.success(request, f"Пресет «{preset.name}» сохранён.")
+        else:
+            messages.success(request, f"Пресет «{preset.name}» обновлён.")
+        return redirect(self._build_workbench_redirect_url(request))
+
     @staticmethod
     def _extract_filters(request) -> dict[str, object]:
         """
@@ -196,4 +245,3 @@ def _build_mailing_name(payload: dict) -> str:
         "Черновик из workbench: "
         f"as_of={as_of_date}; window={window_days}; segment={segment_code}; focus={focus_category_code}"
     )[:150]
-

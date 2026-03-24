@@ -915,6 +915,71 @@ class GuestRestaurantWindowMetrics(models.Model):
         )
 
 
+class GuestWorkbenchFilterPreset(models.Model):
+    """
+    Сохранённый пресет фильтров рабочего экрана гостей (workbench).
+
+    Используется для быстрых повторных отборов маркетолога без ручного
+    заполнения формы фильтров.
+    """
+
+    name = models.CharField(
+        max_length=120,
+        unique=True,
+        help_text="Уникальное имя пресета фильтра.",
+    )
+    description = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Короткое описание назначения пресета.",
+    )
+    window_days = models.PositiveIntegerField(
+        default=30,
+        db_index=True,
+        help_text="Размер окна метрик в днях.",
+    )
+    department_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Department.Id для отбора. Пусто — все заведения.",
+    )
+    segment_code = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Код сегмента активности из workbench.",
+    )
+    focus_category_code = models.SlugField(
+        max_length=80,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Код фокусной категории из workbench.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Включён ли пресет для отображения в интерфейсе.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "guest_workbench_filter_preset"
+        verbose_name = "Пресет фильтра workbench"
+        verbose_name_plural = "Пресеты фильтров workbench"
+        indexes = [
+            models.Index(fields=["is_active", "updated_at"], name="gwfp_active_updated_idx"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class OlapCategoryDict(models.Model):
     """
     Справочник категорий из OLAP.

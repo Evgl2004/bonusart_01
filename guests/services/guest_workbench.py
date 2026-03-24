@@ -21,6 +21,7 @@ from django.db.models.functions import Coalesce
 from guests.models import (
     FocusCategory,
     GuestRestaurantDailyCategoryFact,
+    GuestWorkbenchFilterPreset,
     GuestRestaurantWindowMetrics,
     OrderFact,
 )
@@ -73,6 +74,7 @@ def build_guest_workbench_payload(
     selected_department_id = (department_id or "").strip()
     selected_segment_code = normalize_segment_code(segment_code)
     selected_focus_category_code_raw = (focus_category_code or "").strip()
+    saved_presets = _build_saved_presets()
 
     target_as_of = as_of_date
     if target_as_of is None:
@@ -87,6 +89,7 @@ def build_guest_workbench_payload(
             selected_department_id=selected_department_id,
             selected_segment_code=selected_segment_code,
             selected_focus_category_code=selected_focus_category_code_raw,
+            saved_presets=saved_presets,
         )
 
     base_scope = GuestRestaurantWindowMetrics.objects.filter(as_of_date=target_as_of)
@@ -178,6 +181,7 @@ def build_guest_workbench_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": focus_category_options,
+            "saved_presets": saved_presets,
         },
         "cards": {
             "guests_total": int(cards_agg["guests_total"] or 0),
@@ -207,6 +211,7 @@ def _build_empty_payload(
     selected_department_id: str,
     selected_segment_code: str,
     selected_focus_category_code: str,
+    saved_presets: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
     Строит пустой payload, если оконных данных еще нет.
@@ -222,6 +227,7 @@ def _build_empty_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": [],
+            "saved_presets": saved_presets,
         },
         "cards": {
             "guests_total": 0,
@@ -289,6 +295,56 @@ def _build_segment_options() -> list[dict[str, str]]:
     Формирует справочник сегментов для фильтра на экране workbench.
     """
     return [{"code": code, "name": name} for code, name in SEGMENT_DEFINITIONS]
+
+
+def _build_saved_presets() -> list[dict[str, Any]]:
+    """
+    Возвращает активные пресеты фильтров для экрана workbench.
+    """
+    focus_name_map = {
+        (row.get("code") or "").strip(): (row.get("name") or "").strip()
+        for row in FocusCategory.objects.filter(is_enabled=True).values("code", "name")
+    }
+    department_name_map = _load_department_names()
+
+    rows = (
+        GuestWorkbenchFilterPreset.objects.filter(is_active=True)
+        .order_by("-updated_at", "name")
+        .values(
+            "id",
+            "name",
+            "description",
+            "window_days",
+            "department_id",
+            "segment_code",
+            "focus_category_code",
+            "updated_at",
+        )
+    )
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        department_id = (row.get("department_id") or "").strip()
+        segment_code = (row.get("segment_code") or "").strip()
+        focus_code = (row.get("focus_category_code") or "").strip()
+
+        result.append(
+            {
+                "id": int(row["id"]),
+                "name": (row.get("name") or "").strip(),
+                "description": (row.get("description") or "").strip(),
+                "window_days": int(row.get("window_days") or DEFAULT_WINDOW_DAYS),
+                "department_id": department_id,
+                "department_name": department_name_map.get(department_id, department_id) if department_id else "Все заведения",
+                "segment_code": segment_code,
+                "segment_name": SEGMENT_NAMES_MAP.get(segment_code, "Все сегменты") if segment_code else "Все сегменты",
+                "focus_category_code": focus_code,
+                "focus_category_name": focus_name_map.get(focus_code, focus_code) if focus_code else "Все категории",
+                "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else "",
+            }
+        )
+
+    return result
 
 
 def _load_department_names() -> dict[str, str]:

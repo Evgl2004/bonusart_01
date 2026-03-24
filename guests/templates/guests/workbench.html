@@ -137,6 +137,40 @@
   </div>
 </form>
 
+<div class="wb-card mb-4">
+  <div class="card-body">
+    <h2 class="h6 mb-3">Сохранённые пресеты фильтров</h2>
+    <form method="post" action="{% url 'guests_workbench_actions' %}" class="row g-2 align-items-end mb-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="save_filter_preset">
+      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+      <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+      <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+      <div class="col-12 col-md-8">
+        <label class="form-label">Имя пресета</label>
+        <input type="text" name="preset_name" class="form-control" maxlength="120"
+               placeholder="Например: Остывшие любители вина" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <button type="submit" class="btn btn-outline-secondary w-100">Сохранить текущий фильтр</button>
+      </div>
+    </form>
+
+    <div class="d-flex flex-wrap gap-2">
+      {% for preset in payload.filters.saved_presets %}
+        <a class="btn btn-sm btn-outline-primary"
+           href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}">
+          {{ preset.name }}
+        </a>
+      {% empty %}
+        <span class="text-muted small">Пока нет сохранённых пресетов.</span>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">

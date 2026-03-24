@@ -13,6 +13,7 @@ from django.urls import reverse
 from guests.models import (
     FocusCategory,
     Guest,
+    GuestWorkbenchFilterPreset,
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantWindowMetrics,
     Mailing,
@@ -188,6 +189,7 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["segments"]["cooling_30_60d"], 1)
         self.assertEqual(payload["cards"]["guests_total"], 2)
         self.assertEqual(payload["selected_guests"]["total"], 2)
+        self.assertIn("saved_presets", payload["filters"])
 
         matrix = payload["segment_focus_matrix"]
         col_index = {col["focus_category_code"]: idx for idx, col in enumerate(matrix["columns"])}
@@ -257,6 +259,32 @@ class GuestsWorkbenchViewTests(TestCase):
         rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].guest_id, self.guest_1.id)
+
+    def test_save_filter_preset_from_workbench(self):
+        """
+        Быстрое действие должно сохранять пресет текущих фильтров.
+        """
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "save_filter_preset",
+                "preset_name": "Остывшие + Вино",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "cooling_30_60d",
+                "focus_category_code": "wine",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("guests_workbench")))
+
+        preset = GuestWorkbenchFilterPreset.objects.get(name="Остывшие + Вино")
+        self.assertEqual(preset.window_days, 30)
+        self.assertEqual(preset.department_id, self.department_id)
+        self.assertEqual(preset.segment_code, "cooling_30_60d")
+        self.assertEqual(preset.focus_category_code, "wine")
 
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """
