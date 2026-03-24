@@ -217,6 +217,8 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["selected_guests"]["total"], 1)
         self.assertEqual(len(payload["selected_guests"]["rows"]), 1)
         self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
+        self.assertContains(response, 'data-segment-code="active_30d"')
+        self.assertContains(response, 'data-focus-category-code="beer_ermolaev"')
 
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """

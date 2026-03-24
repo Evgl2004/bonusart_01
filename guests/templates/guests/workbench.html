@@ -51,6 +51,17 @@
     border: 1px solid #e2e8f0;
   }
 
+  .wb-matrix-cell--clickable {
+    cursor: pointer;
+    transition: transform 0.08s ease, box-shadow 0.08s ease, border-color 0.12s ease;
+  }
+
+  .wb-matrix-cell--clickable:hover {
+    border-color: #3b82f6;
+    box-shadow: 0 8px 20px rgba(59, 130, 246, 0.15);
+    transform: translateY(-1px);
+  }
+
   .wb-matrix-cell .value {
     font-size: 1.1rem;
     font-weight: 700;
@@ -314,7 +325,14 @@
                   <td>{{ row.guests_total }}</td>
                   {% for cell in row.cells %}
                     <td>
-                      <div class="wb-matrix-cell">
+                      <div
+                        class="wb-matrix-cell wb-matrix-cell--clickable js-matrix-cell"
+                        role="button"
+                        tabindex="0"
+                        data-segment-code="{{ cell.segment_code }}"
+                        data-focus-category-code="{{ cell.focus_category_code }}"
+                        title="Открыть гостей для пересечения сегмента и категории"
+                      >
                         <div class="value">{{ cell.guests_count }}</div>
                         <div class="meta">в сегменте: {{ cell.share_of_segment }}%</div>
                         <div class="meta">в категории: {{ cell.share_of_category }}%</div>
@@ -399,6 +417,7 @@
     const node = document.getElementById("guest-workbench-payload");
     const chartNode = document.getElementById("guests-scatter");
     const heatmapNode = document.getElementById("segment-category-heatmap");
+    const filterForm = document.querySelector("form[method='get']");
     if (!node || !chartNode || !heatmapNode) {
       return;
     }
@@ -516,6 +535,45 @@
 
     window.addEventListener("resize", function() {
       heatmapChart.resize();
+    });
+
+    function applyMatrixFilters(segmentCode, focusCategoryCode) {
+      if (!filterForm) {
+        return;
+      }
+      const segmentSelect = filterForm.querySelector("select[name='segment_code']");
+      const focusSelect = filterForm.querySelector("select[name='focus_category_code']");
+      if (segmentSelect) {
+        segmentSelect.value = segmentCode || "";
+      }
+      if (focusSelect) {
+        focusSelect.value = focusCategoryCode || "";
+      }
+      filterForm.submit();
+    }
+
+    document.querySelectorAll(".js-matrix-cell").forEach(function(node) {
+      node.addEventListener("click", function() {
+        applyMatrixFilters(node.dataset.segmentCode || "", node.dataset.focusCategoryCode || "");
+      });
+      node.addEventListener("keydown", function(event) {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          applyMatrixFilters(node.dataset.segmentCode || "", node.dataset.focusCategoryCode || "");
+        }
+      });
+    });
+
+    heatmapChart.on("click", function(params) {
+      const value = params && params.value ? params.value : null;
+      if (!value) {
+        return;
+      }
+      const x = value[0] || 0;
+      const y = value[1] || 0;
+      const row = matrixRows[y] || {};
+      const col = matrixColumns[x] || {};
+      applyMatrixFilters(row.segment_code || "", col.focus_category_code || "");
     });
   })();
 </script>

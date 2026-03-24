@@ -458,6 +458,9 @@ def _build_segment_focus_matrix(
                     "share_of_category_pct": _to_percent(guests_count, category_total),
                     "share_of_segment": _to_percent_str(guests_count, segment_total),
                     "share_of_category": _to_percent_str(guests_count, category_total),
+                    "segment_code": segment_code,
+                    "focus_category_id": int(col["focus_category_id"]),
+                    "focus_category_code": (col.get("focus_category_code") or "").strip(),
                 }
             )
             heatmap_items.append(
@@ -467,6 +470,7 @@ def _build_segment_focus_matrix(
                     "value": guests_count,
                     "segment_code": segment_code,
                     "focus_category_id": int(col["focus_category_id"]),
+                    "focus_category_code": (col.get("focus_category_code") or "").strip(),
                 }
             )
 
