@@ -46,6 +46,8 @@ class GuestsWorkbenchActionsView(View):
             return self._rename_filter_preset(request)
         if action == "delete_filter_preset":
             return self._delete_filter_preset(request)
+        if action == "restore_filter_preset":
+            return self._restore_filter_preset(request)
         if action == "save_filter_preset":
             return self._save_filter_preset(request)
         if action == "create_mailing_draft":
@@ -65,6 +67,7 @@ class GuestsWorkbenchActionsView(View):
             department_id=filters["department_id"],
             segment_code=filters["segment_code"],
             focus_category_code=filters["focus_category_code"],
+            show_all_presets=bool(filters["show_all_presets"]),
         )
 
         selected_guests = payload.get("selected_guests", {})
@@ -243,6 +246,26 @@ class GuestsWorkbenchActionsView(View):
         messages.success(request, f"Пресет «{preset.name}» удалён.")
         return redirect(self._build_workbench_redirect_url(request))
 
+    def _restore_filter_preset(self, request):
+        """
+        Восстанавливает ранее деактивированный пресет фильтра.
+        """
+        preset_id = request.POST.get("preset_id")
+        if not preset_id:
+            messages.error(request, "Не указан ID пресета для восстановления.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        try:
+            preset = GuestWorkbenchFilterPreset.objects.get(pk=int(preset_id), is_active=False)
+        except (ValueError, GuestWorkbenchFilterPreset.DoesNotExist):
+            messages.error(request, "Пресет не найден.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        preset.is_active = True
+        preset.save(update_fields=["is_active", "updated_at"])
+        messages.success(request, f"Пресет «{preset.name}» восстановлен.")
+        return redirect(self._build_workbench_redirect_url(request))
+
     @staticmethod
     def _extract_filters(request) -> dict[str, object]:
         """
@@ -255,6 +278,7 @@ class GuestsWorkbenchActionsView(View):
             "department_id": (request.POST.get("department_id") or "").strip(),
             "segment_code": (request.POST.get("segment_code") or "").strip(),
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
+            "show_all_presets": _to_bool_flag(request.POST.get("show_all_presets")),
         }
 
     @staticmethod
@@ -268,6 +292,7 @@ class GuestsWorkbenchActionsView(View):
             "department_id": (request.POST.get("department_id") or "").strip(),
             "segment_code": (request.POST.get("segment_code") or "").strip(),
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
+            "show_all_presets": "1" if _to_bool_flag(request.POST.get("show_all_presets")) else "",
         }
         params = {key: value for key, value in params.items() if value}
         base_url = reverse("guests_workbench")
@@ -286,6 +311,13 @@ def _parse_iso_date(raw_value: str) -> date | None:
         return date.fromisoformat(raw_value)
     except ValueError:
         return None
+
+
+def _to_bool_flag(raw_value: str | None) -> bool:
+    """
+    Нормализует флаг из POST-формы (checkbox/select).
+    """
+    return (raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _build_mailing_name(payload: dict) -> str:

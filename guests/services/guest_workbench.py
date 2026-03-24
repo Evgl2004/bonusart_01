@@ -66,6 +66,7 @@ def build_guest_workbench_payload(
     department_id: str | None = None,
     segment_code: str | None = None,
     focus_category_code: str | None = None,
+    show_all_presets: bool = False,
 ) -> dict[str, Any]:
     """
     Формирует payload для страницы `guests/workbench`.
@@ -74,7 +75,7 @@ def build_guest_workbench_payload(
     selected_department_id = (department_id or "").strip()
     selected_segment_code = normalize_segment_code(segment_code)
     selected_focus_category_code_raw = (focus_category_code or "").strip()
-    saved_presets = _build_saved_presets()
+    saved_presets = _build_saved_presets(show_all_presets=show_all_presets)
 
     target_as_of = as_of_date
     if target_as_of is None:
@@ -89,6 +90,7 @@ def build_guest_workbench_payload(
             selected_department_id=selected_department_id,
             selected_segment_code=selected_segment_code,
             selected_focus_category_code=selected_focus_category_code_raw,
+            show_all_presets=show_all_presets,
             saved_presets=saved_presets,
         )
 
@@ -181,6 +183,7 @@ def build_guest_workbench_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": focus_category_options,
+            "show_all_presets": show_all_presets,
             "saved_presets": saved_presets,
         },
         "cards": {
@@ -211,6 +214,7 @@ def _build_empty_payload(
     selected_department_id: str,
     selected_segment_code: str,
     selected_focus_category_code: str,
+    show_all_presets: bool,
     saved_presets: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
@@ -227,6 +231,7 @@ def _build_empty_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": [],
+            "show_all_presets": show_all_presets,
             "saved_presets": saved_presets,
         },
         "cards": {
@@ -297,9 +302,12 @@ def _build_segment_options() -> list[dict[str, str]]:
     return [{"code": code, "name": name} for code, name in SEGMENT_DEFINITIONS]
 
 
-def _build_saved_presets() -> list[dict[str, Any]]:
+def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, Any]]:
     """
-    Возвращает активные пресеты фильтров для экрана workbench.
+    Возвращает пресеты фильтров для экрана workbench.
+
+    По умолчанию отображаются только активные пресеты.
+    В режиме show_all_presets=True возвращаются и деактивированные.
     """
     focus_name_map = {
         (row.get("code") or "").strip(): (row.get("name") or "").strip()
@@ -307,19 +315,20 @@ def _build_saved_presets() -> list[dict[str, Any]]:
     }
     department_name_map = _load_department_names()
 
-    rows = (
-        GuestWorkbenchFilterPreset.objects.filter(is_active=True)
-        .order_by("-updated_at", "name")
-        .values(
-            "id",
-            "name",
-            "description",
-            "window_days",
-            "department_id",
-            "segment_code",
-            "focus_category_code",
-            "updated_at",
-        )
+    presets_qs = GuestWorkbenchFilterPreset.objects.all()
+    if not show_all_presets:
+        presets_qs = presets_qs.filter(is_active=True)
+
+    rows = presets_qs.order_by("-is_active", "-updated_at", "name").values(
+        "id",
+        "name",
+        "description",
+        "window_days",
+        "department_id",
+        "segment_code",
+        "focus_category_code",
+        "is_active",
+        "updated_at",
     )
 
     result: list[dict[str, Any]] = []
@@ -340,6 +349,7 @@ def _build_saved_presets() -> list[dict[str, Any]]:
                 "segment_name": SEGMENT_NAMES_MAP.get(segment_code, "Все сегменты") if segment_code else "Все сегменты",
                 "focus_category_code": focus_code,
                 "focus_category_name": focus_name_map.get(focus_code, focus_code) if focus_code else "Все категории",
+                "is_active": bool(row.get("is_active")),
                 "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else "",
             }
         )

@@ -1,6 +1,6 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 
-{% block title %}Гости: рабочий экран{% endblock %}
+{% block title %}Р“РѕСЃС‚Рё: СЂР°Р±РѕС‡РёР№ СЌРєСЂР°РЅ{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -85,20 +85,20 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h1 class="h3 mb-1">Гости: рабочий экран</h1>
+    <h1 class="h3 mb-1">Р“РѕСЃС‚Рё: СЂР°Р±РѕС‡РёР№ СЌРєСЂР°РЅ</h1>
     <div class="text-muted small">
-      Срез метрик по состоянию на {{ payload.filters.as_of_date|default:"—" }}
+      РЎСЂРµР· РјРµС‚СЂРёРє РїРѕ СЃРѕСЃС‚РѕСЏРЅРёСЋ РЅР° {{ payload.filters.as_of_date|default:"вЂ”" }}
     </div>
   </div>
 </div>
 
 <form method="get" class="row g-2 align-items-end mb-4">
   <div class="col-12 col-md-2">
-    <label class="form-label">Дата среза</label>
+    <label class="form-label">Р”Р°С‚Р° СЃСЂРµР·Р°</label>
     <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
   </div>
   <div class="col-12 col-md-2">
-    <label class="form-label">Окно (дней)</label>
+    <label class="form-label">РћРєРЅРѕ (РґРЅРµР№)</label>
     <select name="window_days" class="form-select">
       {% for item in payload.filters.window_options %}
         <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
@@ -106,34 +106,42 @@
     </select>
   </div>
   <div class="col-12 col-md-3">
-    <label class="form-label">Заведение</label>
+    <label class="form-label">Р—Р°РІРµРґРµРЅРёРµ</label>
     <select name="department_id" class="form-select">
-      <option value="">Все заведения</option>
+      <option value="">Р’СЃРµ Р·Р°РІРµРґРµРЅРёСЏ</option>
       {% for dep in payload.filters.department_options %}
         <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="col-12 col-md-2">
-    <label class="form-label">Сегмент</label>
+    <label class="form-label">РЎРµРіРјРµРЅС‚</label>
     <select name="segment_code" class="form-select">
-      <option value="">Все сегменты</option>
+      <option value="">Р’СЃРµ СЃРµРіРјРµРЅС‚С‹</option>
       {% for seg in payload.filters.segment_options %}
         <option value="{{ seg.code }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="col-12 col-md-2">
-    <label class="form-label">Фокусная категория</label>
+    <label class="form-label">Р¤РѕРєСѓСЃРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ</label>
     <select name="focus_category_code" class="form-select">
-      <option value="">Все категории</option>
+      <option value="">Р’СЃРµ РєР°С‚РµРіРѕСЂРёРё</option>
       {% for cat in payload.filters.focus_category_options %}
         <option value="{{ cat.code }}" {% if cat.code == selected_focus_category_code %}selected{% endif %}>{{ cat.name }}</option>
       {% endfor %}
     </select>
   </div>
+  <div class="col-12 col-md-2">
+    <label class="form-label d-block">РџСЂРµСЃРµС‚С‹</label>
+    <div class="form-check mt-2">
+      <input class="form-check-input" type="checkbox" value="1" id="show-all-presets" name="show_all_presets"
+             {% if selected_show_all_presets %}checked{% endif %}>
+      <label class="form-check-label" for="show-all-presets">РџРѕРєР°Р·С‹РІР°С‚СЊ РІСЃРµ</label>
+    </div>
+  </div>
   <div class="col-12 col-md-1">
-    <button type="submit" class="btn btn-primary w-100">Применить</button>
+    <button type="submit" class="btn btn-primary w-100">РџСЂРёРјРµРЅРёС‚СЊ</button>
   </div>
 </form>
 
@@ -148,6 +156,7 @@
       <input type="hidden" name="department_id" value="{{ selected_department_id }}">
       <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
       <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+      <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
       <div class="col-12 col-md-8">
         <label class="form-label">Имя пресета</label>
         <input type="text" name="preset_name" class="form-control" maxlength="120"
@@ -161,42 +170,62 @@
     <div class="d-flex flex-column gap-2">
       {% for preset in payload.filters.saved_presets %}
         <div class="d-flex flex-wrap align-items-center gap-2">
-          <a class="btn btn-sm btn-outline-primary"
-             href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}">
+          <a class="btn btn-sm {% if preset.is_active %}btn-outline-primary{% else %}btn-outline-secondary{% endif %}"
+             href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}{% if selected_show_all_presets %}&show_all_presets=1{% endif %}">
             {{ preset.name }}
           </a>
           <span class="text-muted small">
             {{ preset.department_name }} · {{ preset.segment_name }} · {{ preset.focus_category_name }}
           </span>
+          {% if not preset.is_active %}
+            <span class="badge text-bg-secondary">неактивный</span>
+          {% endif %}
 
-          <form method="post" action="{% url 'guests_workbench_actions' %}" class="d-flex gap-1">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="rename_filter_preset">
-            <input type="hidden" name="preset_id" value="{{ preset.id }}">
-            <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-            <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-            <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-            <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-            <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-            <input type="text" name="new_name" class="form-control form-control-sm"
-                   value="{{ preset.name }}" maxlength="120" style="min-width: 220px;">
-            <button type="submit" class="btn btn-sm btn-outline-secondary">Переименовать</button>
-          </form>
+          {% if preset.is_active %}
+            <form method="post" action="{% url 'guests_workbench_actions' %}" class="d-flex gap-1">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="rename_filter_preset">
+              <input type="hidden" name="preset_id" value="{{ preset.id }}">
+              <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+              <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+              <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+              <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+              <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+              <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+              <input type="text" name="new_name" class="form-control form-control-sm"
+                     value="{{ preset.name }}" maxlength="120" style="min-width: 220px;">
+              <button type="submit" class="btn btn-sm btn-outline-secondary">Переименовать</button>
+            </form>
 
-          <form method="post" action="{% url 'guests_workbench_actions' %}">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="delete_filter_preset">
-            <input type="hidden" name="preset_id" value="{{ preset.id }}">
-            <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-            <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-            <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-            <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-            <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-            <button type="submit" class="btn btn-sm btn-outline-danger"
-                    onclick="return confirm('Удалить пресет {{ preset.name|escapejs }}?');">
-              Удалить
-            </button>
-          </form>
+            <form method="post" action="{% url 'guests_workbench_actions' %}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="delete_filter_preset">
+              <input type="hidden" name="preset_id" value="{{ preset.id }}">
+              <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+              <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+              <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+              <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+              <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+              <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+              <button type="submit" class="btn btn-sm btn-outline-danger"
+                      onclick="return confirm('Удалить пресет {{ preset.name|escapejs }}?');">
+                Удалить
+              </button>
+            </form>
+          {% else %}
+            <form method="post" action="{% url 'guests_workbench_actions' %}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="restore_filter_preset">
+              <input type="hidden" name="preset_id" value="{{ preset.id }}">
+              <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+              <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+              <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+              <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+              <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+              <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+              <button type="submit" class="btn btn-sm btn-outline-success">Восстановить</button>
+            </form>
+          {% endif %}
         </div>
       {% empty %}
         <span class="text-muted small">Пока нет сохранённых пресетов.</span>
@@ -204,53 +233,52 @@
     </div>
   </div>
 </div>
-
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Гостей</div>
+      <div class="wb-kpi-title">Р“РѕСЃС‚РµР№</div>
       <div class="wb-kpi-value">{{ payload.cards.guests_total }}</div>
     </div></div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Заказов</div>
+      <div class="wb-kpi-title">Р—Р°РєР°Р·РѕРІ</div>
       <div class="wb-kpi-value">{{ payload.cards.orders_total }}</div>
     </div></div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Сумма (нетто)</div>
+      <div class="wb-kpi-title">РЎСѓРјРјР° (РЅРµС‚С‚Рѕ)</div>
       <div class="wb-kpi-value">{{ payload.cards.net_total }}</div>
     </div></div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Средний рейтинг</div>
+      <div class="wb-kpi-title">РЎСЂРµРґРЅРёР№ СЂРµР№С‚РёРЅРі</div>
       <div class="wb-kpi-value">{{ payload.cards.avg_rating }}</div>
     </div></div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Начислено бонусов</div>
+      <div class="wb-kpi-title">РќР°С‡РёСЃР»РµРЅРѕ Р±РѕРЅСѓСЃРѕРІ</div>
       <div class="wb-kpi-value">{{ payload.cards.bonus_in_total }}</div>
     </div></div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Списано бонусов</div>
+      <div class="wb-kpi-title">РЎРїРёСЃР°РЅРѕ Р±РѕРЅСѓСЃРѕРІ</div>
       <div class="wb-kpi-value">{{ payload.cards.bonus_out_total }}</div>
     </div></div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Активные 30д (2+ визита)</div>
+      <div class="wb-kpi-title">РђРєС‚РёРІРЅС‹Рµ 30Рґ (2+ РІРёР·РёС‚Р°)</div>
       <div class="wb-kpi-value">{{ payload.segments.active_30d }}</div>
     </div></div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Остывшие 30-60д</div>
+      <div class="wb-kpi-title">РћСЃС‚С‹РІС€РёРµ 30-60Рґ</div>
       <div class="wb-kpi-value">{{ payload.segments.cooling_30_60d }}</div>
     </div></div>
   </div>
@@ -260,29 +288,29 @@
   <div class="col-12 col-xl-6">
     <div class="wb-card">
       <div class="card-body">
-        <h2 class="h6 mb-3">Рейтинг гостей</h2>
+        <h2 class="h6 mb-3">Р РµР№С‚РёРЅРі РіРѕСЃС‚РµР№</h2>
         <div class="wb-table-wrap">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th>Телефон</th>
-                <th>Заказов</th>
-                <th>Визитов</th>
-                <th>Сумма</th>
-                <th>Рейтинг</th>
+                <th>РўРµР»РµС„РѕРЅ</th>
+                <th>Р—Р°РєР°Р·РѕРІ</th>
+                <th>Р’РёР·РёС‚РѕРІ</th>
+                <th>РЎСѓРјРјР°</th>
+                <th>Р РµР№С‚РёРЅРі</th>
               </tr>
             </thead>
             <tbody>
               {% for row in payload.top_rating %}
                 <tr>
-                  <td>{{ row.phone|default:"—" }}</td>
+                  <td>{{ row.phone|default:"вЂ”" }}</td>
                   <td>{{ row.orders_count }}</td>
                   <td>{{ row.visits_count }}</td>
                   <td>{{ row.sum_net }}</td>
                   <td><strong>{{ row.rating_score }}</strong></td>
                 </tr>
               {% empty %}
-                <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+                <tr><td colspan="5" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -294,29 +322,29 @@
   <div class="col-12 col-xl-6">
     <div class="wb-card">
       <div class="card-body">
-        <h2 class="h6 mb-3">Антирейтинг гостей</h2>
+        <h2 class="h6 mb-3">РђРЅС‚РёСЂРµР№С‚РёРЅРі РіРѕСЃС‚РµР№</h2>
         <div class="wb-table-wrap">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th>Телефон</th>
-                <th>Заказов</th>
-                <th>Визитов</th>
-                <th>Сумма</th>
-                <th>Рейтинг</th>
+                <th>РўРµР»РµС„РѕРЅ</th>
+                <th>Р—Р°РєР°Р·РѕРІ</th>
+                <th>Р’РёР·РёС‚РѕРІ</th>
+                <th>РЎСѓРјРјР°</th>
+                <th>Р РµР№С‚РёРЅРі</th>
               </tr>
             </thead>
             <tbody>
               {% for row in payload.anti_rating %}
                 <tr>
-                  <td>{{ row.phone|default:"—" }}</td>
+                  <td>{{ row.phone|default:"вЂ”" }}</td>
                   <td>{{ row.orders_count }}</td>
                   <td>{{ row.visits_count }}</td>
                   <td>{{ row.sum_net }}</td>
                   <td><strong>{{ row.rating_score }}</strong></td>
                 </tr>
               {% empty %}
-                <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+                <tr><td colspan="5" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -330,17 +358,17 @@
   <div class="col-12">
     <div class="wb-card">
       <div class="card-body">
-        <h2 class="h6 mb-3">Рейтинг заведений (внутри сети)</h2>
+        <h2 class="h6 mb-3">Р РµР№С‚РёРЅРі Р·Р°РІРµРґРµРЅРёР№ (РІРЅСѓС‚СЂРё СЃРµС‚Рё)</h2>
         <div class="wb-table-wrap">
           <table class="table table-sm align-middle mb-0">
             <thead>
               <tr>
-                <th>Заведение</th>
-                <th>Гостей</th>
-                <th>Сумма</th>
-                <th>Средний рейтинг</th>
-                <th>Начислено</th>
-                <th>Списано</th>
+                <th>Р—Р°РІРµРґРµРЅРёРµ</th>
+                <th>Р“РѕСЃС‚РµР№</th>
+                <th>РЎСѓРјРјР°</th>
+                <th>РЎСЂРµРґРЅРёР№ СЂРµР№С‚РёРЅРі</th>
+                <th>РќР°С‡РёСЃР»РµРЅРѕ</th>
+                <th>РЎРїРёСЃР°РЅРѕ</th>
               </tr>
             </thead>
             <tbody>
@@ -354,7 +382,7 @@
                   <td>{{ row.bonus_out_total }}</td>
                 </tr>
               {% empty %}
-                <tr><td colspan="6" class="text-muted">Нет данных</td></tr>
+                <tr><td colspan="6" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -368,20 +396,20 @@
   <div class="col-12">
     <div class="wb-card">
       <div class="card-body">
-        <h2 class="h6 mb-1">Матрица сегментов и фокусных категорий</h2>
+        <h2 class="h6 mb-1">РњР°С‚СЂРёС†Р° СЃРµРіРјРµРЅС‚РѕРІ Рё С„РѕРєСѓСЃРЅС‹С… РєР°С‚РµРіРѕСЂРёР№</h2>
         <p class="text-muted small mb-3">
-          В ячейке: гостей, % внутри сегмента и % внутри категории.
+          Р’ СЏС‡РµР№РєРµ: РіРѕСЃС‚РµР№, % РІРЅСѓС‚СЂРё СЃРµРіРјРµРЅС‚Р° Рё % РІРЅСѓС‚СЂРё РєР°С‚РµРіРѕСЂРёРё.
         </p>
         <div class="wb-table-wrap">
           <table class="table table-sm align-middle mb-0 wb-matrix-table">
             <thead>
               <tr>
-                <th>Сегмент</th>
-                <th>Гостей в сегменте</th>
+                <th>РЎРµРіРјРµРЅС‚</th>
+                <th>Р“РѕСЃС‚РµР№ РІ СЃРµРіРјРµРЅС‚Рµ</th>
                 {% for col in payload.segment_focus_matrix.columns %}
                   <th>
                     <div>{{ col.focus_category_name }}</div>
-                    <div class="text-muted small">Всего гостей: {{ col.guests_total }}</div>
+                    <div class="text-muted small">Р’СЃРµРіРѕ РіРѕСЃС‚РµР№: {{ col.guests_total }}</div>
                   </th>
                 {% endfor %}
               </tr>
@@ -399,17 +427,17 @@
                         tabindex="0"
                         data-segment-code="{{ cell.segment_code }}"
                         data-focus-category-code="{{ cell.focus_category_code }}"
-                        title="Открыть гостей для пересечения сегмента и категории"
+                        title="РћС‚РєСЂС‹С‚СЊ РіРѕСЃС‚РµР№ РґР»СЏ РїРµСЂРµСЃРµС‡РµРЅРёСЏ СЃРµРіРјРµРЅС‚Р° Рё РєР°С‚РµРіРѕСЂРёРё"
                       >
                         <div class="value">{{ cell.guests_count }}</div>
-                        <div class="meta">в сегменте: {{ cell.share_of_segment }}%</div>
-                        <div class="meta">в категории: {{ cell.share_of_category }}%</div>
+                        <div class="meta">РІ СЃРµРіРјРµРЅС‚Рµ: {{ cell.share_of_segment }}%</div>
+                        <div class="meta">РІ РєР°С‚РµРіРѕСЂРёРё: {{ cell.share_of_category }}%</div>
                       </div>
                     </td>
                   {% endfor %}
                 </tr>
               {% empty %}
-                <tr><td colspan="3" class="text-muted">Нет данных</td></tr>
+                <tr><td colspan="3" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -421,11 +449,11 @@
 
 <div class="wb-card mb-4">
   <div class="card-body">
-    <h2 class="h6 mb-1">Гости по выбранным фильтрам</h2>
+    <h2 class="h6 mb-1">Р“РѕСЃС‚Рё РїРѕ РІС‹Р±СЂР°РЅРЅС‹Рј С„РёР»СЊС‚СЂР°Рј</h2>
     <p class="text-muted small mb-3">
-      Найдено: {{ payload.selected_guests.total }}.
+      РќР°Р№РґРµРЅРѕ: {{ payload.selected_guests.total }}.
       {% if payload.selected_guests.is_truncated %}
-        Показаны первые {{ payload.selected_guests.limit }} записей.
+        РџРѕРєР°Р·Р°РЅС‹ РїРµСЂРІС‹Рµ {{ payload.selected_guests.limit }} Р·Р°РїРёСЃРµР№.
       {% endif %}
     </p>
     <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3">
@@ -436,28 +464,29 @@
       <input type="hidden" name="department_id" value="{{ selected_department_id }}">
       <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
       <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+      <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
       <button type="submit" class="btn btn-outline-primary"
               {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
-        Создать черновик рассылки по отбору
+        РЎРѕР·РґР°С‚СЊ С‡РµСЂРЅРѕРІРёРє СЂР°СЃСЃС‹Р»РєРё РїРѕ РѕС‚Р±РѕСЂСѓ
       </button>
     </form>
     <div class="wb-table-wrap">
       <table class="table table-sm align-middle mb-0">
         <thead>
           <tr>
-            <th>Телефон</th>
-            <th>Сегмент</th>
-            <th>Заказов</th>
-            <th>Визитов</th>
-            <th>Сумма (нетто)</th>
-            <th>Средний чек</th>
-            <th>Рейтинг</th>
+            <th>РўРµР»РµС„РѕРЅ</th>
+            <th>РЎРµРіРјРµРЅС‚</th>
+            <th>Р—Р°РєР°Р·РѕРІ</th>
+            <th>Р’РёР·РёС‚РѕРІ</th>
+            <th>РЎСѓРјРјР° (РЅРµС‚С‚Рѕ)</th>
+            <th>РЎСЂРµРґРЅРёР№ С‡РµРє</th>
+            <th>Р РµР№С‚РёРЅРі</th>
           </tr>
         </thead>
         <tbody>
           {% for row in payload.selected_guests.rows %}
             <tr>
-              <td>{{ row.phone|default:"—" }}</td>
+              <td>{{ row.phone|default:"вЂ”" }}</td>
               <td>{{ row.segment_name }}</td>
               <td>{{ row.orders_count }}</td>
               <td>{{ row.visits_count }}</td>
@@ -466,7 +495,7 @@
               <td><strong>{{ row.rating_score }}</strong></td>
             </tr>
           {% empty %}
-            <tr><td colspan="7" class="text-muted">Нет гостей под выбранные условия</td></tr>
+            <tr><td colspan="7" class="text-muted">РќРµС‚ РіРѕСЃС‚РµР№ РїРѕРґ РІС‹Р±СЂР°РЅРЅС‹Рµ СѓСЃР»РѕРІРёСЏ</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -476,14 +505,14 @@
 
 <div class="wb-card mb-4">
   <div class="card-body">
-    <h2 class="h6 mb-3">Heatmap покрытия сегментов категориями</h2>
+    <h2 class="h6 mb-3">Heatmap РїРѕРєСЂС‹С‚РёСЏ СЃРµРіРјРµРЅС‚РѕРІ РєР°С‚РµРіРѕСЂРёСЏРјРё</h2>
     <div id="segment-category-heatmap" class="wb-matrix-heatmap"></div>
   </div>
 </div>
 
 <div class="wb-card">
   <div class="card-body">
-    <h2 class="h6 mb-3">Визуализация гостей: частота × средний чек</h2>
+    <h2 class="h6 mb-3">Р’РёР·СѓР°Р»РёР·Р°С†РёСЏ РіРѕСЃС‚РµР№: С‡Р°СЃС‚РѕС‚Р° Г— СЃСЂРµРґРЅРёР№ С‡РµРє</h2>
     <div id="guests-scatter" class="wb-chart"></div>
   </div>
 </div>
@@ -516,19 +545,19 @@
         formatter: function(params) {
           const value = params.value || [];
           return [
-            "Телефон: " + (value[3] || "—"),
-            "Визитов: " + (value[0] || 0),
-            "Средний чек: " + (value[1] || 0),
-            "Рейтинг: " + (value[2] || 0)
+            "РўРµР»РµС„РѕРЅ: " + (value[3] || "вЂ”"),
+            "Р’РёР·РёС‚РѕРІ: " + (value[0] || 0),
+            "РЎСЂРµРґРЅРёР№ С‡РµРє: " + (value[1] || 0),
+            "Р РµР№С‚РёРЅРі: " + (value[2] || 0)
           ].join("<br>");
         }
       },
       xAxis: {
-        name: "Визитов",
+        name: "Р’РёР·РёС‚РѕРІ",
         type: "value"
       },
       yAxis: {
-        name: "Средний чек",
+        name: "РЎСЂРµРґРЅРёР№ С‡РµРє",
         type: "value"
       },
       series: [{
@@ -569,9 +598,9 @@
           const row = matrixRows[y] || {};
           const col = matrixColumns[x] || {};
           return [
-            "Сегмент: " + (row.segment_name || "—"),
-            "Категория: " + (col.focus_category_name || "—"),
-            "Гостей: " + count
+            "РЎРµРіРјРµРЅС‚: " + (row.segment_name || "вЂ”"),
+            "РљР°С‚РµРіРѕСЂРёСЏ: " + (col.focus_category_name || "вЂ”"),
+            "Р“РѕСЃС‚РµР№: " + count
           ].join("<br>");
         }
       },
@@ -583,13 +612,13 @@
       },
       xAxis: {
         type: "category",
-        data: matrixColumns.map(function(col) { return col.focus_category_name || "—"; }),
+        data: matrixColumns.map(function(col) { return col.focus_category_name || "вЂ”"; }),
         splitArea: { show: true },
         axisLabel: { interval: 0, rotate: 30 }
       },
       yAxis: {
         type: "category",
-        data: matrixRows.map(function(row) { return row.segment_name || "—"; }),
+        data: matrixRows.map(function(row) { return row.segment_name || "вЂ”"; }),
         splitArea: { show: true }
       },
       visualMap: {
@@ -601,7 +630,7 @@
         bottom: 10
       },
       series: [{
-        name: "Покрытие",
+        name: "РџРѕРєСЂС‹С‚РёРµ",
         type: "heatmap",
         data: heatmapData,
         label: { show: true },

@@ -347,6 +347,91 @@ class GuestsWorkbenchViewTests(TestCase):
         preset.refresh_from_db()
         self.assertFalse(preset.is_active)
 
+    def test_show_all_presets_flag_displays_inactive_presets(self):
+        """
+        По умолчанию в workbench показываются только активные пресеты.
+        При show_all_presets=1 должны отображаться и неактивные.
+        """
+        GuestWorkbenchFilterPreset.objects.create(
+            name="Активный пресет",
+            window_days=30,
+            department_id=self.department_id,
+            segment_code="active_30d",
+            focus_category_code="beer_ermolaev",
+            is_active=True,
+        )
+        GuestWorkbenchFilterPreset.objects.create(
+            name="Архивный пресет",
+            window_days=30,
+            department_id=self.department_id,
+            segment_code="cooling_30_60d",
+            focus_category_code="wine",
+            is_active=False,
+        )
+
+        default_response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(default_response.status_code, 200)
+        default_presets = default_response.context["payload"]["filters"]["saved_presets"]
+        self.assertEqual(len(default_presets), 1)
+        self.assertTrue(default_presets[0]["is_active"])
+        self.assertEqual(default_response.context["selected_show_all_presets"], False)
+
+        all_response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "show_all_presets": "1",
+            },
+            secure=True,
+        )
+        self.assertEqual(all_response.status_code, 200)
+        all_presets = all_response.context["payload"]["filters"]["saved_presets"]
+        self.assertEqual(len(all_presets), 2)
+        self.assertTrue(any(not item["is_active"] for item in all_presets))
+        self.assertEqual(all_response.context["selected_show_all_presets"], True)
+
+    def test_restore_filter_preset_from_workbench(self):
+        """
+        Действие restore_filter_preset должно возвращать пресет в активные.
+        """
+        preset = GuestWorkbenchFilterPreset.objects.create(
+            name="Архивный для восстановления",
+            window_days=30,
+            department_id=self.department_id,
+            segment_code="active_30d",
+            focus_category_code="beer_ermolaev",
+            is_active=False,
+        )
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "restore_filter_preset",
+                "preset_id": preset.id,
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+                "focus_category_code": "beer_ermolaev",
+                "show_all_presets": "1",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        preset.refresh_from_db()
+        self.assertTrue(preset.is_active)
+        self.assertIn("show_all_presets=1", response.url)
+
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """
         Создаёт минимальный набор сущностей для активной фокусной категории.
