@@ -10,7 +10,14 @@ from decimal import Decimal
 from django.test import TestCase
 from django.urls import reverse
 
-from guests.models import Guest, GuestRestaurantWindowMetrics, OrderFact
+from guests.models import (
+    FocusCategory,
+    Guest,
+    GuestRestaurantDailyCategoryFact,
+    GuestRestaurantWindowMetrics,
+    OlapCategoryDict,
+    OrderFact,
+)
 
 
 class GuestsWorkbenchViewTests(TestCase):
@@ -23,6 +30,8 @@ class GuestsWorkbenchViewTests(TestCase):
         self.guest_2 = Guest.objects.create(phone="+79990002222", first_name="Иван")
         self.as_of_date = date(2026, 3, 23)
         self.department_id = "dep-1"
+        self.focus_beer = self._create_focus_category("beer_ermolaev", "Пиво Ермолаевъ")
+        self.focus_wine = self._create_focus_category("wine", "Вино")
 
         OrderFact.objects.create(
             guest=self.guest_1,
@@ -108,6 +117,30 @@ class GuestsWorkbenchViewTests(TestCase):
             rating_score=Decimal("8.00"),
             last_visit_at=date(2026, 2, 20),
         )
+
+        # Дневные факты для матрицы «сегменты × фокусные категории».
+        GuestRestaurantDailyCategoryFact.objects.create(
+            business_date=date(2026, 3, 22),
+            guest=self.guest_1,
+            department_id=self.department_id,
+            focus_category=self.focus_beer,
+            orders_count=1,
+            items_count=2,
+            sum_gross=Decimal("900.00"),
+            sum_net=Decimal("900.00"),
+            bonus_sum=Decimal("0.00"),
+        )
+        GuestRestaurantDailyCategoryFact.objects.create(
+            business_date=date(2026, 3, 15),
+            guest=self.guest_2,
+            department_id=self.department_id,
+            focus_category=self.focus_wine,
+            orders_count=1,
+            items_count=1,
+            sum_gross=Decimal("700.00"),
+            sum_net=Decimal("700.00"),
+            bonus_sum=Decimal("0.00"),
+        )
         GuestRestaurantWindowMetrics.objects.create(
             as_of_date=self.as_of_date,
             guest=self.guest_2,
@@ -146,3 +179,33 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["segments"]["cooling_30_60d"], 1)
         self.assertEqual(payload["cards"]["guests_total"], 2)
 
+        matrix = payload["segment_focus_matrix"]
+        col_index = {col["focus_category_code"]: idx for idx, col in enumerate(matrix["columns"])}
+        row_index = {row["segment_code"]: row for row in matrix["rows"]}
+
+        self.assertIn("beer_ermolaev", col_index)
+        self.assertIn("wine", col_index)
+        self.assertEqual(row_index["active_30d"]["guests_total"], 1)
+        self.assertEqual(row_index["cooling_30_60d"]["guests_total"], 1)
+
+        active_beer_cell = row_index["active_30d"]["cells"][col_index["beer_ermolaev"]]
+        cooling_wine_cell = row_index["cooling_30_60d"]["cells"][col_index["wine"]]
+        self.assertEqual(active_beer_cell["guests_count"], 1)
+        self.assertEqual(cooling_wine_cell["guests_count"], 1)
+
+    def _create_focus_category(self, code: str, name: str) -> FocusCategory:
+        """
+        Создаёт минимальный набор сущностей для активной фокусной категории.
+        """
+        olap_category = OlapCategoryDict.objects.create(
+            iiko_category_external_id=f"ext-{code}",
+            category_name=name,
+            is_active=True,
+        )
+        return FocusCategory.objects.create(
+            code=code,
+            name=name,
+            source_type=FocusCategory.SourceType.OLAP_DIRECT,
+            olap_category=olap_category,
+            is_enabled=True,
+        )

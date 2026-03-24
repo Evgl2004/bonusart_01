@@ -10,17 +10,29 @@
 
 from __future__ import annotations
 
-from datetime import date
+from collections import defaultdict
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
 from django.db.models import Avg, Count, Max, Sum
 from django.db.models.functions import Coalesce
 
-from guests.models import GuestRestaurantWindowMetrics, OrderFact
+from guests.models import (
+    FocusCategory,
+    GuestRestaurantDailyCategoryFact,
+    GuestRestaurantWindowMetrics,
+    OrderFact,
+)
 
 WINDOW_OPTIONS = (7, 14, 30, 60, 180)
 DEFAULT_WINDOW_DAYS = 30
+SEGMENT_DEFINITIONS = (
+    ("active_30d", "Активные 30д (2+ визита)"),
+    ("single_visit_30d", "1 визит за 30д"),
+    ("cooling_30_60d", "Остывшие 30-60д"),
+    ("lost_60d_plus", "Потерянные 60+д"),
+)
 
 
 def normalize_window_days(raw_value: int | str | None) -> int:
@@ -109,7 +121,14 @@ def build_guest_workbench_payload(
         for row in department_rows
     ]
 
-    segmentation = _build_segmentation(base_scope)
+    segmentation, segment_by_key = _build_segmentation_state(base_scope)
+    segment_focus_matrix = _build_segment_focus_matrix(
+        as_of_date=target_as_of,
+        selected_window_days=selected_window_days,
+        selected_department_id=selected_department_id,
+        segment_by_key=segment_by_key,
+        segment_totals=segmentation,
+    )
     scatter_points = _build_scatter_points(work_scope)
 
     return {
@@ -130,6 +149,7 @@ def build_guest_workbench_payload(
             "avg_rating": _to_decimal_str(cards_agg["avg_rating"]),
         },
         "segments": segmentation,
+        "segment_focus_matrix": segment_focus_matrix,
         "top_rating": [_serialize_metric_row(row) for row in top_rating_rows],
         "anti_rating": [_serialize_metric_row(row) for row in anti_rating_rows],
         "department_competition": department_competition,
@@ -170,6 +190,19 @@ def _build_empty_payload(
             "single_visit_30d": 0,
             "cooling_30_60d": 0,
             "lost_60d_plus": 0,
+        },
+        "segment_focus_matrix": {
+            "rows": [
+                {
+                    "segment_code": code,
+                    "segment_name": name,
+                    "guests_total": 0,
+                    "cells": [],
+                }
+                for code, name in SEGMENT_DEFINITIONS
+            ],
+            "columns": [],
+            "heatmap": {"max_value": 0, "items": []},
         },
         "top_rating": [],
         "anti_rating": [],
@@ -216,7 +249,7 @@ def _load_department_names() -> dict[str, str]:
     return result
 
 
-def _build_segmentation(scope_qs) -> dict[str, int]:
+def _build_segmentation_state(scope_qs) -> tuple[dict[str, int], dict[tuple[int, str], str]]:
     """
     Считает сегменты активности по окнам 30/60/180 дней.
 
@@ -241,30 +274,149 @@ def _build_segmentation(scope_qs) -> dict[str, int]:
         window_map = state.setdefault(key, {})
         window_map[window] = visits
 
-    active_30d = 0
-    single_visit_30d = 0
-    cooling_30_60d = 0
-    lost_60d_plus = 0
+    segment_totals = {code: 0 for code, _ in SEGMENT_DEFINITIONS}
+    segment_by_key: dict[tuple[int, str], str] = {}
 
-    for window_map in state.values():
+    for key, window_map in state.items():
         visits_30 = int(window_map.get(30, 0))
         visits_60 = int(window_map.get(60, 0))
         visits_180 = int(window_map.get(180, 0))
 
         if visits_30 >= 2:
-            active_30d += 1
+            segment_by_key[key] = "active_30d"
+            segment_totals["active_30d"] += 1
+            continue
         if visits_30 == 1:
-            single_visit_30d += 1
+            segment_by_key[key] = "single_visit_30d"
+            segment_totals["single_visit_30d"] += 1
+            continue
         if visits_30 == 0 and visits_60 > 0:
-            cooling_30_60d += 1
+            segment_by_key[key] = "cooling_30_60d"
+            segment_totals["cooling_30_60d"] += 1
+            continue
         if visits_60 == 0 and visits_180 > 0:
-            lost_60d_plus += 1
+            segment_by_key[key] = "lost_60d_plus"
+            segment_totals["lost_60d_plus"] += 1
+
+    return segment_totals, segment_by_key
+
+
+def _build_segment_focus_matrix(
+    *,
+    as_of_date: date,
+    selected_window_days: int,
+    selected_department_id: str,
+    segment_by_key: dict[tuple[int, str], str],
+    segment_totals: dict[str, int],
+) -> dict[str, Any]:
+    """
+    Формирует матрицу «Сегменты × фокусные категории» для наглядного покрытия.
+
+    Для каждой ячейки считаются:
+    1. количество гостей;
+    2. доля внутри сегмента;
+    3. доля внутри выбранной фокусной категории.
+    """
+    focus_rows = list(
+        FocusCategory.objects.filter(is_enabled=True)
+        .values("id", "code", "name")
+        .order_by("name", "id")
+    )
+    if not focus_rows:
+        return {
+            "rows": [
+                {
+                    "segment_code": code,
+                    "segment_name": name,
+                    "guests_total": int(segment_totals.get(code, 0)),
+                    "cells": [],
+                }
+                for code, name in SEGMENT_DEFINITIONS
+            ],
+            "columns": [],
+            "heatmap": {"max_value": 0, "items": []},
+        }
+
+    focus_ids = [int(row["id"]) for row in focus_rows]
+    range_start = as_of_date - timedelta(days=max(selected_window_days, 1) - 1)
+
+    daily_scope = GuestRestaurantDailyCategoryFact.objects.filter(
+        business_date__gte=range_start,
+        business_date__lte=as_of_date,
+        focus_category_id__in=focus_ids,
+    )
+    if selected_department_id:
+        daily_scope = daily_scope.filter(department_id=selected_department_id)
+
+    cell_sets: dict[tuple[str, int], set[tuple[int, str]]] = defaultdict(set)
+    category_sets: dict[int, set[tuple[int, str]]] = defaultdict(set)
+
+    for row in daily_scope.values("guest_id", "department_id", "focus_category_id"):
+        guest_id = int(row["guest_id"])
+        department_id = _normalize_department_id(row.get("department_id"))
+        segment_code = segment_by_key.get((guest_id, department_id))
+        if not segment_code:
+            continue
+        focus_id = int(row["focus_category_id"])
+        guest_key = (guest_id, department_id)
+        cell_sets[(segment_code, focus_id)].add(guest_key)
+        category_sets[focus_id].add(guest_key)
+
+    columns: list[dict[str, Any]] = []
+    for row in focus_rows:
+        focus_id = int(row["id"])
+        columns.append(
+            {
+                "focus_category_id": focus_id,
+                "focus_category_code": (row.get("code") or "").strip(),
+                "focus_category_name": (row.get("name") or "").strip() or f"Категория {focus_id}",
+                "guests_total": len(category_sets.get(focus_id, set())),
+            }
+        )
+
+    rows: list[dict[str, Any]] = []
+    heatmap_items: list[dict[str, Any]] = []
+    max_value = 0
+
+    for row_idx, (segment_code, segment_name) in enumerate(SEGMENT_DEFINITIONS):
+        segment_total = int(segment_totals.get(segment_code, 0))
+        cells: list[dict[str, Any]] = []
+        for col_idx, col in enumerate(columns):
+            category_total = int(col["guests_total"])
+            guests_count = len(cell_sets.get((segment_code, int(col["focus_category_id"])), set()))
+            max_value = max(max_value, guests_count)
+            cells.append(
+                {
+                    "guests_count": guests_count,
+                    "share_of_segment_pct": _to_percent(guests_count, segment_total),
+                    "share_of_category_pct": _to_percent(guests_count, category_total),
+                    "share_of_segment": _to_percent_str(guests_count, segment_total),
+                    "share_of_category": _to_percent_str(guests_count, category_total),
+                }
+            )
+            heatmap_items.append(
+                {
+                    "x": col_idx,
+                    "y": row_idx,
+                    "value": guests_count,
+                    "segment_code": segment_code,
+                    "focus_category_id": int(col["focus_category_id"]),
+                }
+            )
+
+        rows.append(
+            {
+                "segment_code": segment_code,
+                "segment_name": segment_name,
+                "guests_total": segment_total,
+                "cells": cells,
+            }
+        )
 
     return {
-        "active_30d": active_30d,
-        "single_visit_30d": single_visit_30d,
-        "cooling_30_60d": cooling_30_60d,
-        "lost_60d_plus": lost_60d_plus,
+        "rows": rows,
+        "columns": columns,
+        "heatmap": {"max_value": max_value, "items": heatmap_items},
     }
 
 
@@ -325,3 +477,25 @@ def _to_decimal_str(value: Any) -> str:
         return "0.00"
     return f"{Decimal(str(value)):.2f}"
 
+
+def _to_percent(value: int, base: int) -> float:
+    """
+    Считает долю в процентах для визуализации матрицы покрытий.
+    """
+    if base <= 0:
+        return 0.0
+    return round((float(value) * 100.0) / float(base), 1)
+
+
+def _to_percent_str(value: int, base: int) -> str:
+    """
+    Представляет долю в процентах строкой с одним знаком после запятой.
+    """
+    return f"{_to_percent(value, base):.1f}"
+
+
+def _normalize_department_id(value: Any) -> str:
+    """
+    Нормализует Department.Id для корректного сравнения ключей сегментации.
+    """
+    return (value or "").strip()

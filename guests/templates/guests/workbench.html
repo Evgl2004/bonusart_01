@@ -36,6 +36,38 @@
   .wb-chart {
     min-height: 360px;
   }
+
+  .wb-matrix-table th,
+  .wb-matrix-table td {
+    white-space: nowrap;
+    vertical-align: top;
+  }
+
+  .wb-matrix-cell {
+    min-width: 170px;
+    border-radius: 0.65rem;
+    padding: 0.55rem 0.6rem;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+  }
+
+  .wb-matrix-cell .value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.1;
+  }
+
+  .wb-matrix-cell .meta {
+    margin-top: 0.25rem;
+    font-size: 0.78rem;
+    color: #475569;
+    line-height: 1.2;
+  }
+
+  .wb-matrix-heatmap {
+    min-height: 360px;
+  }
 </style>
 {% endblock %}
 
@@ -235,6 +267,61 @@
   </div>
 </div>
 
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <div class="wb-card">
+      <div class="card-body">
+        <h2 class="h6 mb-1">Матрица сегментов и фокусных категорий</h2>
+        <p class="text-muted small mb-3">
+          В ячейке: гостей, % внутри сегмента и % внутри категории.
+        </p>
+        <div class="wb-table-wrap">
+          <table class="table table-sm align-middle mb-0 wb-matrix-table">
+            <thead>
+              <tr>
+                <th>Сегмент</th>
+                <th>Гостей в сегменте</th>
+                {% for col in payload.segment_focus_matrix.columns %}
+                  <th>
+                    <div>{{ col.focus_category_name }}</div>
+                    <div class="text-muted small">Всего гостей: {{ col.guests_total }}</div>
+                  </th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in payload.segment_focus_matrix.rows %}
+                <tr>
+                  <td><strong>{{ row.segment_name }}</strong></td>
+                  <td>{{ row.guests_total }}</td>
+                  {% for cell in row.cells %}
+                    <td>
+                      <div class="wb-matrix-cell">
+                        <div class="value">{{ cell.guests_count }}</div>
+                        <div class="meta">в сегменте: {{ cell.share_of_segment }}%</div>
+                        <div class="meta">в категории: {{ cell.share_of_category }}%</div>
+                      </div>
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% empty %}
+                <tr><td colspan="3" class="text-muted">Нет данных</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="wb-card mb-4">
+  <div class="card-body">
+    <h2 class="h6 mb-3">Heatmap покрытия сегментов категориями</h2>
+    <div id="segment-category-heatmap" class="wb-matrix-heatmap"></div>
+  </div>
+</div>
+
 <div class="wb-card">
   <div class="card-body">
     <h2 class="h6 mb-3">Визуализация гостей: частота × средний чек</h2>
@@ -251,7 +338,8 @@
   (function() {
     const node = document.getElementById("guest-workbench-payload");
     const chartNode = document.getElementById("guests-scatter");
-    if (!node || !chartNode) {
+    const heatmapNode = document.getElementById("segment-category-heatmap");
+    if (!node || !chartNode || !heatmapNode) {
       return;
     }
 
@@ -300,7 +388,75 @@
     window.addEventListener("resize", function() {
       chart.resize();
     });
+
+    const matrix = payload.segment_focus_matrix || {};
+    const matrixRows = matrix.rows || [];
+    const matrixColumns = matrix.columns || [];
+    const heatmap = matrix.heatmap || {};
+    const heatmapData = (heatmap.items || []).map(function(item) {
+      return [item.x || 0, item.y || 0, item.value || 0];
+    });
+
+    const heatmapChart = echarts.init(heatmapNode);
+    heatmapChart.setOption({
+      tooltip: {
+        position: "top",
+        formatter: function(params) {
+          const value = params.value || [];
+          const x = value[0] || 0;
+          const y = value[1] || 0;
+          const count = value[2] || 0;
+          const row = matrixRows[y] || {};
+          const col = matrixColumns[x] || {};
+          return [
+            "Сегмент: " + (row.segment_name || "—"),
+            "Категория: " + (col.focus_category_name || "—"),
+            "Гостей: " + count
+          ].join("<br>");
+        }
+      },
+      grid: {
+        top: 40,
+        right: 20,
+        bottom: 70,
+        left: 140
+      },
+      xAxis: {
+        type: "category",
+        data: matrixColumns.map(function(col) { return col.focus_category_name || "—"; }),
+        splitArea: { show: true },
+        axisLabel: { interval: 0, rotate: 30 }
+      },
+      yAxis: {
+        type: "category",
+        data: matrixRows.map(function(row) { return row.segment_name || "—"; }),
+        splitArea: { show: true }
+      },
+      visualMap: {
+        min: 0,
+        max: heatmap.max_value || 0,
+        calculable: true,
+        orient: "horizontal",
+        left: "center",
+        bottom: 10
+      },
+      series: [{
+        name: "Покрытие",
+        type: "heatmap",
+        data: heatmapData,
+        label: { show: true },
+        emphasis: {
+          itemStyle: {
+            shadowBlur: 10,
+            shadowColor: "rgba(0, 0, 0, 0.5)"
+          }
+        }
+      }]
+    });
+
+    window.addEventListener("resize", function() {
+      heatmapChart.resize();
+    });
   })();
 </script>
 {% endblock %}
-
