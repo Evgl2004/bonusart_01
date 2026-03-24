@@ -20,9 +20,10 @@ from .views_mailings_import import MailingImportPhonesView, MailingImportTemplat
 from .views_mailings_logs import MailingLogsDownloadTxtView, MailingLogsView
 from .views_guest_workbench import GuestsWorkbenchView
 from .views_guest_workbench_actions import GuestsWorkbenchActionsView
+from .views_focus_categories_workbench import FocusCategoriesWorkbenchView
+from .views_focus_categories_actions import FocusCategoriesActionsView
 from .views_segments_workbench import SegmentsWorkbenchView
 from .views_navigation import (
-    FocusCategoriesWorkbenchView,
     ReportsWorkbenchView,
 )
 
@@ -35,6 +36,7 @@ urlpatterns = [
     path("dashboard/", AnalyticsDashboardView.as_view(), name="dashboard"),
     path("segments/", SegmentsWorkbenchView.as_view(), name="segments"),
     path("focus-categories/", FocusCategoriesWorkbenchView.as_view(), name="focus_categories"),
+    path("focus-categories/actions/", FocusCategoriesActionsView.as_view(), name="focus_categories_actions"),
     path("reports/", ReportsWorkbenchView.as_view(), name="reports"),
 
     # Гости.

@@ -1,0 +1,324 @@
+{% extends "base.html" %}
+
+{% block title %}Категории и фокусы{% endblock %}
+
+{% block extra_css %}
+<style>
+  .fc-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    height: 100%;
+  }
+
+  .fc-card .card-body {
+    padding: 1rem 1.1rem;
+  }
+
+  .fc-kpi-title {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-bottom: 0.3rem;
+  }
+
+  .fc-kpi-value {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #111827;
+  }
+
+  .fc-table-wrap {
+    max-height: 520px;
+    overflow: auto;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">Категории и фокусы</h1>
+    <div class="text-muted small">
+      Срез на {{ payload.filters.as_of_date|default:"—" }} · окно {{ payload.filters.window_days }} дней
+    </div>
+  </div>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-4">
+  <div class="col-12 col-md-3">
+    <label class="form-label">Дата среза</label>
+    <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
+  </div>
+  <div class="col-12 col-md-3">
+    <label class="form-label">Окно (дней)</label>
+    <select name="window_days" class="form-select">
+      {% for item in payload.filters.window_options %}
+        <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-4">
+    <label class="form-label">Заведение</label>
+    <select name="department_id" class="form-select">
+      <option value="">Все заведения</option>
+      {% for dep in payload.filters.department_options %}
+        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-2">
+    <button type="submit" class="btn btn-primary w-100">Применить</button>
+  </div>
+</form>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="fc-card"><div class="card-body">
+      <div class="fc-kpi-title">Фокусов всего</div>
+      <div class="fc-kpi-value">{{ payload.stats.focus_total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="fc-card"><div class="card-body">
+      <div class="fc-kpi-title">Фокусов включено</div>
+      <div class="fc-kpi-value">{{ payload.stats.focus_enabled }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="fc-card"><div class="card-body">
+      <div class="fc-kpi-title">Связей focus → nomenclature</div>
+      <div class="fc-kpi-value">{{ payload.stats.resolved_links_total }}</div>
+    </div></div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="fc-card"><div class="card-body">
+      <div class="fc-kpi-title">Выбранный фокус</div>
+      <div class="fc-kpi-value">
+        {% if payload.selected_focus.focus_name %}
+          {{ payload.selected_focus.focus_name }}
+        {% else %}
+          —
+        {% endif %}
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-xl-6">
+    <div class="fc-card">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Добавить фокус из OLAP-категории</h2>
+        <form method="post" action="{% url 'focus_categories_actions' %}" class="row g-2 align-items-end">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_focus_from_olap">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+
+          <div class="col-12">
+            <label class="form-label">OLAP-категория</label>
+            <select class="form-select" name="olap_category_id" required>
+              <option value="">Выберите категорию</option>
+              {% for item in payload.available_sources.olap_categories %}
+                <option value="{{ item.id }}">{{ item.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label">Имя фокуса (опц.)</label>
+            <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя OLAP-категории">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">Код фокуса (опц.)</label>
+            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — сгенерируется автоматически">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">Вес</label>
+            <input type="number" class="form-control" name="priority_weight" min="1" value="1">
+          </div>
+          <div class="col-12 col-md-8">
+            <label class="form-label">Тег (опц.)</label>
+            <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: beer, meat, lunch">
+          </div>
+          <div class="col-12">
+            <button type="submit" class="btn btn-outline-primary w-100">Создать фокус</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-6">
+    <div class="fc-card">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Добавить фокус из виртуальной категории</h2>
+        <form method="post" action="{% url 'focus_categories_actions' %}" class="row g-2 align-items-end">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_focus_from_virtual">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+
+          <div class="col-12">
+            <label class="form-label">Виртуальная категория</label>
+            <select class="form-select" name="virtual_category_id" {% if not payload.available_sources.virtual_categories %}disabled{% else %}required{% endif %}>
+              <option value="">Выберите категорию</option>
+              {% for item in payload.available_sources.virtual_categories %}
+                <option value="{{ item.id }}">{{ item.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label">Имя фокуса (опц.)</label>
+            <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной категории">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">Код фокуса (опц.)</label>
+            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — сгенерируется автоматически">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">Вес</label>
+            <input type="number" class="form-control" name="priority_weight" min="1" value="1">
+          </div>
+          <div class="col-12 col-md-8">
+            <label class="form-label">Тег (опц.)</label>
+            <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: wine, sushi">
+          </div>
+          <div class="col-12">
+            <button type="submit" class="btn btn-outline-secondary w-100" {% if not payload.available_sources.virtual_categories %}disabled{% endif %}>
+              Создать фокус
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="fc-card mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <h2 class="h6 mb-0">Фокусные категории</h2>
+      <form method="post" action="{% url 'focus_categories_actions' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="rebuild_focus_resolved">
+        <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+        <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+        <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+        <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+        <button type="submit" class="btn btn-sm btn-outline-dark">Пересобрать связи (все фокусы)</button>
+      </form>
+    </div>
+
+    <div class="fc-table-wrap">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Фокус</th>
+            <th>Источник</th>
+            <th>Статус</th>
+            <th>Связей</th>
+            <th>Гостей</th>
+            <th>Заказов</th>
+            <th>Сумма</th>
+            <th class="text-end">Действия</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payload.focus_rows %}
+            <tr>
+              <td>
+                <div><strong>{{ row.name }}</strong></div>
+                <div class="small text-muted">{{ row.code }}{% if row.tag_code %} · {{ row.tag_code }}{% endif %}</div>
+              </td>
+              <td>
+                <div>{{ row.source_type_label }}</div>
+                <div class="small text-muted">{{ row.source_name }}</div>
+              </td>
+              <td>
+                {% if row.is_enabled %}
+                  <span class="badge text-bg-success">включён</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">выключен</span>
+                {% endif %}
+              </td>
+              <td>{{ row.resolved_links_count }}</td>
+              <td>{{ row.guests_count }}</td>
+              <td>{{ row.orders_count }}</td>
+              <td>{{ row.net_total }}</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-primary"
+                   href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date }}&window_days={{ selected_window_days }}&department_id={{ selected_department_id }}&selected_focus_id={{ row.id }}">
+                  Состав
+                </a>
+                <form method="post" action="{% url 'focus_categories_actions' %}" class="d-inline">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="set_focus_enabled">
+                  <input type="hidden" name="focus_id" value="{{ row.id }}">
+                  <input type="hidden" name="enabled" value="{% if row.is_enabled %}0{% else %}1{% endif %}">
+                  <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+                  <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+                  <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                  <input type="hidden" name="selected_focus_id" value="{{ row.id }}">
+                  <button type="submit" class="btn btn-sm {% if row.is_enabled %}btn-outline-danger{% else %}btn-outline-success{% endif %}">
+                    {% if row.is_enabled %}Выключить{% else %}Включить{% endif %}
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="8" class="text-muted">Фокусные категории пока не созданы.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="fc-card">
+  <div class="card-body">
+    <h2 class="h6 mb-1">Состав номенклатур выбранного фокуса</h2>
+    <p class="text-muted small mb-3">
+      {% if payload.selected_focus.focus_name %}
+        {{ payload.selected_focus.focus_name }} · всего {{ payload.selected_focus.total }} номенклатур.
+        {% if payload.selected_focus.is_truncated %}
+          Показаны первые {{ payload.selected_focus.limit }}.
+        {% endif %}
+      {% else %}
+        Выберите фокус в таблице выше, чтобы посмотреть состав.
+      {% endif %}
+    </p>
+    <div class="fc-table-wrap">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Код блюда</th>
+            <th>Номенклатура</th>
+            <th>OLAP-категория</th>
+            <th>Источник связи</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payload.selected_focus.rows %}
+            <tr>
+              <td>{{ row.dish_code }}</td>
+              <td>{{ row.dish_name }}</td>
+              <td>{{ row.olap_category_name|default:"—" }}</td>
+              <td>{{ row.source_reason_label }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="4" class="text-muted">Нет данных для отображения.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
