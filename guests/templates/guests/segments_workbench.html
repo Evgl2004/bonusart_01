@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Сегменты гостей{% endblock %}
+
+{% block extra_css %}
+<style>
+  .seg-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    height: 100%;
+  }
+
+  .seg-card .card-body {
+    padding: 1rem 1.1rem;
+  }
+
+  .seg-kpi-title {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-bottom: 0.3rem;
+  }
+
+  .seg-kpi-value {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: #111827;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h1 class="h3 mb-1">Сегменты гостей</h1>
+    <div class="text-muted small">
+      Срез на {{ payload.filters.as_of_date|default:"—" }} · окно {{ payload.filters.window_days }} дней
+    </div>
+  </div>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-4">
+  <div class="col-12 col-md-3">
+    <label class="form-label">Дата среза</label>
+    <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
+  </div>
+  <div class="col-12 col-md-3">
+    <label class="form-label">Окно (дней)</label>
+    <select name="window_days" class="form-select">
+      {% for item in payload.filters.window_options %}
+        <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-4">
+    <label class="form-label">Заведение</label>
+    <select name="department_id" class="form-select">
+      <option value="">Все заведения</option>
+      {% for dep in payload.filters.department_options %}
+        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-2">
+    <button type="submit" class="btn btn-primary w-100">Применить</button>
+  </div>
+</form>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="seg-card">
+      <div class="card-body">
+        <div class="seg-kpi-title">Всего гостей</div>
+        <div class="seg-kpi-value">{{ payload.cards.guests_total }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="seg-card">
+      <div class="card-body">
+        <div class="seg-kpi-title">Активные 30д</div>
+        <div class="seg-kpi-value">{{ payload.segments.active_30d }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="seg-card">
+      <div class="card-body">
+        <div class="seg-kpi-title">1 визит за 30д</div>
+        <div class="seg-kpi-value">{{ payload.segments.single_visit_30d }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="seg-card">
+      <div class="card-body">
+        <div class="seg-kpi-title">Потерянные 60+д</div>
+        <div class="seg-kpi-value">{{ payload.segments.lost_60d_plus }}</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="seg-card">
+  <div class="card-body">
+    <h2 class="h6 mb-3">Состав сегментов</h2>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Сегмент</th>
+            <th>Гостей</th>
+            <th>Доля от базы</th>
+            <th class="text-end">Действие</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in segment_rows %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td>{{ row.guests_count }}</td>
+              <td>{{ row.share_pct }}%</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-primary" href="{{ row.details_url }}">
+                  Открыть гостей сегмента
+                </a>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="4" class="text-muted">Нет данных по сегментам.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
