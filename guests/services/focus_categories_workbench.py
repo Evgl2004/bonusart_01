@@ -1,10 +1,10 @@
 """
-Сервис данных для экрана «Категории и фокусы».
+Сервис данных для экрана «Категории и цели».
 
 Цель:
-1. дать маркетологу рабочий обзор по фокусным категориям;
+1. дать маркетологу рабочий обзор по целевым категориям;
 2. показать покрытие по гостям и обороту за выбранное окно;
-3. дать быстрый доступ к составу номенклатур в каждой фокусной категории.
+3. дать быстрый доступ к составу номенклатур в каждой целевой категории.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
-from django.db.models import Count, Max, Sum
+from django.db.models import Count, Max, Q, Sum
 from django.db.models.functions import Coalesce
 
 from guests.models import (
@@ -21,6 +21,7 @@ from guests.models import (
     FocusCategoryNomenclatureResolved,
     GuestRestaurantDailyCategoryFact,
     OlapCategoryDict,
+    OlapNomenclatureDict,
     OrderFact,
     VirtualCategory,
 )
@@ -28,6 +29,7 @@ from guests.services.guest_workbench import WINDOW_OPTIONS, normalize_window_day
 
 DEFAULT_WINDOW_DAYS = 30
 NOMENCLATURE_PREVIEW_LIMIT = 200
+NOMENCLATURE_CATALOG_LIMIT = 500
 
 
 def build_focus_categories_workbench_payload(
@@ -36,12 +38,18 @@ def build_focus_categories_workbench_payload(
     window_days: int | str | None = None,
     department_id: str | None = None,
     selected_focus_id: int | None = None,
+    nomenclature_query: str | None = None,
+    nomenclature_group_query: str | None = None,
+    nomenclature_olap_category_id: int | None = None,
 ) -> dict[str, Any]:
     """
     Формирует payload для страницы `focus-categories`.
     """
     selected_window_days = normalize_window_days(window_days)
     selected_department_id = (department_id or "").strip()
+    selected_nomenclature_query = (nomenclature_query or "").strip()
+    selected_nomenclature_group_query = (nomenclature_group_query or "").strip()
+    selected_nomenclature_olap_category_id = int(nomenclature_olap_category_id or 0)
 
     target_as_of = as_of_date
     if target_as_of is None:
@@ -53,6 +61,9 @@ def build_focus_categories_workbench_payload(
             selected_window_days=selected_window_days,
             selected_department_id=selected_department_id,
             selected_focus_id=selected_focus_id,
+            selected_nomenclature_query=selected_nomenclature_query,
+            selected_nomenclature_group_query=selected_nomenclature_group_query,
+            selected_nomenclature_olap_category_id=selected_nomenclature_olap_category_id,
         )
 
     range_start = target_as_of - timedelta(days=selected_window_days - 1)
@@ -103,6 +114,12 @@ def build_focus_categories_workbench_payload(
         focus_id=selected_focus_id,
         limit=NOMENCLATURE_PREVIEW_LIMIT,
     )
+    nomenclature_catalog = _build_nomenclature_catalog(
+        query=selected_nomenclature_query,
+        group_query=selected_nomenclature_group_query,
+        olap_category_id=selected_nomenclature_olap_category_id if selected_nomenclature_olap_category_id > 0 else None,
+        limit=NOMENCLATURE_CATALOG_LIMIT,
+    )
 
     total_resolved_links = sum(item["resolved_links_count"] for item in payload_rows)
     enabled_focus_count = sum(1 for item in payload_rows if item["is_enabled"])
@@ -115,6 +132,10 @@ def build_focus_categories_workbench_payload(
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
             "selected_focus_id": int(selected_focus_id or 0),
+            "nomenclature_query": selected_nomenclature_query,
+            "nomenclature_group_query": selected_nomenclature_group_query,
+            "nomenclature_olap_category_id": selected_nomenclature_olap_category_id,
+            "nomenclature_olap_category_options": _build_nomenclature_olap_category_options(),
         },
         "stats": {
             "focus_total": len(payload_rows),
@@ -127,6 +148,7 @@ def build_focus_categories_workbench_payload(
             "virtual_categories": _build_available_virtual_categories(),
         },
         "selected_focus": selected_focus_data,
+        "nomenclature_catalog": nomenclature_catalog,
     }
 
 
@@ -136,6 +158,9 @@ def _build_empty_payload(
     selected_window_days: int,
     selected_department_id: str,
     selected_focus_id: int | None,
+    selected_nomenclature_query: str,
+    selected_nomenclature_group_query: str,
+    selected_nomenclature_olap_category_id: int,
 ) -> dict[str, Any]:
     """
     Возвращает пустой payload, если пока нет данных для аналитики.
@@ -148,6 +173,10 @@ def _build_empty_payload(
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
             "selected_focus_id": int(selected_focus_id or 0),
+            "nomenclature_query": selected_nomenclature_query,
+            "nomenclature_group_query": selected_nomenclature_group_query,
+            "nomenclature_olap_category_id": selected_nomenclature_olap_category_id,
+            "nomenclature_olap_category_options": _build_nomenclature_olap_category_options(),
         },
         "stats": {
             "focus_total": 0,
@@ -164,6 +193,12 @@ def _build_empty_payload(
             "focus_name": "",
             "total": 0,
             "limit": NOMENCLATURE_PREVIEW_LIMIT,
+            "is_truncated": False,
+            "rows": [],
+        },
+        "nomenclature_catalog": {
+            "total": 0,
+            "limit": NOMENCLATURE_CATALOG_LIMIT,
             "is_truncated": False,
             "rows": [],
         },
@@ -240,6 +275,24 @@ def _build_available_virtual_categories() -> list[dict[str, Any]]:
     ]
 
 
+def _build_nomenclature_olap_category_options() -> list[dict[str, Any]]:
+    """
+    Возвращает список категорий OLAP для фильтра каталога номенклатуры.
+    """
+    rows = (
+        OlapCategoryDict.objects.filter(is_active=True)
+        .order_by("category_name", "id")
+        .values("id", "category_name")
+    )
+    return [
+        {
+            "id": int(row["id"]),
+            "name": (row.get("category_name") or "").strip(),
+        }
+        for row in rows
+    ]
+
+
 def _build_focus_source_name(focus: FocusCategory) -> str:
     """
     Формирует человеко-понятное название источника фокуса.
@@ -291,6 +344,7 @@ def _build_selected_focus_nomenclature(*, focus_id: int | None, limit: int) -> d
         queryset[:limit].values(
             "nomenclature__iiko_nomenclature_external_id",
             "nomenclature__nomenclature_name",
+            "nomenclature__dish_group_name",
             "nomenclature__olap_category__category_name",
             "source_reason",
         )
@@ -307,12 +361,64 @@ def _build_selected_focus_nomenclature(*, focus_id: int | None, limit: int) -> d
             {
                 "dish_code": (row.get("nomenclature__iiko_nomenclature_external_id") or "").strip(),
                 "dish_name": (row.get("nomenclature__nomenclature_name") or "").strip(),
+                "dish_group_name": (row.get("nomenclature__dish_group_name") or "").strip(),
                 "olap_category_name": (row.get("nomenclature__olap_category__category_name") or "").strip(),
                 "source_reason": row.get("source_reason") or "",
                 "source_reason_label": source_reason_labels.get(
                     row.get("source_reason") or "",
                     row.get("source_reason") or "",
                 ),
+            }
+            for row in rows
+        ],
+    }
+
+
+def _build_nomenclature_catalog(
+    *,
+    query: str,
+    group_query: str,
+    olap_category_id: int | None,
+    limit: int,
+) -> dict[str, Any]:
+    """
+    Формирует каталог номенклатур с быстрым поиском для конструктора виртуальных категорий.
+    """
+    queryset = OlapNomenclatureDict.objects.select_related("olap_category").filter(is_active=True)
+    if query:
+        queryset = queryset.filter(
+            Q(iiko_nomenclature_external_id__icontains=query)
+            | Q(nomenclature_name__icontains=query)
+        )
+    if group_query:
+        queryset = queryset.filter(dish_group_name__icontains=group_query)
+    if olap_category_id is not None:
+        queryset = queryset.filter(olap_category_id=int(olap_category_id))
+
+    queryset = queryset.order_by("nomenclature_name", "id")
+    total = queryset.count()
+    rows = list(
+        queryset[:limit].values(
+            "id",
+            "iiko_nomenclature_external_id",
+            "nomenclature_name",
+            "dish_group_name",
+            "olap_category_id",
+            "olap_category__category_name",
+        )
+    )
+    return {
+        "total": int(total),
+        "limit": int(limit),
+        "is_truncated": total > limit,
+        "rows": [
+            {
+                "id": int(row["id"]),
+                "dish_code": (row.get("iiko_nomenclature_external_id") or "").strip(),
+                "dish_name": (row.get("nomenclature_name") or "").strip(),
+                "dish_group_name": (row.get("dish_group_name") or "").strip(),
+                "olap_category_id": int(row.get("olap_category_id") or 0),
+                "olap_category_name": (row.get("olap_category__category_name") or "").strip(),
             }
             for row in rows
         ],

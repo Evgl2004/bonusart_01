@@ -1,5 +1,5 @@
 """
-Представление экрана «Категории и фокусы».
+Представление экрана «Категории и цели».
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from guests.services.guest_workbench import normalize_window_days
 
 class FocusCategoriesWorkbenchView(TemplateView):
     """
-    Рабочий экран управления фокусными категориями.
+    Рабочий экран управления целевыми категориями.
     """
 
     template_name = "guests/focus_categories_workbench.html"
@@ -27,12 +27,20 @@ class FocusCategoriesWorkbenchView(TemplateView):
         raw_window_days = self.request.GET.get("window_days")
         selected_department_id = (self.request.GET.get("department_id") or "").strip()
         selected_focus_id = _parse_int(self.request.GET.get("selected_focus_id"))
+        selected_nomenclature_query = (self.request.GET.get("nomenclature_query") or "").strip()
+        selected_nomenclature_group_query = (self.request.GET.get("nomenclature_group_query") or "").strip()
+        selected_nomenclature_olap_category_id = _parse_int(
+            self.request.GET.get("nomenclature_olap_category_id")
+        )
 
         payload = build_focus_categories_workbench_payload(
             as_of_date=_parse_iso_date(raw_as_of_date),
             window_days=normalize_window_days(raw_window_days),
             department_id=selected_department_id,
             selected_focus_id=selected_focus_id,
+            nomenclature_query=selected_nomenclature_query,
+            nomenclature_group_query=selected_nomenclature_group_query,
+            nomenclature_olap_category_id=selected_nomenclature_olap_category_id,
         )
 
         context["payload"] = payload
@@ -40,6 +48,11 @@ class FocusCategoriesWorkbenchView(TemplateView):
         context["selected_window_days"] = payload["filters"]["window_days"]
         context["selected_department_id"] = payload["filters"]["department_id"]
         context["selected_focus_id"] = int(payload["filters"]["selected_focus_id"] or 0)
+        context["selected_nomenclature_query"] = payload["filters"]["nomenclature_query"]
+        context["selected_nomenclature_group_query"] = payload["filters"]["nomenclature_group_query"]
+        context["selected_nomenclature_olap_category_id"] = int(
+            payload["filters"]["nomenclature_olap_category_id"] or 0
+        )
         return context
 
 
@@ -64,4 +77,3 @@ def _parse_int(raw_value: str | None) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
-

@@ -1,5 +1,5 @@
 """
-Тесты экрана «Категории и фокусы».
+Тесты экрана «Категории и цели».
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ from guests.models import (
     OlapCategoryDict,
     OlapNomenclatureDict,
     OrderFact,
+    VirtualCategory,
+    VirtualCategoryNomenclatureLink,
 )
 
 
@@ -92,7 +94,7 @@ class FocusCategoriesWorkbenchTests(TestCase):
 
     def test_focus_categories_page_renders_data(self):
         """
-        Экран должен открываться и показывать таблицу фокусов.
+        Экран должен открываться и показывать таблицу целевых категорий.
         """
         response = self.client.get(
             reverse("focus_categories"),
@@ -104,7 +106,7 @@ class FocusCategoriesWorkbenchTests(TestCase):
             secure=True,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Фокусные категории")
+        self.assertContains(response, "Целевые категории")
         self.assertContains(response, self.focus.name)
         payload = response.context["payload"]
         self.assertEqual(payload["stats"]["focus_total"], 1)
@@ -162,3 +164,38 @@ class FocusCategoriesWorkbenchTests(TestCase):
             FocusCategoryNomenclatureResolved.objects.filter(focus_category=self.focus).exists()
         )
 
+    def test_create_virtual_category_from_nomenclature_with_target(self):
+        """
+        Конструктор должен создавать виртуальную и целевую категории из выбранной номенклатуры.
+        """
+        response = self.client.post(
+            reverse("focus_categories_actions"),
+            {
+                "action": "create_virtual_category_from_nomenclature",
+                "virtual_name": "Мангал",
+                "virtual_code": "grill_virtual",
+                "create_target_category": "1",
+                "focus_name": "Мангал",
+                "focus_code": "grill_target",
+                "priority_weight": 2,
+                "nomenclature_ids": [str(self.nomenclature_1.id)],
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        virtual_category = VirtualCategory.objects.get(code="grill_virtual")
+        self.assertEqual(virtual_category.name, "Мангал")
+        self.assertTrue(
+            VirtualCategoryNomenclatureLink.objects.filter(
+                virtual_category=virtual_category,
+                nomenclature_id=self.nomenclature_1.id,
+            ).exists()
+        )
+
+        target_category = FocusCategory.objects.get(code="grill_target")
+        self.assertEqual(target_category.source_type, FocusCategory.SourceType.VIRTUAL)
+        self.assertEqual(target_category.virtual_category_id, virtual_category.id)
