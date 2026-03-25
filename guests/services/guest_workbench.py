@@ -163,7 +163,8 @@ def build_guest_workbench_payload(
         selected_focus_category_code_raw if selected_focus_category_code_raw in focus_codes else ""
     )
     selected_guests = _build_selected_guests_rows(
-        work_scope=work_scope,
+        base_scope=base_scope,
+        selected_window_days=selected_window_days,
         segment_by_key=segment_by_key,
         focus_guest_keys_by_code=focus_guest_keys_by_code,
         segment_code=selected_segment_code,
@@ -586,7 +587,8 @@ def _build_scatter_points(scope_qs) -> list[dict[str, Any]]:
 
 def _build_selected_guests_rows(
     *,
-    work_scope,
+    base_scope,
+    selected_window_days: int,
     segment_by_key: dict[tuple[int, str], str],
     focus_guest_keys_by_code: dict[str, set[tuple[int, str]]],
     segment_code: str,
@@ -600,10 +602,44 @@ def _build_selected_guests_rows(
     total = 0
     focus_keys = focus_guest_keys_by_code.get(focus_category_code, set()) if focus_category_code else None
 
-    for row in work_scope.order_by("-rating_score", "-sum_net", "guest_id"):
+    # Для «остывших/потерянных» гостей строки в выбранном окне может не быть.
+    # Берем представителя гостя с fallback по окнам:
+    # выбранное окно -> 180 -> 60 -> 30 -> 14 -> 7.
+    preferred_windows = [selected_window_days] + [180, 60, 30, 14, 7]
+    unique_windows: list[int] = []
+    for window in preferred_windows:
+        if window not in unique_windows:
+            unique_windows.append(window)
+    window_rank = {window: idx for idx, window in enumerate(unique_windows)}
+    default_rank = len(unique_windows) + 1
+
+    representative_by_key: dict[tuple[int, str], GuestRestaurantWindowMetrics] = {}
+    for row in base_scope.select_related("guest"):
+        key = (int(row.guest_id), _normalize_department_id(row.department_id))
+        current = representative_by_key.get(key)
+        row_rank = window_rank.get(int(row.window_days), default_rank)
+        if current is None:
+            representative_by_key[key] = row
+            continue
+        current_rank = window_rank.get(int(current.window_days), default_rank)
+        if row_rank < current_rank:
+            representative_by_key[key] = row
+
+    representative_rows = list(representative_by_key.values())
+    representative_rows.sort(
+        key=lambda item: (
+            -(float(item.rating_score or 0)),
+            -(float(item.sum_net or 0)),
+            int(item.guest_id),
+        )
+    )
+
+    for row in representative_rows:
         key = (int(row.guest_id), _normalize_department_id(row.department_id))
         row_segment_code = segment_by_key.get(key, "")
 
+        if not row_segment_code:
+            continue
         if segment_code and row_segment_code != segment_code:
             continue
         if focus_keys is not None and key not in focus_keys:
@@ -614,6 +650,7 @@ def _build_selected_guests_rows(
             item = _serialize_metric_row(row)
             item["segment_code"] = row_segment_code
             item["segment_name"] = SEGMENT_NAMES_MAP.get(row_segment_code, "Вне сегмента")
+            item["source_window_days"] = int(row.window_days or 0)
             rows.append(item)
 
     return {
