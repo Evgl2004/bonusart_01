@@ -64,6 +64,27 @@
   .fc-focus-list-wrap {
     max-height: 360px;
   }
+
+  .fc-sections {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .fc-section-focus-list {
+    order: 1;
+  }
+
+  .fc-section-composition {
+    order: 2;
+  }
+
+  .fc-section-add {
+    order: 3;
+  }
+
+  .fc-section-rebuild {
+    order: 4;
+  }
 </style>
 {% endblock %}
 
@@ -107,7 +128,8 @@
   </div>
 </form>
 
-<div class="row g-3 mb-4">
+<div class="fc-sections">
+<div class="row g-3 mb-4 fc-section-add">
   <div class="col-6 col-lg-3">
     <div class="fc-card"><div class="card-body">
       <div class="fc-kpi-title">Категорий всего</div>
@@ -244,7 +266,7 @@
   </div>
 </div>
 
-<div class="fc-card mb-4">
+<div class="fc-card mb-4 fc-section-rebuild">
   <div class="card-body">
     <h2 class="h6 mb-2">Пересчёт витрин после изменений</h2>
     <p class="fc-note mb-3">
@@ -286,7 +308,7 @@
   </div>
 </div>
 
-<div class="fc-card mb-4" id="focus-composition">
+<div class="fc-card mb-4 fc-section-composition" id="focus-composition">
   <div class="card-body">
     <h2 class="h6 mb-1">Состав номенклатур выбранной категории</h2>
     <p class="text-muted small mb-3">
@@ -328,7 +350,7 @@
   </div>
 </div>
 
-<div class="fc-card mb-4">
+<div class="fc-card mb-4 fc-section-focus-list">
   <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h2 class="h6 mb-0">Целевые категории</h2>
@@ -398,6 +420,8 @@
       </table>
     </div>
   </div>
+</div>
+
 </div>
 
 {% endblock %}
