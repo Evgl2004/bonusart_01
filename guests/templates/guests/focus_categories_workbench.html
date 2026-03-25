@@ -37,6 +37,30 @@
     font-size: 0.85rem;
     color: #4b5563;
   }
+
+  .fc-advanced {
+    border: 1px dashed #d1d5db;
+    border-radius: 0.65rem;
+    padding: 0.5rem 0.65rem;
+    margin-top: 0.35rem;
+    background: #f8fafc;
+  }
+
+  .fc-advanced > summary {
+    cursor: pointer;
+    color: #374151;
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin-bottom: 0.45rem;
+  }
+
+  .fc-advanced > summary::marker {
+    color: #6b7280;
+  }
+
+  .fc-composition-wrap {
+    max-height: 460px;
+  }
 </style>
 {% endblock %}
 
@@ -135,22 +159,27 @@
               {% endfor %}
             </select>
           </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">Имя (опционально)</label>
-            <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя OLAP-категории">
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">Код (опционально)</label>
-            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
-          </div>
-          <div class="col-12 col-md-4">
-            <label class="form-label">Вес</label>
-            <input type="number" class="form-control" name="priority_weight" min="1" value="1">
-          </div>
-          <div class="col-12 col-md-8">
-            <label class="form-label">Тег (опционально)</label>
-            <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: beer, grill">
-          </div>
+          <details class="col-12 fc-advanced">
+            <summary>Дополнительные настройки (имя, код, вес, тег)</summary>
+            <div class="row g-2">
+              <div class="col-12 col-md-6">
+                <label class="form-label">Имя (опционально)</label>
+                <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя OLAP-категории">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">Код (опционально)</label>
+                <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label">Вес</label>
+                <input type="number" class="form-control" name="priority_weight" min="1" value="1">
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label">Тег (опционально)</label>
+                <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: beer, grill">
+              </div>
+            </div>
+          </details>
           <div class="col-12">
             <button type="submit" class="btn btn-outline-primary w-100">Создать категорию</button>
           </div>
@@ -180,22 +209,27 @@
               {% endfor %}
             </select>
           </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">Имя (опционально)</label>
-            <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной категории">
-          </div>
-          <div class="col-12 col-md-6">
-            <label class="form-label">Код (опционально)</label>
-            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
-          </div>
-          <div class="col-12 col-md-4">
-            <label class="form-label">Вес</label>
-            <input type="number" class="form-control" name="priority_weight" min="1" value="1">
-          </div>
-          <div class="col-12 col-md-8">
-            <label class="form-label">Тег (опционально)</label>
-            <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: wine, sushi">
-          </div>
+          <details class="col-12 fc-advanced">
+            <summary>Дополнительные настройки (имя, код, вес, тег)</summary>
+            <div class="row g-2">
+              <div class="col-12 col-md-6">
+                <label class="form-label">Имя (опционально)</label>
+                <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной категории">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">Код (опционально)</label>
+                <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label">Вес</label>
+                <input type="number" class="form-control" name="priority_weight" min="1" value="1">
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label">Тег (опционально)</label>
+                <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: wine, sushi">
+              </div>
+            </div>
+          </details>
           <div class="col-12">
             <button type="submit" class="btn btn-outline-secondary w-100" {% if not payload.available_sources.virtual_categories %}disabled{% endif %}>
               Создать категорию
@@ -209,17 +243,93 @@
 
 <div class="fc-card mb-4">
   <div class="card-body">
+    <h2 class="h6 mb-2">Пересчёт витрин после изменений</h2>
+    <p class="fc-note mb-3">
+      После изменения целевых категорий обновите агрегаты, чтобы фильтры и рейтинги по гостям отражали новые связи.
+      Рекомендуемый безопасный режим: пересчёт хвоста 180 дней.
+    </p>
+
+    <div class="row g-2">
+      <div class="col-12 col-xl-6">
+        <form method="post" action="{% url 'focus_categories_actions' %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="rebuild_focus_resolved">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+          {% if selected_focus_id %}
+            <input type="hidden" name="focus_id" value="{{ selected_focus_id }}">
+          {% endif %}
+          <button type="submit" class="btn btn-outline-dark w-100">
+            Пересобрать связи номенклатур {% if selected_focus_id %}(для выбранной категории){% else %}(для всех){% endif %}
+          </button>
+        </form>
+      </div>
+      <div class="col-12 col-xl-6">
+        <form method="post" action="{% url 'focus_categories_actions' %}">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="rebuild_aggregates_tail">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+          <button type="submit" class="btn btn-primary w-100" {% if not selected_as_of_date %}disabled{% endif %}>
+            Пересчитать итоги за хвост 180 дней
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="fc-card mb-4" id="focus-composition">
+  <div class="card-body">
+    <h2 class="h6 mb-1">Состав номенклатур выбранной категории</h2>
+    <p class="text-muted small mb-3">
+      {% if payload.selected_focus.focus_name %}
+        {{ payload.selected_focus.focus_name }} · всего {{ payload.selected_focus.total }} номенклатур.
+        {% if payload.selected_focus.is_truncated %}
+          Показаны первые {{ payload.selected_focus.limit }}.
+        {% endif %}
+      {% else %}
+        Выберите категорию в списке ниже, чтобы посмотреть состав.
+      {% endif %}
+    </p>
+    <div class="fc-table-wrap fc-composition-wrap">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>iiko ID</th>
+            <th>Номенклатура</th>
+            <th>Группа</th>
+            <th>OLAP-категория</th>
+            <th>Источник связи</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payload.selected_focus.rows %}
+            <tr>
+              <td><code>{{ row.dish_code }}</code></td>
+              <td>{{ row.dish_name }}</td>
+              <td>{{ row.dish_group_name|default:"—" }}</td>
+              <td>{{ row.olap_category_name|default:"—" }}</td>
+              <td>{{ row.source_reason_label }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="5" class="text-muted">Нет данных для отображения.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="fc-card mb-4">
+  <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h2 class="h6 mb-0">Целевые категории</h2>
-      <form method="post" action="{% url 'focus_categories_actions' %}">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="rebuild_focus_resolved">
-        <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-        <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-        <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-        <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-        <button type="submit" class="btn btn-sm btn-outline-dark">Пересобрать связи категорий</button>
-      </form>
+      <span class="small text-muted">Нажмите «Состав», чтобы открыть номенклатуру категории выше.</span>
     </div>
 
     <div class="fc-table-wrap">
@@ -260,7 +370,7 @@
               <td>{{ row.net_total }}</td>
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-primary"
-                   href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&selected_focus_id={{ row.id|urlencode }}">
+                   href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&selected_focus_id={{ row.id|urlencode }}#focus-composition">
                   Состав
                 </a>
                 <form method="post" action="{% url 'focus_categories_actions' %}" class="d-inline">
@@ -287,88 +397,4 @@
   </div>
 </div>
 
-<div class="row g-3">
-  <div class="col-12 col-xl-7">
-    <div class="fc-card">
-      <div class="card-body">
-        <h2 class="h6 mb-1">Состав номенклатур выбранной категории</h2>
-        <p class="text-muted small mb-3">
-          {% if payload.selected_focus.focus_name %}
-            {{ payload.selected_focus.focus_name }} · всего {{ payload.selected_focus.total }} номенклатур.
-            {% if payload.selected_focus.is_truncated %}
-              Показаны первые {{ payload.selected_focus.limit }}.
-            {% endif %}
-          {% else %}
-            Выберите категорию в таблице выше, чтобы посмотреть состав.
-          {% endif %}
-        </p>
-        <div class="fc-table-wrap">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th>iiko ID</th>
-                <th>Номенклатура</th>
-                <th>Группа</th>
-                <th>OLAP-категория</th>
-                <th>Источник связи</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in payload.selected_focus.rows %}
-                <tr>
-                  <td><code>{{ row.dish_code }}</code></td>
-                  <td>{{ row.dish_name }}</td>
-                  <td>{{ row.dish_group_name|default:"—" }}</td>
-                  <td>{{ row.olap_category_name|default:"—" }}</td>
-                  <td>{{ row.source_reason_label }}</td>
-                </tr>
-              {% empty %}
-                <tr><td colspan="5" class="text-muted">Нет данных для отображения.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-xl-5">
-    <div class="fc-card">
-      <div class="card-body">
-        <h2 class="h6 mb-2">Пересчёт витрин после изменений</h2>
-        <p class="fc-note mb-3">
-          После изменения целевых категорий обновите агрегаты, чтобы фильтры и рейтинги по гостям отражали новые связи.
-          Рекомендуемый безопасный режим: пересчёт хвоста 180 дней.
-        </p>
-
-        <form method="post" action="{% url 'focus_categories_actions' %}" class="mb-2">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="rebuild_focus_resolved">
-          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-          {% if selected_focus_id %}
-            <input type="hidden" name="focus_id" value="{{ selected_focus_id }}">
-          {% endif %}
-          <button type="submit" class="btn btn-outline-dark w-100">
-            Пересобрать связи номенклатур {% if selected_focus_id %}(для выбранной категории){% else %}(для всех){% endif %}
-          </button>
-        </form>
-
-        <form method="post" action="{% url 'focus_categories_actions' %}">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="rebuild_aggregates_tail">
-          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-          <button type="submit" class="btn btn-primary w-100" {% if not selected_as_of_date %}disabled{% endif %}>
-            Пересчитать итоги за хвост 180 дней
-          </button>
-        </form>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}
