@@ -43,15 +43,16 @@ class SegmentsWorkbenchView(TemplateView):
             window_days=selected_window_days,
             department_id=selected_department_id,
         )
-        total_guests = int(payload.get("cards", {}).get("guests_total") or 0)
+        total_unique_guests = int(payload.get("cards", {}).get("guests_total") or 0)
 
         rows = []
         segment_totals = payload.get("segments", {})
+        segment_base_total = sum(int(segment_totals.get(code, 0)) for code, _ in SEGMENT_DEFINITIONS)
         filters = payload.get("filters", {})
         selected_as_of_date = (filters.get("as_of_date") or "").strip()
         for code, name in SEGMENT_DEFINITIONS:
             guests_count = int(segment_totals.get(code, 0))
-            share_pct = round((guests_count * 100.0 / total_guests), 1) if total_guests > 0 else 0.0
+            share_pct = round((guests_count * 100.0 / segment_base_total), 1) if segment_base_total > 0 else 0.0
 
             rows.append(
                 {
@@ -73,6 +74,8 @@ class SegmentsWorkbenchView(TemplateView):
         context["selected_as_of_date"] = selected_as_of_date
         context["selected_window_days"] = selected_window_days
         context["selected_department_id"] = (filters.get("department_id") or "").strip()
+        context["segment_base_total"] = segment_base_total
+        context["total_unique_guests"] = total_unique_guests
         return context
 
     @staticmethod
@@ -95,8 +98,8 @@ class SegmentsWorkbenchView(TemplateView):
         params = {key: value for key, value in params.items() if value}
         base_url = reverse("guests_workbench")
         if not params:
-            return base_url
-        return f"{base_url}?{urlencode(params)}"
+            return f"{base_url}#selected-guests"
+        return f"{base_url}?{urlencode(params)}#selected-guests"
 
 
 def _parse_iso_date(raw_value: str) -> date | None:
@@ -109,4 +112,3 @@ def _parse_iso_date(raw_value: str) -> date | None:
         return date.fromisoformat(raw_value)
     except ValueError:
         return None
-

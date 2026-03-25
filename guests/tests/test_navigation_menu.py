@@ -24,19 +24,22 @@ class NavigationMenuTests(TestCase):
         """
         Новые разделы должны отвечать со статусом 200.
         """
-        for route_name in ("dashboard", "segments", "focus_categories", "reports", "guests_workbench"):
+        for route_name in ("dashboard", "segments", "focus_categories", "virtual_categories", "reports", "guests_workbench"):
             response = self.client.get(reverse(route_name), secure=True)
             self.assertEqual(response.status_code, 200, msg=f"Route `{route_name}` is unavailable")
 
     def test_sidebar_contains_new_working_menu_links(self):
         """
-        На любой странице нового меню должны быть ссылки на все рабочие разделы.
+        На любой странице нового меню должны быть ссылки только на рабочие разделы.
+        «Рассылки» и «Отчеты» скрыты из основного меню.
         """
         response = self.client.get(reverse("segments"), secure=True)
         self.assertEqual(response.status_code, 200)
 
-        for route_name in ("dashboard", "segments", "guests_workbench", "focus_categories", "mailings", "reports"):
+        for route_name in ("dashboard", "segments", "guests_workbench", "focus_categories", "virtual_categories"):
             self.assertContains(response, f'href="{reverse(route_name)}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("mailings")}"', html=False)
+        self.assertNotContains(response, f'href="{reverse("reports")}"', html=False)
 
     def test_sidebar_hides_legacy_block_for_regular_user(self):
         """

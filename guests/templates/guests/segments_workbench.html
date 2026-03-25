@@ -67,12 +67,25 @@
   </div>
 </form>
 
+<div class="alert alert-light border small mb-4">
+  Важно: при выборе «Все заведения» один и тот же гость может попасть в разные сегменты по разным заведениям.
+  Поэтому доля считается от «сегментированной базы» (профили гость × заведение).
+</div>
+
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="seg-card">
       <div class="card-body">
-        <div class="seg-kpi-title">Всего гостей</div>
-        <div class="seg-kpi-value">{{ payload.cards.guests_total }}</div>
+        <div class="seg-kpi-title">Уникальных гостей</div>
+        <div class="seg-kpi-value">{{ total_unique_guests }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="seg-card">
+      <div class="card-body">
+        <div class="seg-kpi-title">Сегментированная база</div>
+        <div class="seg-kpi-value">{{ segment_base_total }}</div>
       </div>
     </div>
   </div>
@@ -81,14 +94,6 @@
       <div class="card-body">
         <div class="seg-kpi-title">Активные 30д</div>
         <div class="seg-kpi-value">{{ payload.segments.active_30d }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="seg-card">
-      <div class="card-body">
-        <div class="seg-kpi-title">1 визит за 30д</div>
-        <div class="seg-kpi-value">{{ payload.segments.single_visit_30d }}</div>
       </div>
     </div>
   </div>
@@ -111,7 +116,7 @@
           <tr>
             <th>Сегмент</th>
             <th>Гостей</th>
-            <th>Доля от базы</th>
+            <th>Доля от сегментированной базы</th>
             <th class="text-end">Действие</th>
           </tr>
         </thead>
@@ -138,4 +143,3 @@
   </div>
 </div>
 {% endblock %}
-

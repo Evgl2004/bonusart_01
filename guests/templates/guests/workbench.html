@@ -1,6 +1,6 @@
-﻿{% extends "base.html" %}
+{% extends "base.html" %}
 
-{% block title %}Р“РѕСЃС‚Рё: СЂР°Р±РѕС‡РёР№ СЌРєСЂР°РЅ{% endblock %}
+{% block title %}Гости: рабочий экран{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -23,13 +23,13 @@
   }
 
   .wb-kpi-value {
-    font-size: 1.4rem;
+    font-size: 1.3rem;
     font-weight: 700;
     color: #111827;
   }
 
   .wb-table-wrap {
-    max-height: 420px;
+    max-height: 440px;
     overflow: auto;
   }
 
@@ -44,7 +44,7 @@
   }
 
   .wb-matrix-cell {
-    min-width: 170px;
+    min-width: 175px;
     border-radius: 0.65rem;
     padding: 0.55rem 0.6rem;
     background: #f8fafc;
@@ -79,26 +79,30 @@
   .wb-matrix-heatmap {
     min-height: 360px;
   }
+
+  .wb-tabs .nav-link {
+    border-radius: 0.6rem 0.6rem 0 0;
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h1 class="h3 mb-1">Р“РѕСЃС‚Рё: СЂР°Р±РѕС‡РёР№ СЌРєСЂР°РЅ</h1>
+    <h1 class="h3 mb-1">Гости: рабочий экран</h1>
     <div class="text-muted small">
-      РЎСЂРµР· РјРµС‚СЂРёРє РїРѕ СЃРѕСЃС‚РѕСЏРЅРёСЋ РЅР° {{ payload.filters.as_of_date|default:"вЂ”" }}
+      Срез метрик по состоянию на {{ payload.filters.as_of_date|default:"—" }}
     </div>
   </div>
 </div>
 
-<form method="get" class="row g-2 align-items-end mb-4">
+<form method="get" class="row g-2 align-items-end mb-3">
   <div class="col-12 col-md-2">
-    <label class="form-label">Р”Р°С‚Р° СЃСЂРµР·Р°</label>
+    <label class="form-label">Дата среза</label>
     <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
   </div>
   <div class="col-12 col-md-2">
-    <label class="form-label">РћРєРЅРѕ (РґРЅРµР№)</label>
+    <label class="form-label">Окно (дней)</label>
     <select name="window_days" class="form-select">
       {% for item in payload.filters.window_options %}
         <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
@@ -106,310 +110,281 @@
     </select>
   </div>
   <div class="col-12 col-md-3">
-    <label class="form-label">Р—Р°РІРµРґРµРЅРёРµ</label>
+    <label class="form-label">Заведение</label>
     <select name="department_id" class="form-select">
-      <option value="">Р’СЃРµ Р·Р°РІРµРґРµРЅРёСЏ</option>
+      <option value="">Все заведения</option>
       {% for dep in payload.filters.department_options %}
         <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="col-12 col-md-2">
-    <label class="form-label">РЎРµРіРјРµРЅС‚</label>
+    <label class="form-label">Сегмент</label>
     <select name="segment_code" class="form-select">
-      <option value="">Р’СЃРµ СЃРµРіРјРµРЅС‚С‹</option>
+      <option value="">Все сегменты</option>
       {% for seg in payload.filters.segment_options %}
         <option value="{{ seg.code }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
       {% endfor %}
     </select>
   </div>
   <div class="col-12 col-md-2">
-    <label class="form-label">Р¤РѕРєСѓСЃРЅР°СЏ РєР°С‚РµРіРѕСЂРёСЏ</label>
+    <label class="form-label">Целевая категория</label>
     <select name="focus_category_code" class="form-select">
-      <option value="">Р’СЃРµ РєР°С‚РµРіРѕСЂРёРё</option>
+      <option value="">Все категории</option>
       {% for cat in payload.filters.focus_category_options %}
         <option value="{{ cat.code }}" {% if cat.code == selected_focus_category_code %}selected{% endif %}>{{ cat.name }}</option>
       {% endfor %}
     </select>
   </div>
-  <div class="col-12 col-md-2">
-    <label class="form-label d-block">РџСЂРµСЃРµС‚С‹</label>
-    <div class="form-check mt-2">
+  <div class="col-12 col-md-1">
+    <button type="submit" class="btn btn-primary w-100">Применить</button>
+  </div>
+
+  <div class="col-12">
+    <div class="form-check mt-1">
       <input class="form-check-input" type="checkbox" value="1" id="show-all-presets" name="show_all_presets"
              {% if selected_show_all_presets %}checked{% endif %}>
-      <label class="form-check-label" for="show-all-presets">РџРѕРєР°Р·С‹РІР°С‚СЊ РІСЃРµ</label>
+      <label class="form-check-label" for="show-all-presets">Показывать архивные пресеты</label>
     </div>
-  </div>
-  <div class="col-12 col-md-1">
-    <button type="submit" class="btn btn-primary w-100">РџСЂРёРјРµРЅРёС‚СЊ</button>
   </div>
 </form>
 
-<div class="wb-card mb-4">
-  <div class="card-body">
-    <h2 class="h6 mb-3">Сохранённые пресеты фильтров</h2>
-    <form method="post" action="{% url 'guests_workbench_actions' %}" class="row g-2 align-items-end mb-3">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="save_filter_preset">
-      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-      <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-      <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-      <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
-      <div class="col-12 col-md-8">
-        <label class="form-label">Имя пресета</label>
-        <input type="text" name="preset_name" class="form-control" maxlength="120"
-               placeholder="Например: Остывшие любители вина" required>
-      </div>
-      <div class="col-12 col-md-4">
-        <button type="submit" class="btn btn-outline-secondary w-100">Сохранить текущий фильтр</button>
-      </div>
-    </form>
-
-    <div class="d-flex flex-column gap-2">
-      {% for preset in payload.filters.saved_presets %}
-        <div class="d-flex flex-wrap align-items-center gap-2">
-          <a class="btn btn-sm {% if preset.is_active %}btn-outline-primary{% else %}btn-outline-secondary{% endif %}"
-             href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}{% if selected_show_all_presets %}&show_all_presets=1{% endif %}">
-            {{ preset.name }}
-          </a>
-          <span class="text-muted small">
-            {{ preset.department_name }} · {{ preset.segment_name }} · {{ preset.focus_category_name }}
-          </span>
-          {% if not preset.is_active %}
-            <span class="badge text-bg-secondary">неактивный</span>
-          {% endif %}
-
-          {% if preset.is_active %}
-            <form method="post" action="{% url 'guests_workbench_actions' %}" class="d-flex gap-1">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="rename_filter_preset">
-              <input type="hidden" name="preset_id" value="{{ preset.id }}">
-              <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-              <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-              <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-              <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-              <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-              <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
-              <input type="text" name="new_name" class="form-control form-control-sm"
-                     value="{{ preset.name }}" maxlength="120" style="min-width: 220px;">
-              <button type="submit" class="btn btn-sm btn-outline-secondary">Переименовать</button>
-            </form>
-
-            <form method="post" action="{% url 'guests_workbench_actions' %}">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="delete_filter_preset">
-              <input type="hidden" name="preset_id" value="{{ preset.id }}">
-              <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-              <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-              <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-              <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-              <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-              <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
-              <button type="submit" class="btn btn-sm btn-outline-danger"
-                      onclick="return confirm('Удалить пресет {{ preset.name|escapejs }}?');">
-                Удалить
-              </button>
-            </form>
-          {% else %}
-            <form method="post" action="{% url 'guests_workbench_actions' %}">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="restore_filter_preset">
-              <input type="hidden" name="preset_id" value="{{ preset.id }}">
-              <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-              <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-              <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-              <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-              <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-              <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
-              <button type="submit" class="btn btn-sm btn-outline-success">Восстановить</button>
-            </form>
-          {% endif %}
-        </div>
-      {% empty %}
-        <span class="text-muted small">Пока нет сохранённых пресетов.</span>
+{% if selected_segment_code or selected_focus_category_code or selected_department_id %}
+  <div class="alert alert-info border py-2 small mb-4">
+    Активные фильтры:
+    {% if selected_department_id %}
+      {% for dep in payload.filters.department_options %}
+        {% if dep.id == selected_department_id %}
+          <span class="badge text-bg-light border ms-1">Заведение: {{ dep.name }}</span>
+        {% endif %}
       {% endfor %}
-    </div>
+    {% endif %}
+    {% if selected_segment_code %}
+      {% for seg in payload.filters.segment_options %}
+        {% if seg.code == selected_segment_code %}
+          <span class="badge text-bg-light border ms-1">Сегмент: {{ seg.name }}</span>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if selected_focus_category_code %}
+      {% for cat in payload.filters.focus_category_options %}
+        {% if cat.code == selected_focus_category_code %}
+          <span class="badge text-bg-light border ms-1">Категория: {{ cat.name }}</span>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
   </div>
-</div>
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Р“РѕСЃС‚РµР№</div>
-      <div class="wb-kpi-value">{{ payload.cards.guests_total }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">Р—Р°РєР°Р·РѕРІ</div>
-      <div class="wb-kpi-value">{{ payload.cards.orders_total }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">РЎСѓРјРјР° (РЅРµС‚С‚Рѕ)</div>
-      <div class="wb-kpi-value">{{ payload.cards.net_total }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">РЎСЂРµРґРЅРёР№ СЂРµР№С‚РёРЅРі</div>
-      <div class="wb-kpi-value">{{ payload.cards.avg_rating }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">РќР°С‡РёСЃР»РµРЅРѕ Р±РѕРЅСѓСЃРѕРІ</div>
-      <div class="wb-kpi-value">{{ payload.cards.bonus_in_total }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">РЎРїРёСЃР°РЅРѕ Р±РѕРЅСѓСЃРѕРІ</div>
-      <div class="wb-kpi-value">{{ payload.cards.bonus_out_total }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">РђРєС‚РёРІРЅС‹Рµ 30Рґ (2+ РІРёР·РёС‚Р°)</div>
-      <div class="wb-kpi-value">{{ payload.segments.active_30d }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="wb-card"><div class="card-body">
-      <div class="wb-kpi-title">РћСЃС‚С‹РІС€РёРµ 30-60Рґ</div>
-      <div class="wb-kpi-value">{{ payload.segments.cooling_30_60d }}</div>
-    </div></div>
-  </div>
-</div>
+{% endif %}
 
-<div class="row g-3 mb-4">
-  <div class="col-12 col-xl-6">
-    <div class="wb-card">
-      <div class="card-body">
-        <h2 class="h6 mb-3">Р РµР№С‚РёРЅРі РіРѕСЃС‚РµР№</h2>
-        <div class="wb-table-wrap">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th>РўРµР»РµС„РѕРЅ</th>
-                <th>Р—Р°РєР°Р·РѕРІ</th>
-                <th>Р’РёР·РёС‚РѕРІ</th>
-                <th>РЎСѓРјРјР°</th>
-                <th>Р РµР№С‚РёРЅРі</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in payload.top_rating %}
-                <tr>
-                  <td>{{ row.phone|default:"вЂ”" }}</td>
-                  <td>{{ row.orders_count }}</td>
-                  <td>{{ row.visits_count }}</td>
-                  <td>{{ row.sum_net }}</td>
-                  <td><strong>{{ row.rating_score }}</strong></td>
-                </tr>
-              {% empty %}
-                <tr><td colspan="5" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
+<ul class="nav nav-tabs wb-tabs mb-3" id="guests-workbench-tabs" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tab-overview" data-bs-toggle="tab" data-bs-target="#pane-overview" type="button" role="tab" aria-controls="pane-overview" aria-selected="true">
+      Сводка
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-matrix" data-bs-toggle="tab" data-bs-target="#pane-matrix" type="button" role="tab" aria-controls="pane-matrix" aria-selected="false">
+      Сегменты и категории
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-guests" data-bs-toggle="tab" data-bs-target="#pane-guests" type="button" role="tab" aria-controls="pane-guests" aria-selected="false">
+      Гости
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-presets" data-bs-toggle="tab" data-bs-target="#pane-presets" type="button" role="tab" aria-controls="pane-presets" aria-selected="false">
+      Пресеты
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+  <div class="tab-pane fade show active" id="pane-overview" role="tabpanel" aria-labelledby="tab-overview" tabindex="0">
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Гостей</div>
+          <div class="wb-kpi-value">{{ payload.cards.guests_total }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Заказов</div>
+          <div class="wb-kpi-value">{{ payload.cards.orders_total }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Сумма (нетто)</div>
+          <div class="wb-kpi-value">{{ payload.cards.net_total }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Средний рейтинг</div>
+          <div class="wb-kpi-value">{{ payload.cards.avg_rating }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Начислено бонусов</div>
+          <div class="wb-kpi-value">{{ payload.cards.bonus_in_total }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Списано бонусов</div>
+          <div class="wb-kpi-value">{{ payload.cards.bonus_out_total }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Активные 30д (2+ визита)</div>
+          <div class="wb-kpi-value">{{ payload.segments.active_30d }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title">Остывшие 30-60д</div>
+          <div class="wb-kpi-value">{{ payload.segments.cooling_30_60d }}</div>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-12 col-xl-6">
+        <div class="wb-card">
+          <div class="card-body">
+            <h2 class="h6 mb-3">Рейтинг гостей</h2>
+            <div class="wb-table-wrap">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Телефон</th>
+                    <th>Заказов</th>
+                    <th>Визитов</th>
+                    <th>Сумма</th>
+                    <th>Рейтинг</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in payload.top_rating %}
+                    <tr>
+                      <td>{{ row.phone|default:"—" }}</td>
+                      <td>{{ row.orders_count }}</td>
+                      <td>{{ row.visits_count }}</td>
+                      <td>{{ row.sum_net }}</td>
+                      <td><strong>{{ row.rating_score }}</strong></td>
+                    </tr>
+                  {% empty %}
+                    <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
+      </div>
+
+      <div class="col-12 col-xl-6">
+        <div class="wb-card">
+          <div class="card-body">
+            <h2 class="h6 mb-3">Антирейтинг гостей</h2>
+            <div class="wb-table-wrap">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Телефон</th>
+                    <th>Заказов</th>
+                    <th>Визитов</th>
+                    <th>Сумма</th>
+                    <th>Рейтинг</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in payload.anti_rating %}
+                    <tr>
+                      <td>{{ row.phone|default:"—" }}</td>
+                      <td>{{ row.orders_count }}</td>
+                      <td>{{ row.visits_count }}</td>
+                      <td>{{ row.sum_net }}</td>
+                      <td><strong>{{ row.rating_score }}</strong></td>
+                    </tr>
+                  {% empty %}
+                    <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-12">
+        <div class="wb-card">
+          <div class="card-body">
+            <h2 class="h6 mb-3">Рейтинг заведений (внутри сети)</h2>
+            <div class="wb-table-wrap">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Заведение</th>
+                    <th>Гостей</th>
+                    <th>Сумма</th>
+                    <th>Средний рейтинг</th>
+                    <th>Начислено</th>
+                    <th>Списано</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in payload.department_competition %}
+                    <tr>
+                      <td>{{ row.department_name }}</td>
+                      <td>{{ row.guests_count }}</td>
+                      <td>{{ row.net_total }}</td>
+                      <td>{{ row.avg_rating }}</td>
+                      <td>{{ row.bonus_in_total }}</td>
+                      <td>{{ row.bonus_out_total }}</td>
+                    </tr>
+                  {% empty %}
+                    <tr><td colspan="6" class="text-muted">Нет данных</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="wb-card mb-4">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Визуализация гостей: частота × средний чек</h2>
+        <div id="guests-scatter" class="wb-chart"></div>
       </div>
     </div>
   </div>
 
-  <div class="col-12 col-xl-6">
-    <div class="wb-card">
+  <div class="tab-pane fade" id="pane-matrix" role="tabpanel" aria-labelledby="tab-matrix" tabindex="0">
+    <div class="wb-card mb-4">
       <div class="card-body">
-        <h2 class="h6 mb-3">РђРЅС‚РёСЂРµР№С‚РёРЅРі РіРѕСЃС‚РµР№</h2>
-        <div class="wb-table-wrap">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th>РўРµР»РµС„РѕРЅ</th>
-                <th>Р—Р°РєР°Р·РѕРІ</th>
-                <th>Р’РёР·РёС‚РѕРІ</th>
-                <th>РЎСѓРјРјР°</th>
-                <th>Р РµР№С‚РёРЅРі</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in payload.anti_rating %}
-                <tr>
-                  <td>{{ row.phone|default:"вЂ”" }}</td>
-                  <td>{{ row.orders_count }}</td>
-                  <td>{{ row.visits_count }}</td>
-                  <td>{{ row.sum_net }}</td>
-                  <td><strong>{{ row.rating_score }}</strong></td>
-                </tr>
-              {% empty %}
-                <tr><td colspan="5" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-12">
-    <div class="wb-card">
-      <div class="card-body">
-        <h2 class="h6 mb-3">Р РµР№С‚РёРЅРі Р·Р°РІРµРґРµРЅРёР№ (РІРЅСѓС‚СЂРё СЃРµС‚Рё)</h2>
-        <div class="wb-table-wrap">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th>Р—Р°РІРµРґРµРЅРёРµ</th>
-                <th>Р“РѕСЃС‚РµР№</th>
-                <th>РЎСѓРјРјР°</th>
-                <th>РЎСЂРµРґРЅРёР№ СЂРµР№С‚РёРЅРі</th>
-                <th>РќР°С‡РёСЃР»РµРЅРѕ</th>
-                <th>РЎРїРёСЃР°РЅРѕ</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in payload.department_competition %}
-                <tr>
-                  <td>{{ row.department_name }}</td>
-                  <td>{{ row.guests_count }}</td>
-                  <td>{{ row.net_total }}</td>
-                  <td>{{ row.avg_rating }}</td>
-                  <td>{{ row.bonus_in_total }}</td>
-                  <td>{{ row.bonus_out_total }}</td>
-                </tr>
-              {% empty %}
-                <tr><td colspan="6" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-12">
-    <div class="wb-card">
-      <div class="card-body">
-        <h2 class="h6 mb-1">РњР°С‚СЂРёС†Р° СЃРµРіРјРµРЅС‚РѕРІ Рё С„РѕРєСѓСЃРЅС‹С… РєР°С‚РµРіРѕСЂРёР№</h2>
+        <h2 class="h6 mb-1">Матрица сегментов и целевых категорий</h2>
         <p class="text-muted small mb-3">
-          Р’ СЏС‡РµР№РєРµ: РіРѕСЃС‚РµР№, % РІРЅСѓС‚СЂРё СЃРµРіРјРµРЅС‚Р° Рё % РІРЅСѓС‚СЂРё РєР°С‚РµРіРѕСЂРёРё.
+          В ячейке: гостей, % внутри сегмента и % внутри категории. Нажмите на ячейку, чтобы открыть отбор гостей.
         </p>
         <div class="wb-table-wrap">
           <table class="table table-sm align-middle mb-0 wb-matrix-table">
             <thead>
               <tr>
-                <th>РЎРµРіРјРµРЅС‚</th>
-                <th>Р“РѕСЃС‚РµР№ РІ СЃРµРіРјРµРЅС‚Рµ</th>
+                <th>Сегмент</th>
+                <th>Гостей в сегменте</th>
                 {% for col in payload.segment_focus_matrix.columns %}
                   <th>
                     <div>{{ col.focus_category_name }}</div>
-                    <div class="text-muted small">Р’СЃРµРіРѕ РіРѕСЃС‚РµР№: {{ col.guests_total }}</div>
+                    <div class="text-muted small">Всего гостей: {{ col.guests_total }}</div>
                   </th>
                 {% endfor %}
               </tr>
@@ -427,17 +402,82 @@
                         tabindex="0"
                         data-segment-code="{{ cell.segment_code }}"
                         data-focus-category-code="{{ cell.focus_category_code }}"
-                        title="РћС‚РєСЂС‹С‚СЊ РіРѕСЃС‚РµР№ РґР»СЏ РїРµСЂРµСЃРµС‡РµРЅРёСЏ СЃРµРіРјРµРЅС‚Р° Рё РєР°С‚РµРіРѕСЂРёРё"
+                        title="Открыть гостей для пересечения сегмента и категории"
                       >
                         <div class="value">{{ cell.guests_count }}</div>
-                        <div class="meta">РІ СЃРµРіРјРµРЅС‚Рµ: {{ cell.share_of_segment }}%</div>
-                        <div class="meta">РІ РєР°С‚РµРіРѕСЂРёРё: {{ cell.share_of_category }}%</div>
+                        <div class="meta">в сегменте: {{ cell.share_of_segment }}%</div>
+                        <div class="meta">в категории: {{ cell.share_of_category }}%</div>
                       </div>
                     </td>
                   {% endfor %}
                 </tr>
               {% empty %}
-                <tr><td colspan="3" class="text-muted">РќРµС‚ РґР°РЅРЅС‹С…</td></tr>
+                <tr><td colspan="3" class="text-muted">Нет данных</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="wb-card mb-4">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Heatmap покрытия сегментов категориями</h2>
+        <div id="segment-category-heatmap" class="wb-matrix-heatmap"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-pane fade" id="pane-guests" role="tabpanel" aria-labelledby="tab-guests" tabindex="0">
+    <div class="wb-card mb-4" id="selected-guests">
+      <div class="card-body">
+        <h2 class="h6 mb-1">Гости по выбранным фильтрам</h2>
+        <p class="text-muted small mb-3">
+          Найдено: {{ payload.selected_guests.total }}.
+          {% if payload.selected_guests.is_truncated %}
+            Показаны первые {{ payload.selected_guests.limit }} записей.
+          {% endif %}
+        </p>
+        <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_mailing_draft">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+          <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+          <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+          <button type="submit" class="btn btn-outline-primary"
+                  {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
+            Создать черновик рассылки по отбору
+          </button>
+        </form>
+        <div class="wb-table-wrap">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Телефон</th>
+                <th>Сегмент</th>
+                <th>Заказов</th>
+                <th>Визитов</th>
+                <th>Сумма (нетто)</th>
+                <th>Средний чек</th>
+                <th>Рейтинг</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in payload.selected_guests.rows %}
+                <tr>
+                  <td>{{ row.phone|default:"—" }}</td>
+                  <td>{{ row.segment_name }}</td>
+                  <td>{{ row.orders_count }}</td>
+                  <td>{{ row.visits_count }}</td>
+                  <td>{{ row.sum_net }}</td>
+                  <td>{{ row.avg_check_net }}</td>
+                  <td><strong>{{ row.rating_score }}</strong></td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="7" class="text-muted">Нет гостей под выбранные условия</td></tr>
               {% endfor %}
             </tbody>
           </table>
@@ -445,75 +485,96 @@
       </div>
     </div>
   </div>
-</div>
 
-<div class="wb-card mb-4">
-  <div class="card-body">
-    <h2 class="h6 mb-1">Р“РѕСЃС‚Рё РїРѕ РІС‹Р±СЂР°РЅРЅС‹Рј С„РёР»СЊС‚СЂР°Рј</h2>
-    <p class="text-muted small mb-3">
-      РќР°Р№РґРµРЅРѕ: {{ payload.selected_guests.total }}.
-      {% if payload.selected_guests.is_truncated %}
-        РџРѕРєР°Р·Р°РЅС‹ РїРµСЂРІС‹Рµ {{ payload.selected_guests.limit }} Р·Р°РїРёСЃРµР№.
-      {% endif %}
-    </p>
-    <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="create_mailing_draft">
-      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-      <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-      <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-      <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
-      <button type="submit" class="btn btn-outline-primary"
-              {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
-        РЎРѕР·РґР°С‚СЊ С‡РµСЂРЅРѕРІРёРє СЂР°СЃСЃС‹Р»РєРё РїРѕ РѕС‚Р±РѕСЂСѓ
-      </button>
-    </form>
-    <div class="wb-table-wrap">
-      <table class="table table-sm align-middle mb-0">
-        <thead>
-          <tr>
-            <th>РўРµР»РµС„РѕРЅ</th>
-            <th>РЎРµРіРјРµРЅС‚</th>
-            <th>Р—Р°РєР°Р·РѕРІ</th>
-            <th>Р’РёР·РёС‚РѕРІ</th>
-            <th>РЎСѓРјРјР° (РЅРµС‚С‚Рѕ)</th>
-            <th>РЎСЂРµРґРЅРёР№ С‡РµРє</th>
-            <th>Р РµР№С‚РёРЅРі</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in payload.selected_guests.rows %}
-            <tr>
-              <td>{{ row.phone|default:"вЂ”" }}</td>
-              <td>{{ row.segment_name }}</td>
-              <td>{{ row.orders_count }}</td>
-              <td>{{ row.visits_count }}</td>
-              <td>{{ row.sum_net }}</td>
-              <td>{{ row.avg_check_net }}</td>
-              <td><strong>{{ row.rating_score }}</strong></td>
-            </tr>
+  <div class="tab-pane fade" id="pane-presets" role="tabpanel" aria-labelledby="tab-presets" tabindex="0">
+    <div class="wb-card mb-4">
+      <div class="card-body">
+        <h2 class="h6 mb-3">Сохранённые пресеты фильтров</h2>
+        <form method="post" action="{% url 'guests_workbench_actions' %}" class="row g-2 align-items-end mb-3">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="save_filter_preset">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+          <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+          <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+          <div class="col-12 col-md-8">
+            <label class="form-label">Имя пресета</label>
+            <input type="text" name="preset_name" class="form-control" maxlength="120"
+                   placeholder="Например: Остывшие любители вина" required>
+          </div>
+          <div class="col-12 col-md-4">
+            <button type="submit" class="btn btn-outline-secondary w-100">Сохранить текущий фильтр</button>
+          </div>
+        </form>
+
+        <div class="d-flex flex-column gap-2">
+          {% for preset in payload.filters.saved_presets %}
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <a class="btn btn-sm {% if preset.is_active %}btn-outline-primary{% else %}btn-outline-secondary{% endif %}"
+                 href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}{% if selected_show_all_presets %}&show_all_presets=1{% endif %}">
+                {{ preset.name }}
+              </a>
+              <span class="text-muted small">
+                {{ preset.department_name }} · {{ preset.segment_name }} · {{ preset.focus_category_name }}
+              </span>
+              {% if not preset.is_active %}
+                <span class="badge text-bg-secondary">неактивный</span>
+              {% endif %}
+
+              {% if preset.is_active %}
+                <form method="post" action="{% url 'guests_workbench_actions' %}" class="d-flex gap-1">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="rename_filter_preset">
+                  <input type="hidden" name="preset_id" value="{{ preset.id }}">
+                  <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+                  <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+                  <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                  <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+                  <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+                  <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+                  <input type="text" name="new_name" class="form-control form-control-sm"
+                         value="{{ preset.name }}" maxlength="120" style="min-width: 220px;">
+                  <button type="submit" class="btn btn-sm btn-outline-secondary">Переименовать</button>
+                </form>
+
+                <form method="post" action="{% url 'guests_workbench_actions' %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="delete_filter_preset">
+                  <input type="hidden" name="preset_id" value="{{ preset.id }}">
+                  <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+                  <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+                  <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                  <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+                  <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+                  <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+                  <button type="submit" class="btn btn-sm btn-outline-danger"
+                          onclick="return confirm('Удалить пресет {{ preset.name|escapejs }}?');">
+                    Удалить
+                  </button>
+                </form>
+              {% else %}
+                <form method="post" action="{% url 'guests_workbench_actions' %}">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="restore_filter_preset">
+                  <input type="hidden" name="preset_id" value="{{ preset.id }}">
+                  <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+                  <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+                  <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                  <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+                  <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+                  <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+                  <button type="submit" class="btn btn-sm btn-outline-success">Восстановить</button>
+                </form>
+              {% endif %}
+            </div>
           {% empty %}
-            <tr><td colspan="7" class="text-muted">РќРµС‚ РіРѕСЃС‚РµР№ РїРѕРґ РІС‹Р±СЂР°РЅРЅС‹Рµ СѓСЃР»РѕРІРёСЏ</td></tr>
+            <span class="text-muted small">Пока нет сохранённых пресетов.</span>
           {% endfor %}
-        </tbody>
-      </table>
+        </div>
+      </div>
     </div>
-  </div>
-</div>
-
-<div class="wb-card mb-4">
-  <div class="card-body">
-    <h2 class="h6 mb-3">Heatmap РїРѕРєСЂС‹С‚РёСЏ СЃРµРіРјРµРЅС‚РѕРІ РєР°С‚РµРіРѕСЂРёСЏРјРё</h2>
-    <div id="segment-category-heatmap" class="wb-matrix-heatmap"></div>
-  </div>
-</div>
-
-<div class="wb-card">
-  <div class="card-body">
-    <h2 class="h6 mb-3">Р’РёР·СѓР°Р»РёР·Р°С†РёСЏ РіРѕСЃС‚РµР№: С‡Р°СЃС‚РѕС‚Р° Г— СЃСЂРµРґРЅРёР№ С‡РµРє</h2>
-    <div id="guests-scatter" class="wb-chart"></div>
   </div>
 </div>
 
@@ -524,128 +585,144 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
   (function() {
-    const node = document.getElementById("guest-workbench-payload");
-    const chartNode = document.getElementById("guests-scatter");
+    const payloadNode = document.getElementById("guest-workbench-payload");
+    const scatterNode = document.getElementById("guests-scatter");
     const heatmapNode = document.getElementById("segment-category-heatmap");
     const filterForm = document.querySelector("form[method='get']");
-    if (!node || !chartNode || !heatmapNode) {
+    if (!payloadNode) {
       return;
     }
 
-    const payload = JSON.parse(node.textContent || "{}");
-    const points = (payload.visualization && payload.visualization.scatter_points) || [];
-    const data = points.map(function(item) {
-      return [item.visits_count || 0, item.avg_check_net || 0, item.rating_score || 0, item.phone || ""];
-    });
-
-    const chart = echarts.init(chartNode);
-    chart.setOption({
-      tooltip: {
-        trigger: "item",
-        formatter: function(params) {
-          const value = params.value || [];
-          return [
-            "РўРµР»РµС„РѕРЅ: " + (value[3] || "вЂ”"),
-            "Р’РёР·РёС‚РѕРІ: " + (value[0] || 0),
-            "РЎСЂРµРґРЅРёР№ С‡РµРє: " + (value[1] || 0),
-            "Р РµР№С‚РёРЅРі: " + (value[2] || 0)
-          ].join("<br>");
-        }
-      },
-      xAxis: {
-        name: "Р’РёР·РёС‚РѕРІ",
-        type: "value"
-      },
-      yAxis: {
-        name: "РЎСЂРµРґРЅРёР№ С‡РµРє",
-        type: "value"
-      },
-      series: [{
-        type: "scatter",
-        data: data,
-        symbolSize: function(value) {
-          const rating = value[2] || 0;
-          return Math.max(8, Math.min(28, 8 + rating / 10));
-        },
-        itemStyle: {
-          color: "#2563eb",
-          opacity: 0.8
-        }
-      }]
-    });
-
-    window.addEventListener("resize", function() {
-      chart.resize();
-    });
-
+    const payload = JSON.parse(payloadNode.textContent || "{}");
     const matrix = payload.segment_focus_matrix || {};
     const matrixRows = matrix.rows || [];
     const matrixColumns = matrix.columns || [];
     const heatmap = matrix.heatmap || {};
-    const heatmapData = (heatmap.items || []).map(function(item) {
-      return [item.x || 0, item.y || 0, item.value || 0];
-    });
 
-    const heatmapChart = echarts.init(heatmapNode);
-    heatmapChart.setOption({
-      tooltip: {
-        position: "top",
-        formatter: function(params) {
-          const value = params.value || [];
-          const x = value[0] || 0;
-          const y = value[1] || 0;
-          const count = value[2] || 0;
-          const row = matrixRows[y] || {};
-          const col = matrixColumns[x] || {};
-          return [
-            "РЎРµРіРјРµРЅС‚: " + (row.segment_name || "вЂ”"),
-            "РљР°С‚РµРіРѕСЂРёСЏ: " + (col.focus_category_name || "вЂ”"),
-            "Р“РѕСЃС‚РµР№: " + count
-          ].join("<br>");
-        }
-      },
-      grid: {
-        top: 40,
-        right: 20,
-        bottom: 70,
-        left: 140
-      },
-      xAxis: {
-        type: "category",
-        data: matrixColumns.map(function(col) { return col.focus_category_name || "вЂ”"; }),
-        splitArea: { show: true },
-        axisLabel: { interval: 0, rotate: 30 }
-      },
-      yAxis: {
-        type: "category",
-        data: matrixRows.map(function(row) { return row.segment_name || "вЂ”"; }),
-        splitArea: { show: true }
-      },
-      visualMap: {
-        min: 0,
-        max: heatmap.max_value || 0,
-        calculable: true,
-        orient: "horizontal",
-        left: "center",
-        bottom: 10
-      },
-      series: [{
-        name: "РџРѕРєСЂС‹С‚РёРµ",
-        type: "heatmap",
-        data: heatmapData,
-        label: { show: true },
-        emphasis: {
-          itemStyle: {
-            shadowBlur: 10,
-            shadowColor: "rgba(0, 0, 0, 0.5)"
+    let scatterChart = null;
+    let heatmapChart = null;
+
+    function initScatter() {
+      if (!scatterNode || scatterChart) {
+        return;
+      }
+      const points = (payload.visualization && payload.visualization.scatter_points) || [];
+      const data = points.map(function(item) {
+        return [item.visits_count || 0, item.avg_check_net || 0, item.rating_score || 0, item.phone || ""];
+      });
+      scatterChart = echarts.init(scatterNode);
+      scatterChart.setOption({
+        tooltip: {
+          trigger: "item",
+          formatter: function(params) {
+            const value = params.value || [];
+            return [
+              "Телефон: " + (value[3] || "—"),
+              "Визитов: " + (value[0] || 0),
+              "Средний чек: " + (value[1] || 0),
+              "Рейтинг: " + (value[2] || 0)
+            ].join("<br>");
           }
-        }
-      }]
-    });
+        },
+        xAxis: {
+          name: "Визитов",
+          type: "value"
+        },
+        yAxis: {
+          name: "Средний чек",
+          type: "value"
+        },
+        series: [{
+          type: "scatter",
+          data: data,
+          symbolSize: function(value) {
+            const rating = value[2] || 0;
+            return Math.max(8, Math.min(28, 8 + rating / 10));
+          },
+          itemStyle: {
+            color: "#2563eb",
+            opacity: 0.8
+          }
+        }]
+      });
+    }
 
-    window.addEventListener("resize", function() {
-      heatmapChart.resize();
-    });
+    function initHeatmap() {
+      if (!heatmapNode || heatmapChart) {
+        return;
+      }
+      const heatmapData = (heatmap.items || []).map(function(item) {
+        return [item.x || 0, item.y || 0, item.value || 0];
+      });
+      heatmapChart = echarts.init(heatmapNode);
+      heatmapChart.setOption({
+        tooltip: {
+          position: "top",
+          formatter: function(params) {
+            const value = params.value || [];
+            const x = value[0] || 0;
+            const y = value[1] || 0;
+            const count = value[2] || 0;
+            const row = matrixRows[y] || {};
+            const col = matrixColumns[x] || {};
+            return [
+              "Сегмент: " + (row.segment_name || "—"),
+              "Категория: " + (col.focus_category_name || "—"),
+              "Гостей: " + count
+            ].join("<br>");
+          }
+        },
+        grid: {
+          top: 40,
+          right: 20,
+          bottom: 70,
+          left: 160
+        },
+        xAxis: {
+          type: "category",
+          data: matrixColumns.map(function(col) { return col.focus_category_name || "—"; }),
+          splitArea: { show: true },
+          axisLabel: { interval: 0, rotate: 30 }
+        },
+        yAxis: {
+          type: "category",
+          data: matrixRows.map(function(row) { return row.segment_name || "—"; }),
+          splitArea: { show: true }
+        },
+        visualMap: {
+          min: 0,
+          max: heatmap.max_value || 0,
+          calculable: true,
+          orient: "horizontal",
+          left: "center",
+          bottom: 10
+        },
+        series: [{
+          name: "Покрытие",
+          type: "heatmap",
+          data: heatmapData,
+          label: { show: true },
+          emphasis: {
+            itemStyle: {
+              shadowBlur: 10,
+              shadowColor: "rgba(0, 0, 0, 0.5)"
+            }
+          }
+        }]
+      });
+
+      heatmapChart.on("click", function(params) {
+        const value = params && params.value ? params.value : null;
+        if (!value) {
+          return;
+        }
+        const x = value[0] || 0;
+        const y = value[1] || 0;
+        const row = matrixRows[y] || {};
+        const col = matrixColumns[x] || {};
+        applyMatrixFilters(row.segment_code || "", col.focus_category_code || "");
+      });
+    }
 
     function applyMatrixFilters(segmentCode, focusCategoryCode) {
       if (!filterForm) {
@@ -674,16 +751,43 @@
       });
     });
 
-    heatmapChart.on("click", function(params) {
-      const value = params && params.value ? params.value : null;
-      if (!value) {
-        return;
+    const tabs = Array.from(document.querySelectorAll("#guests-workbench-tabs [data-bs-toggle='tab']"));
+    tabs.forEach(function(tabButton) {
+      tabButton.addEventListener("shown.bs.tab", function(event) {
+        const target = event.target.getAttribute("data-bs-target");
+        if (target === "#pane-overview") {
+          initScatter();
+          if (scatterChart) {
+            scatterChart.resize();
+          }
+        }
+        if (target === "#pane-matrix") {
+          initHeatmap();
+          if (heatmapChart) {
+            heatmapChart.resize();
+          }
+        }
+      });
+    });
+
+    initScatter();
+
+    // Если открыли страницу с якорем списка гостей, переключаем на вкладку "Гости".
+    if (window.location.hash === "#selected-guests") {
+      const guestsTab = document.getElementById("tab-guests");
+      if (guestsTab) {
+        const tab = new bootstrap.Tab(guestsTab);
+        tab.show();
       }
-      const x = value[0] || 0;
-      const y = value[1] || 0;
-      const row = matrixRows[y] || {};
-      const col = matrixColumns[x] || {};
-      applyMatrixFilters(row.segment_code || "", col.focus_category_code || "");
+    }
+
+    window.addEventListener("resize", function() {
+      if (scatterChart) {
+        scatterChart.resize();
+      }
+      if (heatmapChart) {
+        heatmapChart.resize();
+      }
     });
   })();
 </script>

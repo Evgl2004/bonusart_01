@@ -118,17 +118,10 @@
         </a>
 
         <a
-          href="{% url 'mailings' %}"
-          class="{% if '/mailings' in request.path or '/templates' in request.path %}active{% endif %}"
+          href="{% url 'virtual_categories' %}"
+          class="{% if current == 'virtual_categories' %}active{% endif %}"
         >
-          Рассылки
-        </a>
-
-        <a
-          href="{% url 'reports' %}"
-          class="{% if current == 'reports' %}active{% endif %}"
-        >
-          Отчеты
+          Конструктор категорий
         </a>
 
         {% if request.user.is_staff %}

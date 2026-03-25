@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Категории и цели{% endblock %}
+{% block title %}Целевые категории{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -37,24 +37,20 @@
     font-size: 0.85rem;
     color: #4b5563;
   }
-
-  .fc-table-sticky thead th {
-    position: sticky;
-    top: 0;
-    background: #fff;
-    z-index: 1;
-  }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h1 class="h3 mb-1">Категории и цели</h1>
+    <h1 class="h3 mb-1">Целевые категории</h1>
     <div class="text-muted small">
       Срез на {{ payload.filters.as_of_date|default:"—" }} · окно {{ payload.filters.window_days }} дней
     </div>
   </div>
+  <a class="btn btn-outline-secondary" href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">
+    Перейти в конструктор категорий
+  </a>
 </div>
 
 <form method="get" class="row g-2 align-items-end mb-4">
@@ -121,7 +117,7 @@
   <div class="col-12 col-xl-6">
     <div class="fc-card">
       <div class="card-body">
-        <h2 class="h6 mb-3">Добавить целевую категорию из OLAP</h2>
+        <h2 class="h6 mb-3">Добавить категорию из OLAP</h2>
         <form method="post" action="{% url 'focus_categories_actions' %}" class="row g-2 align-items-end">
           {% csrf_token %}
           <input type="hidden" name="action" value="create_focus_from_olap">
@@ -129,9 +125,6 @@
           <input type="hidden" name="window_days" value="{{ selected_window_days }}">
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
           <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-          <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-          <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-          <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
 
           <div class="col-12">
             <label class="form-label">OLAP-категория</label>
@@ -142,22 +135,21 @@
               {% endfor %}
             </select>
           </div>
-
           <div class="col-12 col-md-6">
-            <label class="form-label">Имя категории (опц.)</label>
+            <label class="form-label">Имя (опционально)</label>
             <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя OLAP-категории">
           </div>
           <div class="col-12 col-md-6">
-            <label class="form-label">Код категории (опц.)</label>
-            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — сгенерируется автоматически">
+            <label class="form-label">Код (опционально)</label>
+            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
           </div>
           <div class="col-12 col-md-4">
             <label class="form-label">Вес</label>
             <input type="number" class="form-control" name="priority_weight" min="1" value="1">
           </div>
           <div class="col-12 col-md-8">
-            <label class="form-label">Тег (опц.)</label>
-            <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: beer, meat, lunch">
+            <label class="form-label">Тег (опционально)</label>
+            <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: beer, grill">
           </div>
           <div class="col-12">
             <button type="submit" class="btn btn-outline-primary w-100">Создать категорию</button>
@@ -170,7 +162,7 @@
   <div class="col-12 col-xl-6">
     <div class="fc-card">
       <div class="card-body">
-        <h2 class="h6 mb-3">Добавить целевую категорию из виртуальной</h2>
+        <h2 class="h6 mb-3">Добавить категорию из виртуальной</h2>
         <form method="post" action="{% url 'focus_categories_actions' %}" class="row g-2 align-items-end">
           {% csrf_token %}
           <input type="hidden" name="action" value="create_focus_from_virtual">
@@ -178,9 +170,6 @@
           <input type="hidden" name="window_days" value="{{ selected_window_days }}">
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
           <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-          <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-          <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-          <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
 
           <div class="col-12">
             <label class="form-label">Виртуальная категория</label>
@@ -191,21 +180,20 @@
               {% endfor %}
             </select>
           </div>
-
           <div class="col-12 col-md-6">
-            <label class="form-label">Имя категории (опц.)</label>
+            <label class="form-label">Имя (опционально)</label>
             <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной категории">
           </div>
           <div class="col-12 col-md-6">
-            <label class="form-label">Код категории (опц.)</label>
-            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — сгенерируется автоматически">
+            <label class="form-label">Код (опционально)</label>
+            <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
           </div>
           <div class="col-12 col-md-4">
             <label class="form-label">Вес</label>
             <input type="number" class="form-control" name="priority_weight" min="1" value="1">
           </div>
           <div class="col-12 col-md-8">
-            <label class="form-label">Тег (опц.)</label>
+            <label class="form-label">Тег (опционально)</label>
             <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: wine, sushi">
           </div>
           <div class="col-12">
@@ -221,135 +209,6 @@
 
 <div class="fc-card mb-4">
   <div class="card-body">
-    <h2 class="h6 mb-2">Конструктор виртуальной категории</h2>
-    <p class="fc-note mb-3">Выберите номенклатуры в таблице и соберите виртуальную категорию. По желанию можно сразу создать целевую категорию на её основе.</p>
-
-    <form method="get" class="row g-2 align-items-end mb-3">
-      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-      <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-
-      <div class="col-12 col-lg-4">
-        <label class="form-label">Поиск по iiko ID и названию</label>
-        <input type="text" class="form-control" name="nomenclature_query" value="{{ selected_nomenclature_query }}" placeholder="Например: хачапури или 999426...">
-      </div>
-      <div class="col-12 col-lg-3">
-        <label class="form-label">Группа номенклатуры</label>
-        <input type="text" class="form-control" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}" placeholder="Например: Мангал">
-      </div>
-      <div class="col-12 col-lg-3">
-        <label class="form-label">OLAP-категория</label>
-        <select class="form-select" name="nomenclature_olap_category_id">
-          <option value="">Все категории</option>
-          {% for item in payload.filters.nomenclature_olap_category_options %}
-            <option value="{{ item.id }}" {% if item.id == selected_nomenclature_olap_category_id %}selected{% endif %}>{{ item.name }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      <div class="col-6 col-lg-1">
-        <button type="submit" class="btn btn-primary w-100">Найти</button>
-      </div>
-      <div class="col-6 col-lg-1">
-        <a class="btn btn-outline-secondary w-100" href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&selected_focus_id={{ selected_focus_id|urlencode }}">Сброс</a>
-      </div>
-    </form>
-
-    <form method="post" action="{% url 'focus_categories_actions' %}">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="create_virtual_category_from_nomenclature">
-      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-      <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-      <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-      <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-      <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
-
-      <div class="row g-2 align-items-end mb-3">
-        <div class="col-12 col-md-4">
-          <label class="form-label">Название виртуальной категории</label>
-          <input type="text" class="form-control" name="virtual_name" maxlength="150" required>
-        </div>
-        <div class="col-12 col-md-3">
-          <label class="form-label">Код виртуальной (опц.)</label>
-          <input type="text" class="form-control" name="virtual_code" maxlength="80" placeholder="auto">
-        </div>
-        <div class="col-12 col-md-5">
-          <div class="form-check mt-4">
-            <input class="form-check-input" type="checkbox" id="create-target-category" name="create_target_category" value="1" checked>
-            <label class="form-check-label" for="create-target-category">
-              Сразу создать целевую категорию на базе виртуальной
-            </label>
-          </div>
-        </div>
-
-        <div class="col-12 col-md-4">
-          <label class="form-label">Имя целевой категории (опц.)</label>
-          <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной">
-        </div>
-        <div class="col-12 col-md-3">
-          <label class="form-label">Код целевой (опц.)</label>
-          <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="auto">
-        </div>
-        <div class="col-6 col-md-2">
-          <label class="form-label">Вес</label>
-          <input type="number" class="form-control" name="priority_weight" min="1" value="1">
-        </div>
-        <div class="col-6 col-md-3">
-          <label class="form-label">Тег (опц.)</label>
-          <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: grill">
-        </div>
-      </div>
-
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <div class="text-muted small">
-          Найдено номенклатур: {{ payload.nomenclature_catalog.total }}
-          {% if payload.nomenclature_catalog.is_truncated %}
-            · показаны первые {{ payload.nomenclature_catalog.limit }}
-          {% endif %}
-        </div>
-        <button type="submit" class="btn btn-success btn-sm" {% if not payload.nomenclature_catalog.rows %}disabled{% endif %}>
-          Создать виртуальную категорию
-        </button>
-      </div>
-
-      <div class="fc-table-wrap fc-table-sticky">
-        <table class="table table-sm align-middle mb-0">
-          <thead>
-            <tr>
-              <th style="width: 42px;">
-                <input class="form-check-input" type="checkbox" id="nomenclature-select-all">
-              </th>
-              <th>iiko ID</th>
-              <th>Номенклатура</th>
-              <th>Группа</th>
-              <th>OLAP-категория</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in payload.nomenclature_catalog.rows %}
-              <tr>
-                <td>
-                  <input class="form-check-input" type="checkbox" name="nomenclature_ids" value="{{ row.id }}">
-                </td>
-                <td><code>{{ row.dish_code }}</code></td>
-                <td>{{ row.dish_name }}</td>
-                <td>{{ row.dish_group_name|default:"—" }}</td>
-                <td>{{ row.olap_category_name|default:"—" }}</td>
-              </tr>
-            {% empty %}
-              <tr><td colspan="5" class="text-muted">Номенклатуры по текущим фильтрам не найдены.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    </form>
-  </div>
-</div>
-
-<div class="fc-card mb-4">
-  <div class="card-body">
     <div class="d-flex justify-content-between align-items-center mb-3">
       <h2 class="h6 mb-0">Целевые категории</h2>
       <form method="post" action="{% url 'focus_categories_actions' %}">
@@ -359,9 +218,6 @@
         <input type="hidden" name="window_days" value="{{ selected_window_days }}">
         <input type="hidden" name="department_id" value="{{ selected_department_id }}">
         <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-        <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-        <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-        <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
         <button type="submit" class="btn btn-sm btn-outline-dark">Пересобрать связи категорий</button>
       </form>
     </div>
@@ -404,7 +260,7 @@
               <td>{{ row.net_total }}</td>
               <td class="text-end">
                 <a class="btn btn-sm btn-outline-primary"
-                   href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&selected_focus_id={{ row.id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}">
+                   href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&selected_focus_id={{ row.id|urlencode }}">
                   Состав
                 </a>
                 <form method="post" action="{% url 'focus_categories_actions' %}" class="d-inline">
@@ -416,9 +272,6 @@
                   <input type="hidden" name="window_days" value="{{ selected_window_days }}">
                   <input type="hidden" name="department_id" value="{{ selected_department_id }}">
                   <input type="hidden" name="selected_focus_id" value="{{ row.id }}">
-                  <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-                  <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-                  <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
                   <button type="submit" class="btn btn-sm {% if row.is_enabled %}btn-outline-danger{% else %}btn-outline-success{% endif %}">
                     {% if row.is_enabled %}Выключить{% else %}Включить{% endif %}
                   </button>
@@ -484,7 +337,7 @@
       <div class="card-body">
         <h2 class="h6 mb-2">Пересчёт витрин после изменений</h2>
         <p class="fc-note mb-3">
-          После добавления или изменения категорий нужно обновить агрегаты, чтобы фильтры и рейтинги гостей стали консистентными.
+          После изменения целевых категорий обновите агрегаты, чтобы фильтры и рейтинги по гостям отражали новые связи.
           Рекомендуемый безопасный режим: пересчёт хвоста 180 дней.
         </p>
 
@@ -495,9 +348,6 @@
           <input type="hidden" name="window_days" value="{{ selected_window_days }}">
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
           <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-          <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-          <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-          <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
           {% if selected_focus_id %}
             <input type="hidden" name="focus_id" value="{{ selected_focus_id }}">
           {% endif %}
@@ -513,58 +363,12 @@
           <input type="hidden" name="window_days" value="{{ selected_window_days }}">
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
           <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-          <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-          <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-          <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
           <button type="submit" class="btn btn-primary w-100" {% if not selected_as_of_date %}disabled{% endif %}>
             Пересчитать итоги за хвост 180 дней
           </button>
         </form>
-
-        <p class="text-muted small mt-3 mb-0">
-          Пересчёт запускается вручную по кнопке, чтобы не нагружать систему автоматически при каждом изменении категории.
-        </p>
       </div>
     </div>
   </div>
 </div>
-{% endblock %}
-
-{% block extra_js %}
-<script>
-  document.addEventListener("DOMContentLoaded", function () {
-    const master = document.getElementById("nomenclature-select-all");
-    if (!master) {
-      return;
-    }
-
-    const getItems = () => Array.from(document.querySelectorAll("input[name='nomenclature_ids']"));
-
-    const syncMaster = () => {
-      const items = getItems();
-      if (!items.length) {
-        master.checked = false;
-        master.indeterminate = false;
-        return;
-      }
-      const checked = items.filter((item) => item.checked).length;
-      master.checked = checked === items.length;
-      master.indeterminate = checked > 0 && checked < items.length;
-    };
-
-    master.addEventListener("change", function () {
-      const items = getItems();
-      items.forEach((item) => {
-        item.checked = master.checked;
-      });
-      syncMaster();
-    });
-
-    getItems().forEach((item) => {
-      item.addEventListener("change", syncMaster);
-    });
-
-    syncMaster();
-  });
-</script>
 {% endblock %}
