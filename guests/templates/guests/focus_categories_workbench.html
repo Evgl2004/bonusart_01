@@ -9,7 +9,6 @@
     border-radius: 0.85rem;
     background: #fff;
     box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
-    height: 100%;
   }
 
   .fc-card .card-body {
@@ -29,7 +28,7 @@
   }
 
   .fc-table-wrap {
-    max-height: 520px;
+    max-height: 420px;
     overflow: auto;
   }
 
@@ -59,7 +58,11 @@
   }
 
   .fc-composition-wrap {
-    max-height: 460px;
+    max-height: 320px;
+  }
+
+  .fc-focus-list-wrap {
+    max-height: 360px;
   }
 </style>
 {% endblock %}
@@ -332,7 +335,7 @@
       <span class="small text-muted">Нажмите «Состав», чтобы открыть номенклатуру категории выше.</span>
     </div>
 
-    <div class="fc-table-wrap">
+    <div class="fc-table-wrap fc-focus-list-wrap">
       <table class="table table-sm align-middle mb-0">
         <thead>
           <tr>
