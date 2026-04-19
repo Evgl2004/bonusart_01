@@ -15,9 +15,35 @@
     padding: 1rem 1.1rem;
   }
 
+  .vc-note {
+    border: 1px solid #dbeafe;
+    background: #eff6ff;
+    color: #1e3a8a;
+    border-radius: 0.75rem;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.86rem;
+  }
+
+  .vc-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+    color: #64748b;
+    font-size: 0.86rem;
+  }
+
   .vc-table-wrap {
-    max-height: 620px;
+    max-height: 560px;
     overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.65rem;
+  }
+
+  .vc-table-wrap--compact {
+    max-height: 280px;
   }
 
   .vc-table-sticky thead th {
@@ -25,6 +51,78 @@
     top: 0;
     background: #fff;
     z-index: 1;
+  }
+
+  .vc-code {
+    color: #be185d;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.8rem;
+    word-break: break-all;
+  }
+
+  .vc-empty {
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.65rem;
+    padding: 0.85rem;
+    color: #64748b;
+    text-align: center;
+    background: #f8fafc;
+  }
+
+  .vc-save-grid {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.6rem;
+    align-items: end;
+    margin-bottom: 0.65rem;
+  }
+
+  .vc-save-grid .btn {
+    white-space: nowrap;
+  }
+
+  .vc-advanced {
+    border: 1px dashed #d1d5db;
+    border-radius: 0.65rem;
+    padding: 0.45rem 0.6rem;
+    margin-bottom: 0.75rem;
+    background: #f8fafc;
+  }
+
+  .vc-advanced > summary {
+    cursor: pointer;
+    color: #374151;
+    font-size: 0.88rem;
+    font-weight: 600;
+  }
+
+  .vc-advanced > summary::marker {
+    color: #6b7280;
+  }
+
+  .vc-actions-col {
+    display: flex;
+    gap: 0.4rem;
+    justify-content: flex-end;
+    align-items: end;
+  }
+
+  .vc-action-btn {
+    min-width: 92px;
+  }
+
+  @media (max-width: 991.98px) {
+    .vc-save-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .vc-actions-col {
+      justify-content: stretch;
+    }
+
+    .vc-action-btn {
+      width: 100%;
+    }
   }
 </style>
 {% endblock %}
@@ -34,7 +132,7 @@
   <div>
     <h1 class="h3 mb-1">Конструктор категорий</h1>
     <div class="text-muted small">
-      Создание виртуальных категорий из номенклатуры с быстрым поиском
+      Виртуальные категории собираются из номенклатуры и могут быть основой для целевых категорий.
     </div>
   </div>
   <a class="btn btn-outline-secondary" href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">
@@ -42,161 +140,235 @@
   </a>
 </div>
 
-<form method="get" class="row g-2 align-items-end mb-4">
-  <div class="col-12 col-md-3">
-    <label class="form-label">Дата среза</label>
-    <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
-  </div>
-  <div class="col-12 col-md-3">
-    <label class="form-label">Окно (дней)</label>
-    <select name="window_days" class="form-select">
-      {% for item in payload.filters.window_options %}
-        <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-4">
-    <label class="form-label">Заведение</label>
-    <select name="department_id" class="form-select">
-      <option value="">Все заведения</option>
-      {% for dep in payload.filters.department_options %}
-        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-2">
-    <button type="submit" class="btn btn-primary w-100">Применить</button>
-  </div>
-</form>
+<div class="vc-note mb-3">
+  Здесь нет фильтров «дата / окно / заведение», потому что конструктор работает со справочником номенклатуры.
+</div>
 
-<div class="vc-card mb-4">
+<div class="vc-card mb-3">
   <div class="card-body">
-    <h2 class="h6 mb-2">Подбор номенклатуры</h2>
-    <p class="text-muted small mb-3">
-      Выберите номенклатуры в таблице и соберите виртуальную категорию. При необходимости можно сразу создать и целевую категорию.
+    <h2 class="h6 mb-2">Существующие виртуальные категории</h2>
+    <p class="text-muted small mb-2">
+      Используйте этот блок как быстрый обзор: сколько позиций в категории и используется ли она в целевых категориях.
     </p>
-
-    <form method="get" class="row g-2 align-items-end mb-3">
-      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-      <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-
-      <div class="col-12 col-lg-4">
-        <label class="form-label">Поиск по iiko ID и названию</label>
-        <input type="text" class="form-control" name="nomenclature_query" value="{{ selected_nomenclature_query }}" placeholder="Например: хачапури или 999426...">
-      </div>
-      <div class="col-12 col-lg-3">
-        <label class="form-label">Группа номенклатуры</label>
-        <input type="text" class="form-control" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}" placeholder="Например: Мангал">
-      </div>
-      <div class="col-12 col-lg-3">
-        <label class="form-label">OLAP-категория</label>
-        <select class="form-select" name="nomenclature_olap_category_id">
-          <option value="">Все категории</option>
-          {% for item in payload.filters.nomenclature_olap_category_options %}
-            <option value="{{ item.id }}" {% if item.id == selected_nomenclature_olap_category_id %}selected{% endif %}>{{ item.name }}</option>
+    <div class="vc-table-wrap vc-table-wrap--compact vc-table-sticky">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Название</th>
+            <th>Код</th>
+            <th>Позиции</th>
+            <th>Используется в целях</th>
+            <th>Статус</th>
+            <th>Обновлено</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payload.virtual_categories %}
+            <tr>
+              <td>{{ row.name }}</td>
+              <td><code>{{ row.code|default:"—" }}</code></td>
+              <td>{{ row.nomenclatures_count }}</td>
+              <td>{{ row.focus_categories_count }}</td>
+              <td>
+                {% if row.is_active %}
+                  <span class="badge text-bg-success">активна</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">архив</span>
+                {% endif %}
+              </td>
+              <td>{{ row.updated_at|date:"d.m.Y H:i" }}</td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="6" class="text-muted">Виртуальные категории пока не созданы.</td></tr>
           {% endfor %}
-        </select>
-      </div>
-      <div class="col-6 col-lg-1">
-        <button type="submit" class="btn btn-primary w-100">Найти</button>
-      </div>
-      <div class="col-6 col-lg-1">
-        <a class="btn btn-outline-secondary w-100" href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">Сброс</a>
-      </div>
-    </form>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
 
-    <form method="post" action="{% url 'focus_categories_actions' %}">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="create_virtual_category_from_nomenclature">
-      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-      <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
-      <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
-      <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
-      <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
+<div class="row g-3">
+  <div class="col-12 col-xl-7">
+    <div class="vc-card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Каталог номенклатуры</h2>
+        <p class="text-muted small mb-3">
+          Отфильтруйте каталог и отмечайте позиции галочками. Выбор сохраняется между поисками на этой странице.
+        </p>
 
-      <div class="row g-2 align-items-end mb-3">
-        <div class="col-12 col-md-4">
-          <label class="form-label">Название виртуальной категории</label>
-          <input type="text" class="form-control" name="virtual_name" maxlength="150" required>
+        <form method="get" class="row g-2 align-items-end mb-2">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+
+          <div class="col-12 col-lg-5">
+            <label class="form-label">Поиск по iiko ID и названию</label>
+            <input type="text" class="form-control" name="nomenclature_query" value="{{ selected_nomenclature_query }}" placeholder="Например: хачапури или 999426...">
+          </div>
+          <div class="col-12 col-lg-3">
+            <label class="form-label">Группа номенклатуры</label>
+            <input type="text" class="form-control" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}" placeholder="Например: Мангал">
+          </div>
+          <div class="col-12 col-lg-3">
+            <label class="form-label">OLAP-категория</label>
+            <select class="form-select" name="nomenclature_olap_category_id">
+              <option value="">Все категории</option>
+              {% for item in payload.filters.nomenclature_olap_category_options %}
+                <option value="{{ item.id }}" {% if item.id == selected_nomenclature_olap_category_id %}selected{% endif %}>{{ item.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-6 col-lg-1 vc-actions-col">
+            <button type="submit" class="btn btn-primary vc-action-btn">🔎 Найти</button>
+          </div>
+          <div class="col-6 col-lg-1 vc-actions-col">
+            <a class="btn btn-outline-secondary vc-action-btn" href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">↺ Сброс</a>
+          </div>
+        </form>
+
+        <div class="vc-toolbar">
+          <label class="form-check-label">
+            <input class="form-check-input me-1" type="checkbox" id="nomenclature-select-all">
+            Выбрать все в текущем результате
+          </label>
+          <span>
+            Найдено номенклатур: {{ payload.nomenclature_catalog.total }}
+            {% if payload.nomenclature_catalog.is_truncated %}
+              · показаны первые {{ payload.nomenclature_catalog.limit }}
+            {% endif %}
+          </span>
         </div>
-        <div class="col-12 col-md-3">
-          <label class="form-label">Код виртуальной (опционально)</label>
-          <input type="text" class="form-control" name="virtual_code" maxlength="80" placeholder="auto">
+
+        <div class="vc-table-wrap vc-table-sticky">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width: 42px;"></th>
+                <th>iiko ID</th>
+                <th>Номенклатура</th>
+                <th>Группа</th>
+                <th>OLAP-категория</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in payload.nomenclature_catalog.rows %}
+                <tr>
+                  <td>
+                    <input
+                      class="form-check-input vc-nomenclature-item"
+                      type="checkbox"
+                      name="nomenclature_ids"
+                      value="{{ row.id }}"
+                      data-id="{{ row.id }}"
+                      data-code="{{ row.dish_code|escape }}"
+                      data-name="{{ row.dish_name|escape }}"
+                      data-group="{{ row.dish_group_name|default:'—'|escape }}"
+                      data-category="{{ row.olap_category_name|default:'—'|escape }}"
+                    >
+                  </td>
+                  <td><span class="vc-code">{{ row.dish_code }}</span></td>
+                  <td>{{ row.dish_name }}</td>
+                  <td>{{ row.dish_group_name|default:"—" }}</td>
+                  <td>{{ row.olap_category_name|default:"—" }}</td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="text-muted">Номенклатуры по текущим фильтрам не найдены.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <div class="col-12 col-md-5">
-          <div class="form-check mt-4">
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-5">
+    <div class="vc-card h-100">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Состав и сохранение категории</h2>
+        <p class="text-muted small mb-3">
+          Справа всегда отображается текущий набор выбранных позиций перед сохранением.
+        </p>
+
+        <form method="post" action="{% url 'focus_categories_actions' %}" id="virtual-category-create-form">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_virtual_category_from_nomenclature">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+          <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
+          <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
+          <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
+
+          <div class="vc-save-grid">
+            <div>
+              <label class="form-label">Название виртуальной категории *</label>
+              <input type="text" class="form-control" id="virtual-name" name="virtual_name" maxlength="150" required>
+            </div>
+            <button type="submit" class="btn btn-success" id="virtual-create-button" disabled>
+              Сохранить категорию
+            </button>
+          </div>
+
+          <div class="form-check mb-2">
             <input class="form-check-input" type="checkbox" id="create-target-category" name="create_target_category" value="1" checked>
             <label class="form-check-label" for="create-target-category">
               Сразу создать целевую категорию на базе виртуальной
             </label>
           </div>
-        </div>
 
-        <div class="col-12 col-md-4">
-          <label class="form-label">Имя целевой категории (опционально)</label>
-          <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной">
-        </div>
-        <div class="col-12 col-md-3">
-          <label class="form-label">Код целевой (опционально)</label>
-          <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="auto">
-        </div>
-        <div class="col-6 col-md-2">
-          <label class="form-label">Вес</label>
-          <input type="number" class="form-control" name="priority_weight" min="1" value="1">
-        </div>
-        <div class="col-6 col-md-3">
-          <label class="form-label">Тег (опционально)</label>
-          <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: grill">
-        </div>
-      </div>
+          <details class="vc-advanced">
+            <summary>Дополнительные настройки (опционально)</summary>
+            <div class="row g-2 mt-1">
+              <div class="col-12 col-md-6">
+                <label class="form-label">Код виртуальной категории</label>
+                <input type="text" class="form-control" name="virtual_code" maxlength="80" placeholder="auto">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">Имя целевой категории</label>
+                <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">Код целевой категории</label>
+                <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="auto">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label">Вес</label>
+                <input type="number" class="form-control" name="priority_weight" min="1" value="1">
+              </div>
+              <div class="col-6 col-md-3">
+                <label class="form-label">Тег</label>
+                <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: grill">
+              </div>
+            </div>
+          </details>
 
-      <div class="d-flex justify-content-between align-items-center mb-2">
-        <div class="text-muted small">
-          Найдено номенклатур: {{ payload.nomenclature_catalog.total }}
-          {% if payload.nomenclature_catalog.is_truncated %}
-            · показаны первые {{ payload.nomenclature_catalog.limit }}
-          {% endif %}
-        </div>
-        <button type="submit" class="btn btn-success btn-sm" {% if not payload.nomenclature_catalog.rows %}disabled{% endif %}>
-          Создать виртуальную категорию
-        </button>
-      </div>
+          <div class="vc-toolbar mb-2">
+            <strong id="selected-count">Выбрано позиций: 0</strong>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="clear-selection">
+              Очистить выбор
+            </button>
+          </div>
 
-      <div class="vc-table-wrap vc-table-sticky">
-        <table class="table table-sm align-middle mb-0">
-          <thead>
-            <tr>
-              <th style="width: 42px;">
-                <input class="form-check-input" type="checkbox" id="nomenclature-select-all">
-              </th>
-              <th>iiko ID</th>
-              <th>Номенклатура</th>
-              <th>Группа</th>
-              <th>OLAP-категория</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for row in payload.nomenclature_catalog.rows %}
-              <tr>
-                <td>
-                  <input class="form-check-input" type="checkbox" name="nomenclature_ids" value="{{ row.id }}">
-                </td>
-                <td><code>{{ row.dish_code }}</code></td>
-                <td>{{ row.dish_name }}</td>
-                <td>{{ row.dish_group_name|default:"—" }}</td>
-                <td>{{ row.olap_category_name|default:"—" }}</td>
-              </tr>
-            {% empty %}
-              <tr><td colspan="5" class="text-muted">Номенклатуры по текущим фильтрам не найдены.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+          <div class="vc-table-wrap vc-table-wrap--compact vc-table-sticky">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th style="width: 72px;">Убрать</th>
+                  <th>iiko ID</th>
+                  <th>Номенклатура</th>
+                  <th>Группа</th>
+                </tr>
+              </thead>
+              <tbody id="selected-nomenclature-body">
+                <tr><td colspan="4"><div class="vc-empty">Пока ничего не выбрано.</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </form>
       </div>
-    </form>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -204,38 +376,189 @@
 {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
+    const selectionStorageKey = "vc_selected_nomenclatures_v1";
+
+    const form = document.getElementById("virtual-category-create-form");
     const master = document.getElementById("nomenclature-select-all");
-    if (!master) {
+    const selectedBody = document.getElementById("selected-nomenclature-body");
+    const selectedCount = document.getElementById("selected-count");
+    const clearSelectionButton = document.getElementById("clear-selection");
+    const virtualNameInput = document.getElementById("virtual-name");
+    const createButton = document.getElementById("virtual-create-button");
+
+    if (!form || !master || !selectedBody || !selectedCount || !virtualNameInput || !createButton) {
       return;
     }
 
-    const getItems = () => Array.from(document.querySelectorAll("input[name='nomenclature_ids']"));
+    const getCheckboxes = () => Array.from(document.querySelectorAll(".vc-nomenclature-item"));
 
-    const syncMaster = () => {
-      const items = getItems();
+    const safeParse = (raw) => {
+      try {
+        return JSON.parse(raw || "{}");
+      } catch (e) {
+        return {};
+      }
+    };
+
+    let selectedMap = safeParse(window.localStorage.getItem(selectionStorageKey));
+
+    const saveSelection = () => {
+      window.localStorage.setItem(selectionStorageKey, JSON.stringify(selectedMap));
+    };
+
+    const normalizeItemFromCheckbox = (checkbox) => {
+      const id = String(checkbox.dataset.id || checkbox.value || "");
+      if (!id) {
+        return null;
+      }
+      return {
+        id: id,
+        code: checkbox.dataset.code || "",
+        name: checkbox.dataset.name || "",
+        group: checkbox.dataset.group || "",
+      };
+    };
+
+    const syncMasterState = () => {
+      const items = getCheckboxes();
       if (!items.length) {
         master.checked = false;
         master.indeterminate = false;
         return;
       }
-      const checked = items.filter((item) => item.checked).length;
-      master.checked = checked === items.length;
-      master.indeterminate = checked > 0 && checked < items.length;
+      const checkedCount = items.filter((item) => item.checked).length;
+      master.checked = checkedCount === items.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < items.length;
     };
 
-    master.addEventListener("change", function () {
-      const items = getItems();
-      items.forEach((item) => {
-        item.checked = master.checked;
+    const syncVisibleCheckboxes = () => {
+      getCheckboxes().forEach((checkbox) => {
+        const id = String(checkbox.dataset.id || checkbox.value || "");
+        checkbox.checked = Boolean(id && selectedMap[id]);
       });
-      syncMaster();
+      syncMasterState();
+    };
+
+    const renderSelectedTable = () => {
+      const rows = Object.values(selectedMap).sort((a, b) => {
+        const nA = String(a.name || "").toLowerCase();
+        const nB = String(b.name || "").toLowerCase();
+        return nA.localeCompare(nB, "ru");
+      });
+
+      selectedCount.textContent = `Выбрано позиций: ${rows.length}`;
+      selectedBody.innerHTML = "";
+
+      if (!rows.length) {
+        selectedBody.innerHTML = '<tr><td colspan="4"><div class="vc-empty">Пока ничего не выбрано.</div></td></tr>';
+      } else {
+        rows.forEach((row) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>
+              <button type="button" class="btn btn-outline-secondary btn-sm" data-remove-id="${row.id}">Убрать</button>
+            </td>
+            <td><span class="vc-code">${row.code || "—"}</span></td>
+            <td>${row.name || "—"}</td>
+            <td>${row.group || "—"}</td>
+          `;
+          selectedBody.appendChild(tr);
+        });
+      }
+
+      selectedBody.querySelectorAll("[data-remove-id]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const rowId = String(button.dataset.removeId || "");
+          if (!rowId) {
+            return;
+          }
+          delete selectedMap[rowId];
+          saveSelection();
+          syncVisibleCheckboxes();
+          renderSelectedTable();
+          updateCreateButtonState();
+        });
+      });
+    };
+
+    const updateCreateButtonState = () => {
+      const hasName = Boolean((virtualNameInput.value || "").trim());
+      const hasSelection = Object.keys(selectedMap).length > 0;
+      createButton.disabled = !(hasName && hasSelection);
+    };
+
+    const rebuildHiddenInputs = () => {
+      form.querySelectorAll(".vc-hidden-selected").forEach((node) => node.remove());
+      Object.keys(selectedMap).forEach((rowId) => {
+        const hidden = document.createElement("input");
+        hidden.type = "hidden";
+        hidden.name = "nomenclature_ids";
+        hidden.value = rowId;
+        hidden.className = "vc-hidden-selected";
+        form.appendChild(hidden);
+      });
+    };
+
+    getCheckboxes().forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const item = normalizeItemFromCheckbox(checkbox);
+        if (!item) {
+          return;
+        }
+        if (checkbox.checked) {
+          selectedMap[item.id] = item;
+        } else {
+          delete selectedMap[item.id];
+        }
+        saveSelection();
+        syncMasterState();
+        renderSelectedTable();
+        updateCreateButtonState();
+      });
     });
 
-    getItems().forEach((item) => {
-      item.addEventListener("change", syncMaster);
+    master.addEventListener("change", () => {
+      getCheckboxes().forEach((checkbox) => {
+        const item = normalizeItemFromCheckbox(checkbox);
+        if (!item) {
+          return;
+        }
+        checkbox.checked = master.checked;
+        if (master.checked) {
+          selectedMap[item.id] = item;
+        } else {
+          delete selectedMap[item.id];
+        }
+      });
+      saveSelection();
+      syncMasterState();
+      renderSelectedTable();
+      updateCreateButtonState();
     });
 
-    syncMaster();
+    if (clearSelectionButton) {
+      clearSelectionButton.addEventListener("click", () => {
+        selectedMap = {};
+        saveSelection();
+        syncVisibleCheckboxes();
+        renderSelectedTable();
+        updateCreateButtonState();
+      });
+    }
+
+    virtualNameInput.addEventListener("input", updateCreateButtonState);
+
+    form.addEventListener("submit", (event) => {
+      rebuildHiddenInputs();
+      updateCreateButtonState();
+      if (createButton.disabled) {
+        event.preventDefault();
+      }
+    });
+
+    syncVisibleCheckboxes();
+    renderSelectedTable();
+    updateCreateButtonState();
   });
 </script>
 {% endblock %}

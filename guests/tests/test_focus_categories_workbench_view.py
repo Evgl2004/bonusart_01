@@ -199,3 +199,35 @@ class FocusCategoriesWorkbenchTests(TestCase):
         target_category = FocusCategory.objects.get(code="grill_target")
         self.assertEqual(target_category.source_type, FocusCategory.SourceType.VIRTUAL)
         self.assertEqual(target_category.virtual_category_id, virtual_category.id)
+
+    def test_virtual_categories_page_shows_existing_virtual_categories_summary(self):
+        """
+        Экран конструктора должен показывать верхний блок с уже созданными виртуальными категориями.
+        """
+        virtual_category = VirtualCategory.objects.create(
+            code="wine_virtual",
+            name="Вино и игристое",
+            is_active=True,
+        )
+        VirtualCategoryNomenclatureLink.objects.create(
+            virtual_category=virtual_category,
+            nomenclature=self.nomenclature_1,
+        )
+
+        response = self.client.get(
+            reverse("virtual_categories"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Существующие виртуальные категории")
+        self.assertContains(response, virtual_category.name)
+
+        payload = response.context["payload"]
+        rows = payload["virtual_categories"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["nomenclatures_count"], 1)

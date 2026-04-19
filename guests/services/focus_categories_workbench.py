@@ -147,6 +147,7 @@ def build_focus_categories_workbench_payload(
             "olap_categories": _build_available_olap_categories(),
             "virtual_categories": _build_available_virtual_categories(),
         },
+        "virtual_categories": _build_virtual_categories_summary(),
         "selected_focus": selected_focus_data,
         "nomenclature_catalog": nomenclature_catalog,
     }
@@ -188,6 +189,7 @@ def _build_empty_payload(
             "olap_categories": _build_available_olap_categories(),
             "virtual_categories": _build_available_virtual_categories(),
         },
+        "virtual_categories": _build_virtual_categories_summary(),
         "selected_focus": {
             "focus_id": int(selected_focus_id or 0),
             "focus_name": "",
@@ -270,6 +272,45 @@ def _build_available_virtual_categories() -> list[dict[str, Any]]:
             "id": int(row["id"]),
             "name": (row.get("name") or "").strip(),
             "code": (row.get("code") or "").strip(),
+        }
+        for row in rows
+    ]
+
+
+def _build_virtual_categories_summary() -> list[dict[str, Any]]:
+    """
+    Возвращает список всех виртуальных категорий для верхнего блока конструктора.
+
+    Нужен для быстрого обзора:
+    1. активна категория или архивная;
+    2. сколько номенклатур в составе;
+    3. используется ли категория в фокусных категориях.
+    """
+    rows = (
+        VirtualCategory.objects.annotate(
+            nomenclatures_count=Count("nomenclature_links", distinct=True),
+            focus_categories_count=Count("focus_category_rows", distinct=True),
+        )
+        .order_by("-is_active", "name", "id")
+        .values(
+            "id",
+            "name",
+            "code",
+            "is_active",
+            "updated_at",
+            "nomenclatures_count",
+            "focus_categories_count",
+        )
+    )
+    return [
+        {
+            "id": int(row["id"]),
+            "name": (row.get("name") or "").strip(),
+            "code": (row.get("code") or "").strip(),
+            "is_active": bool(row.get("is_active")),
+            "updated_at": row.get("updated_at"),
+            "nomenclatures_count": int(row.get("nomenclatures_count") or 0),
+            "focus_categories_count": int(row.get("focus_categories_count") or 0),
         }
         for row in rows
     ]
