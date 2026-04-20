@@ -51,6 +51,8 @@ class FocusCategoriesActionsView(View):
             return self._create_virtual_category_from_nomenclature(request)
         if action == "update_virtual_category_from_nomenclature":
             return self._update_virtual_category_from_nomenclature(request)
+        if action == "set_virtual_category_active":
+            return self._set_virtual_category_active(request)
         if action == "set_focus_enabled":
             return self._set_focus_enabled(request)
         if action == "rebuild_focus_resolved":
@@ -390,6 +392,33 @@ class FocusCategoriesActionsView(View):
 
         return redirect(self._build_redirect_url(request, edit_virtual_id=int(virtual_category.id)))
 
+    def _set_virtual_category_active(self, request):
+        """
+        Переключает статус виртуальной категории (активна/архив).
+        """
+        virtual_category_id = _parse_positive_int(request.POST.get("virtual_category_id"))
+        if virtual_category_id is None:
+            messages.error(request, "Не выбрана виртуальная категория для изменения статуса.")
+            return redirect(self._build_redirect_url(request))
+
+        virtual_category = VirtualCategory.objects.filter(id=virtual_category_id).only("id", "name", "is_active").first()
+        if virtual_category is None:
+            messages.error(request, "Виртуальная категория не найдена.")
+            return redirect(self._build_redirect_url(request))
+
+        target_enabled = _to_bool_flag(request.POST.get("enabled"))
+        if bool(virtual_category.is_active) == bool(target_enabled):
+            return redirect(self._build_redirect_url(request, edit_virtual_id=int(virtual_category.id)))
+
+        virtual_category.is_active = bool(target_enabled)
+        virtual_category.save(update_fields=["is_active", "updated_at"])
+
+        if target_enabled:
+            messages.success(request, f"Виртуальная категория «{virtual_category.name}» восстановлена из архива.")
+        else:
+            messages.success(request, f"Виртуальная категория «{virtual_category.name}» отправлена в архив.")
+        return redirect(self._build_redirect_url(request, edit_virtual_id=int(virtual_category.id)))
+
     def _set_focus_enabled(self, request):
         """
         Включает или выключает целевую категорию.
@@ -554,14 +583,33 @@ class FocusCategoriesActionsView(View):
         """
         Генерирует уникальный `code` виртуальной категории.
         """
-        slug = (slugify(base_name) or "").strip("-")
-        base = slug or "virtual-category"
+        slug = _transliterate_and_slugify(base_name)
+        base = f"virt-cat-{slug}" if slug else "virt-cat"
+        base = base[:70].strip("-") or "virt-cat"
         candidate = base
         suffix = 2
         while VirtualCategory.objects.filter(code=candidate).exists():
             candidate = f"{base}-{suffix}"
             suffix += 1
         return candidate
+
+
+def _transliterate_and_slugify(value: str) -> str:
+    """
+    Транслитерирует кириллицу в латиницу и возвращает slug.
+    """
+    translit_map = {
+        "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+        "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+        "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+        "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "",
+        "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    }
+    normalized_chars: list[str] = []
+    for char in (value or "").lower():
+        normalized_chars.append(translit_map.get(char, char))
+    normalized = "".join(normalized_chars)
+    return (slugify(normalized) or "").strip("-")
 
 
 def _parse_positive_int(raw_value: str | None) -> int | None:

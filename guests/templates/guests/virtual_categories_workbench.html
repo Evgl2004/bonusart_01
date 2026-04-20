@@ -108,7 +108,21 @@
   }
 
   .vc-action-btn {
-    min-width: 92px;
+    min-width: 0;
+  }
+
+  .vc-search-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    align-items: end;
+  }
+
+  .vc-row-actions {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.4rem;
   }
 
   @media (max-width: 991.98px) {
@@ -122,6 +136,16 @@
 
     .vc-action-btn {
       width: 100%;
+    }
+
+    .vc-search-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .vc-row-actions {
+      flex-direction: column;
+      align-items: stretch;
     }
   }
 </style>
@@ -179,12 +203,42 @@
               </td>
               <td>{{ row.updated_at|date:"d.m.Y H:i" }}</td>
               <td class="text-end">
-                <a
-                  class="btn btn-sm {% if row.id == selected_virtual_category_id %}btn-primary{% else %}btn-outline-primary{% endif %}"
-                  href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}&edit_virtual_id={{ row.id }}"
-                >
-                  {% if row.id == selected_virtual_category_id %}Редактируется{% else %}Редактировать состав{% endif %}
-                </a>
+                <div class="vc-row-actions">
+                  {% if row.id == selected_virtual_category_id %}
+                    <a
+                      class="btn btn-sm btn-outline-secondary"
+                      href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}"
+                    >
+                      Выйти из редактирования
+                    </a>
+                  {% else %}
+                    <a
+                      class="btn btn-sm btn-outline-primary"
+                      href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}&edit_virtual_id={{ row.id }}"
+                    >
+                      Редактировать состав
+                    </a>
+                  {% endif %}
+
+                  <form method="post" action="{% url 'focus_categories_actions' %}" class="d-inline">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="set_virtual_category_active">
+                    <input type="hidden" name="return_page" value="virtual_categories">
+                    <input type="hidden" name="virtual_category_id" value="{{ row.id }}">
+                    <input type="hidden" name="enabled" value="{% if row.is_active %}0{% else %}1{% endif %}">
+                    <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+                    <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+                    <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                    <input type="hidden" name="edit_virtual_id" value="{{ selected_virtual_category_id }}">
+                    <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
+                    <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
+                    <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
+
+                    <button type="submit" class="btn btn-sm {% if row.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                      {% if row.is_active %}В архив{% else %}Восстановить{% endif %}
+                    </button>
+                  </form>
+                </div>
               </td>
             </tr>
           {% empty %}
@@ -212,7 +266,7 @@
           <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
           <input type="hidden" name="edit_virtual_id" value="{{ selected_virtual_category_id }}">
 
-          <div class="col-12 col-lg-5">
+          <div class="col-12 col-lg-4">
             <label class="form-label">Поиск по iiko ID и названию</label>
             <input type="text" class="form-control" name="nomenclature_query" value="{{ selected_nomenclature_query }}" placeholder="Например: хачапури или 999426...">
           </div>
@@ -229,11 +283,12 @@
               {% endfor %}
             </select>
           </div>
-          <div class="col-6 col-lg-1 vc-actions-col">
-            <button type="submit" class="btn btn-primary vc-action-btn">🔎 Найти</button>
-          </div>
-          <div class="col-6 col-lg-1 vc-actions-col">
-            <a class="btn btn-outline-secondary vc-action-btn" href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">↺ Сброс</a>
+          <div class="col-12 col-lg-2">
+            <label class="form-label d-none d-lg-block">&nbsp;</label>
+            <div class="vc-search-actions">
+              <button type="submit" class="btn btn-primary vc-action-btn">🔎 Найти</button>
+              <a class="btn btn-outline-secondary vc-action-btn" href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">↺ Сброс</a>
+            </div>
           </div>
         </form>
 
@@ -338,8 +393,9 @@
 
           {% if is_edit_mode %}
             <div class="vc-note mb-2">
-              Режим редактирования активен для категории «{{ selected_virtual_category.name }}».
-              <a href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}" class="ms-1">Создать новую категорию</a>
+              Чтобы выйти из режима редактирования «{{ selected_virtual_category.name }}» и перейти к созданию новой категории,
+              нажмите
+              <a href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}" class="ms-1">«Создать новую категорию»</a>.
             </div>
           {% else %}
             <div class="form-check mb-2">

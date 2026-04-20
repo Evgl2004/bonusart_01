@@ -311,3 +311,69 @@ class FocusCategoriesWorkbenchTests(TestCase):
                 nomenclature=self.nomenclature_2,
             ).exists()
         )
+
+    def test_create_virtual_category_generates_transliterated_code(self):
+        """
+        Если код не указан вручную, должен генерироваться код вида virt-cat-... из имени.
+        """
+        response = self.client.post(
+            reverse("focus_categories_actions"),
+            {
+                "action": "create_virtual_category_from_nomenclature",
+                "return_page": "virtual_categories",
+                "virtual_name": "Супы Чина",
+                "nomenclature_ids": [str(self.nomenclature_1.id)],
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        created = VirtualCategory.objects.get(name="Супы Чина")
+        self.assertEqual(created.code, "virt-cat-supy-china")
+
+    def test_set_virtual_category_active_action_archives_and_restores(self):
+        """
+        Экшен должен корректно отправлять виртуальную категорию в архив и восстанавливать обратно.
+        """
+        virtual_category = VirtualCategory.objects.create(
+            code="wine_virtual",
+            name="Вино",
+            is_active=True,
+        )
+
+        archive_response = self.client.post(
+            reverse("focus_categories_actions"),
+            {
+                "action": "set_virtual_category_active",
+                "return_page": "virtual_categories",
+                "virtual_category_id": virtual_category.id,
+                "enabled": "0",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(archive_response.status_code, 302)
+        virtual_category.refresh_from_db()
+        self.assertFalse(virtual_category.is_active)
+
+        restore_response = self.client.post(
+            reverse("focus_categories_actions"),
+            {
+                "action": "set_virtual_category_active",
+                "return_page": "virtual_categories",
+                "virtual_category_id": virtual_category.id,
+                "enabled": "1",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(restore_response.status_code, 302)
+        virtual_category.refresh_from_db()
+        self.assertTrue(virtual_category.is_active)
