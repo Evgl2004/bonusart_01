@@ -61,7 +61,7 @@ class FocusCategoriesWorkbenchTests(TestCase):
             olap_category=self.olap_category_1,
             is_active=True,
         )
-        OlapNomenclatureDict.objects.create(
+        self.nomenclature_2 = OlapNomenclatureDict.objects.create(
             iiko_nomenclature_external_id="dish-2",
             nomenclature_name="Вино белое",
             olap_category=self.olap_category_2,
@@ -231,3 +231,83 @@ class FocusCategoriesWorkbenchTests(TestCase):
         rows = payload["virtual_categories"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["nomenclatures_count"], 1)
+
+    def test_virtual_categories_page_edit_mode_returns_selected_virtual_category(self):
+        """
+        При передаче edit_virtual_id страница конструктора должна отдать состав выбранной категории.
+        """
+        virtual_category = VirtualCategory.objects.create(
+            code="grill_virtual",
+            name="Мангал",
+            is_active=True,
+        )
+        VirtualCategoryNomenclatureLink.objects.create(
+            virtual_category=virtual_category,
+            nomenclature=self.nomenclature_1,
+        )
+
+        response = self.client.get(
+            reverse("virtual_categories"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "edit_virtual_id": virtual_category.id,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.context["payload"]
+        selected_virtual = payload["selected_virtual_category"]
+        self.assertEqual(selected_virtual["id"], virtual_category.id)
+        self.assertEqual(selected_virtual["name"], "Мангал")
+        self.assertEqual(selected_virtual["total"], 1)
+        self.assertEqual(selected_virtual["selected_ids"], [self.nomenclature_1.id])
+
+    def test_update_virtual_category_from_nomenclature_updates_links_and_name(self):
+        """
+        Экшен обновления должен менять состав и имя существующей виртуальной категории.
+        """
+        virtual_category = VirtualCategory.objects.create(
+            code="wine_virtual",
+            name="Вино старое",
+            is_active=True,
+        )
+        VirtualCategoryNomenclatureLink.objects.create(
+            virtual_category=virtual_category,
+            nomenclature=self.nomenclature_1,
+        )
+
+        response = self.client.post(
+            reverse("focus_categories_actions"),
+            {
+                "action": "update_virtual_category_from_nomenclature",
+                "return_page": "virtual_categories",
+                "virtual_category_id": virtual_category.id,
+                "edit_virtual_id": virtual_category.id,
+                "virtual_name": "Вино новое",
+                "virtual_code": "wine_virtual",
+                "nomenclature_ids": [str(self.nomenclature_2.id)],
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("virtual_categories"), response.url)
+
+        virtual_category.refresh_from_db()
+        self.assertEqual(virtual_category.name, "Вино новое")
+        self.assertFalse(
+            VirtualCategoryNomenclatureLink.objects.filter(
+                virtual_category=virtual_category,
+                nomenclature=self.nomenclature_1,
+            ).exists()
+        )
+        self.assertTrue(
+            VirtualCategoryNomenclatureLink.objects.filter(
+                virtual_category=virtual_category,
+                nomenclature=self.nomenclature_2,
+            ).exists()
+        )

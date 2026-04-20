@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from urllib.parse import urlencode
 
 from django.contrib import messages
+from django.db import transaction
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -17,6 +18,7 @@ from django.views import View
 from guests.models import (
     FocusCategory,
     OlapCategoryDict,
+    OlapNomenclatureDict,
     VirtualCategory,
     VirtualCategoryNomenclatureLink,
 )
@@ -47,6 +49,8 @@ class FocusCategoriesActionsView(View):
             return self._create_focus_from_virtual(request)
         if action == "create_virtual_category_from_nomenclature":
             return self._create_virtual_category_from_nomenclature(request)
+        if action == "update_virtual_category_from_nomenclature":
+            return self._update_virtual_category_from_nomenclature(request)
         if action == "set_focus_enabled":
             return self._set_focus_enabled(request)
         if action == "rebuild_focus_resolved":
@@ -267,6 +271,125 @@ class FocusCategoriesActionsView(View):
         )
         return redirect(self._build_redirect_url(request))
 
+    def _update_virtual_category_from_nomenclature(self, request):
+        """
+        Обновляет существующую виртуальную категорию и её состав номенклатур.
+
+        Используется экраном конструктора в режиме «редактирования».
+        """
+        virtual_category_id = _parse_positive_int(request.POST.get("virtual_category_id"))
+        if virtual_category_id is None:
+            messages.error(request, "Не выбрана виртуальная категория для редактирования.")
+            return redirect(self._build_redirect_url(request))
+
+        virtual_category = (
+            VirtualCategory.objects.filter(id=virtual_category_id)
+            .only("id", "name", "code")
+            .first()
+        )
+        if virtual_category is None:
+            messages.error(request, "Виртуальная категория не найдена.")
+            return redirect(self._build_redirect_url(request))
+
+        virtual_name = (request.POST.get("virtual_name") or "").strip()
+        if not virtual_name:
+            messages.error(request, "Укажите название виртуальной категории.")
+            return redirect(self._build_redirect_url(request))
+
+        raw_virtual_code = (request.POST.get("virtual_code") or "").strip()
+        if raw_virtual_code:
+            duplicate_code_exists = (
+                VirtualCategory.objects.filter(code=raw_virtual_code)
+                .exclude(id=virtual_category.id)
+                .exists()
+            )
+            if duplicate_code_exists:
+                messages.error(request, f"Виртуальная категория с кодом «{raw_virtual_code}» уже существует.")
+                return redirect(self._build_redirect_url(request, edit_virtual_id=int(virtual_category.id)))
+
+        nomenclature_ids = []
+        for raw_id in request.POST.getlist("nomenclature_ids"):
+            parsed = _parse_positive_int(raw_id)
+            if parsed is not None:
+                nomenclature_ids.append(parsed)
+        nomenclature_ids = sorted(set(nomenclature_ids))
+        if not nomenclature_ids:
+            messages.error(request, "Выберите хотя бы одну номенклатуру для виртуальной категории.")
+            return redirect(self._build_redirect_url(request, edit_virtual_id=int(virtual_category.id)))
+        existing_nomenclature_ids = set(
+            OlapNomenclatureDict.objects.filter(id__in=nomenclature_ids).values_list("id", flat=True)
+        )
+        if not existing_nomenclature_ids:
+            messages.error(request, "Выбранные номенклатуры не найдены в справочнике OLAP.")
+            return redirect(self._build_redirect_url(request, edit_virtual_id=int(virtual_category.id)))
+        nomenclature_ids = sorted(existing_nomenclature_ids)
+
+        with transaction.atomic():
+            virtual_category.name = virtual_name
+            if raw_virtual_code:
+                virtual_category.code = raw_virtual_code
+            virtual_category.save(update_fields=["name", "code", "updated_at"])
+
+            current_ids = set(
+                VirtualCategoryNomenclatureLink.objects.filter(virtual_category=virtual_category)
+                .values_list("nomenclature_id", flat=True)
+            )
+            target_ids = set(nomenclature_ids)
+
+            ids_to_delete = current_ids - target_ids
+            ids_to_create = target_ids - current_ids
+
+            if ids_to_delete:
+                VirtualCategoryNomenclatureLink.objects.filter(
+                    virtual_category=virtual_category,
+                    nomenclature_id__in=ids_to_delete,
+                ).delete()
+
+            if ids_to_create:
+                VirtualCategoryNomenclatureLink.objects.bulk_create(
+                    [
+                        VirtualCategoryNomenclatureLink(
+                            virtual_category=virtual_category,
+                            nomenclature_id=nomenclature_id,
+                        )
+                        for nomenclature_id in sorted(ids_to_create)
+                    ],
+                    batch_size=1000,
+                    ignore_conflicts=True,
+                )
+
+            focus_codes = list(
+                FocusCategory.objects.filter(
+                    source_type=FocusCategory.SourceType.VIRTUAL,
+                    virtual_category_id=virtual_category.id,
+                ).values_list("code", flat=True)
+            )
+
+            rebuild_stats = None
+            if focus_codes:
+                rebuild_stats = rebuild_focus_category_nomenclature_resolved(focus_codes=focus_codes)
+
+        if rebuild_stats is None:
+            messages.success(
+                request,
+                (
+                    f"Виртуальная категория «{virtual_category.name}» обновлена. "
+                    f"Позиций в составе: {len(nomenclature_ids)}."
+                ),
+            )
+        else:
+            messages.success(
+                request,
+                (
+                    f"Виртуальная категория «{virtual_category.name}» обновлена. "
+                    f"Позиций в составе: {len(nomenclature_ids)}. "
+                    f"Пересчитаны связи для целевых категорий: {len(focus_codes)}, "
+                    f"записано={rebuild_stats.written_links}, удалено={rebuild_stats.deleted_links}."
+                ),
+            )
+
+        return redirect(self._build_redirect_url(request, edit_virtual_id=int(virtual_category.id)))
+
     def _set_focus_enabled(self, request):
         """
         Включает или выключает целевую категорию.
@@ -381,21 +504,33 @@ class FocusCategoriesActionsView(View):
         return redirect(self._build_redirect_url(request))
 
     @staticmethod
-    def _build_redirect_url(request, *, selected_focus_id: int | None = None) -> str:
+    def _build_redirect_url(
+        request,
+        *,
+        selected_focus_id: int | None = None,
+        edit_virtual_id: int | None = None,
+    ) -> str:
         """
-        Формирует URL возврата в экран категорий с сохранением фильтров.
+        Формирует URL возврата в нужный экран с сохранением фильтров.
         """
+        return_page = (request.POST.get("return_page") or "").strip()
+        is_virtual_categories_return = return_page == "virtual_categories"
         params = {
             "as_of_date": (request.POST.get("as_of_date") or "").strip(),
             "window_days": (request.POST.get("window_days") or "").strip(),
             "department_id": (request.POST.get("department_id") or "").strip(),
             "selected_focus_id": str(selected_focus_id or _parse_positive_int(request.POST.get("selected_focus_id")) or ""),
+            "edit_virtual_id": str(edit_virtual_id or _parse_positive_int(request.POST.get("edit_virtual_id")) or ""),
             "nomenclature_query": (request.POST.get("nomenclature_query") or "").strip(),
             "nomenclature_group_query": (request.POST.get("nomenclature_group_query") or "").strip(),
             "nomenclature_olap_category_id": str(_parse_positive_int(request.POST.get("nomenclature_olap_category_id")) or ""),
         }
+        if is_virtual_categories_return:
+            params.pop("selected_focus_id", None)
+        else:
+            params.pop("edit_virtual_id", None)
         params = {key: value for key, value in params.items() if value}
-        base_url = reverse("focus_categories")
+        base_url = reverse("virtual_categories" if is_virtual_categories_return else "focus_categories")
         if not params:
             return base_url
         return f"{base_url}?{urlencode(params)}"

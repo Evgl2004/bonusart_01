@@ -160,11 +160,12 @@
             <th>Используется в целях</th>
             <th>Статус</th>
             <th>Обновлено</th>
+            <th class="text-end">Действие</th>
           </tr>
         </thead>
         <tbody>
           {% for row in payload.virtual_categories %}
-            <tr>
+            <tr {% if row.id == selected_virtual_category_id %}class="table-primary"{% endif %}>
               <td>{{ row.name }}</td>
               <td><code>{{ row.code|default:"—" }}</code></td>
               <td>{{ row.nomenclatures_count }}</td>
@@ -177,9 +178,17 @@
                 {% endif %}
               </td>
               <td>{{ row.updated_at|date:"d.m.Y H:i" }}</td>
+              <td class="text-end">
+                <a
+                  class="btn btn-sm {% if row.id == selected_virtual_category_id %}btn-primary{% else %}btn-outline-primary{% endif %}"
+                  href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}&edit_virtual_id={{ row.id }}"
+                >
+                  {% if row.id == selected_virtual_category_id %}Редактируется{% else %}Редактировать состав{% endif %}
+                </a>
+              </td>
             </tr>
           {% empty %}
-            <tr><td colspan="6" class="text-muted">Виртуальные категории пока не созданы.</td></tr>
+            <tr><td colspan="7" class="text-muted">Виртуальные категории пока не созданы.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -201,6 +210,7 @@
           <input type="hidden" name="window_days" value="{{ selected_window_days }}">
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
           <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+          <input type="hidden" name="edit_virtual_id" value="{{ selected_virtual_category_id }}">
 
           <div class="col-12 col-lg-5">
             <label class="form-label">Поиск по iiko ID и названию</label>
@@ -285,62 +295,86 @@
   <div class="col-12 col-xl-5">
     <div class="vc-card h-100">
       <div class="card-body">
-        <h2 class="h6 mb-2">Состав и сохранение категории</h2>
+        <h2 class="h6 mb-2">
+          {% if is_edit_mode %}
+            Редактирование виртуальной категории
+          {% else %}
+            Состав и сохранение категории
+          {% endif %}
+        </h2>
         <p class="text-muted small mb-3">
-          Справа всегда отображается текущий набор выбранных позиций перед сохранением.
+          {% if is_edit_mode %}
+            Обновляйте состав и параметры выбранной категории, затем сохраните изменения.
+          {% else %}
+            Справа всегда отображается текущий набор выбранных позиций перед сохранением.
+          {% endif %}
         </p>
 
         <form method="post" action="{% url 'focus_categories_actions' %}" id="virtual-category-create-form">
           {% csrf_token %}
-          <input type="hidden" name="action" value="create_virtual_category_from_nomenclature">
+          <input type="hidden" name="return_page" value="virtual_categories">
+          <input type="hidden" name="action" value="{% if is_edit_mode %}update_virtual_category_from_nomenclature{% else %}create_virtual_category_from_nomenclature{% endif %}">
           <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
           <input type="hidden" name="window_days" value="{{ selected_window_days }}">
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
           <input type="hidden" name="selected_focus_id" value="{{ selected_focus_id }}">
+          <input type="hidden" name="edit_virtual_id" value="{{ selected_virtual_category_id }}">
           <input type="hidden" name="nomenclature_query" value="{{ selected_nomenclature_query }}">
           <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
           <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
+          {% if is_edit_mode %}
+            <input type="hidden" name="virtual_category_id" value="{{ selected_virtual_category.id }}">
+          {% endif %}
 
           <div class="vc-save-grid">
             <div>
               <label class="form-label">Название виртуальной категории *</label>
-              <input type="text" class="form-control" id="virtual-name" name="virtual_name" maxlength="150" required>
+              <input type="text" class="form-control" id="virtual-name" name="virtual_name" maxlength="150" required value="{{ selected_virtual_category.name|default:'' }}">
             </div>
             <button type="submit" class="btn btn-success" id="virtual-create-button" disabled>
-              Сохранить категорию
+              {% if is_edit_mode %}Сохранить изменения{% else %}Сохранить категорию{% endif %}
             </button>
           </div>
 
-          <div class="form-check mb-2">
-            <input class="form-check-input" type="checkbox" id="create-target-category" name="create_target_category" value="1" checked>
-            <label class="form-check-label" for="create-target-category">
-              Сразу создать целевую категорию на базе виртуальной
-            </label>
-          </div>
+          {% if is_edit_mode %}
+            <div class="vc-note mb-2">
+              Режим редактирования активен для категории «{{ selected_virtual_category.name }}».
+              <a href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}" class="ms-1">Создать новую категорию</a>
+            </div>
+          {% else %}
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="create-target-category" name="create_target_category" value="1" checked>
+              <label class="form-check-label" for="create-target-category">
+                Сразу создать целевую категорию на базе виртуальной
+              </label>
+            </div>
+          {% endif %}
 
           <details class="vc-advanced">
             <summary>Дополнительные настройки (опционально)</summary>
             <div class="row g-2 mt-1">
               <div class="col-12 col-md-6">
                 <label class="form-label">Код виртуальной категории</label>
-                <input type="text" class="form-control" name="virtual_code" maxlength="80" placeholder="auto">
+                <input type="text" class="form-control" name="virtual_code" maxlength="80" placeholder="auto" value="{{ selected_virtual_category.code|default:'' }}">
               </div>
-              <div class="col-12 col-md-6">
-                <label class="form-label">Имя целевой категории</label>
-                <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной">
-              </div>
-              <div class="col-12 col-md-6">
-                <label class="form-label">Код целевой категории</label>
-                <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="auto">
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label">Вес</label>
-                <input type="number" class="form-control" name="priority_weight" min="1" value="1">
-              </div>
-              <div class="col-6 col-md-3">
-                <label class="form-label">Тег</label>
-                <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: grill">
-              </div>
+              {% if not is_edit_mode %}
+                <div class="col-12 col-md-6">
+                  <label class="form-label">Имя целевой категории</label>
+                  <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной">
+                </div>
+                <div class="col-12 col-md-6">
+                  <label class="form-label">Код целевой категории</label>
+                  <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="auto">
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label">Вес</label>
+                  <input type="number" class="form-control" name="priority_weight" min="1" value="1">
+                </div>
+                <div class="col-6 col-md-3">
+                  <label class="form-label">Тег</label>
+                  <input type="text" class="form-control" name="tag_code" maxlength="64" placeholder="Например: grill">
+                </div>
+              {% endif %}
             </div>
           </details>
 
@@ -371,12 +405,14 @@
     </div>
   </div>
 </div>
+{{ selected_virtual_category.rows|json_script:"vc-edit-selected-rows" }}
 {% endblock %}
 
 {% block extra_js %}
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     const selectionStorageKey = "vc_selected_nomenclatures_v1";
+    const isEditMode = {{ is_edit_mode|yesno:"true,false" }};
 
     const form = document.getElementById("virtual-category-create-form");
     const master = document.getElementById("nomenclature-select-all");
@@ -400,7 +436,35 @@
       }
     };
 
+    const safeParseArray = (raw) => {
+      try {
+        const parsed = JSON.parse(raw || "[]");
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    };
+
     let selectedMap = safeParse(window.localStorage.getItem(selectionStorageKey));
+    const editRowsNode = document.getElementById("vc-edit-selected-rows");
+    const editRows = safeParseArray(editRowsNode ? editRowsNode.textContent : "[]");
+
+    if (isEditMode) {
+      selectedMap = {};
+      editRows.forEach((row) => {
+        const rowId = String(row.id || "");
+        if (!rowId) {
+          return;
+        }
+        selectedMap[rowId] = {
+          id: rowId,
+          code: row.dish_code || "",
+          name: row.dish_name || "",
+          group: row.dish_group_name || "",
+        };
+      });
+      window.localStorage.setItem(selectionStorageKey, JSON.stringify(selectedMap));
+    }
 
     const saveSelection = () => {
       window.localStorage.setItem(selectionStorageKey, JSON.stringify(selectedMap));

@@ -32,6 +32,7 @@ class VirtualCategoriesWorkbenchView(TemplateView):
         raw_window_days = self.request.GET.get("window_days")
         selected_department_id = (self.request.GET.get("department_id") or "").strip()
         selected_focus_id = _parse_int(self.request.GET.get("selected_focus_id"))
+        selected_virtual_category_id = _parse_int(self.request.GET.get("edit_virtual_id"))
         selected_nomenclature_query = (self.request.GET.get("nomenclature_query") or "").strip()
         selected_nomenclature_group_query = (self.request.GET.get("nomenclature_group_query") or "").strip()
         selected_nomenclature_olap_category_id = _parse_int(
@@ -43,6 +44,7 @@ class VirtualCategoriesWorkbenchView(TemplateView):
             window_days=normalize_window_days(raw_window_days),
             department_id=selected_department_id,
             selected_focus_id=selected_focus_id,
+            selected_virtual_category_id=selected_virtual_category_id,
             nomenclature_query=selected_nomenclature_query,
             nomenclature_group_query=selected_nomenclature_group_query,
             nomenclature_olap_category_id=selected_nomenclature_olap_category_id,
@@ -58,6 +60,11 @@ class VirtualCategoriesWorkbenchView(TemplateView):
         context["selected_nomenclature_olap_category_id"] = int(
             payload["filters"]["nomenclature_olap_category_id"] or 0
         )
+        context["selected_virtual_category_id"] = int(
+            payload["filters"]["selected_virtual_category_id"] or 0
+        )
+        context["selected_virtual_category"] = payload["selected_virtual_category"]
+        context["is_edit_mode"] = bool(context["selected_virtual_category_id"])
         return context
 
 

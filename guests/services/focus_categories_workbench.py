@@ -38,6 +38,7 @@ def build_focus_categories_workbench_payload(
     window_days: int | str | None = None,
     department_id: str | None = None,
     selected_focus_id: int | None = None,
+    selected_virtual_category_id: int | None = None,
     nomenclature_query: str | None = None,
     nomenclature_group_query: str | None = None,
     nomenclature_olap_category_id: int | None = None,
@@ -50,6 +51,7 @@ def build_focus_categories_workbench_payload(
     selected_nomenclature_query = (nomenclature_query or "").strip()
     selected_nomenclature_group_query = (nomenclature_group_query or "").strip()
     selected_nomenclature_olap_category_id = int(nomenclature_olap_category_id or 0)
+    selected_virtual_category_pk = int(selected_virtual_category_id or 0)
 
     target_as_of = as_of_date
     if target_as_of is None:
@@ -61,6 +63,7 @@ def build_focus_categories_workbench_payload(
             selected_window_days=selected_window_days,
             selected_department_id=selected_department_id,
             selected_focus_id=selected_focus_id,
+            selected_virtual_category_id=selected_virtual_category_pk,
             selected_nomenclature_query=selected_nomenclature_query,
             selected_nomenclature_group_query=selected_nomenclature_group_query,
             selected_nomenclature_olap_category_id=selected_nomenclature_olap_category_id,
@@ -114,6 +117,10 @@ def build_focus_categories_workbench_payload(
         focus_id=selected_focus_id,
         limit=NOMENCLATURE_PREVIEW_LIMIT,
     )
+    selected_virtual_category = _build_selected_virtual_category(
+        virtual_category_id=selected_virtual_category_pk,
+        limit=NOMENCLATURE_PREVIEW_LIMIT,
+    )
     nomenclature_catalog = _build_nomenclature_catalog(
         query=selected_nomenclature_query,
         group_query=selected_nomenclature_group_query,
@@ -132,6 +139,7 @@ def build_focus_categories_workbench_payload(
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
             "selected_focus_id": int(selected_focus_id or 0),
+            "selected_virtual_category_id": int(selected_virtual_category_pk or 0),
             "nomenclature_query": selected_nomenclature_query,
             "nomenclature_group_query": selected_nomenclature_group_query,
             "nomenclature_olap_category_id": selected_nomenclature_olap_category_id,
@@ -149,6 +157,7 @@ def build_focus_categories_workbench_payload(
         },
         "virtual_categories": _build_virtual_categories_summary(),
         "selected_focus": selected_focus_data,
+        "selected_virtual_category": selected_virtual_category,
         "nomenclature_catalog": nomenclature_catalog,
     }
 
@@ -159,6 +168,7 @@ def _build_empty_payload(
     selected_window_days: int,
     selected_department_id: str,
     selected_focus_id: int | None,
+    selected_virtual_category_id: int,
     selected_nomenclature_query: str,
     selected_nomenclature_group_query: str,
     selected_nomenclature_olap_category_id: int,
@@ -174,6 +184,7 @@ def _build_empty_payload(
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
             "selected_focus_id": int(selected_focus_id or 0),
+            "selected_virtual_category_id": int(selected_virtual_category_id or 0),
             "nomenclature_query": selected_nomenclature_query,
             "nomenclature_group_query": selected_nomenclature_group_query,
             "nomenclature_olap_category_id": selected_nomenclature_olap_category_id,
@@ -197,6 +208,16 @@ def _build_empty_payload(
             "limit": NOMENCLATURE_PREVIEW_LIMIT,
             "is_truncated": False,
             "rows": [],
+        },
+        "selected_virtual_category": {
+            "id": int(selected_virtual_category_id or 0),
+            "name": "",
+            "code": "",
+            "total": 0,
+            "limit": NOMENCLATURE_PREVIEW_LIMIT,
+            "is_truncated": False,
+            "rows": [],
+            "selected_ids": [],
         },
         "nomenclature_catalog": {
             "total": 0,
@@ -412,6 +433,76 @@ def _build_selected_focus_nomenclature(*, focus_id: int | None, limit: int) -> d
             }
             for row in rows
         ],
+    }
+
+
+def _build_selected_virtual_category(*, virtual_category_id: int | None, limit: int) -> dict[str, Any]:
+    """
+    Возвращает состав выбранной виртуальной категории для режима редактирования.
+    """
+    virtual_pk = int(virtual_category_id or 0)
+    if virtual_pk <= 0:
+        return {
+            "id": 0,
+            "name": "",
+            "code": "",
+            "total": 0,
+            "limit": limit,
+            "is_truncated": False,
+            "rows": [],
+            "selected_ids": [],
+        }
+
+    virtual_category = (
+        VirtualCategory.objects.filter(id=virtual_pk)
+        .only("id", "name", "code")
+        .first()
+    )
+    if virtual_category is None:
+        return {
+            "id": virtual_pk,
+            "name": "",
+            "code": "",
+            "total": 0,
+            "limit": limit,
+            "is_truncated": False,
+            "rows": [],
+            "selected_ids": [],
+        }
+
+    queryset = (
+        virtual_category.nomenclature_links.select_related("nomenclature", "nomenclature__olap_category")
+        .order_by("nomenclature__nomenclature_name", "id")
+    )
+    total = queryset.count()
+    rows = list(
+        queryset[:limit].values(
+            "nomenclature_id",
+            "nomenclature__iiko_nomenclature_external_id",
+            "nomenclature__nomenclature_name",
+            "nomenclature__dish_group_name",
+            "nomenclature__olap_category__category_name",
+        )
+    )
+
+    return {
+        "id": int(virtual_category.id),
+        "name": (virtual_category.name or "").strip(),
+        "code": (virtual_category.code or "").strip(),
+        "total": int(total),
+        "limit": int(limit),
+        "is_truncated": total > limit,
+        "rows": [
+            {
+                "id": int(row["nomenclature_id"]),
+                "dish_code": (row.get("nomenclature__iiko_nomenclature_external_id") or "").strip(),
+                "dish_name": (row.get("nomenclature__nomenclature_name") or "").strip(),
+                "dish_group_name": (row.get("nomenclature__dish_group_name") or "").strip(),
+                "olap_category_name": (row.get("nomenclature__olap_category__category_name") or "").strip(),
+            }
+            for row in rows
+        ],
+        "selected_ids": [int(row["nomenclature_id"]) for row in rows],
     }
 
 
