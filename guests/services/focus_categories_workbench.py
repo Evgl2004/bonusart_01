@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from django.db.models import Count, Max, Q, Sum
@@ -109,7 +109,7 @@ def build_focus_categories_workbench_payload(
                 "resolved_links_count": int(focus.resolved_links_count or 0),
                 "guests_count": int(coverage.get("guests_count") or 0),
                 "orders_count": int(coverage.get("orders_count") or 0),
-                "net_total": _to_money_str(coverage.get("net_total")),
+                "net_total": _to_money_rub(coverage.get("net_total")),
             }
         )
 
@@ -557,10 +557,13 @@ def _build_nomenclature_catalog(
     }
 
 
-def _to_money_str(value: Any) -> str:
+def _to_money_rub(value: Any) -> str:
     """
-    Приводит денежное значение к строке с двумя знаками после запятой.
+    Форматирует денежное значение в UI-формат: `9 090 413,43 ₽`.
     """
     if value is None:
-        return "0.00"
-    return f"{Decimal(str(value)):.2f}"
+        return "0,00 ₽"
+    normalized = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    integer_part, fractional_part = f"{normalized:.2f}".split(".")
+    integer_with_spaces = f"{int(integer_part):,}".replace(",", " ")
+    return f"{integer_with_spaces},{fractional_part} ₽"

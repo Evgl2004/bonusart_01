@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Прототип: Целевые категории v2</title>
+  <style>
+    :root {
+      --bg: #f4f7fc;
+      --card: #ffffff;
+      --line: #d9e1ef;
+      --text: #0f172a;
+      --muted: #64748b;
+      --primary: #2563eb;
+      --primary-2: #1d4ed8;
+      --success: #16a34a;
+      --danger: #dc2626;
+      --soft: #f8fafc;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+
+    .wrap {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 14px 16px 24px;
+    }
+
+    .top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .h1 {
+      margin: 0 0 4px;
+      font-size: 38px;
+      line-height: 1.08;
+      letter-spacing: -0.01em;
+    }
+
+    .sub {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .btn {
+      height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      color: var(--text);
+      padding: 0 14px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+
+    .btn:hover { border-color: #c7d2e8; }
+
+    .btn.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+
+    .btn.primary:hover { background: var(--primary-2); }
+
+    .btn.success {
+      border-color: var(--success);
+      color: var(--success);
+      background: #fff;
+    }
+
+    .btn.success.fill {
+      color: #fff;
+      background: var(--success);
+    }
+
+    .btn.danger {
+      border-color: var(--danger);
+      color: var(--danger);
+      background: #fff;
+    }
+
+    .btn.sm {
+      height: 32px;
+      border-radius: 8px;
+      font-size: 14px;
+      padding: 0 10px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      box-shadow: 0 6px 16px rgba(15, 23, 42, 0.04);
+    }
+
+    .card + .card { margin-top: 10px; }
+
+    .card h2 {
+      margin: 0 0 4px;
+      font-size: 24px;
+      line-height: 1.15;
+    }
+
+    .desc {
+      margin: 0 0 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+      align-items: stretch;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .field label {
+      font-size: 13px;
+      color: #334155;
+      font-weight: 700;
+    }
+
+    .field input,
+    .field select {
+      height: 40px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 0 10px;
+      font-size: 15px;
+      background: #fff;
+    }
+
+    .filter-box {
+      display: grid;
+      gap: 8px;
+      height: 100%;
+      align-content: start;
+    }
+
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 10px;
+      height: 100%;
+    }
+
+    .kpi-card {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      min-height: 88px;
+    }
+
+    .kpi-title {
+      font-size: 14px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .kpi-value {
+      font-size: 34px;
+      font-weight: 800;
+      color: #111827;
+      line-height: 1;
+    }
+
+    .sections {
+      display: grid;
+      gap: 10px;
+    }
+
+    .table-wrap {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow: auto;
+      background: #fff;
+      max-height: 420px;
+    }
+
+    .table-wrap.mid { max-height: 290px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 15px;
+    }
+
+    thead th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: var(--soft);
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      padding: 9px 10px;
+      font-weight: 800;
+    }
+
+    tbody td {
+      border-bottom: 1px solid #edf2f7;
+      padding: 9px 10px;
+      vertical-align: top;
+    }
+
+    tbody tr:hover { background: #f9fbff; }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid #cce9d9;
+      background: #ecfdf3;
+      color: #166534;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+
+    .double {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .advanced {
+      border: 1px dashed #c6d4eb;
+      border-radius: 9px;
+      padding: 8px 10px;
+      background: #fbfdff;
+      margin-top: 8px;
+    }
+
+    .advanced summary {
+      cursor: pointer;
+      font-weight: 700;
+      color: #334155;
+    }
+
+    .advanced-grid {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 0.7fr 1fr;
+      gap: 8px;
+    }
+
+    .rebuild-note {
+      border: 1px solid #fde68a;
+      background: #fffbeb;
+      color: #92400e;
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      font-size: 14px;
+    }
+
+    @media (max-width: 1280px) {
+      .hero { grid-template-columns: 1fr; }
+      .double { grid-template-columns: 1fr; }
+      .advanced-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 860px) {
+      .kpi-grid { grid-template-columns: 1fr; grid-template-rows: auto; }
+      .advanced-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1 class="h1">Целевые категории v2</h1>
+      <p class="sub">Упрощённый сценарий: окно + заведение, без выбора даты среза вручную</p>
+    </div>
+    <button class="btn">Перейти в конструктор категорий</button>
+  </div>
+
+  <section class="hero">
+    <div class="card filter-box">
+      <h2 style="font-size:22px;">Фильтр витрины</h2>
+      <p class="desc">Срез всегда считается «на сегодня». Меняем только глубину окна и заведение.</p>
+      <div class="field">
+        <label>Окно (дней)</label>
+        <select>
+          <option>30</option>
+          <option>60</option>
+          <option>90</option>
+          <option>180</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Заведение</label>
+        <select>
+          <option>Все заведения</option>
+          <option>Чина</option>
+          <option>Сами Сусами</option>
+          <option>Узбечка</option>
+          <option>Грузинка</option>
+        </select>
+      </div>
+      <button class="btn primary">Применить</button>
+      <div class="muted">Дата среза: автоматически «сегодня» (20.04.2026)</div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-title">Категорий всего</div>
+        <div class="kpi-value">4</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Категорий включено</div>
+        <div class="kpi-value">4</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Связей категория → номенклатура</div>
+        <div class="kpi-value">214</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-title">Выбранная категория</div>
+        <div class="kpi-value" style="font-size:26px;">Супы Чина</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="sections">
+    <section class="card">
+      <h2>Целевые категории</h2>
+      <p class="desc">Основная таблица управления: посмотреть вклад, открыть состав, включить/выключить категорию.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+          <tr>
+            <th>Категория</th>
+            <th>Источник</th>
+            <th>Статус</th>
+            <th>Связей</th>
+            <th>Гостей</th>
+            <th>Заказов</th>
+            <th>Сумма</th>
+            <th style="min-width: 230px;">Действия</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr>
+            <td><strong>Вино</strong><div class="muted">wine · wine</div></td>
+            <td>Прямая категория OLAP<div class="muted">Вино</div></td>
+            <td><span class="badge">включена</span></td>
+            <td>133</td>
+            <td>179</td>
+            <td>191</td>
+            <td>418074.12</td>
+            <td><div class="actions"><button class="btn sm">Открыть состав</button><button class="btn sm danger">Выключить</button></div></td>
+          </tr>
+          <tr>
+            <td><strong>Пиво Ермолаевъ</strong><div class="muted">beer_ermolaev · beer</div></td>
+            <td>Прямая категория OLAP<div class="muted">Пиво Ермолаевъ</div></td>
+            <td><span class="badge">включена</span></td>
+            <td>42</td>
+            <td>384</td>
+            <td>435</td>
+            <td>456863.97</td>
+            <td><div class="actions"><button class="btn sm">Открыть состав</button><button class="btn sm danger">Выключить</button></div></td>
+          </tr>
+          <tr style="background:#f9fbff;">
+            <td><strong>Супы Чина</strong><div class="muted">focus-virtual-1</div></td>
+            <td>Виртуальная категория<div class="muted">Супы Чина</div></td>
+            <td><span class="badge">включена</span></td>
+            <td>13</td>
+            <td>724</td>
+            <td>803</td>
+            <td>658005.28</td>
+            <td><div class="actions"><button class="btn sm">Открыть состав</button><button class="btn sm danger">Выключить</button></div></td>
+          </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Состав выбранной категории</h2>
+      <p class="desc">Детализация номенклатур по выбранной категории из списка выше.</p>
+      <div class="table-wrap mid">
+        <table>
+          <thead>
+          <tr>
+            <th>iiko ID</th>
+            <th>Номенклатура</th>
+            <th>Группа</th>
+            <th>OLAP-категория</th>
+            <th>Источник связи</th>
+          </tr>
+          </thead>
+          <tbody>
+          <tr>
+            <td>111444</td>
+            <td>Балык Шурва</td>
+            <td>Супы</td>
+            <td>Супы</td>
+            <td>Номенклатура из виртуальной</td>
+          </tr>
+          <tr>
+            <td>99942636666546498678</td>
+            <td>Буглама с бараниной</td>
+            <td>Супы</td>
+            <td>Супы</td>
+            <td>Номенклатура из виртуальной</td>
+          </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="double">
+      <div class="card">
+        <h2>Добавить категорию из OLAP</h2>
+        <p class="desc">Быстрый путь: выбираем категорию OLAP и включаем как целевую.</p>
+        <div class="field">
+          <label>OLAP-категория</label>
+          <select><option>Выберите категорию</option><option>Мангал</option><option>Бизнес-ланч</option></select>
+        </div>
+        <details class="advanced">
+          <summary>Дополнительные настройки (имя, код, вес, тег)</summary>
+          <div class="advanced-grid">
+            <div class="field"><label>Имя</label><input type="text" placeholder="Если пусто — имя OLAP"></div>
+            <div class="field"><label>Код</label><input type="text" placeholder="auto"></div>
+            <div class="field"><label>Вес</label><input type="number" value="1"></div>
+            <div class="field"><label>Тег</label><input type="text" placeholder="Например: grill"></div>
+          </div>
+        </details>
+        <button class="btn primary" style="width:100%;margin-top:8px;">Создать категорию</button>
+      </div>
+
+      <div class="card">
+        <h2>Добавить категорию из виртуальной</h2>
+        <p class="desc">Подключаем готовую виртуальную категорию как целевую.</p>
+        <div class="field">
+          <label>Виртуальная категория</label>
+          <select><option>Супы Чина</option><option>Мясной микс</option></select>
+        </div>
+        <details class="advanced">
+          <summary>Дополнительные настройки (имя, код, вес, тег)</summary>
+          <div class="advanced-grid">
+            <div class="field"><label>Имя</label><input type="text" placeholder="Если пусто — имя виртуальной"></div>
+            <div class="field"><label>Код</label><input type="text" placeholder="auto"></div>
+            <div class="field"><label>Вес</label><input type="number" value="1"></div>
+            <div class="field"><label>Тег</label><input type="text" placeholder="Например: soup"></div>
+          </div>
+        </details>
+        <button class="btn" style="width:100%;margin-top:8px;">Создать категорию</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Пересчёт витрин после изменений</h2>
+      <div class="rebuild-note">
+        Рекомендуемый порядок: сначала пересобрать связи номенклатур, затем пересчитать итоги за хвост 180 дней.
+      </div>
+      <div class="double">
+        <button class="btn">Пересобрать связи номенклатур (для всех)</button>
+        <button class="btn primary">Пересчитать итоги за хвост 180 дней</button>
+      </div>
+    </section>
+  </div>
+</div>
+</body>
+</html>
+

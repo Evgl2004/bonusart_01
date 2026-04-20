@@ -22,9 +22,21 @@
   }
 
   .fc-kpi-value {
-    font-size: 1.3rem;
+    font-size: 1.55rem;
     font-weight: 700;
     color: #111827;
+  }
+
+  .fc-hero-left,
+  .fc-hero-right {
+    height: 100%;
+  }
+
+  .fc-kpi-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    height: 100%;
   }
 
   .fc-table-wrap {
@@ -85,6 +97,49 @@
   .fc-section-rebuild {
     order: 4;
   }
+
+  .fc-help-btn {
+    width: 1.55rem;
+    height: 1.55rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .fc-form-row {
+    display: flex;
+    gap: 0.45rem;
+    align-items: end;
+  }
+
+  .fc-form-row .fc-form-grow {
+    flex: 1;
+  }
+
+  .fc-form-row .btn {
+    min-width: 130px;
+  }
+
+  .fc-auto-apply-note {
+    font-size: 0.83rem;
+    color: #64748b;
+  }
+
+  @media (max-width: 991.98px) {
+    .fc-kpi-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .fc-form-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .fc-form-row .btn {
+      min-width: 100%;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -101,63 +156,79 @@
   </a>
 </div>
 
-<form method="get" class="row g-2 align-items-end mb-4">
-  <div class="col-12 col-md-3">
-    <label class="form-label">Дата среза</label>
-    <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
-  </div>
-  <div class="col-12 col-md-3">
-    <label class="form-label">Окно (дней)</label>
-    <select name="window_days" class="form-select">
-      {% for item in payload.filters.window_options %}
-        <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-4">
-    <label class="form-label">Заведение</label>
-    <select name="department_id" class="form-select">
-      <option value="">Все заведения</option>
-      {% for dep in payload.filters.department_options %}
-        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-2">
-    <button type="submit" class="btn btn-primary w-100">Применить</button>
-  </div>
-</form>
-
 <div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
-    <div class="fc-card"><div class="card-body">
-      <div class="fc-kpi-title">Категорий всего</div>
-      <div class="fc-kpi-value">{{ payload.stats.focus_total }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="fc-card"><div class="card-body">
-      <div class="fc-kpi-title">Категорий включено</div>
-      <div class="fc-kpi-value">{{ payload.stats.focus_enabled }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="fc-card"><div class="card-body">
-      <div class="fc-kpi-title">Связей категория → номенклатура</div>
-      <div class="fc-kpi-value">{{ payload.stats.resolved_links_total }}</div>
-    </div></div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="fc-card"><div class="card-body">
-      <div class="fc-kpi-title">Выбранная категория</div>
-      <div class="fc-kpi-value">
-        {% if payload.selected_focus.focus_name %}
-          {{ payload.selected_focus.focus_name }}
-        {% else %}
-          —
-        {% endif %}
+  <div class="col-12 col-lg-4">
+    <div class="fc-card fc-hero-left">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Фильтр витрины</h2>
+        <p class="text-muted small mb-3">Срез всегда берётся из текущей даты данных. Меняем только окно и заведение.</p>
+        <form method="get" id="fc-filters-form" class="row g-2">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <div class="col-12">
+            <label class="form-label">Окно (дней)</label>
+            <select id="fc-window-days" name="window_days" class="form-select">
+              {% for item in payload.filters.window_options %}
+                <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <label class="form-label">Заведение</label>
+            <select id="fc-department-id" name="department_id" class="form-select">
+              <option value="">Все заведения</option>
+              {% for dep in payload.filters.department_options %}
+                <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12">
+            <div class="form-check mb-1">
+              <input class="form-check-input" type="checkbox" id="fc-auto-apply">
+              <label class="form-check-label" for="fc-auto-apply">Автопересчёт при изменении фильтров</label>
+            </div>
+            <div class="fc-auto-apply-note">По умолчанию включён. При выключении применяйте изменения кнопкой.</div>
+          </div>
+          <div class="col-12">
+            <button id="fc-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
+          </div>
+        </form>
       </div>
-    </div></div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-8">
+    <div class="fc-kpi-grid">
+      <div class="fc-card">
+        <div class="card-body">
+          <div class="fc-kpi-title">Категорий всего</div>
+          <div class="fc-kpi-value">{{ payload.stats.focus_total }}</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="card-body">
+          <div class="fc-kpi-title">Категорий включено</div>
+          <div class="fc-kpi-value">{{ payload.stats.focus_enabled }}</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="card-body">
+          <div class="fc-kpi-title">Связей категория → номенклатура</div>
+          <div class="fc-kpi-value">{{ payload.stats.resolved_links_total }}</div>
+        </div>
+      </div>
+      <div class="fc-card">
+        <div class="card-body">
+          <div class="fc-kpi-title">Выбранная категория</div>
+          <div class="fc-kpi-value">
+            {% if payload.selected_focus.focus_name %}
+              {{ payload.selected_focus.focus_name }}
+            {% else %}
+              —
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -166,7 +237,19 @@
   <div class="col-12 col-xl-6">
     <div class="fc-card">
       <div class="card-body">
-        <h2 class="h6 mb-3">Добавить категорию из OLAP</h2>
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <h2 class="h6 mb-0">Добавить категорию из OLAP</h2>
+          <button
+            type="button"
+            class="btn btn-outline-secondary fc-help-btn"
+            data-bs-toggle="tooltip"
+            data-bs-placement="top"
+            title="Создаёт целевую категорию напрямую из выбранной OLAP-категории и сразу включает её в работу."
+            aria-label="Пояснение по созданию категории из OLAP"
+          >
+            ?
+          </button>
+        </div>
         <form method="post" action="{% url 'focus_categories_actions' %}" class="row g-2 align-items-end">
           {% csrf_token %}
           <input type="hidden" name="action" value="create_focus_from_olap">
@@ -177,10 +260,10 @@
 
           <div class="col-12">
             <label class="form-label">OLAP-категория</label>
-            <select class="form-select" name="olap_category_id" required>
+            <select class="form-select" id="fc-olap-category-select" name="olap_category_id" required>
               <option value="">Выберите категорию</option>
               {% for item in payload.available_sources.olap_categories %}
-                <option value="{{ item.id }}">{{ item.name }}</option>
+                <option value="{{ item.id }}" data-name="{{ item.name|escape }}">{{ item.name }}</option>
               {% endfor %}
             </select>
           </div>
@@ -189,11 +272,11 @@
             <div class="row g-2">
               <div class="col-12 col-md-6">
                 <label class="form-label">Имя (опционально)</label>
-                <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя OLAP-категории">
+                <input type="text" class="form-control" id="fc-olap-focus-name" name="focus_name" maxlength="150" placeholder="Если пусто — имя OLAP-категории">
               </div>
               <div class="col-12 col-md-6">
                 <label class="form-label">Код (опционально)</label>
-                <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
+                <input type="text" class="form-control" id="fc-olap-focus-code" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
               </div>
               <div class="col-12 col-md-4">
                 <label class="form-label">Вес</label>
@@ -216,7 +299,19 @@
   <div class="col-12 col-xl-6">
     <div class="fc-card">
       <div class="card-body">
-        <h2 class="h6 mb-3">Добавить категорию из виртуальной</h2>
+        <div class="d-flex align-items-center gap-2 mb-3">
+          <h2 class="h6 mb-0">Добавить категорию из виртуальной</h2>
+          <button
+            type="button"
+            class="btn btn-outline-secondary fc-help-btn"
+            data-bs-toggle="tooltip"
+            data-bs-placement="top"
+            title="Создаёт целевую категорию на базе готовой виртуальной категории (конструктора)."
+            aria-label="Пояснение по созданию категории из виртуальной"
+          >
+            ?
+          </button>
+        </div>
         <form method="post" action="{% url 'focus_categories_actions' %}" class="row g-2 align-items-end">
           {% csrf_token %}
           <input type="hidden" name="action" value="create_focus_from_virtual">
@@ -227,10 +322,10 @@
 
           <div class="col-12">
             <label class="form-label">Виртуальная категория</label>
-            <select class="form-select" name="virtual_category_id" {% if not payload.available_sources.virtual_categories %}disabled{% else %}required{% endif %}>
+            <select class="form-select" id="fc-virtual-category-select" name="virtual_category_id" {% if not payload.available_sources.virtual_categories %}disabled{% else %}required{% endif %}>
               <option value="">Выберите категорию</option>
               {% for item in payload.available_sources.virtual_categories %}
-                <option value="{{ item.id }}">{{ item.name }}</option>
+                <option value="{{ item.id }}" data-name="{{ item.name|escape }}" data-code="{{ item.code|escape }}">{{ item.name }}</option>
               {% endfor %}
             </select>
           </div>
@@ -239,11 +334,11 @@
             <div class="row g-2">
               <div class="col-12 col-md-6">
                 <label class="form-label">Имя (опционально)</label>
-                <input type="text" class="form-control" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной категории">
+                <input type="text" class="form-control" id="fc-virtual-focus-name" name="focus_name" maxlength="150" placeholder="Если пусто — имя виртуальной категории">
               </div>
               <div class="col-12 col-md-6">
                 <label class="form-label">Код (опционально)</label>
-                <input type="text" class="form-control" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
+                <input type="text" class="form-control" id="fc-virtual-focus-code" name="focus_code" maxlength="80" placeholder="Если пусто — авто">
               </div>
               <div class="col-12 col-md-4">
                 <label class="form-label">Вес</label>
@@ -424,4 +519,145 @@
 
 </div>
 
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const initTooltips = () => {
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((node) => {
+        if (window.bootstrap && window.bootstrap.Tooltip) {
+          new window.bootstrap.Tooltip(node);
+        }
+      });
+    };
+
+    const translitMap = {
+      "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+      "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+      "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+      "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "",
+      "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    };
+
+    const slugifyRu = (value) => {
+      const normalized = String(value || "").toLowerCase()
+        .split("")
+        .map((char) => translitMap[char] !== undefined ? translitMap[char] : char)
+        .join("");
+      return normalized
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .replace(/-{2,}/g, "-");
+    };
+
+    const initFiltersAutoApply = () => {
+      const storageKey = "fc_auto_apply_v1";
+      const form = document.getElementById("fc-filters-form");
+      const windowSelect = document.getElementById("fc-window-days");
+      const departmentSelect = document.getElementById("fc-department-id");
+      const autoApplyCheckbox = document.getElementById("fc-auto-apply");
+      const applyButton = document.getElementById("fc-apply-btn");
+
+      if (!form || !windowSelect || !departmentSelect || !autoApplyCheckbox || !applyButton) {
+        return;
+      }
+
+      const stored = window.localStorage.getItem(storageKey);
+      autoApplyCheckbox.checked = stored === null ? true : stored === "1";
+
+      const syncApplyButtonState = () => {
+        if (autoApplyCheckbox.checked) {
+          applyButton.disabled = true;
+          applyButton.classList.remove("btn-primary");
+          applyButton.classList.add("btn-secondary");
+        } else {
+          applyButton.disabled = false;
+          applyButton.classList.remove("btn-secondary");
+          applyButton.classList.add("btn-primary");
+        }
+      };
+
+      const maybeAutoSubmit = () => {
+        if (!autoApplyCheckbox.checked) {
+          return;
+        }
+        form.requestSubmit();
+      };
+
+      autoApplyCheckbox.addEventListener("change", () => {
+        window.localStorage.setItem(storageKey, autoApplyCheckbox.checked ? "1" : "0");
+        syncApplyButtonState();
+      });
+
+      windowSelect.addEventListener("change", maybeAutoSubmit);
+      departmentSelect.addEventListener("change", maybeAutoSubmit);
+
+      syncApplyButtonState();
+    };
+
+    const initAutoDefaultsForCreateForms = () => {
+      const olapSelect = document.getElementById("fc-olap-category-select");
+      const olapNameInput = document.getElementById("fc-olap-focus-name");
+      const olapCodeInput = document.getElementById("fc-olap-focus-code");
+
+      const virtualSelect = document.getElementById("fc-virtual-category-select");
+      const virtualNameInput = document.getElementById("fc-virtual-focus-name");
+      const virtualCodeInput = document.getElementById("fc-virtual-focus-code");
+
+      const applySuggestion = (input, suggestedValue) => {
+        if (!input || !suggestedValue) {
+          return;
+        }
+        if (!String(input.value || "").trim()) {
+          input.value = suggestedValue;
+        }
+      };
+
+      const updateFromOlap = () => {
+        if (!olapSelect) {
+          return;
+        }
+        const selectedOption = olapSelect.options[olapSelect.selectedIndex];
+        if (!selectedOption || !selectedOption.value) {
+          return;
+        }
+        const sourceName = String(selectedOption.dataset.name || "").trim();
+        const slug = slugifyRu(sourceName);
+        const suggestedCode = slug || `focus-olap-${selectedOption.value}`;
+        applySuggestion(olapNameInput, sourceName);
+        applySuggestion(olapCodeInput, suggestedCode);
+      };
+
+      const updateFromVirtual = () => {
+        if (!virtualSelect) {
+          return;
+        }
+        const selectedOption = virtualSelect.options[virtualSelect.selectedIndex];
+        if (!selectedOption || !selectedOption.value) {
+          return;
+        }
+        const sourceName = String(selectedOption.dataset.name || "").trim();
+        const sourceCode = String(selectedOption.dataset.code || "").trim();
+        const slug = slugifyRu(sourceName);
+        const suggestedCode = sourceCode || slug || `focus-virtual-${selectedOption.value}`;
+        applySuggestion(virtualNameInput, sourceName);
+        applySuggestion(virtualCodeInput, suggestedCode);
+      };
+
+      if (olapSelect) {
+        olapSelect.addEventListener("change", updateFromOlap);
+        updateFromOlap();
+      }
+      if (virtualSelect) {
+        virtualSelect.addEventListener("change", updateFromVirtual);
+        updateFromVirtual();
+      }
+    };
+
+    initTooltips();
+    initFiltersAutoApply();
+    initAutoDefaultsForCreateForms();
+  });
+</script>
 {% endblock %}
