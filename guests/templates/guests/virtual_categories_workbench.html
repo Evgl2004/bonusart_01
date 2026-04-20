@@ -118,6 +118,42 @@
     align-items: end;
   }
 
+  .vc-icon-btn {
+    width: 2.7rem;
+    min-width: 2.7rem;
+    padding: 0.45rem 0;
+    line-height: 1;
+    font-size: 1.1rem;
+  }
+
+  .vc-help-btn {
+    width: 1.55rem;
+    height: 1.55rem;
+    border-radius: 999px;
+    font-size: 0.82rem;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .vc-btn-archive {
+    color: #dc3545;
+    border-color: #dc3545;
+  }
+
+  .vc-btn-archive:hover,
+  .vc-btn-archive:focus {
+    color: #fff;
+    background: #dc3545;
+    border-color: #dc3545;
+  }
+
+  .vc-btn-archive:disabled {
+    color: #dc3545;
+    border-color: #dc3545;
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
   .vc-row-actions {
     display: flex;
     justify-content: flex-end;
@@ -155,17 +191,23 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h1 class="h3 mb-1">Конструктор категорий</h1>
-    <div class="text-muted small">
-      Виртуальные категории собираются из номенклатуры и могут быть основой для целевых категорий.
+    <div class="text-muted small d-flex align-items-center gap-2 flex-wrap">
+      <span>Виртуальные категории собираются из номенклатуры и могут быть основой для целевых категорий.</span>
+      <button
+        type="button"
+        class="btn btn-outline-secondary vc-help-btn"
+        data-bs-toggle="tooltip"
+        data-bs-placement="top"
+        title="В конструкторе нет фильтров «дата / окно / заведение», потому что это справочник номенклатуры."
+        aria-label="Пояснение по фильтрам конструктора"
+      >
+        ?
+      </button>
     </div>
   </div>
   <a class="btn btn-outline-secondary" href="{% url 'focus_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">
     Вернуться к целевым категориям
   </a>
-</div>
-
-<div class="vc-note mb-3">
-  Здесь нет фильтров «дата / окно / заведение», потому что конструктор работает со справочником номенклатуры.
 </div>
 
 <div class="vc-card mb-3">
@@ -207,7 +249,8 @@
                   {% if row.id == selected_virtual_category_id %}
                     <a
                       class="btn btn-sm btn-outline-secondary"
-                      href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}"
+                      data-clear-selection="1"
+                      href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}&reset_selection=1"
                     >
                       Выйти из редактирования
                     </a>
@@ -234,7 +277,16 @@
                     <input type="hidden" name="nomenclature_group_query" value="{{ selected_nomenclature_group_query }}">
                     <input type="hidden" name="nomenclature_olap_category_id" value="{{ selected_nomenclature_olap_category_id }}">
 
-                    <button type="submit" class="btn btn-sm {% if row.is_active %}btn-outline-warning{% else %}btn-outline-success{% endif %}">
+                    <button
+                      type="submit"
+                      class="btn btn-sm {% if row.is_active %}vc-btn-archive{% else %}btn-outline-success{% endif %}"
+                      {% if is_edit_mode %}
+                        disabled
+                        data-bs-toggle="tooltip"
+                        data-bs-placement="top"
+                        title="Кнопка «В архив/Восстановить» недоступна, пока открыт режим редактирования состава."
+                      {% endif %}
+                    >
                       {% if row.is_active %}В архив{% else %}Восстановить{% endif %}
                     </button>
                   </form>
@@ -286,8 +338,22 @@
           <div class="col-12 col-lg-2">
             <label class="form-label d-none d-lg-block">&nbsp;</label>
             <div class="vc-search-actions">
-              <button type="submit" class="btn btn-primary vc-action-btn">🔎 Найти</button>
-              <a class="btn btn-outline-secondary vc-action-btn" href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}">↺ Сброс</a>
+              <button
+                type="submit"
+                class="btn btn-primary vc-action-btn vc-icon-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Найти по фильтрам"
+                aria-label="Найти по фильтрам"
+              >🔎</button>
+              <a
+                class="btn btn-outline-secondary vc-action-btn vc-icon-btn"
+                href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Сбросить фильтры"
+                aria-label="Сбросить фильтры"
+              >↺</a>
             </div>
           </div>
         </form>
@@ -395,7 +461,7 @@
             <div class="vc-note mb-2">
               Чтобы выйти из режима редактирования «{{ selected_virtual_category.name }}» и перейти к созданию новой категории,
               нажмите
-              <a href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}" class="ms-1">«Создать новую категорию»</a>.
+              <a data-clear-selection="1" href="{% url 'virtual_categories' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}&department_id={{ selected_department_id|urlencode }}&nomenclature_query={{ selected_nomenclature_query|urlencode }}&nomenclature_group_query={{ selected_nomenclature_group_query|urlencode }}&nomenclature_olap_category_id={{ selected_nomenclature_olap_category_id|urlencode }}&reset_selection=1" class="ms-1">«Создать новую категорию»</a>.
             </div>
           {% else %}
             <div class="form-check mb-2">
@@ -469,6 +535,8 @@
   document.addEventListener("DOMContentLoaded", function () {
     const selectionStorageKey = "vc_selected_nomenclatures_v1";
     const isEditMode = {{ is_edit_mode|yesno:"true,false" }};
+    const currentUrl = new URL(window.location.href);
+    const shouldResetSelection = !isEditMode && currentUrl.searchParams.get("reset_selection") === "1";
 
     const form = document.getElementById("virtual-category-create-form");
     const master = document.getElementById("nomenclature-select-all");
@@ -505,6 +573,13 @@
     const editRowsNode = document.getElementById("vc-edit-selected-rows");
     const editRows = safeParseArray(editRowsNode ? editRowsNode.textContent : "[]");
 
+    if (shouldResetSelection) {
+      selectedMap = {};
+      window.localStorage.setItem(selectionStorageKey, JSON.stringify(selectedMap));
+      currentUrl.searchParams.delete("reset_selection");
+      window.history.replaceState({}, "", currentUrl.pathname + (currentUrl.search ? currentUrl.search : ""));
+    }
+
     if (isEditMode) {
       selectedMap = {};
       editRows.forEach((row) => {
@@ -521,6 +596,18 @@
       });
       window.localStorage.setItem(selectionStorageKey, JSON.stringify(selectedMap));
     }
+
+    document.querySelectorAll('[data-clear-selection="1"]').forEach((link) => {
+      link.addEventListener("click", () => {
+        window.localStorage.removeItem(selectionStorageKey);
+      });
+    });
+
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((node) => {
+      if (window.bootstrap && window.bootstrap.Tooltip) {
+        new window.bootstrap.Tooltip(node);
+      }
+    });
 
     const saveSelection = () => {
       window.localStorage.setItem(selectionStorageKey, JSON.stringify(selectedMap));
