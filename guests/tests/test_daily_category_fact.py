@@ -71,8 +71,15 @@ class DailyCategoryFactServiceTests(TestCase):
             source_reason=FocusCategoryNomenclatureResolved.SourceReason.DIRECT_OLAP,
         )
 
-    def _create_raw_line(self, *, fingerprint: str, dish_code: str, order_number: int, sum_value: str) -> None:
-        OlapSalesRawLine.objects.create(
+    def _create_raw_line(
+        self,
+        *,
+        fingerprint: str,
+        dish_code: str,
+        order_number: int,
+        sum_value: str,
+    ) -> OlapSalesRawLine:
+        return OlapSalesRawLine.objects.create(
             row_fingerprint=fingerprint,
             sync_journal=self.journal,
             guest=self.guest,
@@ -162,3 +169,78 @@ class DailyCategoryFactServiceTests(TestCase):
         self.assertEqual(fact.items_count, 2)
         self.assertEqual(fact.sum_gross, Decimal("500"))
 
+    def test_rebuild_daily_category_fact_deletes_stale_rows_for_full_scope(self):
+        """
+        При полном пересчёте в выбранном периоде устаревшие строки должны удаляться.
+        """
+        self._create_raw_line(
+            fingerprint="dcf-6",
+            dish_code="dish-100",
+            order_number=700001,
+            sum_value="250",
+        )
+        stale_guest = Guest.objects.create(
+            first_name="Старый гость",
+            phone="+79990007777",
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        GuestRestaurantDailyCategoryFact.objects.create(
+            business_date=date(2026, 3, 18),
+            guest=stale_guest,
+            department_id="dept-stale",
+            focus_category=self.focus_category,
+            orders_count=2,
+            items_count=2,
+            sum_gross=Decimal("500"),
+            sum_net=Decimal("500"),
+            bonus_sum=Decimal("0"),
+        )
+
+        stats = rebuild_daily_category_fact_from_raw_lines(
+            business_date_from=date(2026, 3, 18),
+            business_date_to=date(2026, 3, 18),
+        )
+
+        self.assertEqual(stats.deleted_rows, 1)
+        self.assertEqual(GuestRestaurantDailyCategoryFact.objects.count(), 1)
+        fact = GuestRestaurantDailyCategoryFact.objects.get()
+        self.assertEqual(fact.guest_id, self.guest.id)
+
+    def test_rebuild_daily_category_fact_does_not_delete_on_incremental_raw_id_range(self):
+        """
+        При инкрементальном проходе по id сырого слоя удаление устаревших строк отключено.
+        """
+        raw_line = self._create_raw_line(
+            fingerprint="dcf-7",
+            dish_code="dish-100",
+            order_number=800001,
+            sum_value="350",
+        )
+        stale_guest = Guest.objects.create(
+            first_name="Инкремент",
+            phone="+79990008888",
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        GuestRestaurantDailyCategoryFact.objects.create(
+            business_date=date(2026, 3, 18),
+            guest=stale_guest,
+            department_id="dept-stale",
+            focus_category=self.focus_category,
+            orders_count=1,
+            items_count=1,
+            sum_gross=Decimal("120"),
+            sum_net=Decimal("120"),
+            bonus_sum=Decimal("0"),
+        )
+
+        stats = rebuild_daily_category_fact_from_raw_lines(
+            raw_line_id_from=raw_line.id,
+            raw_line_id_to=raw_line.id,
+            business_date_from=date(2026, 3, 18),
+            business_date_to=date(2026, 3, 18),
+        )
+
+        self.assertEqual(stats.deleted_rows, 0)
+        self.assertEqual(GuestRestaurantDailyCategoryFact.objects.count(), 2)

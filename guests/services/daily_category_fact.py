@@ -18,6 +18,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from guests.models import (
+    FocusCategory,
     FocusCategoryNomenclatureResolved,
     GuestRestaurantDailyCategoryFact,
     OlapSalesRawLine,
@@ -37,6 +38,7 @@ class DailyCategoryFactBuildStats:
     grouped_rows: int = 0
     created_rows: int = 0
     updated_rows: int = 0
+    deleted_rows: int = 0
 
 
 @dataclass
@@ -92,6 +94,65 @@ def _build_nomenclature_to_focus_mapping() -> dict[str, list[int]]:
     return mapping
 
 
+def _delete_stale_daily_rows(
+    *,
+    expected_keys: set[tuple[date, int, str, int]],
+    scope_focus_ids: set[int],
+    business_date_from: date | None,
+    business_date_to: date | None,
+    batch_size: int,
+) -> int:
+    """
+    Удаляет строки дневного слоя, которые не входят в актуальные агрегаты
+    в рамках заданного периода и набора активных фокусных категорий.
+    """
+
+    if not scope_focus_ids:
+        return 0
+
+    query = GuestRestaurantDailyCategoryFact.objects.filter(
+        focus_category_id__in=scope_focus_ids
+    ).values(
+        "id",
+        "business_date",
+        "guest_id",
+        "department_id",
+        "focus_category_id",
+    )
+    if business_date_from is not None:
+        query = query.filter(business_date__gte=business_date_from)
+    if business_date_to is not None:
+        query = query.filter(business_date__lte=business_date_to)
+
+    chunk_size = max(100, int(batch_size))
+    stale_ids_batch: list[int] = []
+    deleted_rows = 0
+
+    for row in query.iterator(chunk_size=chunk_size):
+        row_key = (
+            row["business_date"],
+            int(row["guest_id"]),
+            _normalize_text(row["department_id"]),
+            int(row["focus_category_id"]),
+        )
+        if row_key in expected_keys:
+            continue
+
+        stale_ids_batch.append(int(row["id"]))
+        if len(stale_ids_batch) >= chunk_size:
+            deleted_rows += GuestRestaurantDailyCategoryFact.objects.filter(
+                id__in=stale_ids_batch
+            ).delete()[0]
+            stale_ids_batch.clear()
+
+    if stale_ids_batch:
+        deleted_rows += GuestRestaurantDailyCategoryFact.objects.filter(
+            id__in=stale_ids_batch
+        ).delete()[0]
+
+    return int(deleted_rows)
+
+
 def rebuild_daily_category_fact_from_raw_lines(
     *,
     raw_line_id_from: int | None = None,
@@ -105,9 +166,29 @@ def rebuild_daily_category_fact_from_raw_lines(
     """
 
     stats = DailyCategoryFactBuildStats()
+    full_scope_rebuild = raw_line_id_from is None and raw_line_id_to is None
+    enabled_focus_ids: set[int] = set()
+    if full_scope_rebuild:
+        enabled_focus_ids = set(
+            FocusCategory.objects.filter(is_enabled=True).values_list("id", flat=True)
+        )
+
     nomenclature_to_focus = _build_nomenclature_to_focus_mapping()
     if not nomenclature_to_focus:
         logger.info("rebuild_daily_category_fact_from_raw_lines: нет активных связей focus -> nomenclature")
+        if full_scope_rebuild and enabled_focus_ids:
+            with transaction.atomic():
+                stats.deleted_rows = _delete_stale_daily_rows(
+                    expected_keys=set(),
+                    scope_focus_ids=enabled_focus_ids,
+                    business_date_from=business_date_from,
+                    business_date_to=business_date_to,
+                    batch_size=batch_size,
+                )
+            logger.info(
+                "rebuild_daily_category_fact_from_raw_lines: deleted_stale=%s",
+                stats.deleted_rows,
+            )
         return stats
 
     aggregates: dict[tuple[date, int, str, int], _DailyAggregate] = {}
@@ -183,6 +264,19 @@ def rebuild_daily_category_fact_from_raw_lines(
     stats.grouped_rows = len(aggregates)
     if not aggregates:
         logger.info("rebuild_daily_category_fact_from_raw_lines: нет агрегатов для записи")
+        if full_scope_rebuild and enabled_focus_ids:
+            with transaction.atomic():
+                stats.deleted_rows = _delete_stale_daily_rows(
+                    expected_keys=set(),
+                    scope_focus_ids=enabled_focus_ids,
+                    business_date_from=business_date_from,
+                    business_date_to=business_date_to,
+                    batch_size=batch_size,
+                )
+            logger.info(
+                "rebuild_daily_category_fact_from_raw_lines: deleted_stale=%s",
+                stats.deleted_rows,
+            )
         return stats
 
     business_dates = {key[0] for key in aggregates.keys()}
@@ -267,16 +361,25 @@ def rebuild_daily_category_fact_from_raw_lines(
 
         stats.created_rows = len(to_create)
         stats.updated_rows = len(to_update)
+        if full_scope_rebuild and enabled_focus_ids:
+            stats.deleted_rows = _delete_stale_daily_rows(
+                expected_keys=set(aggregates.keys()),
+                scope_focus_ids=enabled_focus_ids,
+                business_date_from=business_date_from,
+                business_date_to=business_date_to,
+                batch_size=batch_size,
+            )
 
     logger.info(
         (
             "rebuild_daily_category_fact_from_raw_lines: scanned=%s grouped=%s "
-            "without_mapping=%s created=%s updated=%s"
+            "without_mapping=%s created=%s updated=%s deleted=%s"
         ),
         stats.scanned_raw_lines,
         stats.grouped_rows,
         stats.lines_without_focus_mapping,
         stats.created_rows,
         stats.updated_rows,
+        stats.deleted_rows,
     )
     return stats

@@ -322,13 +322,14 @@ class Command(BaseCommand):
                         self.stdout.write(
                             (
                                 "[daily_category] scanned={scanned} grouped={grouped} without_mapping={without_mapping} "
-                                "created={created} updated={updated}"
+                                "created={created} updated={updated} deleted={deleted}"
                             ).format(
                                 scanned=stats.scanned_raw_lines,
                                 grouped=stats.grouped_rows,
                                 without_mapping=stats.lines_without_focus_mapping,
                                 created=stats.created_rows,
                                 updated=stats.updated_rows,
+                                deleted=getattr(stats, "deleted_rows", 0),
                             )
                         )
 
