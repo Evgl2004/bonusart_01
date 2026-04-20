@@ -27,16 +27,9 @@
     color: #111827;
   }
 
-  .fc-hero-left,
-  .fc-hero-right {
-    height: 100%;
-  }
-
-  .fc-kpi-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    height: 100%;
+  .fc-kpi-card .card-body {
+    padding-top: 0.8rem;
+    padding-bottom: 0.8rem;
   }
 
   .fc-table-wrap {
@@ -127,10 +120,6 @@
   }
 
   @media (max-width: 991.98px) {
-    .fc-kpi-grid {
-      grid-template-columns: 1fr;
-    }
-
     .fc-form-row {
       flex-direction: column;
       align-items: stretch;
@@ -156,76 +145,77 @@
   </a>
 </div>
 
+<div class="fc-card mb-3">
+  <div class="card-body">
+    <h2 class="h6 mb-2">Фильтр витрины</h2>
+    <form method="get" id="fc-filters-form" class="row g-2 align-items-end">
+      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+      <div class="col-12 col-md-3">
+        <label class="form-label">Окно (дней)</label>
+        <select id="fc-window-days" name="window_days" class="form-select">
+          {% for item in payload.filters.window_options %}
+            <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Заведение</label>
+        <select id="fc-department-id" name="department_id" class="form-select">
+          <option value="">Все заведения</option>
+          {% for dep in payload.filters.department_options %}
+            <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-12 col-md-3">
+        <div class="form-check mb-1">
+          <input class="form-check-input" type="checkbox" id="fc-auto-apply">
+          <label class="form-check-label" for="fc-auto-apply">Автопересчёт</label>
+        </div>
+        <div class="fc-auto-apply-note">По умолчанию включён.</div>
+      </div>
+      <div class="col-12 col-md-2">
+        <button id="fc-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="row g-3 mb-4">
-  <div class="col-12 col-lg-4">
-    <div class="fc-card fc-hero-left">
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="fc-card fc-kpi-card">
       <div class="card-body">
-        <h2 class="h6 mb-2">Фильтр витрины</h2>
-        <p class="text-muted small mb-3">Срез всегда берётся из текущей даты данных. Меняем только окно и заведение.</p>
-        <form method="get" id="fc-filters-form" class="row g-2">
-          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-          <div class="col-12">
-            <label class="form-label">Окно (дней)</label>
-            <select id="fc-window-days" name="window_days" class="form-select">
-              {% for item in payload.filters.window_options %}
-                <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12">
-            <label class="form-label">Заведение</label>
-            <select id="fc-department-id" name="department_id" class="form-select">
-              <option value="">Все заведения</option>
-              {% for dep in payload.filters.department_options %}
-                <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12">
-            <div class="form-check mb-1">
-              <input class="form-check-input" type="checkbox" id="fc-auto-apply">
-              <label class="form-check-label" for="fc-auto-apply">Автопересчёт при изменении фильтров</label>
-            </div>
-            <div class="fc-auto-apply-note">По умолчанию включён. При выключении применяйте изменения кнопкой.</div>
-          </div>
-          <div class="col-12">
-            <button id="fc-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
-          </div>
-        </form>
+        <div class="fc-kpi-title">Категорий всего</div>
+        <div class="fc-kpi-value">{{ payload.stats.focus_total }}</div>
       </div>
     </div>
   </div>
-
-  <div class="col-12 col-lg-8">
-    <div class="fc-kpi-grid">
-      <div class="fc-card">
-        <div class="card-body">
-          <div class="fc-kpi-title">Категорий всего</div>
-          <div class="fc-kpi-value">{{ payload.stats.focus_total }}</div>
-        </div>
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="fc-card fc-kpi-card">
+      <div class="card-body">
+        <div class="fc-kpi-title">Категорий включено</div>
+        <div class="fc-kpi-value">{{ payload.stats.focus_enabled }}</div>
       </div>
-      <div class="fc-card">
-        <div class="card-body">
-          <div class="fc-kpi-title">Категорий включено</div>
-          <div class="fc-kpi-value">{{ payload.stats.focus_enabled }}</div>
-        </div>
+    </div>
+  </div>
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="fc-card fc-kpi-card">
+      <div class="card-body">
+        <div class="fc-kpi-title">Связей категория → номенклатура</div>
+        <div class="fc-kpi-value">{{ payload.stats.resolved_links_total }}</div>
       </div>
-      <div class="fc-card">
-        <div class="card-body">
-          <div class="fc-kpi-title">Связей категория → номенклатура</div>
-          <div class="fc-kpi-value">{{ payload.stats.resolved_links_total }}</div>
-        </div>
-      </div>
-      <div class="fc-card">
-        <div class="card-body">
-          <div class="fc-kpi-title">Выбранная категория</div>
-          <div class="fc-kpi-value">
-            {% if payload.selected_focus.focus_name %}
-              {{ payload.selected_focus.focus_name }}
-            {% else %}
-              —
-            {% endif %}
-          </div>
+    </div>
+  </div>
+  <div class="col-12 col-sm-6 col-xl-3">
+    <div class="fc-card fc-kpi-card">
+      <div class="card-body">
+        <div class="fc-kpi-title">Выбранная категория</div>
+        <div class="fc-kpi-value">
+          {% if payload.selected_focus.focus_name %}
+            {{ payload.selected_focus.focus_name }}
+          {% else %}
+            —
+          {% endif %}
         </div>
       </div>
     </div>
@@ -363,7 +353,19 @@
 
 <div class="fc-card mb-4 fc-section-rebuild">
   <div class="card-body">
-    <h2 class="h6 mb-2">Пересчёт витрин после изменений</h2>
+    <div class="d-flex align-items-center gap-2 mb-2">
+      <h2 class="h6 mb-0">Пересчёт витрин после изменений</h2>
+      <button
+        type="button"
+        class="btn btn-outline-secondary fc-help-btn"
+        data-bs-toggle="tooltip"
+        data-bs-placement="top"
+        title="Используйте после добавления/выключения категорий: сначала пересоберите связи номенклатур, затем пересчитайте витрины за хвост."
+        aria-label="Пояснение по пересчёту витрин"
+      >
+        ?
+      </button>
+    </div>
     <p class="fc-note mb-3">
       После изменения целевых категорий обновите агрегаты, чтобы фильтры и рейтинги по гостям отражали новые связи.
       Рекомендуемый безопасный режим: пересчёт хвоста 180 дней.
