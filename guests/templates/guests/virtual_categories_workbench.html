@@ -47,7 +47,15 @@
   }
 
   .vc-table-wrap--selected {
-    max-height: 420px;
+    min-height: 430px;
+    height: clamp(430px, 52vh, 560px);
+    max-height: clamp(430px, 52vh, 560px);
+  }
+
+  .vc-table-wrap--selected .table > :not(caption) > * > * {
+    padding-top: 0.34rem;
+    padding-bottom: 0.34rem;
+    font-size: 0.94rem;
   }
 
   .vc-table-sticky thead th {
@@ -186,6 +194,12 @@
     .vc-row-actions {
       flex-direction: column;
       align-items: stretch;
+    }
+
+    .vc-table-wrap--selected {
+      min-height: 320px;
+      height: 380px;
+      max-height: 380px;
     }
   }
 </style>

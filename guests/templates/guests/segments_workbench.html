@@ -9,7 +9,6 @@
     border-radius: 0.85rem;
     background: #fff;
     box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
-    height: 100%;
   }
 
   .seg-card .card-body {
@@ -99,6 +98,15 @@
     text-overflow: ellipsis;
   }
 
+  .seg-help-btn {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    line-height: 1;
+    padding: 0;
+    font-size: 0.8rem;
+  }
+
   .seg-page-footer {
     border: 1px solid #dbeafe;
     background: #eff6ff;
@@ -129,8 +137,18 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h1 class="h3 mb-1">Сегменты гостей</h1>
-    <div class="text-muted small">
-      Срез на {{ payload.filters.as_of_date|default:"—" }} · окно {{ payload.filters.window_days }} дней
+    <div class="text-muted small d-flex align-items-center gap-2 flex-wrap">
+      <span>Срез на {{ payload.filters.as_of_date|default:"—" }} · окно {{ payload.filters.window_days }} дней</span>
+      <button
+        type="button"
+        class="btn btn-outline-secondary seg-help-btn"
+        data-bs-toggle="tooltip"
+        data-bs-placement="top"
+        title="Эта страница показывает, как гости разбиваются на сегменты по выбранному окну дней и заведению."
+        aria-label="Подсказка по странице"
+      >
+        ?
+      </button>
     </div>
   </div>
 </div>
@@ -139,7 +157,19 @@
   <div class="card-body">
     <div class="seg-top-layout">
       <div class="seg-top-pane">
-        <div class="seg-top-pane-title">Фильтр витрины</div>
+        <div class="seg-top-pane-title d-flex align-items-center gap-2">
+          <span>Фильтр витрины</span>
+          <button
+            type="button"
+            class="btn btn-outline-secondary seg-help-btn"
+            data-bs-toggle="tooltip"
+            data-bs-placement="top"
+            title="Настройте окно дней и заведение. При включенном автопересчёте данные обновятся сразу после смены фильтров."
+            aria-label="Подсказка по фильтру витрины"
+          >
+            ?
+          </button>
+        </div>
         <form method="get" id="seg-filters-form" class="row g-2 align-items-end">
           <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
           <div class="col-12 col-md-6">
@@ -175,6 +205,19 @@
       </div>
 
       <div class="seg-top-pane">
+        <div class="seg-top-pane-title d-flex align-items-center gap-2">
+          <span>Ключевые метрики</span>
+          <button
+            type="button"
+            class="btn btn-outline-secondary seg-help-btn"
+            data-bs-toggle="tooltip"
+            data-bs-placement="top"
+            title="Метрики считаются по выбранному окну и заведению. При выборе «Все заведения» один гость может попадать в разные сегменты."
+            aria-label="Подсказка по ключевым метрикам"
+          >
+            ?
+          </button>
+        </div>
         <div class="row g-2">
           <div class="col-6">
             <div class="seg-kpi-compact">
@@ -221,7 +264,19 @@
 
 <div class="seg-card">
   <div class="card-body">
-    <h2 class="h6 mb-3">Состав сегментов</h2>
+    <h2 class="h6 mb-3 d-flex align-items-center gap-2">
+      <span>Состав сегментов</span>
+      <button
+        type="button"
+        class="btn btn-outline-secondary seg-help-btn"
+        data-bs-toggle="tooltip"
+        data-bs-placement="top"
+        title="Кнопка «Открыть гостей сегмента» переводит в раздел «Гости» с уже готовыми фильтрами."
+        aria-label="Подсказка по составу сегментов"
+      >
+        ?
+      </button>
+    </h2>
     <div class="table-responsive">
       <table class="table table-sm align-middle mb-0">
         <thead>
@@ -273,6 +328,12 @@
     if (!form || !windowSelect || !departmentSelect || !autoApplyCheckbox || !applyButton) {
       return;
     }
+
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((node) => {
+      if (window.bootstrap && window.bootstrap.Tooltip) {
+        new window.bootstrap.Tooltip(node);
+      }
+    });
 
     const stored = window.localStorage.getItem(storageKey);
     autoApplyCheckbox.checked = stored === null ? true : stored === "1";
