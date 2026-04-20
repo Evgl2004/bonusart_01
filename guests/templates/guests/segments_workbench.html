@@ -27,6 +27,101 @@
     font-weight: 700;
     color: #111827;
   }
+
+  .seg-top-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    align-items: stretch;
+  }
+
+  .seg-top-pane {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: #fff;
+    padding: 0.65rem;
+    height: 100%;
+  }
+
+  .seg-top-pane-title {
+    font-size: 0.88rem;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 0.55rem;
+  }
+
+  .seg-top-auto-box {
+    min-height: 42px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.65rem;
+    padding: 0.45rem 0.65rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    background: #f8fafc;
+  }
+
+  .seg-top-auto-box .form-check {
+    margin: 0;
+  }
+
+  .seg-auto-apply-note {
+    font-size: 0.83rem;
+    color: #64748b;
+  }
+
+  .seg-kpi-compact {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: #f8fafc;
+    min-height: 72px;
+  }
+
+  .seg-kpi-compact .card-body {
+    padding: 0.55rem 0.65rem;
+  }
+
+  .seg-kpi-compact .seg-kpi-title {
+    margin-bottom: 0.2rem;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .seg-kpi-compact .seg-kpi-value {
+    font-size: 2rem;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .seg-page-footer {
+    border: 1px solid #dbeafe;
+    background: #eff6ff;
+    color: #1e3a8a;
+    border-radius: 0.75rem;
+    padding: 0.8rem 0.95rem;
+    font-size: 0.88rem;
+  }
+
+  /* На странице сегментов держим левое меню на всю высоту экрана. */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    align-self: flex-start;
+  }
+
+  @media (max-width: 991.98px) {
+    .seg-top-layout {
+      grid-template-columns: 1fr;
+    }
+  }
 </style>
 {% endblock %}
 
@@ -40,71 +135,88 @@
   </div>
 </div>
 
-<form method="get" class="row g-2 align-items-end mb-4">
-  <div class="col-12 col-md-3">
-    <label class="form-label">Дата среза</label>
-    <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
+<div class="seg-card mb-4">
+  <div class="card-body">
+    <div class="seg-top-layout">
+      <div class="seg-top-pane">
+        <div class="seg-top-pane-title">Фильтр витрины</div>
+        <form method="get" id="seg-filters-form" class="row g-2 align-items-end">
+          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+          <div class="col-12 col-md-6">
+            <label class="form-label">Окно (дней)</label>
+            <select id="seg-window-days" name="window_days" class="form-select">
+              {% for item in payload.filters.window_options %}
+                <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">Заведение</label>
+            <select id="seg-department-id" name="department_id" class="form-select">
+              <option value="">Все заведения</option>
+              {% for dep in payload.filters.department_options %}
+                <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-8">
+            <div class="seg-top-auto-box">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="seg-auto-apply">
+                <label class="form-check-label" for="seg-auto-apply">Автопересчёт</label>
+              </div>
+              <div class="seg-auto-apply-note">По умолчанию включён.</div>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <button id="seg-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="seg-top-pane">
+        <div class="row g-2">
+          <div class="col-6">
+            <div class="seg-kpi-compact">
+              <div class="card-body">
+                <div class="seg-kpi-title">Уникальных гостей</div>
+                <div class="seg-kpi-value">{{ total_unique_guests }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="seg-kpi-compact">
+              <div class="card-body">
+                <div class="seg-kpi-title">Сегментированная база</div>
+                <div class="seg-kpi-value">{{ segment_base_total }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="seg-kpi-compact">
+              <div class="card-body">
+                <div class="seg-kpi-title">Активные 30д</div>
+                <div class="seg-kpi-value">{{ payload.segments.active_30d }}</div>
+              </div>
+            </div>
+          </div>
+          <div class="col-6">
+            <div class="seg-kpi-compact">
+              <div class="card-body">
+                <div class="seg-kpi-title">Потерянные 60+д</div>
+                <div class="seg-kpi-value">{{ payload.segments.lost_60d_plus }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
-  <div class="col-12 col-md-3">
-    <label class="form-label">Окно (дней)</label>
-    <select name="window_days" class="form-select">
-      {% for item in payload.filters.window_options %}
-        <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-4">
-    <label class="form-label">Заведение</label>
-    <select name="department_id" class="form-select">
-      <option value="">Все заведения</option>
-      {% for dep in payload.filters.department_options %}
-        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-2">
-    <button type="submit" class="btn btn-primary w-100">Применить</button>
-  </div>
-</form>
+</div>
 
 <div class="alert alert-light border small mb-4">
   Важно: при выборе «Все заведения» один и тот же гость может попасть в разные сегменты по разным заведениям.
   Поэтому доля считается от «сегментированной базы» (профили гость × заведение).
-</div>
-
-<div class="row g-3 mb-4">
-  <div class="col-6 col-lg-3">
-    <div class="seg-card">
-      <div class="card-body">
-        <div class="seg-kpi-title">Уникальных гостей</div>
-        <div class="seg-kpi-value">{{ total_unique_guests }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="seg-card">
-      <div class="card-body">
-        <div class="seg-kpi-title">Сегментированная база</div>
-        <div class="seg-kpi-value">{{ segment_base_total }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="seg-card">
-      <div class="card-body">
-        <div class="seg-kpi-title">Активные 30д</div>
-        <div class="seg-kpi-value">{{ payload.segments.active_30d }}</div>
-      </div>
-    </div>
-  </div>
-  <div class="col-6 col-lg-3">
-    <div class="seg-card">
-      <div class="card-body">
-        <div class="seg-kpi-title">Потерянные 60+д</div>
-        <div class="seg-kpi-value">{{ payload.segments.lost_60d_plus }}</div>
-      </div>
-    </div>
-  </div>
 </div>
 
 <div class="seg-card">
@@ -142,4 +254,57 @@
     </div>
   </div>
 </div>
+
+<div class="seg-page-footer mt-3">
+  Подсказка: кнопка «Открыть гостей сегмента» переводит в раздел «Гости» с уже готовыми фильтрами.
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const storageKey = "seg_auto_apply_v1";
+    const form = document.getElementById("seg-filters-form");
+    const windowSelect = document.getElementById("seg-window-days");
+    const departmentSelect = document.getElementById("seg-department-id");
+    const autoApplyCheckbox = document.getElementById("seg-auto-apply");
+    const applyButton = document.getElementById("seg-apply-btn");
+
+    if (!form || !windowSelect || !departmentSelect || !autoApplyCheckbox || !applyButton) {
+      return;
+    }
+
+    const stored = window.localStorage.getItem(storageKey);
+    autoApplyCheckbox.checked = stored === null ? true : stored === "1";
+
+    const syncApplyButtonState = () => {
+      if (autoApplyCheckbox.checked) {
+        applyButton.disabled = true;
+        applyButton.classList.remove("btn-primary");
+        applyButton.classList.add("btn-secondary");
+      } else {
+        applyButton.disabled = false;
+        applyButton.classList.remove("btn-secondary");
+        applyButton.classList.add("btn-primary");
+      }
+    };
+
+    const maybeAutoSubmit = () => {
+      if (!autoApplyCheckbox.checked) {
+        return;
+      }
+      form.requestSubmit();
+    };
+
+    autoApplyCheckbox.addEventListener("change", () => {
+      window.localStorage.setItem(storageKey, autoApplyCheckbox.checked ? "1" : "0");
+      syncApplyButtonState();
+    });
+
+    windowSelect.addEventListener("change", maybeAutoSubmit);
+    departmentSelect.addEventListener("change", maybeAutoSubmit);
+
+    syncApplyButtonState();
+  });
+</script>
 {% endblock %}
