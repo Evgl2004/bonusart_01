@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import Any
 from urllib.parse import urlencode
 
 from django.urls import reverse
@@ -20,6 +21,19 @@ from guests.services.guest_workbench import (
     build_guest_workbench_payload,
     normalize_window_days,
 )
+
+SEGMENT_CHART_LABELS = {
+    "active_30d": "Активные 30д",
+    "single_visit_30d": "1 визит за 30д",
+    "cooling_30_60d": "Остывшие 30-60д",
+    "lost_60d_plus": "Потерянные 60+д",
+}
+SEGMENT_CHART_COLORS = {
+    "active_30d": "#0e9f6e",
+    "single_visit_30d": "#2563eb",
+    "cooling_30_60d": "#f59e0b",
+    "lost_60d_plus": "#ef4444",
+}
 
 
 class SegmentsWorkbenchView(TemplateView):
@@ -76,6 +90,12 @@ class SegmentsWorkbenchView(TemplateView):
         context["selected_department_id"] = (filters.get("department_id") or "").strip()
         context["segment_base_total"] = segment_base_total
         context["total_unique_guests"] = total_unique_guests
+        context["segment_charts_payload"] = self._build_segment_charts_payload(
+            as_of_date=_parse_iso_date(selected_as_of_date) or as_of_value,
+            window_days=selected_window_days,
+            department_options=filters.get("department_options") or [],
+            selected_department_id=(filters.get("department_id") or "").strip(),
+        )
         return context
 
     @staticmethod
@@ -100,6 +120,71 @@ class SegmentsWorkbenchView(TemplateView):
         if not params:
             return f"{base_url}#selected-guests"
         return f"{base_url}?{urlencode(params)}#selected-guests"
+
+    @staticmethod
+    def _build_segment_charts_payload(
+        *,
+        as_of_date: date | None,
+        window_days: int,
+        department_options: list[dict[str, Any]],
+        selected_department_id: str,
+    ) -> dict[str, Any]:
+        """
+        Готовит данные для блока графиков по сегментам гостей.
+
+        Данные строятся по каждому заведению отдельно, чтобы UI мог
+        динамически сравнивать сегменты между заведениями без доп. запросов.
+        """
+        segments = [
+            {
+                "code": code,
+                "name": SEGMENT_CHART_LABELS.get(code, name),
+                "color": SEGMENT_CHART_COLORS.get(code),
+            }
+            for code, name in SEGMENT_DEFINITIONS
+        ]
+        if as_of_date is None:
+            return {
+                "segments": segments,
+                "departments": [],
+                "initial_selected_department_ids": [],
+            }
+
+        departments: list[dict[str, Any]] = []
+        for option in department_options:
+            dep_id = (option.get("id") or "").strip()
+            dep_name = (option.get("name") or "").strip()
+            if not dep_id:
+                continue
+            dep_payload = build_guest_workbench_payload(
+                as_of_date=as_of_date,
+                window_days=window_days,
+                department_id=dep_id,
+            )
+            dep_segment_totals = dep_payload.get("segments", {})
+            departments.append(
+                {
+                    "id": dep_id,
+                    "name": dep_name or dep_id,
+                    "segments": {
+                        code: int(dep_segment_totals.get(code, 0))
+                        for code, _ in SEGMENT_DEFINITIONS
+                    },
+                }
+            )
+
+        default_selected_ids = [dep["id"] for dep in departments]
+        initial_selected_ids = (
+            [selected_department_id]
+            if selected_department_id and selected_department_id in set(default_selected_ids)
+            else default_selected_ids
+        )
+
+        return {
+            "segments": segments,
+            "departments": departments,
+            "initial_selected_department_ids": initial_selected_ids,
+        }
 
 
 def _parse_iso_date(raw_value: str) -> date | None:

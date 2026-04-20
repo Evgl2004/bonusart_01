@@ -21,6 +21,14 @@
     margin-bottom: 0.3rem;
   }
 
+  .seg-kpi-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    margin-bottom: 0.2rem;
+  }
+
   .seg-kpi-value {
     font-size: 1.3rem;
     font-weight: 700;
@@ -82,7 +90,7 @@
   }
 
   .seg-kpi-compact .seg-kpi-title {
-    margin-bottom: 0.2rem;
+    margin-bottom: 0;
     text-transform: uppercase;
     letter-spacing: 0.02em;
     white-space: nowrap;
@@ -116,6 +124,174 @@
     font-size: 0.88rem;
   }
 
+  .seg-charts-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+  }
+
+  .seg-charts-card .card-body {
+    padding: 1rem 1.1rem;
+  }
+
+  .seg-charts-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .seg-chart-box {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: #fff;
+    padding: 0.85rem;
+  }
+
+  .seg-chart-box h3 {
+    margin: 0 0 0.35rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: #111827;
+  }
+
+  .seg-chart-box p {
+    margin: 0 0 0.65rem;
+    font-size: 0.88rem;
+    color: #6b7280;
+  }
+
+  .seg-chart-box.full-width {
+    grid-column: 1 / -1;
+  }
+
+  .seg-chart-controls {
+    display: grid;
+    grid-template-columns: 1.5fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .seg-department-checkboxes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .seg-department-checkbox {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.65rem;
+    padding: 0.45rem 0.6rem;
+    background: #f8fafc;
+    font-size: 0.88rem;
+  }
+
+  .seg-mode-box {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.65rem;
+    padding: 0.55rem 0.7rem;
+    background: #f8fafc;
+    font-size: 0.88rem;
+  }
+
+  .seg-mode-box .form-check {
+    margin-bottom: 0.35rem;
+  }
+
+  .seg-chart-canvas-wrap {
+    position: relative;
+    height: 320px;
+    max-height: 320px;
+    overflow: hidden;
+  }
+
+  .seg-chart-canvas-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+    display: block;
+  }
+
+  .seg-heatmap-wrap {
+    overflow-x: auto;
+  }
+
+  .seg-heatmap-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0.35rem;
+    min-width: 760px;
+  }
+
+  .seg-heatmap-table th {
+    text-align: left;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: #64748b;
+    padding: 0.3rem 0.4rem;
+    white-space: nowrap;
+  }
+
+  .seg-heatmap-table td {
+    border: 1px solid #dbe5f4;
+    border-radius: 0.65rem;
+    padding: 0.55rem;
+    background: #f8fafc;
+    min-width: 130px;
+    vertical-align: top;
+  }
+
+  .seg-heatmap-main {
+    font-size: 1.25rem;
+    line-height: 1;
+    font-weight: 700;
+    color: #111827;
+    margin-bottom: 0.35rem;
+  }
+
+  .seg-heatmap-meta {
+    font-size: 0.78rem;
+    color: #334155;
+  }
+
+  .seg-heatmap-legend {
+    margin-top: 0.55rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+  }
+
+  .seg-heatmap-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    border: 1px solid #dbe5f4;
+    border-radius: 999px;
+    padding: 0.2rem 0.55rem;
+    font-size: 0.75rem;
+    color: #334155;
+    background: #f8fafc;
+  }
+
+  .seg-heatmap-dot {
+    width: 0.55rem;
+    height: 0.55rem;
+    border-radius: 999px;
+    display: inline-block;
+  }
+
+  .seg-empty-note {
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.65rem;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 0.88rem;
+    padding: 0.65rem 0.8rem;
+  }
+
   /* На странице сегментов держим левое меню на всю высоту экрана. */
   .sidebar {
     position: sticky;
@@ -128,6 +304,23 @@
   @media (max-width: 991.98px) {
     .seg-top-layout {
       grid-template-columns: 1fr;
+    }
+
+    .seg-charts-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .seg-chart-controls {
+      grid-template-columns: 1fr;
+    }
+
+    .seg-department-checkboxes {
+      grid-template-columns: 1fr;
+    }
+
+    .seg-chart-canvas-wrap {
+      height: 280px;
+      max-height: 280px;
     }
   }
 </style>
@@ -222,7 +415,19 @@
           <div class="col-6">
             <div class="seg-kpi-compact">
               <div class="card-body">
-                <div class="seg-kpi-title">Уникальных гостей</div>
+                <div class="seg-kpi-title-row">
+                  <div class="seg-kpi-title">Уникальных гостей</div>
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary seg-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Количество уникальных гостей (по телефону) с заказами за выбранное окно дней и заведение."
+                    aria-label="Что такое уникальные гости"
+                  >
+                    ?
+                  </button>
+                </div>
                 <div class="seg-kpi-value">{{ total_unique_guests }}</div>
               </div>
             </div>
@@ -230,7 +435,19 @@
           <div class="col-6">
             <div class="seg-kpi-compact">
               <div class="card-body">
-                <div class="seg-kpi-title">Сегментированная база</div>
+                <div class="seg-kpi-title-row">
+                  <div class="seg-kpi-title">Сегментированная база</div>
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary seg-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Сумма гостей по 4 сегментам: Активные 30д, 1 визит за 30д, Остывшие 30-60д, Потерянные 60+д. Считается по профилям гость×заведение."
+                    aria-label="Что такое сегментированная база"
+                  >
+                    ?
+                  </button>
+                </div>
                 <div class="seg-kpi-value">{{ segment_base_total }}</div>
               </div>
             </div>
@@ -238,7 +455,19 @@
           <div class="col-6">
             <div class="seg-kpi-compact">
               <div class="card-body">
-                <div class="seg-kpi-title">Активные 30д</div>
+                <div class="seg-kpi-title-row">
+                  <div class="seg-kpi-title">Активные 30д</div>
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary seg-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Гости, у которых visits_30 >= 2 (два и более визита за последние 30 дней)."
+                    aria-label="Что такое активные 30 дней"
+                  >
+                    ?
+                  </button>
+                </div>
                 <div class="seg-kpi-value">{{ payload.segments.active_30d }}</div>
               </div>
             </div>
@@ -246,7 +475,19 @@
           <div class="col-6">
             <div class="seg-kpi-compact">
               <div class="card-body">
-                <div class="seg-kpi-title">Потерянные 60+д</div>
+                <div class="seg-kpi-title-row">
+                  <div class="seg-kpi-title">Потерянные 60+д</div>
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary seg-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Гости, у которых visits_60 = 0 и visits_180 > 0: за 60 дней не приходили, но в окне 180 дней были."
+                    aria-label="Что такое потерянные 60+ дней"
+                  >
+                    ?
+                  </button>
+                </div>
                 <div class="seg-kpi-value">{{ payload.segments.lost_60d_plus }}</div>
               </div>
             </div>
@@ -313,9 +554,85 @@
 <div class="seg-page-footer mt-3">
   Подсказка: кнопка «Открыть гостей сегмента» переводит в раздел «Гости» с уже готовыми фильтрами.
 </div>
+
+{% if segment_charts_payload.departments %}
+<div class="seg-charts-card mt-3">
+  <div class="card-body">
+    <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-2">
+      <h2 class="h6 mb-0">Графики сегментов по заведениям</h2>
+      <button
+        type="button"
+        class="btn btn-outline-secondary seg-help-btn"
+        data-bs-toggle="tooltip"
+        data-bs-placement="top"
+        title="Сравнение сегментов между заведениями: выберите заведения и режим (гости/доли) для быстрой визуальной оценки."
+        aria-label="Подсказка по графикам сегментов"
+      >
+        ?
+      </button>
+    </div>
+
+    <div class="seg-chart-controls">
+      <div class="seg-chart-box">
+        <h3>Выбор заведений</h3>
+        <p>Отметьте, какие заведения показывать в графиках.</p>
+        <div id="segment-charts-department-checkboxes" class="seg-department-checkboxes"></div>
+      </div>
+      <div class="seg-chart-box">
+        <h3>Режим значений</h3>
+        <p>Переключайте абсолютные значения и доли в процентах.</p>
+        <div class="seg-mode-box">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="segment-charts-mode" id="segment-charts-mode-count" value="count" checked>
+            <label class="form-check-label" for="segment-charts-mode-count">Гости (абсолютные значения)</label>
+          </div>
+          <div class="form-check mb-0">
+            <input class="form-check-input" type="radio" name="segment-charts-mode" id="segment-charts-mode-percent" value="percent">
+            <label class="form-check-label" for="segment-charts-mode-percent">Доли внутри заведения (%)</label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="seg-charts-grid">
+      <section class="seg-chart-box">
+        <h3>1) Структура сегментов по заведениям (100%)</h3>
+        <p>Доли сегментов внутри каждого выбранного заведения.</p>
+        <div class="seg-chart-canvas-wrap">
+          <canvas id="segment-stacked-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="seg-chart-box">
+        <h3>2) Сравнение сегментов по заведениям</h3>
+        <p>Сопоставление заведений по каждому сегменту.</p>
+        <div class="seg-chart-canvas-wrap">
+          <canvas id="segment-grouped-chart"></canvas>
+        </div>
+      </section>
+
+      <section class="seg-chart-box full-width">
+        <h3>3) Тепловая карта сегментов</h3>
+        <p>Чем насыщеннее ячейка, тем выше значение в выбранном режиме.</p>
+        <div class="seg-heatmap-wrap">
+          <table id="segment-heatmap-table" class="seg-heatmap-table"></table>
+        </div>
+        <div class="seg-heatmap-legend">
+          <span class="seg-heatmap-legend-item"><span class="seg-heatmap-dot" style="background:#e2e8f0"></span>минимум</span>
+          <span class="seg-heatmap-legend-item"><span class="seg-heatmap-dot" style="background:#93c5fd"></span>среднее</span>
+          <span class="seg-heatmap-legend-item"><span class="seg-heatmap-dot" style="background:#2563eb"></span>максимум</span>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{{ segment_charts_payload|json_script:"segment-charts-payload" }}
 {% endblock %}
 
 {% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     const storageKey = "seg_auto_apply_v1";
@@ -366,6 +683,253 @@
     departmentSelect.addEventListener("change", maybeAutoSubmit);
 
     syncApplyButtonState();
+
+    const chartsPayloadNode = document.getElementById("segment-charts-payload");
+    if (!chartsPayloadNode) {
+      return;
+    }
+
+    let chartsPayload = {};
+    try {
+      chartsPayload = JSON.parse(chartsPayloadNode.textContent || "{}");
+    } catch (error) {
+      chartsPayload = {};
+    }
+
+    const chartSegments = Array.isArray(chartsPayload.segments) ? chartsPayload.segments : [];
+    const chartDepartments = Array.isArray(chartsPayload.departments) ? chartsPayload.departments : [];
+    if (!chartSegments.length || !chartDepartments.length) {
+      return;
+    }
+
+    const checkboxRoot = document.getElementById("segment-charts-department-checkboxes");
+    const modeInputs = Array.from(document.querySelectorAll('input[name="segment-charts-mode"]'));
+    const heatmapTable = document.getElementById("segment-heatmap-table");
+    const stackedCanvas = document.getElementById("segment-stacked-chart");
+    const groupedCanvas = document.getElementById("segment-grouped-chart");
+    if (!checkboxRoot || !modeInputs.length || !heatmapTable || !stackedCanvas || !groupedCanvas) {
+      return;
+    }
+
+    const chartState = {
+      mode: "count",
+      selectedDepartmentIds: new Set(
+        Array.isArray(chartsPayload.initial_selected_department_ids) && chartsPayload.initial_selected_department_ids.length
+          ? chartsPayload.initial_selected_department_ids
+          : chartDepartments.map((dep) => dep.id)
+      ),
+    };
+
+    let stackedChart = null;
+    let groupedChart = null;
+
+    const getSelectedDepartments = () => chartDepartments.filter((dep) => chartState.selectedDepartmentIds.has(dep.id));
+    const getDepartmentTotal = (department) =>
+      chartSegments.reduce((sum, segment) => sum + Number((department.segments || {})[segment.code] || 0), 0);
+    const getSegmentRawValue = (department, segmentCode) => Number((department.segments || {})[segmentCode] || 0);
+    const getSegmentValue = (department, segmentCode, mode) => {
+      const raw = getSegmentRawValue(department, segmentCode);
+      if (mode === "count") {
+        return raw;
+      }
+      const total = getDepartmentTotal(department);
+      return total > 0 ? (raw * 100) / total : 0;
+    };
+    const heatColor = (value, max) => {
+      if (max <= 0) {
+        return "hsl(210, 60%, 97%)";
+      }
+      const ratio = Math.max(0, Math.min(1, value / max));
+      const lightness = 96 - ratio * 48;
+      return `hsl(216, 84%, ${lightness}%)`;
+    };
+
+    const renderDepartmentCheckboxes = () => {
+      checkboxRoot.innerHTML = "";
+      chartDepartments.forEach((department) => {
+        const checkboxId = `segment-chart-dep-${department.id}`;
+        const wrapper = document.createElement("label");
+        wrapper.className = "seg-department-checkbox";
+        wrapper.setAttribute("for", checkboxId);
+        wrapper.innerHTML = `
+          <input type="checkbox" id="${checkboxId}" ${chartState.selectedDepartmentIds.has(department.id) ? "checked" : ""}>
+          <span>${department.name}</span>
+        `;
+        const input = wrapper.querySelector("input");
+        input.addEventListener("change", (event) => {
+          if (event.target.checked) {
+            chartState.selectedDepartmentIds.add(department.id);
+          } else {
+            chartState.selectedDepartmentIds.delete(department.id);
+          }
+          if (!chartState.selectedDepartmentIds.size) {
+            chartState.selectedDepartmentIds.add(department.id);
+            event.target.checked = true;
+          }
+          renderCharts();
+        });
+        checkboxRoot.appendChild(wrapper);
+      });
+    };
+
+    const renderStackedChart = () => {
+      if (!window.Chart) {
+        return;
+      }
+      const selectedDepartments = getSelectedDepartments();
+      const labels = selectedDepartments.map((department) => department.name);
+      const datasets = chartSegments.map((segment) => ({
+        label: segment.name,
+        data: selectedDepartments.map((department) => getSegmentValue(department, segment.code, "percent")),
+        backgroundColor: segment.color || undefined,
+        borderRadius: 6,
+        barPercentage: 0.9,
+        categoryPercentage: 0.7,
+      }));
+
+      if (stackedChart) {
+        stackedChart.destroy();
+      }
+      stackedChart = new window.Chart(stackedCanvas, {
+        type: "bar",
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: 2.2,
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: {
+              callbacks: {
+                label: (context) => `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`,
+              },
+            },
+          },
+          scales: {
+            x: { stacked: true },
+            y: {
+              stacked: true,
+              min: 0,
+              max: 100,
+              ticks: { callback: (value) => `${value}%` },
+              title: { display: true, text: "Доля сегмента в заведении (%)" },
+            },
+          },
+        },
+      });
+    };
+
+    const renderGroupedChart = () => {
+      if (!window.Chart) {
+        return;
+      }
+      const selectedDepartments = getSelectedDepartments();
+      const labels = selectedDepartments.map((department) => department.name);
+      const datasets = chartSegments.map((segment) => ({
+        label: segment.name,
+        data: selectedDepartments.map((department) => getSegmentValue(department, segment.code, chartState.mode)),
+        backgroundColor: segment.color || undefined,
+        borderRadius: 6,
+        barPercentage: 0.9,
+        categoryPercentage: 0.7,
+      }));
+
+      if (groupedChart) {
+        groupedChart.destroy();
+      }
+      groupedChart = new window.Chart(groupedCanvas, {
+        type: "bar",
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: true,
+          aspectRatio: 2.2,
+          plugins: {
+            legend: { position: "bottom" },
+            tooltip: {
+              callbacks: {
+                label: (context) => {
+                  if (chartState.mode === "percent") {
+                    return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`;
+                  }
+                  return `${context.dataset.label}: ${Math.round(context.parsed.y)} гостей`;
+                },
+              },
+            },
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              ticks: {
+                callback: (value) => (chartState.mode === "percent" ? `${value}%` : value),
+              },
+              title: {
+                display: true,
+                text: chartState.mode === "percent" ? "Доля (%)" : "Количество гостей",
+              },
+            },
+          },
+        },
+      });
+    };
+
+    const renderHeatmap = () => {
+      const selectedDepartments = getSelectedDepartments();
+      const values = [];
+      selectedDepartments.forEach((department) => {
+        chartSegments.forEach((segment) => {
+          values.push(getSegmentValue(department, segment.code, chartState.mode));
+        });
+      });
+      const maxValue = Math.max(...values, 0);
+
+      let html = "<thead><tr><th>Заведение</th>";
+      chartSegments.forEach((segment) => {
+        html += `<th>${segment.name}</th>`;
+      });
+      html += "</tr></thead><tbody>";
+
+      selectedDepartments.forEach((department) => {
+        html += `<tr><th>${department.name}</th>`;
+        chartSegments.forEach((segment) => {
+          const rawValue = getSegmentRawValue(department, segment.code);
+          const displayValue = chartState.mode === "percent"
+            ? `${getSegmentValue(department, segment.code, "percent").toFixed(1)}%`
+            : `${rawValue}`;
+          const displayMeta = chartState.mode === "percent"
+            ? `${rawValue} гостей`
+            : `${getSegmentValue(department, segment.code, "percent").toFixed(1)}% внутри заведения`;
+          const colorBasis = chartState.mode === "percent"
+            ? getSegmentValue(department, segment.code, "percent")
+            : rawValue;
+          html += `
+            <td style="background:${heatColor(colorBasis, maxValue)}">
+              <div class="seg-heatmap-main">${displayValue}</div>
+              <div class="seg-heatmap-meta">${displayMeta}</div>
+            </td>
+          `;
+        });
+        html += "</tr>";
+      });
+      html += "</tbody>";
+      heatmapTable.innerHTML = html;
+    };
+
+    const renderCharts = () => {
+      renderStackedChart();
+      renderGroupedChart();
+      renderHeatmap();
+    };
+
+    modeInputs.forEach((input) => {
+      input.addEventListener("change", (event) => {
+        chartState.mode = event.target.value || "count";
+        renderCharts();
+      });
+    });
+
+    renderDepartmentCheckboxes();
+    renderCharts();
   });
 </script>
 {% endblock %}
