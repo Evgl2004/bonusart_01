@@ -244,6 +244,16 @@
     vertical-align: top;
   }
 
+  .seg-heatmap-cell--clickable {
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .seg-heatmap-cell--clickable:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(37, 99, 235, 0.2);
+  }
+
   .seg-heatmap-main {
     font-size: 1.25rem;
     line-height: 1;
@@ -719,6 +729,9 @@
           : chartDepartments.map((dep) => dep.id)
       ),
     };
+    const guestsWorkbenchBaseUrl = "{% url 'guests_workbench' %}";
+    const asOfDateInput = form.querySelector('input[name="as_of_date"]');
+    const asOfDateValue = asOfDateInput ? asOfDateInput.value : "";
 
     let stackedChart = null;
     let groupedChart = null;
@@ -742,6 +755,24 @@
       const ratio = Math.max(0, Math.min(1, value / max));
       const lightness = 96 - ratio * 48;
       return `hsl(216, 84%, ${lightness}%)`;
+    };
+
+    const openGuestsOverview = (departmentId, segmentCode) => {
+      const params = new URLSearchParams();
+      if (asOfDateValue) {
+        params.set("as_of_date", asOfDateValue);
+      }
+      if (windowSelect && windowSelect.value) {
+        params.set("window_days", windowSelect.value);
+      }
+      if (departmentId) {
+        params.set("department_id", departmentId);
+      }
+      if (segmentCode) {
+        params.set("segment_code", segmentCode);
+      }
+      params.set("active_tab", "overview");
+      window.location.href = `${guestsWorkbenchBaseUrl}?${params.toString()}`;
     };
 
     const renderDepartmentCheckboxes = () => {
@@ -903,7 +934,7 @@
             ? getSegmentValue(department, segment.code, "percent")
             : rawValue;
           html += `
-            <td style="background:${heatColor(colorBasis, maxValue)}">
+            <td class="seg-heatmap-cell--clickable" data-department-id="${department.id}" data-segment-code="${segment.code}" style="background:${heatColor(colorBasis, maxValue)}">
               <div class="seg-heatmap-main">${displayValue}</div>
               <div class="seg-heatmap-meta">${displayMeta}</div>
             </td>
@@ -913,6 +944,11 @@
       });
       html += "</tbody>";
       heatmapTable.innerHTML = html;
+      heatmapTable.querySelectorAll(".seg-heatmap-cell--clickable").forEach((node) => {
+        node.addEventListener("click", () => {
+          openGuestsOverview(node.dataset.departmentId || "", node.dataset.segmentCode || "");
+        });
+      });
     };
 
     const renderCharts = () => {

@@ -281,6 +281,11 @@
     </button>
   </li>
   <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-rating" data-bs-toggle="tab" data-bs-target="#pane-rating" type="button" role="tab" aria-controls="pane-rating" aria-selected="false">
+      Рейтинг гостей
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
     <button class="nav-link" id="tab-presets" data-bs-toggle="tab" data-bs-target="#pane-presets" type="button" role="tab" aria-controls="pane-presets" aria-selected="false">
       Пресеты
     </button>
@@ -372,83 +377,7 @@
       </div>
     </div>
 
-    <div class="row g-3 mb-4">
-      <div class="col-12 col-xl-6">
-        <div class="wb-card">
-          <div class="card-body">
-            <div class="wb-title-row mb-3">
-              <h2 class="h6 mb-0">Рейтинг гостей</h2>
-              <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
-                      title="Топ гостей по рейтингу: сначала по убыванию рейтинга, затем по сумме. Формула рейтинга: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
-            </div>
-            <div class="wb-table-wrap">
-              <table class="table table-sm align-middle mb-0">
-                <thead>
-                  <tr>
-                    <th>Телефон</th>
-                    <th>Заказов</th>
-                    <th>Визитов</th>
-                    <th>Сумма</th>
-                    <th>Рейтинг</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for row in payload.top_rating %}
-                    <tr>
-                      <td>{{ row.phone|default:"—" }}</td>
-                      <td>{{ row.orders_count }}</td>
-                      <td>{{ row.visits_count }}</td>
-                      <td>{{ row.sum_net }}</td>
-                      <td><strong>{{ row.rating_score }}</strong></td>
-                    </tr>
-                  {% empty %}
-                    <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col-12 col-xl-6">
-        <div class="wb-card">
-          <div class="card-body">
-            <div class="wb-title-row mb-3">
-              <h2 class="h6 mb-0">Антирейтинг гостей</h2>
-              <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
-                      title="Гости с наименьшим рейтингом среди тех, у кого есть заказы. Формула рейтинга: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
-            </div>
-            <div class="wb-table-wrap">
-              <table class="table table-sm align-middle mb-0">
-                <thead>
-                  <tr>
-                    <th>Телефон</th>
-                    <th>Заказов</th>
-                    <th>Визитов</th>
-                    <th>Сумма</th>
-                    <th>Рейтинг</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {% for row in payload.anti_rating %}
-                    <tr>
-                      <td>{{ row.phone|default:"—" }}</td>
-                      <td>{{ row.orders_count }}</td>
-                      <td>{{ row.visits_count }}</td>
-                      <td>{{ row.sum_net }}</td>
-                      <td><strong>{{ row.rating_score }}</strong></td>
-                    </tr>
-                  {% empty %}
-                    <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
-                  {% endfor %}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    {% include "guests/_selected_guests_block.html" with block_id="" %}
 
     <div class="row g-3 mb-4">
       <div class="col-12">
@@ -581,62 +510,89 @@
   </div>
 
   <div class="tab-pane fade" id="pane-guests" role="tabpanel" aria-labelledby="tab-guests" tabindex="0">
-    <div class="wb-card mb-4" id="selected-guests">
-      <div class="card-body">
-        <div class="wb-title-row mb-1">
-          <h2 class="h6 mb-0">Гости по выбранным фильтрам</h2>
-          <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
-                  title="Сумма — нетто по гостю в выбранном срезе. Средний чек = сумма / заказы. Рейтинг: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+    {% include "guests/_selected_guests_block.html" with block_id="selected-guests" %}
+  </div>
+
+  <div class="tab-pane fade" id="pane-rating" role="tabpanel" aria-labelledby="tab-rating" tabindex="0">
+    <div class="alert alert-info border py-2 small mb-3">
+      Подсчёт рейтинга выполняется только по выбранным фильтрам <strong>окно + заведение</strong>.
+      Фильтры по сегменту и целевой категории на рейтинг не влияют.
+    </div>
+
+    <div class="row g-3 mb-4">
+      <div class="col-12 col-xl-6">
+        <div class="wb-card">
+          <div class="card-body">
+            <div class="wb-title-row mb-3">
+              <h2 class="h6 mb-0">Рейтинг гостей</h2>
+              <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                      title="Топ гостей по рейтингу: сначала по убыванию рейтинга, затем по сумме. Формула рейтинга: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+            </div>
+            <div class="wb-table-wrap">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Телефон</th>
+                    <th>Заказов</th>
+                    <th>Визитов</th>
+                    <th>Сумма</th>
+                    <th>Рейтинг</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in payload.top_rating %}
+                    <tr>
+                      <td>{{ row.phone|default:"—" }}</td>
+                      <td>{{ row.orders_count }}</td>
+                      <td>{{ row.visits_count }}</td>
+                      <td>{{ row.sum_net }}</td>
+                      <td><strong>{{ row.rating_score }}</strong></td>
+                    </tr>
+                  {% empty %}
+                    <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
-        <p class="text-muted small mb-3">
-          Найдено: {{ payload.selected_guests.total }}.
-          {% if payload.selected_guests.is_truncated %}
-            Показаны первые {{ payload.selected_guests.limit }} записей.
-          {% endif %}
-        </p>
-        <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="create_mailing_draft">
-          <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-          <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-          <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-          <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-          <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-          <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
-          <button type="submit" class="btn btn-outline-primary"
-                  {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
-            Создать черновик рассылки по отбору
-          </button>
-        </form>
-        <div class="wb-table-wrap">
-          <table class="table table-sm align-middle mb-0">
-            <thead>
-              <tr>
-                <th>Телефон</th>
-                <th>Сегмент</th>
-                <th>Заказов</th>
-                <th>Визитов</th>
-                <th>Сумма (нетто)</th>
-                <th>Средний чек</th>
-                <th>Рейтинг</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in payload.selected_guests.rows %}
-                <tr>
-                  <td>{{ row.phone|default:"—" }}</td>
-                  <td>{{ row.segment_name }}</td>
-                  <td>{{ row.orders_count }}</td>
-                  <td>{{ row.visits_count }}</td>
-                  <td>{{ row.sum_net }}</td>
-                  <td>{{ row.avg_check_net }}</td>
-                  <td><strong>{{ row.rating_score }}</strong></td>
-                </tr>
-              {% empty %}
-                <tr><td colspan="7" class="text-muted">Нет гостей под выбранные условия</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
+      </div>
+
+      <div class="col-12 col-xl-6">
+        <div class="wb-card">
+          <div class="card-body">
+            <div class="wb-title-row mb-3">
+              <h2 class="h6 mb-0">Антирейтинг гостей</h2>
+              <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                      title="Гости с наименьшим рейтингом среди тех, у кого есть заказы. Формула рейтинга: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+            </div>
+            <div class="wb-table-wrap">
+              <table class="table table-sm align-middle mb-0">
+                <thead>
+                  <tr>
+                    <th>Телефон</th>
+                    <th>Заказов</th>
+                    <th>Визитов</th>
+                    <th>Сумма</th>
+                    <th>Рейтинг</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in payload.anti_rating %}
+                    <tr>
+                      <td>{{ row.phone|default:"—" }}</td>
+                      <td>{{ row.orders_count }}</td>
+                      <td>{{ row.visits_count }}</td>
+                      <td>{{ row.sum_net }}</td>
+                      <td><strong>{{ row.rating_score }}</strong></td>
+                    </tr>
+                  {% empty %}
+                    <tr><td colspan="5" class="text-muted">Нет данных</td></tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -776,6 +732,7 @@
       "#pane-overview": "overview",
       "#pane-matrix": "matrix",
       "#pane-guests": "guests",
+      "#pane-rating": "rating",
       "#pane-presets": "presets",
     };
 
@@ -783,6 +740,7 @@
       overview: "tab-overview",
       matrix: "tab-matrix",
       guests: "tab-guests",
+      rating: "tab-rating",
       presets: "tab-presets",
     };
 
@@ -1014,6 +972,7 @@
       if (focusSelect) {
         focusSelect.value = focusCategoryCode || "";
       }
+      setActiveTabHiddenValue("guests");
       filterForm.submit();
     }
 

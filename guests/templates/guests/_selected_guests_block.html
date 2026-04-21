@@ -1,0 +1,59 @@
+<div class="wb-card mb-4"{% if block_id %} id="{{ block_id }}"{% endif %}>
+  <div class="card-body">
+    <div class="wb-title-row mb-1">
+      <h2 class="h6 mb-0">Гости по выбранным фильтрам</h2>
+      <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+              title="Сумма — нетто по гостю в выбранном срезе. Средний чек = сумма / заказы. Рейтинг: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+    </div>
+    <p class="text-muted small mb-3">
+      Найдено: {{ payload.selected_guests.total }}.
+      {% if payload.selected_guests.is_truncated %}
+        Показаны первые {{ payload.selected_guests.limit }} записей.
+      {% endif %}
+    </p>
+    <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_mailing_draft">
+      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
+      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+      <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
+      <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+      <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+      <button type="submit" class="btn btn-outline-primary"
+              {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
+        Создать черновик рассылки по отбору
+      </button>
+    </form>
+    <div class="wb-table-wrap">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr>
+            <th>Телефон</th>
+            <th>Сегмент</th>
+            <th>Заказов</th>
+            <th>Визитов</th>
+            <th>Сумма (нетто)</th>
+            <th>Средний чек</th>
+            <th>Рейтинг</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in payload.selected_guests.rows %}
+            <tr>
+              <td>{{ row.phone|default:"—" }}</td>
+              <td>{{ row.segment_name }}</td>
+              <td>{{ row.orders_count }}</td>
+              <td>{{ row.visits_count }}</td>
+              <td>{{ row.sum_net }}</td>
+              <td>{{ row.avg_check_net }}</td>
+              <td><strong>{{ row.rating_score }}</strong></td>
+            </tr>
+          {% empty %}
+            <tr><td colspan="7" class="text-muted">Нет гостей под выбранные условия</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
