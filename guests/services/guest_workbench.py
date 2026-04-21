@@ -673,8 +673,8 @@ def _serialize_metric_row(row: GuestRestaurantWindowMetrics) -> dict[str, Any]:
         "department_id": (row.department_id or "").strip(),
         "orders_count": int(row.orders_count or 0),
         "visits_count": int(row.visits_count or 0),
-        "sum_net": _to_money_str(row.sum_net),
-        "avg_check_net": _to_money_str(row.avg_check_net),
+        "sum_net": _to_money_ui(row.sum_net),
+        "avg_check_net": _to_money_ui(row.avg_check_net),
         "bonus_in_sum": _to_money_str(row.bonus_in_sum),
         "bonus_out_sum": _to_money_str(row.bonus_out_sum),
         "rating_score": _to_decimal_str(row.rating_score),
@@ -689,6 +689,18 @@ def _to_money_str(value: Any) -> str:
     if value is None:
         return "0.00"
     return f"{Decimal(str(value)):.2f}"
+
+
+def _to_money_ui(value: Any) -> str:
+    """
+    Форматирует сумму для UI-таблиц: `1 234 567,89` (без знака валюты).
+    """
+    if value is None:
+        return "0,00"
+    normalized = Decimal(str(value))
+    integer_part, fractional_part = f"{normalized:.2f}".split(".")
+    integer_with_spaces = f"{int(integer_part):,}".replace(",", " ")
+    return f"{integer_with_spaces},{fractional_part}"
 
 
 def _to_decimal_str(value: Any) -> str:

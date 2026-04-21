@@ -83,6 +83,56 @@
   .wb-tabs .nav-link {
     border-radius: 0.6rem 0.6rem 0 0;
   }
+
+  .wb-help-btn {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    line-height: 1;
+    padding: 0;
+    font-size: 0.8rem;
+  }
+
+  .wb-title-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .wb-kpi-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.45rem;
+    margin-bottom: 0.2rem;
+  }
+
+  .wb-top-auto-box {
+    min-height: 42px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.65rem;
+    padding: 0.45rem 0.65rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    background: #f8fafc;
+  }
+
+  .wb-top-auto-box .form-check {
+    margin: 0;
+  }
+
+  .wb-auto-apply-note {
+    font-size: 0.83rem;
+    color: #64748b;
+  }
+
+  .wb-presets-note {
+    font-size: 0.85rem;
+    color: #64748b;
+    margin-bottom: 0.7rem;
+  }
 </style>
 {% endblock %}
 
@@ -91,27 +141,25 @@
   <div>
     <h1 class="h3 mb-1">Гости: рабочий экран</h1>
     <div class="text-muted small">
-      Срез метрик по состоянию на {{ payload.filters.as_of_date|default:"—" }}
+      Срез на {{ payload.filters.as_of_date|default:"—" }} · окно {{ payload.filters.window_days }} дней
     </div>
   </div>
 </div>
 
-<form method="get" class="row g-2 align-items-end mb-3">
-  <div class="col-12 col-md-2">
-    <label class="form-label">Дата среза</label>
-    <input type="date" name="as_of_date" value="{{ selected_as_of_date }}" class="form-control">
-  </div>
+<form method="get" id="wb-filters-form" class="row g-2 align-items-end mb-3">
+  <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+
   <div class="col-12 col-md-2">
     <label class="form-label">Окно (дней)</label>
-    <select name="window_days" class="form-select">
+    <select id="wb-window-days" name="window_days" class="form-select">
       {% for item in payload.filters.window_options %}
         <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
       {% endfor %}
     </select>
   </div>
-  <div class="col-12 col-md-3">
+  <div class="col-12 col-md-2">
     <label class="form-label">Заведение</label>
-    <select name="department_id" class="form-select">
+    <select id="wb-department-id" name="department_id" class="form-select">
       <option value="">Все заведения</option>
       {% for dep in payload.filters.department_options %}
         <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
@@ -120,7 +168,7 @@
   </div>
   <div class="col-12 col-md-2">
     <label class="form-label">Сегмент</label>
-    <select name="segment_code" class="form-select">
+    <select id="wb-segment-code" name="segment_code" class="form-select">
       <option value="">Все сегменты</option>
       {% for seg in payload.filters.segment_options %}
         <option value="{{ seg.code }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
@@ -129,15 +177,24 @@
   </div>
   <div class="col-12 col-md-2">
     <label class="form-label">Целевая категория</label>
-    <select name="focus_category_code" class="form-select">
+    <select id="wb-focus-category-code" name="focus_category_code" class="form-select">
       <option value="">Все категории</option>
       {% for cat in payload.filters.focus_category_options %}
         <option value="{{ cat.code }}" {% if cat.code == selected_focus_category_code %}selected{% endif %}>{{ cat.name }}</option>
       {% endfor %}
     </select>
   </div>
-  <div class="col-12 col-md-1">
-    <button type="submit" class="btn btn-primary w-100">Применить</button>
+  <div class="col-12 col-md-2">
+    <div class="wb-top-auto-box">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="wb-auto-apply">
+        <label class="form-check-label" for="wb-auto-apply">Автопересчёт</label>
+      </div>
+      <div class="wb-auto-apply-note">По умолчанию включён.</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-2">
+    <button id="wb-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
   </div>
 
   <div class="col-12">
@@ -204,49 +261,81 @@
     <div class="row g-3 mb-4">
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Гостей</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Гостей</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Количество уникальных гостей в выбранном окне с учётом фильтров по заведению, сегменту и целевой категории.">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.cards.guests_total }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Заказов</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Заказов</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Суммарное количество заказов по выбранному срезу и активным фильтрам.">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.cards.orders_total }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Сумма (нетто)</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Сумма (нетто)</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Сумма чеков после скидок (нетто) в выбранном окне и фильтрах.">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.cards.net_total }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Средний рейтинг</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Средний рейтинг</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Среднее значение рейтинга гостей. Формула рейтинга: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.cards.avg_rating }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Начислено бонусов</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Начислено бонусов</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Суммарно начисленные бонусы гостям за выбранный период и фильтры.">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.cards.bonus_in_total }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Списано бонусов</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Списано бонусов</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Суммарно списанные бонусы по гостям за выбранный период и фильтры.">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.cards.bonus_out_total }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Активные 30д (2+ визита)</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Активные 30д (2+ визита)</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Гости, у которых за последние 30 дней 2 и более визита.">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.segments.active_30d }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">
         <div class="wb-card"><div class="card-body">
-          <div class="wb-kpi-title">Остывшие 30-60д</div>
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Остывшие 30-60д</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Гости без заказов за последние 30 дней, но с заказами в диапазоне 31–60 дней.">?</button>
+          </div>
           <div class="wb-kpi-value">{{ payload.segments.cooling_30_60d }}</div>
         </div></div>
       </div>
@@ -256,7 +345,11 @@
       <div class="col-12 col-xl-6">
         <div class="wb-card">
           <div class="card-body">
-            <h2 class="h6 mb-3">Рейтинг гостей</h2>
+            <div class="wb-title-row mb-3">
+              <h2 class="h6 mb-0">Рейтинг гостей</h2>
+              <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                      title="Топ гостей по рейтингу: сначала по убыванию рейтинга, затем по сумме. Формула рейтинга: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+            </div>
             <div class="wb-table-wrap">
               <table class="table table-sm align-middle mb-0">
                 <thead>
@@ -290,7 +383,11 @@
       <div class="col-12 col-xl-6">
         <div class="wb-card">
           <div class="card-body">
-            <h2 class="h6 mb-3">Антирейтинг гостей</h2>
+            <div class="wb-title-row mb-3">
+              <h2 class="h6 mb-0">Антирейтинг гостей</h2>
+              <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                      title="Гости с наименьшим рейтингом среди тех, у кого есть заказы. Формула рейтинга: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+            </div>
             <div class="wb-table-wrap">
               <table class="table table-sm align-middle mb-0">
                 <thead>
@@ -326,7 +423,11 @@
       <div class="col-12">
         <div class="wb-card">
           <div class="card-body">
-            <h2 class="h6 mb-3">Рейтинг заведений (внутри сети)</h2>
+            <div class="wb-title-row mb-3">
+              <h2 class="h6 mb-0">Рейтинг заведений (внутри сети)</h2>
+              <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                      title="Свод по заведению в выбранном окне: гостей, сумма, средний рейтинг, начисленные и списанные бонусы. Средний рейтинг — среднее рейтингов гостей в этом заведении.">?</button>
+            </div>
             <div class="wb-table-wrap">
               <table class="table table-sm align-middle mb-0">
                 <thead>
@@ -362,7 +463,11 @@
 
     <div class="wb-card mb-4">
       <div class="card-body">
-        <h2 class="h6 mb-3">Визуализация гостей: частота × средний чек</h2>
+        <div class="wb-title-row mb-3">
+          <h2 class="h6 mb-0">Визуализация гостей: частота × средний чек</h2>
+          <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                  title="Каждая точка — гость. По оси X: визиты, по оси Y: средний чек. Размер точки растёт с рейтингом гостя.">?</button>
+        </div>
         <div id="guests-scatter" class="wb-chart"></div>
       </div>
     </div>
@@ -371,7 +476,11 @@
   <div class="tab-pane fade" id="pane-matrix" role="tabpanel" aria-labelledby="tab-matrix" tabindex="0">
     <div class="wb-card mb-4">
       <div class="card-body">
-        <h2 class="h6 mb-1">Матрица сегментов и целевых категорий</h2>
+        <div class="wb-title-row mb-1">
+          <h2 class="h6 mb-0">Матрица сегментов и целевых категорий</h2>
+          <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                  title="Показывает пересечение сегментов и целевых категорий. В ячейке: количество гостей и доли внутри сегмента/категории. Клик по ячейке открывает этих гостей.">?</button>
+        </div>
         <p class="text-muted small mb-3">
           В ячейке: гостей, % внутри сегмента и % внутри категории. Нажмите на ячейку, чтобы открыть отбор гостей.
         </p>
@@ -422,7 +531,11 @@
 
     <div class="wb-card mb-4">
       <div class="card-body">
-        <h2 class="h6 mb-3">Heatmap покрытия сегментов категориями</h2>
+        <div class="wb-title-row mb-3">
+          <h2 class="h6 mb-0">Тепловая карта покрытия сегментов категориями</h2>
+          <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                  title="Чем насыщеннее цвет ячейки, тем больше гостей в пересечении сегмента и категории. Используйте для быстрого сравнения покрытий.">?</button>
+        </div>
         <div id="segment-category-heatmap" class="wb-matrix-heatmap"></div>
       </div>
     </div>
@@ -431,7 +544,11 @@
   <div class="tab-pane fade" id="pane-guests" role="tabpanel" aria-labelledby="tab-guests" tabindex="0">
     <div class="wb-card mb-4" id="selected-guests">
       <div class="card-body">
-        <h2 class="h6 mb-1">Гости по выбранным фильтрам</h2>
+        <div class="wb-title-row mb-1">
+          <h2 class="h6 mb-0">Гости по выбранным фильтрам</h2>
+          <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                  title="Сумма — нетто по гостю в выбранном срезе. Средний чек = сумма / заказы. Рейтинг: (заказы × 3) + (визиты × 2) + (средний чек / 100).">?</button>
+        </div>
         <p class="text-muted small mb-3">
           Найдено: {{ payload.selected_guests.total }}.
           {% if payload.selected_guests.is_truncated %}
@@ -489,7 +606,14 @@
   <div class="tab-pane fade" id="pane-presets" role="tabpanel" aria-labelledby="tab-presets" tabindex="0">
     <div class="wb-card mb-4">
       <div class="card-body">
-        <h2 class="h6 mb-3">Сохранённые пресеты фильтров</h2>
+        <div class="wb-title-row mb-2">
+          <h2 class="h6 mb-0">Сохранённые пресеты фильтров</h2>
+          <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                  title="Пресет — сохранённый набор фильтров (окно, заведение, сегмент, категория) для быстрого возврата к нужной выборке.">?</button>
+        </div>
+        <p class="wb-presets-note">
+          Здесь можно сохранить текущий набор фильтров, переименовать пресет, удалить или восстановить архивный.
+        </p>
         <form method="post" action="{% url 'guests_workbench_actions' %}" class="row g-2 align-items-end mb-3">
           {% csrf_token %}
           <input type="hidden" name="action" value="save_filter_preset">
@@ -588,10 +712,70 @@
     const payloadNode = document.getElementById("guest-workbench-payload");
     const scatterNode = document.getElementById("guests-scatter");
     const heatmapNode = document.getElementById("segment-category-heatmap");
-    const filterForm = document.querySelector("form[method='get']");
+    const filterForm = document.getElementById("wb-filters-form");
+    const windowSelect = document.getElementById("wb-window-days");
+    const departmentSelect = document.getElementById("wb-department-id");
+    const segmentSelect = document.getElementById("wb-segment-code");
+    const focusSelect = document.getElementById("wb-focus-category-code");
+    const autoApplyCheckbox = document.getElementById("wb-auto-apply");
+    const applyButton = document.getElementById("wb-apply-btn");
+    const showAllPresetsCheckbox = document.getElementById("show-all-presets");
     if (!payloadNode) {
       return;
     }
+
+    const initTooltips = () => {
+      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((node) => {
+        if (window.bootstrap && window.bootstrap.Tooltip) {
+          new window.bootstrap.Tooltip(node);
+        }
+      });
+    };
+
+    const initFiltersAutoApply = () => {
+      const storageKey = "gw_auto_apply_v1";
+      if (!filterForm || !windowSelect || !departmentSelect || !segmentSelect || !focusSelect || !autoApplyCheckbox || !applyButton) {
+        return;
+      }
+
+      const stored = window.localStorage.getItem(storageKey);
+      autoApplyCheckbox.checked = stored === null ? true : stored === "1";
+
+      const syncApplyButtonState = () => {
+        if (autoApplyCheckbox.checked) {
+          applyButton.disabled = true;
+          applyButton.classList.remove("btn-primary");
+          applyButton.classList.add("btn-secondary");
+        } else {
+          applyButton.disabled = false;
+          applyButton.classList.remove("btn-secondary");
+          applyButton.classList.add("btn-primary");
+        }
+      };
+
+      const maybeAutoSubmit = () => {
+        if (!autoApplyCheckbox.checked) {
+          return;
+        }
+        filterForm.requestSubmit();
+      };
+
+      autoApplyCheckbox.addEventListener("change", () => {
+        window.localStorage.setItem(storageKey, autoApplyCheckbox.checked ? "1" : "0");
+        syncApplyButtonState();
+      });
+
+      windowSelect.addEventListener("change", maybeAutoSubmit);
+      departmentSelect.addEventListener("change", maybeAutoSubmit);
+      segmentSelect.addEventListener("change", maybeAutoSubmit);
+      focusSelect.addEventListener("change", maybeAutoSubmit);
+
+      if (showAllPresetsCheckbox) {
+        showAllPresetsCheckbox.addEventListener("change", maybeAutoSubmit);
+      }
+
+      syncApplyButtonState();
+    };
 
     const payload = JSON.parse(payloadNode.textContent || "{}");
     const matrix = payload.segment_focus_matrix || {};
@@ -770,6 +954,8 @@
       });
     });
 
+    initTooltips();
+    initFiltersAutoApply();
     initScatter();
 
     // Если открыли страницу с якорем списка гостей, переключаем на вкладку "Гости".
