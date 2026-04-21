@@ -163,6 +163,7 @@
 <form method="get" id="wb-filters-form" class="mb-3">
   <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
   <input type="hidden" name="active_tab" id="wb-active-tab" value="overview">
+  <input type="hidden" name="scroll_target" id="wb-scroll-target" value="" disabled>
 
   <div class="row g-2 align-items-end">
     <div class="col-12 col-lg-3">
@@ -238,7 +239,7 @@
 </form>
 
 {% if selected_segment_code or selected_focus_category_code or selected_department_id %}
-  <div class="alert alert-info border py-2 small mb-4">
+  <div id="wb-active-filters" class="alert alert-info border py-2 small mb-4">
     Активные фильтры:
     {% if selected_department_id %}
       {% for dep in payload.filters.department_options %}
@@ -716,6 +717,7 @@
     const applyButton = document.getElementById("wb-apply-btn");
     const showAllPresetsCheckbox = document.getElementById("show-all-presets");
     const activeTabInput = document.getElementById("wb-active-tab");
+    const scrollTargetInput = document.getElementById("wb-scroll-target");
     if (!payloadNode) {
       return;
     }
@@ -972,7 +974,11 @@
       if (focusSelect) {
         focusSelect.value = focusCategoryCode || "";
       }
-      setActiveTabHiddenValue("guests");
+      if (scrollTargetInput) {
+        scrollTargetInput.disabled = false;
+        scrollTargetInput.value = "active_filters";
+      }
+      setActiveTabHiddenValue("overview");
       filterForm.submit();
     }
 
@@ -1016,12 +1022,27 @@
     const urlParams = new URLSearchParams(window.location.search);
     const requestedTabKey = normalizeTabKey(urlParams.get("active_tab"));
     const shouldOpenGuestsByHash = window.location.hash === "#selected-guests";
+    const requestedScrollTarget = urlParams.get("scroll_target");
     if (shouldOpenGuestsByHash) {
       if (!activateTabByKey("guests")) {
         setActiveTabHiddenValue("guests");
       }
     } else if (!activateTabByKey(requestedTabKey)) {
       syncActiveTabHiddenFromDom();
+    }
+
+    if (requestedScrollTarget === "active_filters") {
+      const activeFiltersNode = document.getElementById("wb-active-filters");
+      if (activeFiltersNode) {
+        window.requestAnimationFrame(function() {
+          activeFiltersNode.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      }
+      if (window.history && window.history.replaceState) {
+        const cleanUrl = new URL(window.location.href);
+        cleanUrl.searchParams.delete("scroll_target");
+        window.history.replaceState({}, "", cleanUrl.toString());
+      }
     }
 
     window.addEventListener("resize", function() {
