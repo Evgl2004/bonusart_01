@@ -942,11 +942,15 @@
       const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : 6;
 
       const getRows = () => Array.from(complexFiltersContainer.querySelectorAll(".wb-complex-filter-row"));
-      const isFilled = (row) => {
+      const getRowValues = (row) => {
         const fieldValue = (row.querySelector(".wb-cf-field")?.value || "").trim();
         const operatorValue = (row.querySelector(".wb-cf-operator")?.value || "").trim();
         const valueText = (row.querySelector(".wb-cf-value")?.value || "").trim();
-        return Boolean(fieldValue && operatorValue && valueText);
+        return { fieldValue, operatorValue, valueText };
+      };
+      const isFilled = (row) => {
+        const values = getRowValues(row);
+        return Boolean(values.fieldValue && values.operatorValue && values.valueText);
       };
 
       const updateControls = () => {
@@ -956,8 +960,11 @@
         complexFilterAddButton.disabled = rows.length >= maxItems;
       };
 
-      const triggerAutoSubmit = () => {
+      const triggerAutoSubmit = (rowForValidation = null) => {
         updateControls();
+        if (rowForValidation && !isFilled(rowForValidation)) {
+          return;
+        }
         if (typeof onMaybeAutoSubmit === "function") {
           onMaybeAutoSubmit();
         }
@@ -974,7 +981,7 @@
             return;
           }
           node.addEventListener("change", () => {
-            triggerAutoSubmit();
+            triggerAutoSubmit(row);
           });
         });
 
