@@ -123,6 +123,20 @@
     margin: 0;
   }
 
+  .wb-top-check-box {
+    min-height: 42px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.65rem;
+    padding: 0.45rem 0.65rem;
+    display: flex;
+    align-items: center;
+    background: #f8fafc;
+  }
+
+  .wb-top-check-box .form-check {
+    margin: 0;
+  }
+
   .wb-auto-apply-note {
     font-size: 0.83rem;
     color: #64748b;
@@ -146,66 +160,74 @@
   </div>
 </div>
 
-<form method="get" id="wb-filters-form" class="row g-2 align-items-end mb-3">
+<form method="get" id="wb-filters-form" class="mb-3">
   <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
 
-  <div class="col-12 col-md-2">
-    <label class="form-label">Окно (дней)</label>
-    <select id="wb-window-days" name="window_days" class="form-select">
-      {% for item in payload.filters.window_options %}
-        <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-2">
-    <label class="form-label">Заведение</label>
-    <select id="wb-department-id" name="department_id" class="form-select">
-      <option value="">Все заведения</option>
-      {% for dep in payload.filters.department_options %}
-        <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-2">
-    <label class="form-label">Сегмент</label>
-    <select id="wb-segment-code" name="segment_code" class="form-select">
-      <option value="">Все сегменты</option>
-      {% for seg in payload.filters.segment_options %}
-        <option value="{{ seg.code }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-2">
-    <label class="form-label">Целевая категория</label>
-    <select id="wb-focus-category-code" name="focus_category_code" class="form-select">
-      <option value="">Все категории</option>
-      {% for cat in payload.filters.focus_category_options %}
-        <option value="{{ cat.code }}" {% if cat.code == selected_focus_category_code %}selected{% endif %}>{{ cat.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
-  <div class="col-12 col-md-2">
-    <div class="wb-top-auto-box">
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" id="wb-auto-apply">
-        <label class="form-check-label" for="wb-auto-apply">Автопересчёт</label>
-      </div>
-      <div class="wb-auto-apply-note">По умолчанию включён.</div>
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-lg-3">
+      <label class="form-label">Окно (дней)</label>
+      <select id="wb-window-days" name="window_days" class="form-select">
+        {% for item in payload.filters.window_options %}
+          <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-3">
+      <label class="form-label">Заведение</label>
+      <select id="wb-department-id" name="department_id" class="form-select">
+        <option value="">Все заведения</option>
+        {% for dep in payload.filters.department_options %}
+          <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>{{ dep.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-3">
+      <label class="form-label">Сегмент</label>
+      <select id="wb-segment-code" name="segment_code" class="form-select">
+        <option value="">Все сегменты</option>
+        {% for seg in payload.filters.segment_options %}
+          <option value="{{ seg.code }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-3">
+      <label class="form-label">Целевая категория</label>
+      <select id="wb-focus-category-code" name="focus_category_code" class="form-select">
+        <option value="">Все категории</option>
+        {% for cat in payload.filters.focus_category_options %}
+          <option value="{{ cat.code }}" {% if cat.code == selected_focus_category_code %}selected{% endif %}>{{ cat.name }}</option>
+        {% endfor %}
+      </select>
     </div>
   </div>
-  <div class="col-12 col-md-2">
-    <button id="wb-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
-  </div>
 
-  <div class="col-12">
-    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-1">
-      <div class="form-check">
-        <input class="form-check-input" type="checkbox" value="1" id="show-all-presets" name="show_all_presets"
-               {% if selected_show_all_presets %}checked{% endif %}>
-        <label class="form-check-label" for="show-all-presets">Показывать архивные пресеты (вкладка «Пресеты»)</label>
+  <div class="row g-2 align-items-end mt-1">
+    <div class="col-12 col-lg-3">
+      <div class="wb-top-auto-box">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" id="wb-auto-apply">
+          <label class="form-check-label" for="wb-auto-apply">Автопересчёт</label>
+        </div>
+        <div class="wb-auto-apply-note">По умолчанию включён.</div>
       </div>
+    </div>
+
+    <div class="col-12 col-lg-5">
+      <div class="wb-top-check-box">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="1" id="show-all-presets" name="show_all_presets"
+                 {% if selected_show_all_presets %}checked{% endif %}>
+          <label class="form-check-label" for="show-all-presets">Показывать архивные пресеты (вкладка «Пресеты»)</label>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-6 col-lg-2">
+      <button id="wb-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
+    </div>
+    <div class="col-6 col-lg-2">
       <a
-        class="btn btn-sm btn-outline-secondary"
+        class="btn btn-outline-secondary w-100"
         href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}"
       >
         Сбросить фильтры
