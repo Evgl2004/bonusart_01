@@ -66,9 +66,40 @@
     min-height: 320px;
   }
 
+  .dash-auto-box {
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.7rem;
+    min-height: 42px;
+    padding: 0.45rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+  }
+
+  .dash-auto-note {
+    color: #6b7280;
+    font-size: 0.82rem;
+    margin: 0;
+    white-space: nowrap;
+  }
+
+  .dash-auto-box .form-check {
+    margin: 0;
+  }
+
   @media (max-width: 992px) {
     .chart-box {
       min-height: 280px;
+    }
+
+    .dash-auto-box {
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .dash-auto-note {
+      white-space: normal;
     }
   }
 </style>
@@ -84,18 +115,18 @@
   </div>
 </div>
 
-<form method="get" class="row g-2 align-items-end mb-4">
+<form method="get" id="dashboard-filters-form" class="row g-2 align-items-end mb-4">
   <div class="col-12 col-md-3">
     <label class="form-label">Период, дней</label>
-    <select name="period_days" class="form-select">
+    <select id="dashboard-period-days" name="period_days" class="form-select">
       {% for days in period_options %}
         <option value="{{ days }}" {% if days == selected_period_days %}selected{% endif %}>{{ days }}</option>
       {% endfor %}
     </select>
   </div>
-  <div class="col-12 col-md-5">
+  <div class="col-12 col-md-4">
     <label class="form-label">Заведение</label>
-    <select name="department_id" class="form-select">
+    <select id="dashboard-department-id" name="department_id" class="form-select">
       <option value="">Все заведения</option>
       {% for dep in department_options %}
         <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>
@@ -104,8 +135,17 @@
       {% endfor %}
     </select>
   </div>
+  <div class="col-12 col-md-3">
+    <div class="dash-auto-box">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="dashboard-auto-apply">
+        <label class="form-check-label" for="dashboard-auto-apply">Автопересчёт</label>
+      </div>
+      <div class="dash-auto-note">По умолчанию включён.</div>
+    </div>
+  </div>
   <div class="col-12 col-md-2">
-    <button type="submit" class="btn btn-primary w-100">Применить</button>
+    <button id="dashboard-apply-btn" type="submit" class="btn btn-primary w-100">Применить</button>
   </div>
 </form>
 
@@ -149,6 +189,47 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <script>
   (function() {
+    const storageKey = "dashboard_auto_apply_v1";
+    const form = document.getElementById("dashboard-filters-form");
+    const periodSelect = document.getElementById("dashboard-period-days");
+    const departmentSelect = document.getElementById("dashboard-department-id");
+    const autoApplyCheckbox = document.getElementById("dashboard-auto-apply");
+    const applyButton = document.getElementById("dashboard-apply-btn");
+
+    if (form && periodSelect && departmentSelect && autoApplyCheckbox && applyButton) {
+      const stored = window.localStorage.getItem(storageKey);
+      autoApplyCheckbox.checked = stored === null ? true : stored === "1";
+
+      const syncApplyButtonState = function() {
+        if (autoApplyCheckbox.checked) {
+          applyButton.disabled = true;
+          applyButton.classList.remove("btn-primary");
+          applyButton.classList.add("btn-secondary");
+        } else {
+          applyButton.disabled = false;
+          applyButton.classList.remove("btn-secondary");
+          applyButton.classList.add("btn-primary");
+        }
+      };
+
+      const maybeAutoSubmit = function() {
+        if (!autoApplyCheckbox.checked) {
+          return;
+        }
+        form.requestSubmit();
+      };
+
+      autoApplyCheckbox.addEventListener("change", function() {
+        window.localStorage.setItem(storageKey, autoApplyCheckbox.checked ? "1" : "0");
+        syncApplyButtonState();
+      });
+
+      periodSelect.addEventListener("change", maybeAutoSubmit);
+      departmentSelect.addEventListener("change", maybeAutoSubmit);
+
+      syncApplyButtonState();
+    }
+
     const payloadNode = document.getElementById("analytics-dashboard-data");
     if (!payloadNode) {
       return;
