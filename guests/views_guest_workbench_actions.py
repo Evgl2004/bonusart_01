@@ -67,6 +67,7 @@ class GuestsWorkbenchActionsView(View):
             department_id=filters["department_id"],
             segment_code=filters["segment_code"],
             focus_category_code=filters["focus_category_code"],
+            complex_filters=filters["complex_filters"],
             show_all_presets=bool(filters["show_all_presets"]),
         )
 
@@ -278,6 +279,7 @@ class GuestsWorkbenchActionsView(View):
             "department_id": (request.POST.get("department_id") or "").strip(),
             "segment_code": (request.POST.get("segment_code") or "").strip(),
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
+            "complex_filters": _extract_complex_filters_from_post(request),
             "show_all_presets": _to_bool_flag(request.POST.get("show_all_presets")),
         }
 
@@ -295,10 +297,15 @@ class GuestsWorkbenchActionsView(View):
             "show_all_presets": "1" if _to_bool_flag(request.POST.get("show_all_presets")) else "",
         }
         params = {key: value for key, value in params.items() if value}
+        complex_filters = _extract_complex_filters_from_post(request)
+        if complex_filters:
+            params["cf_field"] = [item.get("field") or "" for item in complex_filters]
+            params["cf_op"] = [item.get("operator") or "" for item in complex_filters]
+            params["cf_value"] = [item.get("value") or "" for item in complex_filters]
         base_url = reverse("guests_workbench")
         if not params:
             return base_url
-        return f"{base_url}?{urlencode(params)}"
+        return f"{base_url}?{urlencode(params, doseq=True)}"
 
 
 def _parse_iso_date(raw_value: str) -> date | None:
@@ -318,6 +325,26 @@ def _to_bool_flag(raw_value: str | None) -> bool:
     Нормализует флаг из POST-формы (checkbox/select).
     """
     return (raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _extract_complex_filters_from_post(request) -> list[dict[str, str]]:
+    """
+    Извлекает сложные условия фильтра из POST (повторяемые cf_* параметры).
+    """
+    fields = request.POST.getlist("cf_field")
+    operators = request.POST.getlist("cf_op")
+    values = request.POST.getlist("cf_value")
+    length = max(len(fields), len(operators), len(values), 0)
+
+    result: list[dict[str, str]] = []
+    for idx in range(length):
+        field = (fields[idx] if idx < len(fields) else "").strip()
+        operator = (operators[idx] if idx < len(operators) else "").strip()
+        value = (values[idx] if idx < len(values) else "").strip()
+        if not field and not operator and not value:
+            continue
+        result.append({"field": field, "operator": operator, "value": value})
+    return result
 
 
 def _build_mailing_name(payload: dict) -> str:

@@ -147,6 +147,30 @@
     color: #64748b;
     margin-bottom: 0.7rem;
   }
+
+  .wb-complex-filters-box {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    background: #f8fafc;
+    padding: 0.85rem 0.9rem;
+  }
+
+  .wb-complex-filter-row + .wb-complex-filter-row {
+    margin-top: 0.55rem;
+  }
+
+  .wb-complex-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    margin-top: 0.65rem;
+  }
+
+  .wb-complex-limit-note {
+    font-size: 0.8rem;
+    color: #64748b;
+  }
 </style>
 {% endblock %}
 
@@ -203,6 +227,18 @@
     </div>
   </div>
 
+  <div class="wb-complex-filters-box mt-2">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <label class="form-label mb-0">Дополнительные условия (логика И)</label>
+      <span id="wb-cf-limit-note" class="wb-complex-limit-note">0 из 6 условий</span>
+    </div>
+    <div id="wb-complex-filters" data-max-items="6"></div>
+    <div class="wb-complex-controls">
+      <button type="button" id="wb-cf-add" class="btn btn-sm btn-outline-primary">Добавить условие</button>
+      <span class="wb-complex-limit-note">Пример: «Сумма (нетто) больше 10000» и «Рейтинг больше 20».</span>
+    </div>
+  </div>
+
   <div class="row g-2 align-items-end mt-1">
     <div class="col-12 col-lg-3">
       <div class="wb-top-auto-box">
@@ -238,7 +274,37 @@
   </div>
 </form>
 
-{% if selected_segment_code or selected_focus_category_code or selected_department_id %}
+<template id="wb-cf-row-template">
+  <div class="row g-2 align-items-end wb-complex-filter-row">
+    <div class="col-12 col-lg-4">
+      <label class="form-label">Поле</label>
+      <select class="form-select wb-cf-field" name="cf_field">
+        <option value="">Выберите поле</option>
+        {% for field in payload.filters.complex_filter_fields %}
+          <option value="{{ field.code }}">{{ field.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-3">
+      <label class="form-label">Оператор</label>
+      <select class="form-select wb-cf-operator" name="cf_op">
+        <option value="">Выберите оператор</option>
+        {% for operator in payload.filters.complex_filter_operators %}
+          <option value="{{ operator.code }}">{{ operator.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-3">
+      <label class="form-label">Значение</label>
+      <input type="text" class="form-control wb-cf-value" name="cf_value" placeholder="Например: 1000">
+    </div>
+    <div class="col-12 col-lg-2">
+      <button type="button" class="btn btn-outline-danger w-100 wb-cf-remove">Удалить</button>
+    </div>
+  </div>
+</template>
+
+{% if selected_segment_code or selected_focus_category_code or selected_department_id or payload.filters.complex_filters %}
   <div id="wb-active-filters" class="alert alert-info border py-2 small mb-4">
     Активные фильтры:
     {% if selected_department_id %}
@@ -262,6 +328,9 @@
         {% endif %}
       {% endfor %}
     {% endif %}
+    {% for rule in payload.filters.complex_filters %}
+      <span class="badge text-bg-light border ms-1">Условие: {{ rule.field_name }} {{ rule.operator_name }} {{ rule.value_str }}</span>
+    {% endfor %}
   </div>
 {% endif %}
 
@@ -619,6 +688,11 @@
           <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
           <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
           <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+          {% for rule in payload.filters.complex_filters %}
+            <input type="hidden" name="cf_field" value="{{ rule.field }}">
+            <input type="hidden" name="cf_op" value="{{ rule.operator }}">
+            <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
+          {% endfor %}
           <div class="col-12 col-md-8">
             <label class="form-label">Имя пресета</label>
             <input type="text" name="preset_name" class="form-control" maxlength="120"
@@ -654,6 +728,11 @@
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
                   <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+                  {% for rule in payload.filters.complex_filters %}
+                    <input type="hidden" name="cf_field" value="{{ rule.field }}">
+                    <input type="hidden" name="cf_op" value="{{ rule.operator }}">
+                    <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
+                  {% endfor %}
                   <input type="text" name="new_name" class="form-control form-control-sm"
                          value="{{ preset.name }}" maxlength="120" style="min-width: 220px;">
                   <button type="submit" class="btn btn-sm btn-outline-secondary">Переименовать</button>
@@ -669,6 +748,11 @@
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
                   <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+                  {% for rule in payload.filters.complex_filters %}
+                    <input type="hidden" name="cf_field" value="{{ rule.field }}">
+                    <input type="hidden" name="cf_op" value="{{ rule.operator }}">
+                    <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
+                  {% endfor %}
                   <button type="submit" class="btn btn-sm btn-outline-danger"
                           onclick="return confirm('Удалить пресет {{ preset.name|escapejs }}?');">
                     Удалить
@@ -685,6 +769,11 @@
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
                   <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+                  {% for rule in payload.filters.complex_filters %}
+                    <input type="hidden" name="cf_field" value="{{ rule.field }}">
+                    <input type="hidden" name="cf_op" value="{{ rule.operator }}">
+                    <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
+                  {% endfor %}
                   <button type="submit" class="btn btn-sm btn-outline-success">Восстановить</button>
                 </form>
               {% endif %}
@@ -718,6 +807,10 @@
     const showAllPresetsCheckbox = document.getElementById("show-all-presets");
     const activeTabInput = document.getElementById("wb-active-tab");
     const scrollTargetInput = document.getElementById("wb-scroll-target");
+    const complexFiltersContainer = document.getElementById("wb-complex-filters");
+    const complexFilterTemplate = document.getElementById("wb-cf-row-template");
+    const complexFilterAddButton = document.getElementById("wb-cf-add");
+    const complexFilterLimitNote = document.getElementById("wb-cf-limit-note");
     if (!payloadNode) {
       return;
     }
@@ -789,7 +882,7 @@
     const initFiltersAutoApply = () => {
       const storageKey = "gw_auto_apply_v1";
       if (!filterForm || !windowSelect || !departmentSelect || !segmentSelect || !focusSelect || !autoApplyCheckbox || !applyButton) {
-        return;
+        return () => {};
       }
 
       const stored = window.localStorage.getItem(storageKey);
@@ -829,6 +922,7 @@
       }
 
       syncApplyButtonState();
+      return maybeAutoSubmit;
     };
 
     const payload = JSON.parse(payloadNode.textContent || "{}");
@@ -836,6 +930,119 @@
     const matrixRows = matrix.rows || [];
     const matrixColumns = matrix.columns || [];
     const heatmap = matrix.heatmap || {};
+
+    const initComplexFilters = (onMaybeAutoSubmit) => {
+      if (!filterForm || !complexFiltersContainer || !complexFilterTemplate || !complexFilterAddButton || !complexFilterLimitNote) {
+        return;
+      }
+
+      const payloadFilters = (payload && payload.filters) || {};
+      const existingRules = Array.isArray(payloadFilters.complex_filters) ? payloadFilters.complex_filters : [];
+      const maxItemsRaw = Number(complexFiltersContainer.dataset.maxItems || "6");
+      const maxItems = Number.isFinite(maxItemsRaw) && maxItemsRaw > 0 ? maxItemsRaw : 6;
+
+      const getRows = () => Array.from(complexFiltersContainer.querySelectorAll(".wb-complex-filter-row"));
+      const isFilled = (row) => {
+        const fieldValue = (row.querySelector(".wb-cf-field")?.value || "").trim();
+        const operatorValue = (row.querySelector(".wb-cf-operator")?.value || "").trim();
+        const valueText = (row.querySelector(".wb-cf-value")?.value || "").trim();
+        return Boolean(fieldValue && operatorValue && valueText);
+      };
+
+      const updateControls = () => {
+        const rows = getRows();
+        const filledRowsCount = rows.filter(isFilled).length;
+        complexFilterLimitNote.textContent = `${filledRowsCount} из ${maxItems} условий`;
+        complexFilterAddButton.disabled = rows.length >= maxItems;
+      };
+
+      const triggerAutoSubmit = () => {
+        updateControls();
+        if (typeof onMaybeAutoSubmit === "function") {
+          onMaybeAutoSubmit();
+        }
+      };
+
+      const attachRowHandlers = (row) => {
+        const fieldNode = row.querySelector(".wb-cf-field");
+        const operatorNode = row.querySelector(".wb-cf-operator");
+        const valueNode = row.querySelector(".wb-cf-value");
+        const removeButton = row.querySelector(".wb-cf-remove");
+
+        [fieldNode, operatorNode, valueNode].forEach((node) => {
+          if (!node) {
+            return;
+          }
+          node.addEventListener("change", () => {
+            triggerAutoSubmit();
+          });
+        });
+
+        if (removeButton) {
+          removeButton.addEventListener("click", () => {
+            row.remove();
+            triggerAutoSubmit();
+          });
+        }
+      };
+
+      const appendRow = (rule = {}, shouldTriggerAutoSubmit = false) => {
+        if (getRows().length >= maxItems) {
+          return;
+        }
+
+        const fragment = complexFilterTemplate.content.cloneNode(true);
+        const row = fragment.querySelector(".wb-complex-filter-row");
+        if (!row) {
+          return;
+        }
+
+        const fieldNode = row.querySelector(".wb-cf-field");
+        const operatorNode = row.querySelector(".wb-cf-operator");
+        const valueNode = row.querySelector(".wb-cf-value");
+        if (fieldNode) {
+          fieldNode.value = (rule.field || "").toString();
+        }
+        if (operatorNode) {
+          operatorNode.value = (rule.operator || "").toString();
+        }
+        if (valueNode) {
+          valueNode.value = (rule.value_str || rule.value || "").toString();
+        }
+
+        attachRowHandlers(row);
+        complexFiltersContainer.appendChild(row);
+        updateControls();
+
+        if (shouldTriggerAutoSubmit) {
+          triggerAutoSubmit();
+        }
+      };
+
+      existingRules.forEach((rule) => appendRow(rule, false));
+      updateControls();
+
+      complexFilterAddButton.addEventListener("click", () => {
+        appendRow({}, false);
+        const rows = getRows();
+        const lastRow = rows.length ? rows[rows.length - 1] : null;
+        const fieldNode = lastRow ? lastRow.querySelector(".wb-cf-field") : null;
+        if (fieldNode) {
+          fieldNode.focus();
+        }
+      });
+
+      filterForm.addEventListener("submit", () => {
+        getRows().forEach((row) => {
+          if (isFilled(row)) {
+            return;
+          }
+          row.querySelectorAll("select, input").forEach((node) => {
+            node.disabled = true;
+          });
+        });
+      });
+    };
 
     let scatterChart = null;
     let heatmapChart = null;
@@ -1015,7 +1222,8 @@
     });
 
     initTooltips();
-    initFiltersAutoApply();
+    const maybeAutoSubmit = initFiltersAutoApply();
+    initComplexFilters(maybeAutoSubmit);
     initScatter();
 
     // Если открыли страницу с якорем списка гостей, переключаем на вкладку "Гости".

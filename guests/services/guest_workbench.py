@@ -36,6 +36,37 @@ SEGMENT_DEFINITIONS = (
 )
 SEGMENT_NAMES_MAP = dict(SEGMENT_DEFINITIONS)
 SELECTED_GUESTS_LIMIT = 200
+COMPLEX_FILTER_MAX_ITEMS = 6
+COMPLEX_FILTER_FIELDS = (
+    ("orders_count", "Заказов", "orders_count", "int"),
+    ("visits_count", "Визитов", "visits_count", "int"),
+    ("sum_net", "Сумма (нетто)", "sum_net", "decimal"),
+    ("avg_check_net", "Средний чек", "avg_check_net", "decimal"),
+    ("rating_score", "Рейтинг", "rating_score", "decimal"),
+)
+COMPLEX_FILTER_FIELD_META = {
+    code: {
+        "code": code,
+        "name": name,
+        "orm_field": orm_field,
+        "value_type": value_type,
+    }
+    for code, name, orm_field, value_type in COMPLEX_FILTER_FIELDS
+}
+COMPLEX_FILTER_OPERATORS = (
+    ("gt", "Больше"),
+    ("gte", "Больше или равно"),
+    ("lt", "Меньше"),
+    ("lte", "Меньше или равно"),
+    ("eq", "Равно"),
+)
+COMPLEX_FILTER_OPERATOR_META = {
+    "gt": {"code": "gt", "name": "Больше", "orm_lookup": "gt"},
+    "gte": {"code": "gte", "name": "Больше или равно", "orm_lookup": "gte"},
+    "lt": {"code": "lt", "name": "Меньше", "orm_lookup": "lt"},
+    "lte": {"code": "lte", "name": "Меньше или равно", "orm_lookup": "lte"},
+    "eq": {"code": "eq", "name": "Равно", "orm_lookup": "exact"},
+}
 
 
 def normalize_window_days(raw_value: int | str | None) -> int:
@@ -59,6 +90,105 @@ def normalize_segment_code(raw_value: str | None) -> str:
     return value if value in SEGMENT_NAMES_MAP else ""
 
 
+def normalize_complex_filters(raw_filters: list[dict[str, str]] | None) -> list[dict[str, Any]]:
+    """
+    Нормализует список сложных фильтров вида field/operator/value.
+
+    На выходе остаются только валидные условия (по допустимым полям и операторам)
+    с корректно распарсенным числовым значением.
+    """
+    if not raw_filters:
+        return []
+
+    result: list[dict[str, Any]] = []
+    for item in raw_filters[:COMPLEX_FILTER_MAX_ITEMS]:
+        field_code = (item.get("field") or "").strip()
+        operator_code = (item.get("operator") or "").strip()
+        raw_value = (item.get("value") or "").strip()
+
+        if not field_code and not operator_code and not raw_value:
+            continue
+
+        field_meta = COMPLEX_FILTER_FIELD_META.get(field_code)
+        operator_meta = COMPLEX_FILTER_OPERATOR_META.get(operator_code)
+        if field_meta is None or operator_meta is None or not raw_value:
+            continue
+
+        parsed_value = _parse_numeric_filter_value(raw_value)
+        if parsed_value is None:
+            continue
+
+        if field_meta["value_type"] == "int":
+            parsed_value = Decimal(int(parsed_value))
+
+        result.append(
+            {
+                "field": field_code,
+                "field_name": field_meta["name"],
+                "operator": operator_code,
+                "operator_name": operator_meta["name"],
+                "value": parsed_value,
+                "value_str": _serialize_complex_filter_value(parsed_value, field_meta["value_type"]),
+            }
+        )
+    return result
+
+
+def _parse_numeric_filter_value(raw_value: str) -> Decimal | None:
+    """
+    Парсит числовое значение фильтра с поддержкой запятой и пробелов.
+    """
+    normalized = (raw_value or "").strip().replace(" ", "").replace(",", ".")
+    if not normalized:
+        return None
+    try:
+        return Decimal(normalized)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _serialize_complex_filter_value(value: Decimal, value_type: str) -> str:
+    """
+    Преобразует значение фильтра в строку для повторной подстановки в форму.
+    """
+    if value_type == "int":
+        return str(int(value))
+    return format(value.normalize(), "f")
+
+
+def _build_complex_filter_options() -> dict[str, list[dict[str, str]]]:
+    """
+    Возвращает справочники полей и операторов для UI-конструктора условий.
+    """
+    return {
+        "fields": [
+            {"code": code, "name": name}
+            for code, name, _, _ in COMPLEX_FILTER_FIELDS
+        ],
+        "operators": [{"code": code, "name": name} for code, name in COMPLEX_FILTER_OPERATORS],
+    }
+
+
+def _apply_complex_filters(scope_qs, normalized_filters: list[dict[str, Any]]):
+    """
+    Применяет список сложных условий к queryset оконных метрик (логика И).
+    """
+    filtered_scope = scope_qs
+    for item in normalized_filters:
+        field_meta = COMPLEX_FILTER_FIELD_META.get(item["field"])
+        operator_meta = COMPLEX_FILTER_OPERATOR_META.get(item["operator"])
+        if field_meta is None or operator_meta is None:
+            continue
+
+        value = item["value"]
+        if field_meta["value_type"] == "int":
+            value = int(value)
+
+        lookup = f"{field_meta['orm_field']}__{operator_meta['orm_lookup']}"
+        filtered_scope = filtered_scope.filter(**{lookup: value})
+    return filtered_scope
+
+
 def build_guest_workbench_payload(
     *,
     as_of_date: date | None = None,
@@ -66,6 +196,7 @@ def build_guest_workbench_payload(
     department_id: str | None = None,
     segment_code: str | None = None,
     focus_category_code: str | None = None,
+    complex_filters: list[dict[str, str]] | None = None,
     show_all_presets: bool = False,
 ) -> dict[str, Any]:
     """
@@ -75,6 +206,8 @@ def build_guest_workbench_payload(
     selected_department_id = (department_id or "").strip()
     selected_segment_code = normalize_segment_code(segment_code)
     selected_focus_category_code_raw = (focus_category_code or "").strip()
+    normalized_complex_filters = normalize_complex_filters(complex_filters)
+    complex_filter_options = _build_complex_filter_options()
     saved_presets = _build_saved_presets(show_all_presets=show_all_presets)
 
     target_as_of = as_of_date
@@ -90,6 +223,8 @@ def build_guest_workbench_payload(
             selected_department_id=selected_department_id,
             selected_segment_code=selected_segment_code,
             selected_focus_category_code=selected_focus_category_code_raw,
+            normalized_complex_filters=normalized_complex_filters,
+            complex_filter_options=complex_filter_options,
             show_all_presets=show_all_presets,
             saved_presets=saved_presets,
         )
@@ -99,6 +234,14 @@ def build_guest_workbench_payload(
         base_scope = base_scope.filter(department_id=selected_department_id)
 
     work_scope = base_scope.filter(window_days=selected_window_days).select_related("guest")
+    work_scope = _apply_complex_filters(work_scope, normalized_complex_filters)
+
+    allowed_guest_keys: set[tuple[int, str]] | None = None
+    if normalized_complex_filters:
+        allowed_guest_keys = {
+            (int(guest_id), _normalize_department_id(dep_id))
+            for guest_id, dep_id in work_scope.values_list("guest_id", "department_id").distinct()
+        }
 
     cards_agg = work_scope.aggregate(
         guests_total=Count("guest_id", distinct=True),
@@ -116,8 +259,7 @@ def build_guest_workbench_payload(
     )
 
     department_rows = list(
-        base_scope.filter(window_days=selected_window_days)
-        .values("department_id")
+        work_scope.values("department_id")
         .annotate(
             guests_count=Count("guest_id", distinct=True),
             net_total=Coalesce(Sum("sum_net"), Decimal("0")),
@@ -142,13 +284,16 @@ def build_guest_workbench_payload(
         for row in department_rows
     ]
 
-    segmentation, segment_by_key = _build_segmentation_state(base_scope)
+    segmentation, segment_by_key = _build_segmentation_state(
+        base_scope, allowed_guest_keys=allowed_guest_keys
+    )
     segment_focus_matrix, focus_guest_keys_by_code = _build_segment_focus_matrix(
         as_of_date=target_as_of,
         selected_window_days=selected_window_days,
         selected_department_id=selected_department_id,
         segment_by_key=segment_by_key,
         segment_totals=segmentation,
+        allowed_guest_keys=allowed_guest_keys,
     )
     focus_category_options = [
         {
@@ -169,6 +314,7 @@ def build_guest_workbench_payload(
         focus_guest_keys_by_code=focus_guest_keys_by_code,
         segment_code=selected_segment_code,
         focus_category_code=selected_focus_category_code,
+        allowed_guest_keys=allowed_guest_keys,
         limit=SELECTED_GUESTS_LIMIT,
     )
     scatter_points = _build_scatter_points(work_scope)
@@ -184,6 +330,9 @@ def build_guest_workbench_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": focus_category_options,
+            "complex_filters": normalized_complex_filters,
+            "complex_filter_fields": complex_filter_options["fields"],
+            "complex_filter_operators": complex_filter_options["operators"],
             "show_all_presets": show_all_presets,
             "saved_presets": saved_presets,
         },
@@ -215,6 +364,8 @@ def _build_empty_payload(
     selected_department_id: str,
     selected_segment_code: str,
     selected_focus_category_code: str,
+    normalized_complex_filters: list[dict[str, Any]],
+    complex_filter_options: dict[str, list[dict[str, str]]],
     show_all_presets: bool,
     saved_presets: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -232,6 +383,9 @@ def _build_empty_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": [],
+            "complex_filters": normalized_complex_filters,
+            "complex_filter_fields": complex_filter_options["fields"],
+            "complex_filter_operators": complex_filter_options["operators"],
             "show_all_presets": show_all_presets,
             "saved_presets": saved_presets,
         },
@@ -376,7 +530,11 @@ def _load_department_names() -> dict[str, str]:
     return result
 
 
-def _build_segmentation_state(scope_qs) -> tuple[dict[str, int], dict[tuple[int, str], str]]:
+def _build_segmentation_state(
+    scope_qs,
+    *,
+    allowed_guest_keys: set[tuple[int, str]] | None = None,
+) -> tuple[dict[str, int], dict[tuple[int, str], str]]:
     """
     Считает сегменты активности по окнам 30/60/180 дней.
 
@@ -405,6 +563,8 @@ def _build_segmentation_state(scope_qs) -> tuple[dict[str, int], dict[tuple[int,
     segment_by_key: dict[tuple[int, str], str] = {}
 
     for key, window_map in state.items():
+        if allowed_guest_keys is not None and key not in allowed_guest_keys:
+            continue
         visits_30 = int(window_map.get(30, 0))
         visits_60 = int(window_map.get(60, 0))
         visits_180 = int(window_map.get(180, 0))
@@ -435,6 +595,7 @@ def _build_segment_focus_matrix(
     selected_department_id: str,
     segment_by_key: dict[tuple[int, str], str],
     segment_totals: dict[str, int],
+    allowed_guest_keys: set[tuple[int, str]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, set[tuple[int, str]]]]:
     """
     Формирует матрицу «Сегменты × фокусные категории» для наглядного покрытия.
@@ -484,11 +645,13 @@ def _build_segment_focus_matrix(
     for row in daily_scope.values("guest_id", "department_id", "focus_category_id"):
         guest_id = int(row["guest_id"])
         department_id = _normalize_department_id(row.get("department_id"))
+        guest_key = (guest_id, department_id)
+        if allowed_guest_keys is not None and guest_key not in allowed_guest_keys:
+            continue
         segment_code = segment_by_key.get((guest_id, department_id))
         if not segment_code:
             continue
         focus_id = int(row["focus_category_id"])
-        guest_key = (guest_id, department_id)
         cell_sets[(segment_code, focus_id)].add(guest_key)
         category_sets[focus_id].add(guest_key)
 
@@ -593,6 +756,7 @@ def _build_selected_guests_rows(
     focus_guest_keys_by_code: dict[str, set[tuple[int, str]]],
     segment_code: str,
     focus_category_code: str,
+    allowed_guest_keys: set[tuple[int, str]] | None = None,
     limit: int,
 ) -> dict[str, Any]:
     """
@@ -616,6 +780,8 @@ def _build_selected_guests_rows(
     representative_by_key: dict[tuple[int, str], GuestRestaurantWindowMetrics] = {}
     for row in base_scope.select_related("guest"):
         key = (int(row.guest_id), _normalize_department_id(row.department_id))
+        if allowed_guest_keys is not None and key not in allowed_guest_keys:
+            continue
         current = representative_by_key.get(key)
         row_rank = window_rank.get(int(row.window_days), default_rank)
         if current is None:

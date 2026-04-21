@@ -231,6 +231,75 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertContains(response, 'data-segment-code="active_30d"')
         self.assertContains(response, 'data-focus-category-code="beer_ermolaev"')
 
+    def test_workbench_applies_single_complex_filter(self):
+        """
+        Сложный фильтр по количеству заказов (orders_count) должен отбирать только подходящих гостей.
+        """
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "cf_field": ["orders_count"],
+                "cf_op": ["gt"],
+                "cf_value": ["1"],
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(len(payload["filters"]["complex_filters"]), 1)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
+
+    def test_workbench_applies_multiple_complex_filters_with_and_logic(self):
+        """
+        Несколько сложных фильтров должны применяться с логикой И.
+        """
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "cf_field": ["orders_count", "sum_net"],
+                "cf_op": ["gte", "lt"],
+                "cf_value": ["3", "1600"],
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(len(payload["filters"]["complex_filters"]), 2)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
+
+    def test_workbench_ignores_invalid_complex_filters(self):
+        """
+        Невалидные сложные фильтры должны отбрасываться без поломки выборки.
+        """
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "cf_field": ["bad_field", "orders_count"],
+                "cf_op": ["eq", "bad_operator"],
+                "cf_value": ["1", "3"],
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(len(payload["filters"]["complex_filters"]), 0)
+        self.assertEqual(payload["cards"]["guests_total"], 2)
+        self.assertEqual(payload["selected_guests"]["total"], 2)
+
     def test_lost_segment_guest_visible_even_without_row_in_selected_window(self):
         """
         Гость из сегмента «Потерянные 60+д» должен попадать в таб «Гости»,

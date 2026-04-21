@@ -20,6 +20,11 @@
       <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
       <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
       <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
+      {% for rule in payload.filters.complex_filters %}
+        <input type="hidden" name="cf_field" value="{{ rule.field }}">
+        <input type="hidden" name="cf_op" value="{{ rule.operator }}">
+        <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
+      {% endfor %}
       <button type="submit" class="btn btn-outline-primary"
               {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
         Создать черновик рассылки по отбору
