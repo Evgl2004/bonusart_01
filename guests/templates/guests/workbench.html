@@ -162,6 +162,7 @@
 
 <form method="get" id="wb-filters-form" class="mb-3">
   <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
+  <input type="hidden" name="active_tab" id="wb-active-tab" value="overview">
 
   <div class="row g-2 align-items-end">
     <div class="col-12 col-lg-3">
@@ -758,6 +759,7 @@
     const autoApplyCheckbox = document.getElementById("wb-auto-apply");
     const applyButton = document.getElementById("wb-apply-btn");
     const showAllPresetsCheckbox = document.getElementById("show-all-presets");
+    const activeTabInput = document.getElementById("wb-active-tab");
     if (!payloadNode) {
       return;
     }
@@ -768,6 +770,60 @@
           new window.bootstrap.Tooltip(node);
         }
       });
+    };
+
+    const TAB_KEY_BY_TARGET = {
+      "#pane-overview": "overview",
+      "#pane-matrix": "matrix",
+      "#pane-guests": "guests",
+      "#pane-presets": "presets",
+    };
+
+    const TAB_BUTTON_ID_BY_KEY = {
+      overview: "tab-overview",
+      matrix: "tab-matrix",
+      guests: "tab-guests",
+      presets: "tab-presets",
+    };
+
+    const normalizeTabKey = (value) => {
+      if (!value) {
+        return null;
+      }
+      return Object.prototype.hasOwnProperty.call(TAB_BUTTON_ID_BY_KEY, value) ? value : null;
+    };
+
+    const resolveTabKeyByTarget = (target) => TAB_KEY_BY_TARGET[target] || "overview";
+
+    const setActiveTabHiddenValue = (tabKey) => {
+      if (!activeTabInput) {
+        return;
+      }
+      activeTabInput.value = normalizeTabKey(tabKey) || "overview";
+    };
+
+    const syncActiveTabHiddenFromDom = () => {
+      const activeTabButton = document.querySelector("#guests-workbench-tabs [data-bs-toggle='tab'].active");
+      if (!activeTabButton) {
+        setActiveTabHiddenValue("overview");
+        return;
+      }
+      setActiveTabHiddenValue(resolveTabKeyByTarget(activeTabButton.getAttribute("data-bs-target")));
+    };
+
+    const activateTabByKey = (tabKey) => {
+      const normalized = normalizeTabKey(tabKey);
+      if (!normalized || !window.bootstrap || !window.bootstrap.Tab) {
+        return false;
+      }
+      const tabButtonId = TAB_BUTTON_ID_BY_KEY[normalized];
+      const tabButton = tabButtonId ? document.getElementById(tabButtonId) : null;
+      if (!tabButton) {
+        return false;
+      }
+      const tab = new window.bootstrap.Tab(tabButton);
+      tab.show();
+      return true;
     };
 
     const initFiltersAutoApply = () => {
@@ -977,6 +1033,7 @@
     tabs.forEach(function(tabButton) {
       tabButton.addEventListener("shown.bs.tab", function(event) {
         const target = event.target.getAttribute("data-bs-target");
+        setActiveTabHiddenValue(resolveTabKeyByTarget(target));
         if (target === "#pane-overview") {
           initScatter();
           if (scatterChart) {
@@ -997,12 +1054,15 @@
     initScatter();
 
     // Если открыли страницу с якорем списка гостей, переключаем на вкладку "Гости".
-    if (window.location.hash === "#selected-guests") {
-      const guestsTab = document.getElementById("tab-guests");
-      if (guestsTab) {
-        const tab = new bootstrap.Tab(guestsTab);
-        tab.show();
+    const urlParams = new URLSearchParams(window.location.search);
+    const requestedTabKey = normalizeTabKey(urlParams.get("active_tab"));
+    const shouldOpenGuestsByHash = window.location.hash === "#selected-guests";
+    if (shouldOpenGuestsByHash) {
+      if (!activateTabByKey("guests")) {
+        setActiveTabHiddenValue("guests");
       }
+    } else if (!activateTabByKey(requestedTabKey)) {
+      syncActiveTabHiddenFromDom();
     }
 
     window.addEventListener("resize", function() {
@@ -1016,3 +1076,5 @@
   })();
 </script>
 {% endblock %}
+
+
