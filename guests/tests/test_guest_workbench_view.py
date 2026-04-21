@@ -342,6 +342,52 @@ class GuestsWorkbenchViewTests(TestCase):
         lost_row = next(item for item in payload["selected_guests"]["rows"] if item["phone"] == lost_guest.phone)
         self.assertEqual(lost_row["source_window_days"], 180)
 
+    def test_lost_segment_with_complex_filter_uses_representative_window(self):
+        """
+        Для сегмента «Потерянные 60+д» сложный фильтр должен применяться
+        к репрезентативной строке (fallback по окнам), а не только к выбранному окну.
+        """
+        lost_guest = Guest.objects.create(phone="+79990004444", first_name="Потерянный фильтр")
+        GuestRestaurantWindowMetrics.objects.create(
+            as_of_date=self.as_of_date,
+            guest=lost_guest,
+            department_id=self.department_id,
+            window_days=180,
+            orders_count=2,
+            visits_count=2,
+            avg_check_net=Decimal("2500.00"),
+            sum_net=Decimal("5000.00"),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal("20.00"),
+            last_visit_at=date(2025, 12, 10),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "lost_60d_plus",
+                "cf_field": ["avg_check_net"],
+                "cf_op": ["gte"],
+                "cf_value": ["2000"],
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["segment_code"], "lost_60d_plus")
+        self.assertEqual(len(payload["filters"]["complex_filters"]), 1)
+        self.assertGreaterEqual(payload["selected_guests"]["total"], 1)
+        phones = {item["phone"] for item in payload["selected_guests"]["rows"]}
+        self.assertIn(lost_guest.phone, phones)
+
+        lost_row = next(item for item in payload["selected_guests"]["rows"] if item["phone"] == lost_guest.phone)
+        self.assertEqual(lost_row["source_window_days"], 180)
+
     def test_create_mailing_draft_from_workbench_selection(self):
         """
         Быстрое действие должно создавать черновик рассылки по отобранным гостям.

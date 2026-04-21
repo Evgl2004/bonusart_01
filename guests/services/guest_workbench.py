@@ -189,6 +189,110 @@ def _apply_complex_filters(scope_qs, normalized_filters: list[dict[str, Any]]):
     return filtered_scope
 
 
+def _build_preferred_windows(selected_window_days: int) -> list[int]:
+    """
+    Возвращает приоритет окон для выбора репрезентативной строки гостя.
+    """
+    preferred_windows = [selected_window_days] + [180, 60, 30, 14, 7]
+    unique_windows: list[int] = []
+    for window in preferred_windows:
+        if window not in unique_windows:
+            unique_windows.append(window)
+    return unique_windows
+
+
+def _build_representative_rows(
+    *,
+    base_scope,
+    selected_window_days: int,
+    allowed_guest_keys: set[tuple[int, str]] | None = None,
+) -> list[GuestRestaurantWindowMetrics]:
+    """
+    Выбирает по одной «лучшей» строке метрик на пару (гость, заведение)
+    с fallback по окнам: выбранное окно -> 180 -> 60 -> 30 -> 14 -> 7.
+    """
+    unique_windows = _build_preferred_windows(selected_window_days)
+    window_rank = {window: idx for idx, window in enumerate(unique_windows)}
+    default_rank = len(unique_windows) + 1
+
+    representative_by_key: dict[tuple[int, str], GuestRestaurantWindowMetrics] = {}
+    for row in base_scope.select_related("guest"):
+        key = (int(row.guest_id), _normalize_department_id(row.department_id))
+        if allowed_guest_keys is not None and key not in allowed_guest_keys:
+            continue
+        current = representative_by_key.get(key)
+        row_rank = window_rank.get(int(row.window_days), default_rank)
+        if current is None:
+            representative_by_key[key] = row
+            continue
+        current_rank = window_rank.get(int(current.window_days), default_rank)
+        if row_rank < current_rank:
+            representative_by_key[key] = row
+
+    return list(representative_by_key.values())
+
+
+def _row_matches_complex_filters(
+    row: GuestRestaurantWindowMetrics,
+    normalized_filters: list[dict[str, Any]],
+) -> bool:
+    """
+    Проверяет соответствие одной репрезентативной строки всем сложным условиям (логика И).
+    """
+    for item in normalized_filters:
+        field_meta = COMPLEX_FILTER_FIELD_META.get(item["field"])
+        if field_meta is None:
+            return False
+
+        left_raw = getattr(row, field_meta["orm_field"], None)
+        right_raw = item["value"]
+
+        if field_meta["value_type"] == "int":
+            left_value = int(left_raw or 0)
+            right_value = int(right_raw)
+        else:
+            left_value = Decimal(str(left_raw or 0))
+            right_value = Decimal(str(right_raw))
+
+        operator_code = item.get("operator")
+        if operator_code == "gt" and not (left_value > right_value):
+            return False
+        if operator_code == "gte" and not (left_value >= right_value):
+            return False
+        if operator_code == "lt" and not (left_value < right_value):
+            return False
+        if operator_code == "lte" and not (left_value <= right_value):
+            return False
+        if operator_code == "eq" and not (left_value == right_value):
+            return False
+    return True
+
+
+def _collect_allowed_guest_keys_by_complex_filters(
+    *,
+    base_scope,
+    selected_window_days: int,
+    normalized_filters: list[dict[str, Any]],
+) -> set[tuple[int, str]] | None:
+    """
+    Собирает ключи (guest_id, department_id), прошедшие сложный фильтр по той же
+    репрезентативной строке, которая используется в таблице гостей.
+    """
+    if not normalized_filters:
+        return None
+
+    representative_rows = _build_representative_rows(
+        base_scope=base_scope,
+        selected_window_days=selected_window_days,
+        allowed_guest_keys=None,
+    )
+    allowed_keys: set[tuple[int, str]] = set()
+    for row in representative_rows:
+        if _row_matches_complex_filters(row, normalized_filters):
+            allowed_keys.add((int(row.guest_id), _normalize_department_id(row.department_id)))
+    return allowed_keys
+
+
 def build_guest_workbench_payload(
     *,
     as_of_date: date | None = None,
@@ -236,12 +340,11 @@ def build_guest_workbench_payload(
     work_scope = base_scope.filter(window_days=selected_window_days).select_related("guest")
     work_scope = _apply_complex_filters(work_scope, normalized_complex_filters)
 
-    allowed_guest_keys: set[tuple[int, str]] | None = None
-    if normalized_complex_filters:
-        allowed_guest_keys = {
-            (int(guest_id), _normalize_department_id(dep_id))
-            for guest_id, dep_id in work_scope.values_list("guest_id", "department_id").distinct()
-        }
+    allowed_guest_keys = _collect_allowed_guest_keys_by_complex_filters(
+        base_scope=base_scope,
+        selected_window_days=selected_window_days,
+        normalized_filters=normalized_complex_filters,
+    )
 
     cards_agg = work_scope.aggregate(
         guests_total=Count("guest_id", distinct=True),
@@ -766,32 +869,11 @@ def _build_selected_guests_rows(
     total = 0
     focus_keys = focus_guest_keys_by_code.get(focus_category_code, set()) if focus_category_code else None
 
-    # Для «остывших/потерянных» гостей строки в выбранном окне может не быть.
-    # Берем представителя гостя с fallback по окнам:
-    # выбранное окно -> 180 -> 60 -> 30 -> 14 -> 7.
-    preferred_windows = [selected_window_days] + [180, 60, 30, 14, 7]
-    unique_windows: list[int] = []
-    for window in preferred_windows:
-        if window not in unique_windows:
-            unique_windows.append(window)
-    window_rank = {window: idx for idx, window in enumerate(unique_windows)}
-    default_rank = len(unique_windows) + 1
-
-    representative_by_key: dict[tuple[int, str], GuestRestaurantWindowMetrics] = {}
-    for row in base_scope.select_related("guest"):
-        key = (int(row.guest_id), _normalize_department_id(row.department_id))
-        if allowed_guest_keys is not None and key not in allowed_guest_keys:
-            continue
-        current = representative_by_key.get(key)
-        row_rank = window_rank.get(int(row.window_days), default_rank)
-        if current is None:
-            representative_by_key[key] = row
-            continue
-        current_rank = window_rank.get(int(current.window_days), default_rank)
-        if row_rank < current_rank:
-            representative_by_key[key] = row
-
-    representative_rows = list(representative_by_key.values())
+    representative_rows = _build_representative_rows(
+        base_scope=base_scope,
+        selected_window_days=selected_window_days,
+        allowed_guest_keys=allowed_guest_keys,
+    )
     representative_rows.sort(
         key=lambda item: (
             -(float(item.rating_score or 0)),
