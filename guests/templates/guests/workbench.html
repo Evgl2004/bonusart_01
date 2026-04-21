@@ -198,10 +198,18 @@
   </div>
 
   <div class="col-12">
-    <div class="form-check mt-1">
-      <input class="form-check-input" type="checkbox" value="1" id="show-all-presets" name="show_all_presets"
-             {% if selected_show_all_presets %}checked{% endif %}>
-      <label class="form-check-label" for="show-all-presets">Показывать архивные пресеты</label>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mt-1">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" value="1" id="show-all-presets" name="show_all_presets"
+               {% if selected_show_all_presets %}checked{% endif %}>
+        <label class="form-check-label" for="show-all-presets">Показывать архивные пресеты (вкладка «Пресеты»)</label>
+      </div>
+      <a
+        class="btn btn-sm btn-outline-secondary"
+        href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date|urlencode }}&window_days={{ selected_window_days|urlencode }}"
+      >
+        Сбросить фильтры
+      </a>
     </div>
   </div>
 </form>
@@ -536,6 +544,14 @@
           <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
                   title="Чем насыщеннее цвет ячейки, тем больше гостей в пересечении сегмента и категории. Используйте для быстрого сравнения покрытий.">?</button>
         </div>
+        <p class="text-muted small mb-2">
+          Целевые категории (ось X):
+          {% for col in payload.segment_focus_matrix.columns %}
+            <span class="badge text-bg-light border ms-1">{{ col.focus_category_name }}</span>
+          {% empty %}
+            <span class="ms-1">нет данных</span>
+          {% endfor %}
+        </p>
         <div id="segment-category-heatmap" class="wb-matrix-heatmap"></div>
       </div>
     </div>
