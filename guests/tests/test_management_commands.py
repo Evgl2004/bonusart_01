@@ -7,12 +7,14 @@
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import signal
 import tempfile
 from datetime import date
 from datetime import time
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -30,11 +32,16 @@ from guests.management.commands import (
 )
 from guests.models import (
     BotProfile,
+    FocusCategory,
     Guest,
     GuestBotBinding,
+    GuestRestaurantDailyCategoryFact,
+    GuestRestaurantWindowCategoryMetrics,
+    GuestRestaurantWindowMetrics,
     Mailing,
     MailingGuest,
     MessageTemplate,
+    OlapCategoryDict,
 )
 from guests.services.universal_queue.mailing_producer import MailingDispatchSummary
 
@@ -1050,6 +1057,153 @@ class SyncWindowCategoryMetricsCommandTests(SimpleTestCase):
         self.assertFalse(command.should_stop)
         command._signal_handler(signal.SIGTERM, None)
         self.assertTrue(command.should_stop)
+
+
+@override_settings(WORKBENCH_CATEGORY_WINDOW_METRICS_V2=True)
+class AuditWorkbenchPhoneMetricsCommandTests(TestCase):
+    """
+    Тесты команды audit_workbench_phone_metrics.
+    """
+
+    def test_command_returns_pass_for_matching_payload_and_db(self):
+        """
+        Команда должна возвращать PASS, когда метрики выбранного гостя в payload
+        совпадают с category-window строкой в БД.
+        """
+        as_of_date = date(2026, 4, 22)
+        department_id = "dep-77"
+        guest = Guest.objects.create(phone="+79991112233", first_name="Проверка")
+        focus = self._create_focus_category(code="sushi_rolls", name="Роллы и суши")
+
+        # Сегментация lost_60d_plus: 60д=0, 180д>0
+        GuestRestaurantWindowMetrics.objects.create(
+            as_of_date=as_of_date,
+            guest=guest,
+            department_id=department_id,
+            window_days=30,
+            orders_count=0,
+            visits_count=0,
+            avg_check_net=Decimal("0.00"),
+            sum_net=Decimal("0.00"),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal("0.00"),
+            last_visit_at=None,
+        )
+        GuestRestaurantWindowMetrics.objects.create(
+            as_of_date=as_of_date,
+            guest=guest,
+            department_id=department_id,
+            window_days=60,
+            orders_count=0,
+            visits_count=0,
+            avg_check_net=Decimal("0.00"),
+            sum_net=Decimal("0.00"),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal("0.00"),
+            last_visit_at=None,
+        )
+        GuestRestaurantWindowMetrics.objects.create(
+            as_of_date=as_of_date,
+            guest=guest,
+            department_id=department_id,
+            window_days=180,
+            orders_count=2,
+            visits_count=2,
+            avg_check_net=Decimal("16145.50"),
+            sum_net=Decimal("32291.00"),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal("171.46"),
+            last_visit_at=date(2026, 2, 10),
+        )
+
+        GuestRestaurantDailyCategoryFact.objects.create(
+            business_date=date(2026, 2, 10),
+            guest=guest,
+            department_id=department_id,
+            focus_category=focus,
+            orders_count=2,
+            items_count=3,
+            sum_gross=Decimal("32291.00"),
+            sum_net=Decimal("32291.00"),
+            bonus_sum=Decimal("0.00"),
+        )
+
+        GuestRestaurantWindowCategoryMetrics.objects.create(
+            as_of_date=as_of_date,
+            guest=guest,
+            department_id=department_id,
+            window_days=180,
+            focus_category=focus,
+            orders_count=2,
+            visits_count=2,
+            avg_check_net=Decimal("16145.50"),
+            sum_net=Decimal("32291.00"),
+            sum_focus_net=Decimal("8000.00"),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal("171.46"),
+            last_visit_at=date(2026, 2, 10),
+        )
+
+        output = io.StringIO()
+        call_command(
+            "audit_workbench_phone_metrics",
+            "--phone=79991112233",
+            "--as-of-date=2026-04-22",
+            "--window-days=180",
+            "--department-id=dep-77",
+            "--segment-code=lost_60d_plus",
+            "--focus-category-code=sushi_rolls",
+            "--selected-limit=5000",
+            "--status-mode=full",
+            "--max-full-rows=20",
+            "--output-format=json",
+            stdout=output,
+        )
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["result"]["status"], "PASS")
+        self.assertEqual(payload["result"]["fail_count"], 0)
+        self.assertEqual(payload["payload"]["metrics_layer"], "category_window")
+        self.assertEqual(payload["phones"][0]["status"], "PASS")
+        self.assertIn("full_trace", payload["phones"][0])
+        self.assertIn("raw_scope", payload["phones"][0]["full_trace"])
+        self.assertIn("order_fact_scope", payload["phones"][0]["full_trace"])
+        self.assertIn("daily_fact_scope", payload["phones"][0]["full_trace"])
+        self.assertIn("focus_scope", payload["phones"][0]["full_trace"])
+
+    def test_raises_on_mismatched_complex_filter_vectors(self):
+        """
+        Разная длина вектора --cf-field/--cf-op/--cf-value должна приводить к CommandError.
+        """
+        with self.assertRaises(CommandError):
+            call_command(
+                "audit_workbench_phone_metrics",
+                "--phone=79000000000",
+                "--cf-field=orders_count",
+                "--cf-op=gte",
+                "--cf-value=2",
+                "--cf-value=3",
+                stdout=io.StringIO(),
+            )
+
+    @staticmethod
+    def _create_focus_category(*, code: str, name: str) -> FocusCategory:
+        olap_category = OlapCategoryDict.objects.create(
+            iiko_category_external_id=f"ext-{code}",
+            category_name=name,
+            is_active=True,
+        )
+        return FocusCategory.objects.create(
+            code=code,
+            name=name,
+            source_type=FocusCategory.SourceType.OLAP_DIRECT,
+            olap_category=olap_category,
+            is_enabled=True,
+        )
 
 
 class RunWebhookWorkerCommandTests(SimpleTestCase):
