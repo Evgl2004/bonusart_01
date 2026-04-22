@@ -915,6 +915,80 @@ class GuestRestaurantWindowMetrics(models.Model):
         )
 
 
+class GuestRestaurantWindowCategoryMetrics(models.Model):
+    """
+    Оконные метрики гостя по заведению и фокусной категории.
+
+    Слой используется в режиме workbench с выбранной категорией, где метрики
+    рассчитываются по заказам, содержащим эту категорию.
+    """
+
+    as_of_date = models.DateField(db_index=True)
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.CASCADE,
+        related_name="window_category_metrics",
+    )
+    department_id = models.CharField(
+        max_length=64,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Идентификатор заведения (Department.Id) из OLAP.",
+    )
+    window_days = models.PositiveIntegerField(
+        db_index=True,
+        help_text="Размер окна в днях (например 7/14/30/60/180).",
+    )
+    focus_category = models.ForeignKey(
+        "FocusCategory",
+        on_delete=models.RESTRICT,
+        related_name="window_category_metrics",
+    )
+
+    orders_count = models.PositiveIntegerField(default=0)
+    visits_count = models.PositiveIntegerField(default=0)
+
+    avg_check_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sum_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    sum_focus_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_in_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_out_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    last_visit_at = models.DateField(blank=True, null=True, db_index=True)
+    rating_score = models.DecimalField(max_digits=14, decimal_places=2, default=0, db_index=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_restaurant_window_category_metrics"
+        verbose_name = "Оконная метрика гостя по категории"
+        verbose_name_plural = "Оконные метрики гостей по категориям"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["as_of_date", "guest", "department_id", "window_days", "focus_category"],
+                name="grwcm_uniq_asof_guest_dept_win_focus",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["department_id", "window_days", "focus_category", "rating_score"],
+                name="grwcm_dept_win_focus_rating_idx",
+            ),
+            models.Index(fields=["guest", "window_days", "as_of_date"], name="grwcm_guest_window_date_idx"),
+            models.Index(
+                fields=["focus_category", "as_of_date", "window_days"],
+                name="grwcm_focus_date_window_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"grwcm={self.id} guest={self.guest_id} dept={self.department_id} "
+            f"focus={self.focus_category_id} window={self.window_days} as_of={self.as_of_date}"
+        )
+
+
 class GuestWorkbenchFilterPreset(models.Model):
     """
     Сохранённый пресет фильтров рабочего экрана гостей (workbench).

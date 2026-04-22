@@ -15,6 +15,7 @@ from .models import (
     Guest,
     GuestBotBinding,
     GuestRestaurantDailyCategoryFact,
+    GuestRestaurantWindowCategoryMetrics,
     GuestRestaurantWindowMetrics,
     GuestCategory,
     Mailing,
@@ -519,6 +520,33 @@ class GuestRestaurantWindowMetricsAdmin(admin.ModelAdmin):
     list_filter = ("as_of_date", "window_days", "department_id")
     search_fields = ("guest__phone", "department_id")
     raw_id_fields = ("guest",)
+    readonly_fields = ("updated_at",)
+    list_per_page = 100
+
+
+@admin.register(GuestRestaurantWindowCategoryMetrics)
+class GuestRestaurantWindowCategoryMetricsAdmin(admin.ModelAdmin):
+    """
+    Оконные агрегаты гостя в разрезе фокусной категории.
+    """
+
+    list_display = (
+        "id",
+        "as_of_date",
+        "guest_id",
+        "department_id",
+        "focus_category",
+        "window_days",
+        "orders_count",
+        "visits_count",
+        "avg_check_net",
+        "rating_score",
+        "last_visit_at",
+        "updated_at",
+    )
+    list_filter = ("as_of_date", "window_days", "department_id", "focus_category")
+    search_fields = ("guest__phone", "department_id", "focus_category__code", "focus_category__name")
+    raw_id_fields = ("guest", "focus_category")
     readonly_fields = ("updated_at",)
     list_per_page = 100
 
