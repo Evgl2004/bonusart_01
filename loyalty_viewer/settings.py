@@ -708,6 +708,40 @@ OLAP_WINDOW_METRICS_SCHEDULE_DEPARTMENT_ID = str(
     os.getenv("OLAP_WINDOW_METRICS_SCHEDULE_DEPARTMENT_ID", "") or ""
 ).strip()
 
+# Флаг режима category-window метрик в guests/workbench.
+WORKBENCH_CATEGORY_WINDOW_METRICS_V2 = _env_bool(
+    "WORKBENCH_CATEGORY_WINDOW_METRICS_V2",
+    False,
+)
+
+# Плановый пересчёт category-window метрик.
+OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_ENABLED = _env_bool(
+    "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_ENABLED",
+    False,
+)
+OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_MINUTES = _env_int(
+    "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_MINUTES",
+    60,
+    min_value=1,
+)
+OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_AS_OF_LAG_DAYS = _env_int(
+    "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_AS_OF_LAG_DAYS",
+    0,
+    min_value=0,
+)
+OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_BATCH_SIZE = _env_int(
+    "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_BATCH_SIZE",
+    2000,
+    min_value=100,
+)
+OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_WINDOW_DAYS = str(
+    os.getenv("OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_WINDOW_DAYS", "7,14,30,60,180")
+    or "7,14,30,60,180"
+).strip()
+OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_DEPARTMENT_ID = str(
+    os.getenv("OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_DEPARTMENT_ID", "") or ""
+).strip()
+
 # Плановый контрольный pull из OLAP (по Department.Id и диапазону business_date).
 OLAP_CONTROL_PULL_SCHEDULE_ENABLED = _env_bool(
     "OLAP_CONTROL_PULL_SCHEDULE_ENABLED",
@@ -789,6 +823,14 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_window_metrics_hourly", None)
+
+    if OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_ENABLED:
+        schedule_map["run_window_category_metrics_hourly"] = {
+            "func": "guests.tasks.run_window_category_metrics_scheduled_task",
+            "minutes": OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_window_category_metrics_hourly", None)
 
     if OLAP_CONTROL_PULL_SCHEDULE_ENABLED:
         schedule_map["run_olap_control_pull_daily"] = {

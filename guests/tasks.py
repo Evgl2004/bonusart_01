@@ -385,6 +385,62 @@ def run_window_metrics_scheduled_task() -> int:
         return 0
 
 
+def run_window_category_metrics_scheduled_task() -> int:
+    """
+    Scheduled one-shot rebuild of category-window metrics.
+    """
+    if not bool(getattr(settings, "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_ENABLED", False)):
+        logger.info(
+            "Window category metrics (schedule): disabled by OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_ENABLED."
+        )
+        return 0
+
+    as_of_lag_days = max(
+        0,
+        int(getattr(settings, "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_AS_OF_LAG_DAYS", 0)),
+    )
+    as_of_date = timezone.localdate() - timedelta(days=as_of_lag_days)
+    batch_size = max(
+        100,
+        int(getattr(settings, "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_BATCH_SIZE", 2000)),
+    )
+
+    window_days = _parse_int_csv(
+        str(getattr(settings, "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_WINDOW_DAYS", "7,14,30,60,180"))
+    )
+    if not window_days:
+        window_days = [7, 14, 30, 60, 180]
+
+    call_options = {
+        "once": True,
+        "as_of_date": as_of_date.isoformat(),
+        "window_days": [str(value) for value in window_days],
+        "batch_size": batch_size,
+    }
+
+    department_id = str(
+        getattr(settings, "OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_DEPARTMENT_ID", "") or ""
+    ).strip()
+    if department_id:
+        call_options["department_id"] = department_id
+
+    try:
+        call_command("sync_window_category_metrics", **call_options)
+        logger.info(
+            "Window category metrics (schedule): completed as_of=%s windows=%s.",
+            as_of_date.isoformat(),
+            ",".join(str(value) for value in window_days),
+        )
+        return 1
+    except Exception as err:
+        logger.exception(
+            "Window category metrics (schedule): failed as_of=%s: %s",
+            as_of_date.isoformat(),
+            err,
+        )
+        return 0
+
+
 def run_olap_control_pull_scheduled_task() -> int:
     """
     Плановая контрольная дозагрузка OLAP-журнала по прямому OLAP-срезу.

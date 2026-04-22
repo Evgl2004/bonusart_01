@@ -234,6 +234,37 @@ class OlapDerivedScheduleTasksTests(SimpleTestCase):
             department_id="dept-77",
         )
 
+    @override_settings(OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_ENABLED=False)
+    @patch("guests.tasks.call_command")
+    def test_window_category_metrics_task_returns_zero_when_disabled(self, mocked_call_command):
+        result = tasks.run_window_category_metrics_scheduled_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_ENABLED=True,
+        OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_AS_OF_LAG_DAYS=2,
+        OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_BATCH_SIZE=1400,
+        OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_WINDOW_DAYS="7,30",
+        OLAP_WINDOW_CATEGORY_METRICS_SCHEDULE_DEPARTMENT_ID="dept-99",
+    )
+    @patch("guests.tasks.timezone.localdate")
+    @patch("guests.tasks.call_command")
+    def test_window_category_metrics_task_calls_sync_once(self, mocked_call_command, mocked_localdate):
+        mocked_localdate.return_value = date(2026, 3, 23)
+
+        result = tasks.run_window_category_metrics_scheduled_task()
+
+        self.assertEqual(result, 1)
+        mocked_call_command.assert_called_once_with(
+            "sync_window_category_metrics",
+            once=True,
+            as_of_date="2026-03-21",
+            window_days=["7", "30"],
+            batch_size=1400,
+            department_id="dept-99",
+        )
+
     @override_settings(OLAP_CONTROL_PULL_SCHEDULE_ENABLED=False)
     @patch("guests.tasks.build_iiko_olap_client_from_settings")
     def test_control_pull_task_returns_zero_when_disabled(self, mocked_builder):

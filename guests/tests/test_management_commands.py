@@ -955,6 +955,103 @@ class SyncWindowMetricsCommandTests(SimpleTestCase):
         self.assertTrue(command.should_stop)
 
 
+class SyncWindowCategoryMetricsCommandTests(SimpleTestCase):
+    """
+    Тесты команды sync_window_category_metrics.
+    """
+
+    def test_handle_once_calls_rebuild_service(self):
+        """
+        В режиме --once команда должна вызвать сервис пересчёта category-window метрик.
+        """
+        output = io.StringIO()
+        fake_stats = SimpleNamespace(
+            as_of_date="2026-03-18",
+            windows_processed=2,
+            scanned_raw_lines=120,
+            grouped_rows=34,
+            created_rows=21,
+            updated_rows=8,
+            deleted_rows=3,
+            missing_order_facts=2,
+        )
+
+        with (
+            patch("guests.management.commands.sync_window_category_metrics.signal.signal"),
+            patch(
+                "guests.management.commands.sync_window_category_metrics.rebuild_window_category_metrics_from_order_facts",
+                return_value=fake_stats,
+            ) as mocked_rebuild,
+        ):
+            call_command(
+                "sync_window_category_metrics",
+                "--once",
+                "--as-of-date=2026-03-18",
+                "--window-days=7",
+                "--window-days=30",
+                "--department-id=dept-11",
+                "--batch-size=1700",
+                stdout=output,
+            )
+
+        mocked_rebuild.assert_called_once()
+        kwargs = mocked_rebuild.call_args.kwargs
+        self.assertEqual(str(kwargs["as_of_date"]), "2026-03-18")
+        self.assertEqual(kwargs["window_days"], [7, 30])
+        self.assertEqual(kwargs["department_id"], "dept-11")
+        self.assertEqual(kwargs["batch_size"], 1700)
+
+    def test_handle_once_backfill_range_calls_service_for_each_day(self):
+        """
+        При передаче --business-date-from/--business-date-to сервис должен
+        вызываться для каждой даты диапазона включительно.
+        """
+        output = io.StringIO()
+        fake_stats = SimpleNamespace(
+            as_of_date="2026-03-18",
+            windows_processed=1,
+            scanned_raw_lines=0,
+            grouped_rows=0,
+            created_rows=0,
+            updated_rows=0,
+            deleted_rows=0,
+            missing_order_facts=0,
+        )
+
+        with (
+            patch("guests.management.commands.sync_window_category_metrics.signal.signal"),
+            patch(
+                "guests.management.commands.sync_window_category_metrics.rebuild_window_category_metrics_from_order_facts",
+                return_value=fake_stats,
+            ) as mocked_rebuild,
+        ):
+            call_command(
+                "sync_window_category_metrics",
+                "--once",
+                "--business-date-from=2026-03-17",
+                "--business-date-to=2026-03-18",
+                "--window-days=14",
+                stdout=output,
+            )
+
+        self.assertEqual(mocked_rebuild.call_count, 2)
+        first_as_of = mocked_rebuild.call_args_list[0].kwargs["as_of_date"]
+        second_as_of = mocked_rebuild.call_args_list[1].kwargs["as_of_date"]
+        self.assertEqual(str(first_as_of), "2026-03-17")
+        self.assertEqual(str(second_as_of), "2026-03-18")
+
+    def test_signal_handler_sets_stop_flag(self):
+        """
+        Обработчик сигнала должен выставлять флаг should_stop.
+        """
+        from guests.management.commands.sync_window_category_metrics import Command
+
+        command = Command()
+        self.assertFalse(command.should_stop)
+        command._signal_handler(signal.SIGTERM, None)
+        self.assertTrue(command.should_stop)
+
+
 class RunWebhookWorkerCommandTests(SimpleTestCase):
     """
     Тесты команды run_webhook_worker.
