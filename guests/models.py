@@ -973,7 +973,7 @@ class GuestRestaurantWindowCategoryMetrics(models.Model):
         indexes = [
             models.Index(
                 fields=["department_id", "window_days", "focus_category", "rating_score"],
-                name="grwcm_dept_win_focus_rating_idx",
+                name="grwcm_dept_win_focus_rt_idx",
             ),
             models.Index(fields=["guest", "window_days", "as_of_date"], name="grwcm_guest_window_date_idx"),
             models.Index(
