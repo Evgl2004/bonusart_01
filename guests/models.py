@@ -797,6 +797,58 @@ class OrderFact(models.Model):
         return f"order_fact={self.id} order={self.order_number} date={self.business_date}"
 
 
+class GuestRestaurantDailyOrderFact(models.Model):
+    """
+    Дневной агрегат по гостю и заведению на основе полных чеков.
+
+    Таблица служит быстрым промежуточным слоем для пересчёта общего
+    `GuestRestaurantWindowMetrics` без сканирования всего `order_fact`.
+    """
+
+    business_date = models.DateField(db_index=True)
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.CASCADE,
+        related_name="daily_order_facts",
+    )
+    department_id = models.CharField(
+        max_length=64,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Идентификатор заведения (Department.Id) из OLAP.",
+    )
+
+    orders_count = models.PositiveIntegerField(default=0)
+    sum_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_in_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    bonus_out_sum = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_restaurant_daily_order_fact"
+        verbose_name = "Дневной факт гостя по полным чекам"
+        verbose_name_plural = "Дневные факты гостей по полным чекам"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_date", "guest", "department_id"],
+                name="grdof_uniq_day_guest_dept",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["guest", "department_id", "business_date"], name="grdof_g_dep_date_idx"),
+            models.Index(fields=["department_id", "business_date"], name="grdof_dep_date_idx"),
+            models.Index(fields=["business_date", "department_id"], name="grdof_date_dep_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"grdof={self.id} guest={self.guest_id} dept={self.department_id} "
+            f"date={self.business_date}"
+        )
+
+
 class GuestRestaurantDailyCategoryFact(models.Model):
     """
     Дневной агрегат по гостю, заведению и фокусной категории.
@@ -850,6 +902,76 @@ class GuestRestaurantDailyCategoryFact(models.Model):
     def __str__(self):
         return (
             f"grdcf={self.id} guest={self.guest_id} dept={self.department_id} "
+            f"focus={self.focus_category_id} date={self.business_date}"
+        )
+
+
+class GuestOrderFocusFact(models.Model):
+    """
+    Связь заказа и фокусной категории (order-level мост).
+
+    Каждая строка описывает факт присутствия категории в конкретном заказе.
+    Используется для быстрого расчёта category-window метрик без полного
+    пересканирования сырого OLAP-слоя на каждый запуск.
+    """
+
+    business_date = models.DateField(db_index=True)
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="order_focus_facts",
+    )
+    department_id = models.CharField(
+        max_length=64,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Идентификатор заведения (Department.Id) из OLAP.",
+    )
+
+    order_number = models.BigIntegerField(db_index=True)
+    uniq_order_id = models.CharField(
+        max_length=100,
+        default="",
+        blank=True,
+        db_index=True,
+        help_text="Уникальный идентификатор заказа из OLAP (если передан).",
+    )
+    focus_category = models.ForeignKey(
+        "FocusCategory",
+        on_delete=models.RESTRICT,
+        related_name="order_focus_facts",
+    )
+
+    items_count = models.PositiveIntegerField(default=0)
+    sum_focus_net = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_order_focus_fact"
+        verbose_name = "Факт заказа по фокусной категории"
+        verbose_name_plural = "Факты заказов по фокусным категориям"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["business_date", "department_id", "order_number", "uniq_order_id", "focus_category"],
+                name="goff_uniq_order_focus",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["focus_category", "business_date", "department_id"], name="goff_f_cat_date_dep"),
+            models.Index(fields=["business_date", "department_id", "focus_category"], name="goff_date_dep_f_cat"),
+            models.Index(fields=["guest", "business_date", "focus_category"], name="goff_guest_date_focus"),
+            models.Index(
+                fields=["business_date", "department_id", "order_number", "uniq_order_id"],
+                name="goff_order_join_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"goff={self.id} order={self.order_number} dept={self.department_id} "
             f"focus={self.focus_category_id} date={self.business_date}"
         )
 

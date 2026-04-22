@@ -14,7 +14,9 @@ from .models import (
     FocusCategoryNomenclatureResolved,
     Guest,
     GuestBotBinding,
+    GuestOrderFocusFact,
     GuestRestaurantDailyCategoryFact,
+    GuestRestaurantDailyOrderFact,
     GuestRestaurantWindowCategoryMetrics,
     GuestRestaurantWindowMetrics,
     GuestCategory,
@@ -493,6 +495,62 @@ class GuestRestaurantDailyCategoryFactAdmin(admin.ModelAdmin):
     )
     list_filter = ("business_date", "department_id", "focus_category")
     search_fields = ("guest__phone", "department_id", "focus_category__code", "focus_category__name")
+    raw_id_fields = ("guest", "focus_category")
+    readonly_fields = ("updated_at",)
+    list_per_page = 100
+
+
+@admin.register(GuestRestaurantDailyOrderFact)
+class GuestRestaurantDailyOrderFactAdmin(admin.ModelAdmin):
+    """
+    Дневной слой по полным чекам (гость/заведение/дата).
+    """
+
+    list_display = (
+        "id",
+        "business_date",
+        "guest_id",
+        "department_id",
+        "orders_count",
+        "sum_net",
+        "bonus_in_sum",
+        "bonus_out_sum",
+        "updated_at",
+    )
+    list_filter = ("business_date", "department_id")
+    search_fields = ("guest__phone", "department_id")
+    raw_id_fields = ("guest",)
+    readonly_fields = ("updated_at",)
+    list_per_page = 100
+
+
+@admin.register(GuestOrderFocusFact)
+class GuestOrderFocusFactAdmin(admin.ModelAdmin):
+    """
+    Order-level мост заказа и фокусной категории.
+    """
+
+    list_display = (
+        "id",
+        "business_date",
+        "guest_id",
+        "department_id",
+        "order_number",
+        "uniq_order_id",
+        "focus_category",
+        "items_count",
+        "sum_focus_net",
+        "updated_at",
+    )
+    list_filter = ("business_date", "department_id", "focus_category")
+    search_fields = (
+        "guest__phone",
+        "department_id",
+        "order_number",
+        "uniq_order_id",
+        "focus_category__code",
+        "focus_category__name",
+    )
     raw_id_fields = ("guest", "focus_category")
     readonly_fields = ("updated_at",)
     list_per_page = 100
