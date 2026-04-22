@@ -15,12 +15,14 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
+from django.conf import settings
 from django.db.models import Avg, Count, Max, Sum
 from django.db.models.functions import Coalesce
 
 from guests.models import (
     FocusCategory,
     GuestRestaurantDailyCategoryFact,
+    GuestRestaurantWindowCategoryMetrics,
     GuestWorkbenchFilterPreset,
     GuestRestaurantWindowMetrics,
     OrderFact,
@@ -206,7 +208,7 @@ def _build_representative_rows(
     base_scope,
     selected_window_days: int,
     allowed_guest_keys: set[tuple[int, str]] | None = None,
-) -> list[GuestRestaurantWindowMetrics]:
+) -> list[Any]:
     """
     Выбирает по одной «лучшей» строке метрик на пару (гость, заведение)
     с fallback по окнам: выбранное окно -> 180 -> 60 -> 30 -> 14 -> 7.
@@ -215,7 +217,7 @@ def _build_representative_rows(
     window_rank = {window: idx for idx, window in enumerate(unique_windows)}
     default_rank = len(unique_windows) + 1
 
-    representative_by_key: dict[tuple[int, str], GuestRestaurantWindowMetrics] = {}
+    representative_by_key: dict[tuple[int, str], Any] = {}
     for row in base_scope.select_related("guest"):
         key = (int(row.guest_id), _normalize_department_id(row.department_id))
         if allowed_guest_keys is not None and key not in allowed_guest_keys:
@@ -233,7 +235,7 @@ def _build_representative_rows(
 
 
 def _row_matches_complex_filters(
-    row: GuestRestaurantWindowMetrics,
+    row: Any,
     normalized_filters: list[dict[str, Any]],
 ) -> bool:
     """
@@ -337,11 +339,57 @@ def build_guest_workbench_payload(
     if selected_department_id:
         base_scope = base_scope.filter(department_id=selected_department_id)
 
-    work_scope = base_scope.filter(window_days=selected_window_days).select_related("guest")
+    base_segmentation, base_segment_by_key = _build_segmentation_state(
+        base_scope, allowed_guest_keys=None
+    )
+    base_segment_focus_matrix, _ = _build_segment_focus_matrix(
+        as_of_date=target_as_of,
+        selected_window_days=selected_window_days,
+        selected_department_id=selected_department_id,
+        segment_by_key=base_segment_by_key,
+        segment_totals=base_segmentation,
+        allowed_guest_keys=None,
+    )
+    initial_focus_options = [
+        {
+            "code": (col.get("focus_category_code") or "").strip(),
+            "name": (col.get("focus_category_name") or "").strip(),
+        }
+        for col in base_segment_focus_matrix.get("columns", [])
+        if (col.get("focus_category_code") or "").strip()
+    ]
+    initial_focus_codes = {item["code"] for item in initial_focus_options}
+    selected_focus_category_code = (
+        selected_focus_category_code_raw if selected_focus_category_code_raw in initial_focus_codes else ""
+    )
+    selected_focus_category_id: int | None = None
+    if selected_focus_category_code:
+        selected_focus_category_id = (
+            FocusCategory.objects.filter(code=selected_focus_category_code, is_enabled=True)
+            .values_list("id", flat=True)
+            .first()
+        )
+        if selected_focus_category_id is None:
+            selected_focus_category_code = ""
+
+    category_window_enabled = bool(getattr(settings, "WORKBENCH_CATEGORY_WINDOW_METRICS_V2", False))
+    use_category_window_metrics = bool(
+        category_window_enabled and selected_focus_category_code and selected_focus_category_id
+    )
+    active_metrics_scope = base_scope
+    if use_category_window_metrics and selected_focus_category_id is not None:
+        active_metrics_scope = GuestRestaurantWindowCategoryMetrics.objects.filter(
+            as_of_date=target_as_of,
+            focus_category_id=selected_focus_category_id,
+        )
+        if selected_department_id:
+            active_metrics_scope = active_metrics_scope.filter(department_id=selected_department_id)
+
+    work_scope = active_metrics_scope.filter(window_days=selected_window_days).select_related("guest")
     work_scope = _apply_complex_filters(work_scope, normalized_complex_filters)
 
     allowed_guest_keys = _collect_allowed_guest_keys_by_complex_filters(
-        base_scope=base_scope,
+        base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
         normalized_filters=normalized_complex_filters,
     )
@@ -407,11 +455,21 @@ def build_guest_workbench_payload(
         if (col.get("focus_category_code") or "").strip()
     ]
     focus_codes = {item["code"] for item in focus_category_options}
-    selected_focus_category_code = (
-        selected_focus_category_code_raw if selected_focus_category_code_raw in focus_codes else ""
-    )
+    if selected_focus_category_code and selected_focus_category_code not in focus_codes:
+        selected_focus_name = (
+            FocusCategory.objects.filter(id=selected_focus_category_id).values_list("name", flat=True).first()
+            if selected_focus_category_id
+            else ""
+        )
+        focus_category_options.append(
+            {
+                "code": selected_focus_category_code,
+                "name": str(selected_focus_name or selected_focus_category_code).strip(),
+            }
+        )
+
     selected_guests = _build_selected_guests_rows(
-        base_scope=base_scope,
+        base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
         segment_by_key=segment_by_key,
         focus_guest_keys_by_code=focus_guest_keys_by_code,
@@ -433,6 +491,12 @@ def build_guest_workbench_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": focus_category_options,
+            "metrics_layer": "category_window" if use_category_window_metrics else "window",
+            "metrics_layer_name": (
+                "Метрики по выбранной категории"
+                if use_category_window_metrics
+                else "Общие метрики по окну"
+            ),
             "complex_filters": normalized_complex_filters,
             "complex_filter_fields": complex_filter_options["fields"],
             "complex_filter_operators": complex_filter_options["operators"],
@@ -486,6 +550,8 @@ def _build_empty_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": [],
+            "metrics_layer": "window",
+            "metrics_layer_name": "Общие метрики по окну",
             "complex_filters": normalized_complex_filters,
             "complex_filter_fields": complex_filter_options["fields"],
             "complex_filter_operators": complex_filter_options["operators"],
@@ -909,7 +975,7 @@ def _build_selected_guests_rows(
     }
 
 
-def _serialize_metric_row(row: GuestRestaurantWindowMetrics) -> dict[str, Any]:
+def _serialize_metric_row(row: Any) -> dict[str, Any]:
     """
     Сериализует строку оконной метрики для UI-таблиц.
     """

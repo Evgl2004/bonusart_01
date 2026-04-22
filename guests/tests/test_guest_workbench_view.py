@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from guests.models import (
@@ -15,6 +15,7 @@ from guests.models import (
     Guest,
     GuestWorkbenchFilterPreset,
     GuestRestaurantDailyCategoryFact,
+    GuestRestaurantWindowCategoryMetrics,
     GuestRestaurantWindowMetrics,
     Mailing,
     MailingGuest,
@@ -299,6 +300,106 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(len(payload["filters"]["complex_filters"]), 0)
         self.assertEqual(payload["cards"]["guests_total"], 2)
         self.assertEqual(payload["selected_guests"]["total"], 2)
+
+    @override_settings(WORKBENCH_CATEGORY_WINDOW_METRICS_V2=False)
+    def test_focus_selected_uses_general_window_metrics_when_flag_disabled(self):
+        """
+        При выключенном флаге даже с выбранной категорией должен работать режим A.
+        """
+        self._create_category_window_metric(
+            guest=self.guest_1,
+            focus=self.focus_beer,
+            orders_count=1,
+            visits_count=1,
+            sum_net="300.00",
+            avg_check_net="300.00",
+            rating_score="8.00",
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "focus_category_code": "beer_ermolaev",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["metrics_layer"], "window")
+        self.assertEqual(payload["cards"]["orders_total"], 3)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["orders_count"], 3)
+
+    @override_settings(WORKBENCH_CATEGORY_WINDOW_METRICS_V2=True)
+    def test_focus_selected_uses_category_window_metrics_when_flag_enabled(self):
+        """
+        При включенном флаге и выбранной категории должен работать режим B.
+        """
+        self._create_category_window_metric(
+            guest=self.guest_1,
+            focus=self.focus_beer,
+            orders_count=1,
+            visits_count=1,
+            sum_net="300.00",
+            avg_check_net="300.00",
+            rating_score="8.00",
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "focus_category_code": "beer_ermolaev",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["metrics_layer"], "category_window")
+        self.assertEqual(payload["cards"]["orders_total"], 1)
+        self.assertEqual(payload["cards"]["net_total"], "300,00")
+        self.assertEqual(payload["selected_guests"]["rows"][0]["orders_count"], 1)
+
+    @override_settings(WORKBENCH_CATEGORY_WINDOW_METRICS_V2=True)
+    def test_complex_filters_are_applied_to_category_window_layer(self):
+        """
+        В режиме B сложные фильтры должны применяться к category-window метрикам.
+        """
+        self._create_category_window_metric(
+            guest=self.guest_1,
+            focus=self.focus_beer,
+            orders_count=1,
+            visits_count=1,
+            sum_net="300.00",
+            avg_check_net="300.00",
+            rating_score="8.00",
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "focus_category_code": "beer_ermolaev",
+                "cf_field": ["orders_count"],
+                "cf_op": ["eq"],
+                "cf_value": ["1"],
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["metrics_layer"], "category_window")
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["orders_count"], 1)
 
     def test_lost_segment_guest_visible_even_without_row_in_selected_window(self):
         """
@@ -604,4 +705,35 @@ class GuestsWorkbenchViewTests(TestCase):
             source_type=FocusCategory.SourceType.OLAP_DIRECT,
             olap_category=olap_category,
             is_enabled=True,
+        )
+
+    def _create_category_window_metric(
+        self,
+        *,
+        guest: Guest,
+        focus: FocusCategory,
+        orders_count: int,
+        visits_count: int,
+        sum_net: str,
+        avg_check_net: str,
+        rating_score: str,
+    ) -> None:
+        """
+        Создаёт строку category-window метрик для проверок режима B.
+        """
+        GuestRestaurantWindowCategoryMetrics.objects.create(
+            as_of_date=self.as_of_date,
+            guest=guest,
+            department_id=self.department_id,
+            window_days=30,
+            focus_category=focus,
+            orders_count=orders_count,
+            visits_count=visits_count,
+            sum_net=Decimal(sum_net),
+            sum_focus_net=Decimal(sum_net),
+            avg_check_net=Decimal(avg_check_net),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal(rating_score),
+            last_visit_at=self.as_of_date,
         )

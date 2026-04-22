@@ -304,6 +304,10 @@
   </div>
 </template>
 
+<div class="alert alert-secondary border py-2 small mb-3">
+  Режим расчёта метрик: <strong>{{ payload.filters.metrics_layer_name }}</strong>
+</div>
+
 {% if selected_segment_code or selected_focus_category_code or selected_department_id or payload.filters.complex_filters %}
   <div id="wb-active-filters" class="alert alert-info border py-2 small mb-4">
     Активные фильтры:
