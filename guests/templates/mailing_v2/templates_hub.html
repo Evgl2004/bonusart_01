@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки v2: Шаблоны{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Рассылки v2: шаблоны</h1>
+      <p class="text-muted mb-0">Bridge-экран. Использует текущий backend CRUD шаблонов.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-primary" href="{% url 'message_templates_create' %}">Создать шаблон</a>
+      <a class="btn btn-outline-secondary" href="{% url 'message_templates' %}">Legacy список</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Шаблонов всего</div>
+          <div class="h3 mb-0">{{ templates_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Активных шаблонов</div>
+          <div class="h3 mb-0">{{ templates_active }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <h2 class="h6 mb-0">Последние шаблоны</h2>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'message_templates' %}">Открыть legacy</a>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>ID</th>
+              <th>Название</th>
+              <th>Активен</th>
+              <th>Кампаний</th>
+              <th>Сценариев</th>
+              <th>Обновлен</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in templates %}
+              <tr>
+                <td>{{ row.id }}</td>
+                <td>{{ row.name }}</td>
+                <td>
+                  {% if row.is_active %}
+                    <span class="badge text-bg-success">да</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">нет</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.mailings_total }}</td>
+                <td>{{ row.scenarios_total }}</td>
+                <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{% url 'message_templates_detail' row.id %}">Открыть</a>
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-4">Шаблонов пока нет.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

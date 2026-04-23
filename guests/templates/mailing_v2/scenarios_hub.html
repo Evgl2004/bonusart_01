@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки v2: Автосценарии{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Рассылки v2: автосценарии</h1>
+      <p class="text-muted mb-0">Bridge-экран для контроля сценарных отправок.</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" href="/admin/guests/notificationscenario/">Открыть admin сценариев</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад в hub</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Сценариев всего</div>
+          <div class="h3 mb-0">{{ scenarios_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Сценариев активных</div>
+          <div class="h3 mb-0">{{ scenarios_active }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Список сценариев</h2>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Код</th>
+              <th>Название</th>
+              <th>Триггер</th>
+              <th>Шаблон</th>
+              <th>Активен</th>
+              <th>Событий</th>
+              <th>Обновлен</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in scenarios %}
+              <tr>
+                <td><code>{{ row.code }}</code></td>
+                <td>{{ row.name }}</td>
+                <td>{{ row.get_trigger_type_display }}</td>
+                <td>
+                  {% if row.template %}
+                    {{ row.template.name }}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.is_active %}
+                    <span class="badge text-bg-success">да</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">нет</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.events_total }}</td>
+                <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-4">Сценариев пока нет.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

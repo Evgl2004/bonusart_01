@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки v2{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Рассылки v2</h1>
+      <p class="text-muted mb-0">
+        Единая точка входа в контур рассылок. Текущий этап: bridge с существующими рабочими формами.
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-primary" href="{% url 'mailings_create' %}">Создать кампанию</a>
+      <a class="btn btn-outline-primary" href="{% url 'message_templates_create' %}">Создать шаблон</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Кампаний всего</div>
+          <div class="h3 mb-1">{{ kpi.campaigns_total }}</div>
+          <div class="small text-muted">Активных: {{ kpi.campaigns_active }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Шаблонов (активных)</div>
+          <div class="h3 mb-1">{{ kpi.templates_active }}</div>
+          <div class="small text-muted">Сценариев (активных): {{ kpi.scenarios_active }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Очередь dispatch</div>
+          <div class="h3 mb-1">{{ kpi.dispatch_pending }}</div>
+          <div class="small text-muted">Всего задач: {{ kpi.dispatch_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Ошибки dispatch</div>
+          <div class="h3 mb-1">{{ kpi.dispatch_failed }}</div>
+          <div class="small text-muted">Успешно: {{ kpi.dispatch_done }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Флоу и переходы</h2>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        {% for section in flow_sections %}
+          <div class="col-12 col-lg-6">
+            <div class="border rounded p-3 h-100">
+              <div class="fw-semibold mb-1">{{ section.title }}</div>
+              <div class="text-muted small mb-3">{{ section.description }}</div>
+              <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-sm btn-primary" href="{{ section.primary_url }}">{{ section.primary_label }}</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ section.secondary_url }}">{{ section.secondary_label }}</a>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <h2 class="h6 mb-0">Последние кампании</h2>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings' %}">Полный список</a>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>ID</th>
+              <th>Название</th>
+              <th>Шаблон</th>
+              <th>Активна</th>
+              <th>Получатели</th>
+              <th>Done</th>
+              <th>Error</th>
+              <th>Обновлена</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in campaigns %}
+              <tr>
+                <td>{{ row.id }}</td>
+                <td>{{ row.name }}</td>
+                <td>
+                  {% if row.template %}
+                    {{ row.template.name }}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.is_active %}
+                    <span class="badge text-bg-success">да</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">нет</span>
+                  {% endif %}
+                </td>
+                <td>{{ row.recipients_total }}</td>
+                <td>{{ row.recipients_done }}</td>
+                <td>{{ row.recipients_error }}</td>
+                <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{% url 'mailing_edit' row.id %}">Открыть</a>
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="9" class="text-center text-muted py-4">Кампаний пока нет.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

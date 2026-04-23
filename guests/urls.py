@@ -27,6 +27,12 @@ from .views_virtual_categories_workbench import VirtualCategoriesWorkbenchView
 from .views_navigation import (
     ReportsWorkbenchView,
 )
+from .views_mailings_v2 import (
+    MailingsV2CampaignsHubView,
+    MailingsV2MonitorView,
+    MailingsV2ScenariosView,
+    MailingsV2TemplatesView,
+)
 
 
 urlpatterns = [
@@ -40,6 +46,10 @@ urlpatterns = [
     path("virtual-categories/", VirtualCategoriesWorkbenchView.as_view(), name="virtual_categories"),
     path("focus-categories/actions/", FocusCategoriesActionsView.as_view(), name="focus_categories_actions"),
     path("reports/", ReportsWorkbenchView.as_view(), name="reports"),
+    path("mailings-v2/campaigns/", MailingsV2CampaignsHubView.as_view(), name="mailings_v2_campaigns"),
+    path("mailings-v2/templates/", MailingsV2TemplatesView.as_view(), name="mailings_v2_templates"),
+    path("mailings-v2/monitor/", MailingsV2MonitorView.as_view(), name="mailings_v2_monitor"),
+    path("mailings-v2/scenarios/", MailingsV2ScenariosView.as_view(), name="mailings_v2_scenarios"),
 
     # Гости.
     path("guests/workbench/", GuestsWorkbenchView.as_view(), name="guests_workbench"),
