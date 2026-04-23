@@ -7,13 +7,36 @@
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Рассылки v2: шаблоны</h1>
-      <p class="text-muted mb-0">Bridge-экран. Использует текущий backend CRUD шаблонов.</p>
+      <p class="text-muted mb-0">Список и управление шаблонами в новом контуре.</p>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-primary" href="{% url 'message_templates_create' %}">Создать шаблон</a>
+      <a class="btn btn-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
       <a class="btn btn-outline-secondary" href="{% url 'message_templates' %}">Legacy список</a>
     </div>
   </div>
+
+  <form method="get" class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-md-6">
+          <label class="form-label mb-1">Поиск</label>
+          <input type="text" class="form-control" name="q" value="{{ query }}" placeholder="Название/описание/текст">
+        </div>
+        <div class="col-12 col-md-3">
+          <div class="form-check mt-4">
+            <input class="form-check-input" type="checkbox" value="1" id="showInactive" name="show_inactive" {% if show_inactive %}checked{% endif %}>
+            <label class="form-check-label" for="showInactive">
+              Показывать неактивные
+            </label>
+          </div>
+        </div>
+        <div class="col-12 col-md-3 d-flex gap-2">
+          <button class="btn btn-outline-primary w-100" type="submit">Применить</button>
+          <a class="btn btn-outline-secondary w-100" href="{% url 'mailings_v2_templates' %}">Сбросить</a>
+        </div>
+      </div>
+    </div>
+  </form>
 
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-6">
@@ -37,7 +60,7 @@
   <div class="card border-0 shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
       <h2 class="h6 mb-0">Последние шаблоны</h2>
-      <a class="btn btn-sm btn-outline-primary" href="{% url 'message_templates' %}">Открыть legacy</a>
+      <span class="text-muted small">Показано: {{ templates|length }}</span>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -69,7 +92,7 @@
                 <td>{{ row.scenarios_total }}</td>
                 <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
                 <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="{% url 'message_templates_detail' row.id %}">Открыть</a>
+                  <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_detail' row.id %}">Открыть</a>
                 </td>
               </tr>
             {% empty %}

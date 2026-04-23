@@ -34,6 +34,9 @@ from .views_mailings_v2 import (
     MailingsV2CampaignsHubView,
     MailingsV2MonitorView,
     MailingsV2ScenariosView,
+    MailingsV2TemplateCreateView,
+    MailingsV2TemplateDetailView,
+    MailingsV2TemplateUpdateView,
     MailingsV2TemplatesView,
 )
 
@@ -58,6 +61,13 @@ urlpatterns = [
         name="mailings_v2_campaigns_audience",
     ),
     path("mailings-v2/templates/", MailingsV2TemplatesView.as_view(), name="mailings_v2_templates"),
+    path("mailings-v2/templates/new/", MailingsV2TemplateCreateView.as_view(), name="mailings_v2_templates_new"),
+    path("mailings-v2/templates/<int:pk>/", MailingsV2TemplateDetailView.as_view(), name="mailings_v2_templates_detail"),
+    path(
+        "mailings-v2/templates/<int:pk>/edit/",
+        MailingsV2TemplateUpdateView.as_view(),
+        name="mailings_v2_templates_edit",
+    ),
     path("mailings-v2/monitor/", MailingsV2MonitorView.as_view(), name="mailings_v2_monitor"),
     path("mailings-v2/scenarios/", MailingsV2ScenariosView.as_view(), name="mailings_v2_scenarios"),
 

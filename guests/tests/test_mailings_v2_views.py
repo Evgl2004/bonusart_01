@@ -15,7 +15,7 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from guests.models import BotProfile, Guest, Mailing, MailingGuest, MessageTemplate
+from guests.models import BotProfile, DispatchTask, Guest, Mailing, MailingGuest, MessageTemplate, NotificationScenario
 
 
 class MailingsV2ViewsTests(TestCase):
@@ -140,3 +140,100 @@ class MailingsV2ViewsTests(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, next_url)
+
+    def test_create_template_v2_and_open_detail(self):
+        """
+        Создание шаблона через v2 должно вести на v2-карточку шаблона.
+        """
+        response = self.client.post(
+            reverse("mailings_v2_templates_new"),
+            {
+                "name": "Шаблон v2",
+                "description": "Описание шаблона",
+                "message_text": "Привет, {{ first_name }}!",
+                "is_active": "on",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        template_obj = MessageTemplate.objects.get(name="Шаблон v2")
+        self.assertEqual(
+            response.url,
+            reverse("mailings_v2_templates_detail", kwargs={"pk": template_obj.id}),
+        )
+
+        detail_response = self.client.get(
+            reverse("mailings_v2_templates_detail", kwargs={"pk": template_obj.id}),
+            secure=True,
+        )
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertContains(detail_response, "Привет")
+
+    def test_monitor_filters_by_campaign_status_and_provider(self):
+        """
+        Фильтры monitor v2 должны корректно сужать выборку DispatchTask.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000111",
+            first_name="Петр",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        mailing_guest = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="test_scenario_v2",
+            name="Test scenario",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.MANUAL,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+        )
+
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            mailing_guest=mailing_guest,
+            guest=guest,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.VK,
+            status=DispatchTask.Status.DONE,
+            mailing_guest=mailing_guest,
+            guest=guest,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.PENDING,
+            notification_scenario=scenario,
+            guest=guest,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_monitor"),
+            {
+                "mailing_id": mailing.id,
+                "status": DispatchTask.Status.FAILED,
+                "provider_type": BotProfile.ProviderType.TELEGRAM,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["total_tasks"], 1)
+        self.assertEqual(response.context["failed_tasks"], 1)
+        self.assertEqual(len(response.context["recent_rows"]), 1)

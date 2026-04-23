@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки v2: Шаблон{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h4 mb-0">
+      {% if object and object.pk %}Редактировать шаблон{% else %}Создать шаблон{% endif %}
+    </h1>
+    <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates' %}">Назад к шаблонам</a>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-body">
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+      {% endif %}
+
+      <form method="post">
+        {% csrf_token %}
+
+        <div class="mb-3">
+          <label for="{{ form.name.id_for_label }}" class="form-label">Название шаблона</label>
+          {{ form.name }}
+          {% if form.name.errors %}
+            <div class="text-danger small mt-1">{{ form.name.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <label for="{{ form.description.id_for_label }}" class="form-label">Описание</label>
+          {{ form.description }}
+          {% if form.description.errors %}
+            <div class="text-danger small mt-1">{{ form.description.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-2 d-flex flex-wrap gap-2 align-items-center">
+          <span class="text-muted me-2">Переменные:</span>
+
+          <button type="button" class="btn btn-sm btn-outline-primary var-btn" data-var="{% templatetag openvariable %} first_name {% templatetag closevariable %}">
+            Имя
+          </button>
+
+          <button type="button" class="btn btn-sm btn-outline-primary var-btn" data-var="{% templatetag openvariable %} last_name {% templatetag closevariable %}">
+            Фамилия
+          </button>
+
+          <button type="button" class="btn btn-sm btn-outline-primary var-btn" data-var="{% templatetag openvariable %} phone {% templatetag closevariable %}">
+            Телефон
+          </button>
+
+          <button type="button" class="btn btn-sm btn-outline-primary var-btn" data-var="{% templatetag openvariable %} email {% templatetag closevariable %}">
+            Email
+          </button>
+        </div>
+
+        <div class="mb-3">
+          <label for="{{ form.message_text.id_for_label }}" class="form-label">Текст сообщения</label>
+          {{ form.message_text }}
+          {% if form.message_text.errors %}
+            <div class="text-danger small mt-1">{{ form.message_text.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="form-check mb-3">
+          {{ form.is_active }}
+          <label class="form-check-label" for="{{ form.is_active.id_for_label }}">Активен</label>
+          {% if form.is_active.errors %}
+            <div class="text-danger small mt-1">{{ form.is_active.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="d-flex gap-2 mt-3">
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+          {% if object and object.pk %}
+            <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates_detail' object.pk %}">К карточке</a>
+          {% endif %}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const textarea = document.getElementById("id_message_text");
+  if (!textarea) return;
+
+  function insertAtCursor(el, text) {
+    const start = (typeof el.selectionStart === "number") ? el.selectionStart : el.value.length;
+    const end = (typeof el.selectionEnd === "number") ? el.selectionEnd : el.value.length;
+    el.value = el.value.slice(0, start) + text + el.value.slice(end);
+    const pos = start + text.length;
+    el.setSelectionRange(pos, pos);
+    el.focus();
+  }
+
+  document.querySelectorAll(".var-btn").forEach((btn) => {
+    btn.addEventListener("click", () => insertAtCursor(textarea, btn.dataset.var));
+  });
+})();
+</script>
+{% endblock %}

@@ -34,6 +34,7 @@ class NavigationMenuTests(TestCase):
             "mailings_v2_campaigns",
             "mailings_v2_campaigns_new",
             "mailings_v2_templates",
+            "mailings_v2_templates_new",
             "mailings_v2_monitor",
             "mailings_v2_scenarios",
         ):

@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки v2: Шаблон{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h1 class="h4 mb-1">{{ template_obj.name }}</h1>
+      {% if template_obj.description %}
+        <div class="text-muted">{{ template_obj.description }}</div>
+      {% endif %}
+      <div class="small text-muted mt-2">
+        Автор: {{ template_obj.created_by }} |
+        Создан: {{ template_obj.created_at|date:"Y-m-d H:i" }} |
+        Обновлен: {{ template_obj.updated_at|date:"Y-m-d H:i" }}
+      </div>
+    </div>
+
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates' %}">Назад к шаблонам</a>
+      <a class="btn btn-primary" href="{% url 'mailings_v2_templates_edit' template_obj.id %}">Редактировать</a>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <h2 class="h6 mb-3">Предпросмотр для гостя</h2>
+
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-12 col-lg-6">
+          <label class="form-label">Гость</label>
+          <select class="form-select" name="guest_id">
+            <option value="">-- выбрать --</option>
+            {% for g in guests %}
+              <option value="{{ g.id }}" {% if selected_guest_id == g.id|stringformat:"s" %}selected{% endif %}>
+                {{ g.first_name }} {{ g.last_name }} ({{ g.phone }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-lg-2">
+          <button class="btn btn-outline-primary w-100" type="submit">Показать</button>
+        </div>
+      </form>
+
+      {% if preview_text %}
+        <hr>
+        <div class="small text-muted mb-2">Для: {{ preview_guest.first_name }} {{ preview_guest.last_name }}</div>
+        <pre style="min-height: 180px; white-space: pre-wrap;">{{ preview_text }}</pre>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-body">
+      <h2 class="h6 mb-2">Текст сообщения</h2>
+      <pre class="mb-0" style="white-space: pre-wrap;">{{ template_obj.message_text }}</pre>
+    </div>
+  </div>
+</div>
+{% endblock %}

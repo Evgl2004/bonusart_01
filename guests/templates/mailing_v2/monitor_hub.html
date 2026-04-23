@@ -12,12 +12,71 @@
     <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад в hub</a>
   </div>
 
+  <form method="get" class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-md-3">
+          <label class="form-label mb-1">Кампания</label>
+          <select class="form-select" name="mailing_id">
+            <option value="">Все кампании</option>
+            {% for m in campaigns %}
+              <option value="{{ m.id }}" {% if selected_mailing_id == m.id|stringformat:"s" %}selected{% endif %}>
+                #{{ m.id }} {{ m.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label mb-1">Статус</label>
+          <select class="form-select" name="status">
+            <option value="">Все статусы</option>
+            {% for value, label in status_choices %}
+              <option value="{{ value }}" {% if selected_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label mb-1">Провайдер</label>
+          <select class="form-select" name="provider_type">
+            <option value="">Все провайдеры</option>
+            {% for value, label in provider_choices %}
+              <option value="{{ value }}" {% if selected_provider_type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label mb-1">Сценарий</label>
+          <select class="form-select" name="scenario_id">
+            <option value="">Все сценарии</option>
+            {% for s in scenarios %}
+              <option value="{{ s.id }}" {% if selected_scenario_id == s.id|stringformat:"s" %}selected{% endif %}>
+                {{ s.code }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <button class="btn btn-outline-primary" type="submit">Применить</button>
+        <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_monitor' %}">Сбросить</a>
+      </div>
+    </div>
+  </form>
+
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-4">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Всего задач</div>
+          <div class="text-muted small">Всего задач (по фильтру)</div>
           <div class="h3 mb-0">{{ total_tasks }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-4">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">В работе / в очереди</div>
+          <div class="h3 mb-0">{{ dispatch_pending }}</div>
         </div>
       </div>
     </div>
@@ -29,17 +88,9 @@
         </div>
       </div>
     </div>
-    <div class="col-12 col-md-4">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Уровень видимости</div>
-          <div class="h6 mb-0">Bridge-режим (без управления задачами)</div>
-        </div>
-      </div>
-    </div>
   </div>
 
-  <div class="row g-3">
+  <div class="row g-3 mb-3">
     <div class="col-12 col-lg-6">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-header bg-white">
@@ -101,6 +152,64 @@
             </table>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Последние задачи (первые 200)</h2>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>ID</th>
+              <th>Статус</th>
+              <th>Провайдер</th>
+              <th>Кампания</th>
+              <th>Сценарий</th>
+              <th>Гость</th>
+              <th>Создана</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in recent_rows %}
+              <tr>
+                <td>{{ row.id }}</td>
+                <td>{{ row.status }}</td>
+                <td>{{ row.provider_type }}</td>
+                <td>
+                  {% if row.mailing_guest and row.mailing_guest.mailing %}
+                    #{{ row.mailing_guest.mailing_id }} {{ row.mailing_guest.mailing.name }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.notification_scenario %}
+                    {{ row.notification_scenario.code }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>
+                  {% if row.guest %}
+                    {{ row.guest.phone|default:"—" }}
+                  {% else %}
+                    —
+                  {% endif %}
+                </td>
+                <td>{{ row.created_at|date:"Y-m-d H:i" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-4">Задач нет.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
     </div>
   </div>
