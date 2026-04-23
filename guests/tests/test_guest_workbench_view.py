@@ -489,6 +489,65 @@ class GuestsWorkbenchViewTests(TestCase):
         lost_row = next(item for item in payload["selected_guests"]["rows"] if item["phone"] == lost_guest.phone)
         self.assertEqual(lost_row["source_window_days"], 180)
 
+    def test_without_segment_table_uses_selected_window_only(self):
+        """
+        Без выбранного сегмента таблица гостей должна использовать строго выбранное окно.
+        """
+        lost_guest = Guest.objects.create(phone="+79990005555", first_name="Только 180")
+        GuestRestaurantWindowMetrics.objects.create(
+            as_of_date=self.as_of_date,
+            guest=lost_guest,
+            department_id=self.department_id,
+            window_days=180,
+            orders_count=1,
+            visits_count=1,
+            avg_check_net=Decimal("700.00"),
+            sum_net=Decimal("700.00"),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal("9.00"),
+            last_visit_at=date(2025, 12, 1),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.context["payload"]
+
+        phones = {item["phone"] for item in payload["selected_guests"]["rows"]}
+        self.assertNotIn(lost_guest.phone, phones)
+        self.assertEqual(payload["selected_guests"]["total"], 2)
+
+    def test_active_segment_uses_window_30_even_if_selected_window_is_180(self):
+        """
+        Для сегмента «Активные 30д» таблица должна брать строку окна 30,
+        даже если в фильтре выбрано окно 180.
+        """
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 180,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.context["payload"]
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+
+        row = payload["selected_guests"]["rows"][0]
+        self.assertEqual(row["phone"], self.guest_1.phone)
+        self.assertEqual(row["source_window_days"], 30)
+
     def test_create_mailing_draft_from_workbench_selection(self):
         """
         Быстрое действие должно создавать черновик рассылки по отобранным гостям.

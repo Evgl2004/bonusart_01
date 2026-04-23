@@ -191,29 +191,50 @@ def _apply_complex_filters(scope_qs, normalized_filters: list[dict[str, Any]]):
     return filtered_scope
 
 
-def _build_preferred_windows(selected_window_days: int) -> list[int]:
+def _build_preferred_windows(selected_window_days: int, segment_code: str) -> list[int]:
     """
     Возвращает приоритет окон для выбора репрезентативной строки гостя.
+
+    Логика:
+    1. если сегмент не выбран, таблица должна показывать метрики строго в выбранном окне;
+    2. если выбран сегмент, окно определяется бизнес-смыслом сегмента:
+       1. active_30d / single_visit_30d -> окно 30;
+       2. cooling_30_60d -> окно 60 (fallback: 30);
+       3. lost_60d_plus -> окно 180 (fallback: 60, 30).
     """
-    preferred_windows = [selected_window_days] + [180, 60, 30, 14, 7]
+    if segment_code == "active_30d":
+        preferred_windows = [30]
+    elif segment_code == "single_visit_30d":
+        preferred_windows = [30]
+    elif segment_code == "cooling_30_60d":
+        preferred_windows = [60, 30]
+    elif segment_code == "lost_60d_plus":
+        preferred_windows = [180, 60, 30]
+    else:
+        preferred_windows = [selected_window_days]
+
     unique_windows: list[int] = []
     for window in preferred_windows:
-        if window not in unique_windows:
+        if window in WINDOW_OPTIONS and window not in unique_windows:
             unique_windows.append(window)
-    return unique_windows
+    return unique_windows or [DEFAULT_WINDOW_DAYS]
 
 
 def _build_representative_rows(
     *,
     base_scope,
     selected_window_days: int,
+    segment_code: str,
     allowed_guest_keys: set[tuple[int, str]] | None = None,
 ) -> list[Any]:
     """
     Выбирает по одной «лучшей» строке метрик на пару (гость, заведение)
-    с fallback по окнам: выбранное окно -> 180 -> 60 -> 30 -> 14 -> 7.
+    согласно приоритету окон для текущего сегмента/фильтра.
     """
-    unique_windows = _build_preferred_windows(selected_window_days)
+    unique_windows = _build_preferred_windows(
+        selected_window_days=selected_window_days,
+        segment_code=segment_code,
+    )
     window_rank = {window: idx for idx, window in enumerate(unique_windows)}
     default_rank = len(unique_windows) + 1
 
@@ -224,6 +245,8 @@ def _build_representative_rows(
             continue
         current = representative_by_key.get(key)
         row_rank = window_rank.get(int(row.window_days), default_rank)
+        if row_rank == default_rank:
+            continue
         if current is None:
             representative_by_key[key] = row
             continue
@@ -274,6 +297,7 @@ def _collect_allowed_guest_keys_by_complex_filters(
     *,
     base_scope,
     selected_window_days: int,
+    segment_code: str,
     normalized_filters: list[dict[str, Any]],
 ) -> set[tuple[int, str]] | None:
     """
@@ -286,6 +310,7 @@ def _collect_allowed_guest_keys_by_complex_filters(
     representative_rows = _build_representative_rows(
         base_scope=base_scope,
         selected_window_days=selected_window_days,
+        segment_code=segment_code,
         allowed_guest_keys=None,
     )
     allowed_keys: set[tuple[int, str]] = set()
@@ -391,6 +416,7 @@ def build_guest_workbench_payload(
     allowed_guest_keys = _collect_allowed_guest_keys_by_complex_filters(
         base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
+        segment_code=selected_segment_code,
         normalized_filters=normalized_complex_filters,
     )
 
@@ -946,6 +972,7 @@ def _build_selected_guests_rows(
     representative_rows = _build_representative_rows(
         base_scope=base_scope,
         selected_window_days=selected_window_days,
+        segment_code=segment_code,
         allowed_guest_keys=allowed_guest_keys,
     )
     representative_rows.sort(
