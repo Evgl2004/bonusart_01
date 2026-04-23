@@ -331,6 +331,96 @@ def run_daily_fact_scheduled_task() -> int:
         return 0
 
 
+def run_daily_order_fact_scheduled_task() -> int:
+    """
+    Scheduled one-shot daily_order_fact rebuild for the latest N-day tail.
+    """
+    if not bool(getattr(settings, "OLAP_DAILY_ORDER_FACT_SCHEDULE_ENABLED", False)):
+        logger.info("Daily order fact (schedule): disabled by OLAP_DAILY_ORDER_FACT_SCHEDULE_ENABLED.")
+        return 0
+
+    tail_days = max(1, int(getattr(settings, "OLAP_DAILY_ORDER_FACT_SCHEDULE_TAIL_DAYS", 3)))
+    end_lag_days = max(0, int(getattr(settings, "OLAP_DAILY_ORDER_FACT_SCHEDULE_END_LAG_DAYS", 0)))
+    batch_size = max(100, int(getattr(settings, "OLAP_DAILY_ORDER_FACT_SCHEDULE_BATCH_SIZE", 2000)))
+    date_from, date_to = _build_tail_window_dates(tail_days=tail_days, end_lag_days=end_lag_days)
+
+    call_options = {
+        "once": True,
+        "business_date_from": date_from.isoformat(),
+        "business_date_to": date_to.isoformat(),
+        "batch_size": batch_size,
+    }
+    department_id = str(
+        getattr(settings, "OLAP_DAILY_ORDER_FACT_SCHEDULE_DEPARTMENT_ID", "") or ""
+    ).strip()
+    if department_id:
+        call_options["department_id"] = department_id
+
+    try:
+        call_command("sync_daily_order_fact", **call_options)
+        logger.info(
+            "Daily order fact (schedule): completed for range %s..%s (tail_days=%s, end_lag_days=%s).",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            tail_days,
+            end_lag_days,
+        )
+        return 1
+    except Exception as err:
+        logger.exception(
+            "Daily order fact (schedule): failed for range %s..%s: %s",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            err,
+        )
+        return 0
+
+
+def run_order_focus_fact_scheduled_task() -> int:
+    """
+    Scheduled one-shot order_focus_fact rebuild for the latest N-day tail.
+    """
+    if not bool(getattr(settings, "OLAP_ORDER_FOCUS_FACT_SCHEDULE_ENABLED", False)):
+        logger.info("Order focus fact (schedule): disabled by OLAP_ORDER_FOCUS_FACT_SCHEDULE_ENABLED.")
+        return 0
+
+    tail_days = max(1, int(getattr(settings, "OLAP_ORDER_FOCUS_FACT_SCHEDULE_TAIL_DAYS", 3)))
+    end_lag_days = max(0, int(getattr(settings, "OLAP_ORDER_FOCUS_FACT_SCHEDULE_END_LAG_DAYS", 0)))
+    batch_size = max(100, int(getattr(settings, "OLAP_ORDER_FOCUS_FACT_SCHEDULE_BATCH_SIZE", 2000)))
+    date_from, date_to = _build_tail_window_dates(tail_days=tail_days, end_lag_days=end_lag_days)
+
+    call_options = {
+        "once": True,
+        "business_date_from": date_from.isoformat(),
+        "business_date_to": date_to.isoformat(),
+        "batch_size": batch_size,
+    }
+    department_id = str(
+        getattr(settings, "OLAP_ORDER_FOCUS_FACT_SCHEDULE_DEPARTMENT_ID", "") or ""
+    ).strip()
+    if department_id:
+        call_options["department_id"] = department_id
+
+    try:
+        call_command("sync_order_focus_fact", **call_options)
+        logger.info(
+            "Order focus fact (schedule): completed for range %s..%s (tail_days=%s, end_lag_days=%s).",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            tail_days,
+            end_lag_days,
+        )
+        return 1
+    except Exception as err:
+        logger.exception(
+            "Order focus fact (schedule): failed for range %s..%s: %s",
+            date_from.isoformat(),
+            date_to.isoformat(),
+            err,
+        )
+        return 0
+
+
 def run_window_metrics_scheduled_task() -> int:
     """
     Scheduled one-shot rebuild of rolling window metrics.

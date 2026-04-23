@@ -680,6 +680,58 @@ OLAP_DAILY_FACT_SCHEDULE_BATCH_SIZE = _env_int(
     min_value=100,
 )
 
+# Плановый инкрементальный пересчёт daily_order_fact (tail window).
+OLAP_DAILY_ORDER_FACT_SCHEDULE_ENABLED = _env_bool("OLAP_DAILY_ORDER_FACT_SCHEDULE_ENABLED", False)
+OLAP_DAILY_ORDER_FACT_SCHEDULE_MINUTES = _env_int(
+    "OLAP_DAILY_ORDER_FACT_SCHEDULE_MINUTES",
+    60,
+    min_value=1,
+)
+OLAP_DAILY_ORDER_FACT_SCHEDULE_TAIL_DAYS = _env_int(
+    "OLAP_DAILY_ORDER_FACT_SCHEDULE_TAIL_DAYS",
+    3,
+    min_value=1,
+)
+OLAP_DAILY_ORDER_FACT_SCHEDULE_END_LAG_DAYS = _env_int(
+    "OLAP_DAILY_ORDER_FACT_SCHEDULE_END_LAG_DAYS",
+    0,
+    min_value=0,
+)
+OLAP_DAILY_ORDER_FACT_SCHEDULE_BATCH_SIZE = _env_int(
+    "OLAP_DAILY_ORDER_FACT_SCHEDULE_BATCH_SIZE",
+    2000,
+    min_value=100,
+)
+OLAP_DAILY_ORDER_FACT_SCHEDULE_DEPARTMENT_ID = str(
+    os.getenv("OLAP_DAILY_ORDER_FACT_SCHEDULE_DEPARTMENT_ID", "") or ""
+).strip()
+
+# Плановый инкрементальный пересчёт order_focus_fact (tail window).
+OLAP_ORDER_FOCUS_FACT_SCHEDULE_ENABLED = _env_bool("OLAP_ORDER_FOCUS_FACT_SCHEDULE_ENABLED", False)
+OLAP_ORDER_FOCUS_FACT_SCHEDULE_MINUTES = _env_int(
+    "OLAP_ORDER_FOCUS_FACT_SCHEDULE_MINUTES",
+    60,
+    min_value=1,
+)
+OLAP_ORDER_FOCUS_FACT_SCHEDULE_TAIL_DAYS = _env_int(
+    "OLAP_ORDER_FOCUS_FACT_SCHEDULE_TAIL_DAYS",
+    3,
+    min_value=1,
+)
+OLAP_ORDER_FOCUS_FACT_SCHEDULE_END_LAG_DAYS = _env_int(
+    "OLAP_ORDER_FOCUS_FACT_SCHEDULE_END_LAG_DAYS",
+    0,
+    min_value=0,
+)
+OLAP_ORDER_FOCUS_FACT_SCHEDULE_BATCH_SIZE = _env_int(
+    "OLAP_ORDER_FOCUS_FACT_SCHEDULE_BATCH_SIZE",
+    2000,
+    min_value=100,
+)
+OLAP_ORDER_FOCUS_FACT_SCHEDULE_DEPARTMENT_ID = str(
+    os.getenv("OLAP_ORDER_FOCUS_FACT_SCHEDULE_DEPARTMENT_ID", "") or ""
+).strip()
+
 # Плановый пересчёт оконных метрик.
 OLAP_WINDOW_METRICS_SCHEDULE_ENABLED = _env_bool(
     "OLAP_WINDOW_METRICS_SCHEDULE_ENABLED",
@@ -778,8 +830,10 @@ def _register_olap_schedule_tasks() -> None:
     2. rebuild-задача по cron-расписанию;
     3. order_fact tail-задача по минутному расписанию;
     4. daily_fact tail-задача по минутному расписанию;
-    5. window_metrics-задача по минутному расписанию.
-    6. control_pull-задача по cron (контрольная постановка пропущенных задач в journal).
+    5. daily_order_fact tail-задача по минутному расписанию;
+    6. order_focus_fact tail-задача по минутному расписанию;
+    7. window_metrics-задача по минутному расписанию;
+    8. control_pull-задача по cron (контрольная постановка пропущенных задач в journal).
     """
     schedule_map = Q_CLUSTER.setdefault("schedule", {})
 
@@ -815,6 +869,22 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_daily_fact_tail", None)
+
+    if OLAP_DAILY_ORDER_FACT_SCHEDULE_ENABLED:
+        schedule_map["run_daily_order_fact_tail"] = {
+            "func": "guests.tasks.run_daily_order_fact_scheduled_task",
+            "minutes": OLAP_DAILY_ORDER_FACT_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_daily_order_fact_tail", None)
+
+    if OLAP_ORDER_FOCUS_FACT_SCHEDULE_ENABLED:
+        schedule_map["run_order_focus_fact_tail"] = {
+            "func": "guests.tasks.run_order_focus_fact_scheduled_task",
+            "minutes": OLAP_ORDER_FOCUS_FACT_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_order_focus_fact_tail", None)
 
     if OLAP_WINDOW_METRICS_SCHEDULE_ENABLED:
         schedule_map["run_window_metrics_hourly"] = {
