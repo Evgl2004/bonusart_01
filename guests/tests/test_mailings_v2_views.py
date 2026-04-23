@@ -192,6 +192,177 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, next_url)
 
+    def test_campaigns_hub_filters_and_search(self):
+        """
+        Список кампаний v2 должен поддерживать фильтры/поиск и скрывать архив по умолчанию.
+        """
+        active = self._create_mailing()
+        active.name = "Promo active"
+        active.is_active = True
+        active.save(update_fields=["name", "is_active", "updated_at"])
+
+        archived = self._create_mailing()
+        archived.name = "Promo archived"
+        archived.is_archived = True
+        archived.is_active = False
+        archived.save(update_fields=["name", "is_archived", "is_active", "updated_at"])
+
+        with_error = self._create_mailing()
+        with_error.name = "Promo with error"
+        with_error.save(update_fields=["name", "updated_at"])
+
+        guest = Guest.objects.create(
+            phone="+79990000555",
+            first_name="Тест",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=with_error,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.ERROR,
+            error_description="test",
+            created_at=self.now,
+        )
+
+        default_response = self.client.get(reverse("mailings_v2_campaigns"), secure=True)
+        self.assertEqual(default_response.status_code, 200)
+        self.assertContains(default_response, "Promo active")
+        self.assertContains(default_response, "Promo with error")
+        self.assertNotContains(default_response, "Promo archived")
+
+        archived_response = self.client.get(
+            reverse("mailings_v2_campaigns"),
+            {"show_archived": "1", "q": "archived"},
+            secure=True,
+        )
+        self.assertEqual(archived_response.status_code, 200)
+        self.assertContains(archived_response, "Promo archived")
+        self.assertEqual(archived_response.context["campaigns_total_filtered"], 1)
+
+        active_response = self.client.get(
+            reverse("mailings_v2_campaigns"),
+            {"only_active": "1"},
+            secure=True,
+        )
+        self.assertEqual(active_response.status_code, 200)
+        self.assertContains(active_response, "Promo active")
+        self.assertNotContains(active_response, "Promo with error")
+
+        error_response = self.client.get(
+            reverse("mailings_v2_campaigns"),
+            {"with_errors": "1"},
+            secure=True,
+        )
+        self.assertEqual(error_response.status_code, 200)
+        self.assertContains(error_response, "Promo with error")
+        self.assertNotContains(error_response, "Promo active")
+
+    def test_campaign_ops_duplicate_campaign_copies_setup_and_rows(self):
+        """
+        Дублирование кампании должно копировать настройки, ботов и аудиторию в planned-статус.
+        """
+        mailing = self._create_mailing()
+        mailing.name = "Promo source"
+        mailing.save(update_fields=["name", "updated_at"])
+
+        guest1 = Guest.objects.create(
+            phone="+79990000661",
+            first_name="Алина",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        guest2 = Guest.objects.create(
+            phone="+79990000662",
+            first_name="Олег",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest1,
+            phone=guest1.phone,
+            email="",
+            text_mailing_list="Текст 1",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.DONE,
+            delivery_status="done",
+            created_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest2,
+            phone=guest2.phone,
+            email="",
+            text_mailing_list="Текст 2",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.ERROR,
+            error_description="error",
+            created_at=self.now,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "duplicate_campaign"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        duplicate = Mailing.objects.exclude(id=mailing.id).get(name="Promo source (копия)")
+        self.assertEqual(
+            response.url,
+            reverse("mailings_v2_campaigns_edit", kwargs={"pk": duplicate.id}),
+        )
+        self.assertFalse(duplicate.is_active)
+        self.assertFalse(duplicate.is_archived)
+        self.assertEqual(duplicate.bot_profiles.count(), mailing.bot_profiles.count())
+        self.assertEqual(duplicate.guests_rows.count(), mailing.guests_rows.count())
+        self.assertEqual(
+            duplicate.guests_rows.filter(status=MailingGuest.Status.PLANNED).count(),
+            mailing.guests_rows.count(),
+        )
+        self.assertEqual(
+            duplicate.guests_rows.filter(delivery_status="duplicated_from_campaign").count(),
+            mailing.guests_rows.count(),
+        )
+
+    def test_campaign_ops_archive_campaign_hides_from_default_list(self):
+        """
+        Архивирование должно убирать кампанию из списка по умолчанию и оставлять в show_archived.
+        """
+        mailing = self._create_mailing()
+        mailing.name = "Promo to archive"
+        mailing.is_active = True
+        mailing.save(update_fields=["name", "is_active", "updated_at"])
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "archive_campaign", "next": reverse("mailings_v2_campaigns")},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns"))
+
+        mailing.refresh_from_db()
+        self.assertTrue(mailing.is_archived)
+        self.assertFalse(mailing.is_active)
+
+        default_response = self.client.get(reverse("mailings_v2_campaigns"), secure=True)
+        self.assertEqual(default_response.status_code, 200)
+        self.assertNotContains(default_response, "Promo to archive")
+
+        archived_response = self.client.get(
+            reverse("mailings_v2_campaigns"),
+            {"show_archived": "1", "q": "Promo to archive"},
+            secure=True,
+        )
+        self.assertEqual(archived_response.status_code, 200)
+        self.assertContains(archived_response, "Promo to archive")
+
     def test_campaign_ops_toggle_and_retry_rows(self):
         """
         Операционные действия v2 должны уметь запускать кампанию

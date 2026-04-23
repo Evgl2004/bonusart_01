@@ -24,6 +24,7 @@
           <div class="text-muted small">Кампаний всего</div>
           <div class="h3 mb-1">{{ kpi.campaigns_total }}</div>
           <div class="small text-muted">Активных: {{ kpi.campaigns_active }}</div>
+          <div class="small text-muted">В архиве: {{ kpi.campaigns_archived }}</div>
         </div>
       </div>
     </div>
@@ -78,9 +79,57 @@
     </div>
   </div>
 
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Фильтры кампаний</h2>
+    </div>
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-12 col-lg-4">
+          <label class="form-label mb-1" for="filter-q">Поиск</label>
+          <input
+            id="filter-q"
+            type="text"
+            name="q"
+            class="form-control form-control-sm"
+            value="{{ filters.q }}"
+            placeholder="ID, название, шаблон"
+          >
+        </div>
+        <div class="col-6 col-lg-2">
+          <label class="form-label mb-1" for="filter-created-from">Создано от</label>
+          <input id="filter-created-from" type="date" name="created_from" class="form-control form-control-sm" value="{{ filters.created_from }}">
+        </div>
+        <div class="col-6 col-lg-2">
+          <label class="form-label mb-1" for="filter-created-to">Создано до</label>
+          <input id="filter-created-to" type="date" name="created_to" class="form-control form-control-sm" value="{{ filters.created_to }}">
+        </div>
+        <div class="col-12 col-lg-4 d-flex gap-3 flex-wrap">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="only_active" value="1" id="filter-only-active" {% if filters.only_active %}checked{% endif %}>
+            <label class="form-check-label" for="filter-only-active">Только активные</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="with_errors" value="1" id="filter-with-errors" {% if filters.with_errors %}checked{% endif %}>
+            <label class="form-check-label" for="filter-with-errors">Только с ошибками</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="show_archived" value="1" id="filter-show-archived" {% if filters.show_archived %}checked{% endif %}>
+            <label class="form-check-label" for="filter-show-archived">Показывать архив</label>
+          </div>
+        </div>
+        <div class="col-12 d-flex gap-2">
+          <button class="btn btn-sm btn-primary" type="submit">Применить</button>
+          <a class="btn btn-sm btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Сбросить</a>
+          <div class="ms-auto small text-muted pt-1">Найдено кампаний: {{ campaigns_total_filtered }}</div>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="card border-0 shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
-      <h2 class="h6 mb-0">Последние кампании</h2>
+      <h2 class="h6 mb-0">Кампании</h2>
       <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings' %}">Legacy список</a>
     </div>
     <div class="card-body p-0">
@@ -91,7 +140,7 @@
               <th>ID</th>
               <th>Название</th>
               <th>Шаблон</th>
-              <th>Активна</th>
+              <th>Статус</th>
               <th>Получатели</th>
               <th>Done</th>
               <th>Error</th>
@@ -112,10 +161,12 @@
                   {% endif %}
                 </td>
                 <td>
-                  {% if row.is_active %}
-                    <span class="badge text-bg-success">да</span>
+                  {% if row.is_archived %}
+                    <span class="badge text-bg-dark">архив</span>
+                  {% elif row.is_active %}
+                    <span class="badge text-bg-success">активна</span>
                   {% else %}
-                    <span class="badge text-bg-secondary">нет</span>
+                    <span class="badge text-bg-secondary">пауза</span>
                   {% endif %}
                 </td>
                 <td>{{ row.recipients_total }}</td>
@@ -123,12 +174,28 @@
                 <td>{{ row.recipients_error }}</td>
                 <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
                 <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_campaigns_edit' row.id %}">Открыть</a>
+                  <div class="d-flex gap-1 justify-content-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_campaigns_edit' row.id %}">Открыть</a>
+                    <form method="post" action="{% url 'mailings_v2_campaigns_ops' row.id %}">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="duplicate_campaign">
+                      <input type="hidden" name="next" value="{{ current_query_path }}">
+                      <button class="btn btn-sm btn-outline-secondary" type="submit">Дублировать</button>
+                    </form>
+                    {% if not row.is_archived %}
+                      <form method="post" action="{% url 'mailings_v2_campaigns_ops' row.id %}">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="archive_campaign">
+                        <input type="hidden" name="next" value="{{ current_query_path }}">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">Архивировать</button>
+                      </form>
+                    {% endif %}
+                  </div>
                 </td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="9" class="text-center text-muted py-4">Кампаний пока нет.</td>
+                <td colspan="9" class="text-center text-muted py-4">Кампаний по фильтру не найдено.</td>
               </tr>
             {% endfor %}
           </tbody>

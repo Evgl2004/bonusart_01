@@ -13,9 +13,12 @@ from datetime import timedelta
 from urllib.parse import urlencode
 
 from django.contrib import messages
+from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
+from django.utils.dateparse import parse_date
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views import View
 from django.views.generic import CreateView, DetailView, TemplateView, UpdateView
@@ -51,7 +54,7 @@ class MailingsV2CampaignsHubView(TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
 
-        campaigns_qs = (
+        all_campaigns_qs = (
             Mailing.objects.select_related("template")
             .annotate(
                 recipients_total=Count("guests_rows", distinct=True),
@@ -66,8 +69,35 @@ class MailingsV2CampaignsHubView(TemplateView):
                     distinct=True,
                 ),
             )
-            .order_by("-created_at")
+            .order_by("-updated_at", "-id")
         )
+
+        q = (self.request.GET.get("q") or "").strip()
+        only_active = bool(self.request.GET.get("only_active"))
+        with_errors = bool(self.request.GET.get("with_errors"))
+        show_archived = bool(self.request.GET.get("show_archived"))
+        created_from_raw = (self.request.GET.get("created_from") or "").strip()
+        created_to_raw = (self.request.GET.get("created_to") or "").strip()
+
+        created_from = parse_date(created_from_raw) if created_from_raw else None
+        created_to = parse_date(created_to_raw) if created_to_raw else None
+
+        campaigns_qs = all_campaigns_qs
+        if not show_archived:
+            campaigns_qs = campaigns_qs.filter(is_archived=False)
+        if only_active:
+            campaigns_qs = campaigns_qs.filter(is_active=True)
+        if with_errors:
+            campaigns_qs = campaigns_qs.filter(recipients_error__gt=0)
+        if created_from:
+            campaigns_qs = campaigns_qs.filter(created_at__date__gte=created_from)
+        if created_to:
+            campaigns_qs = campaigns_qs.filter(created_at__date__lte=created_to)
+        if q:
+            search_q = Q(name__icontains=q) | Q(template__name__icontains=q)
+            if q.isdigit():
+                search_q = search_q | Q(id=int(q))
+            campaigns_qs = campaigns_qs.filter(search_q)
 
         dispatch_scope = DispatchTask.objects.filter(
             Q(mailing_guest__isnull=False) | Q(notification_scenario__isnull=False)
@@ -82,10 +112,12 @@ class MailingsV2CampaignsHubView(TemplateView):
         )
 
         recently_updated_threshold = timezone.now() - timedelta(days=7)
+        kpi_scope = all_campaigns_qs.filter(is_archived=False)
         context["kpi"] = {
-            "campaigns_total": campaigns_qs.count(),
-            "campaigns_active": campaigns_qs.filter(is_active=True).count(),
-            "campaigns_recently_updated": campaigns_qs.filter(updated_at__gte=recently_updated_threshold).count(),
+            "campaigns_total": kpi_scope.count(),
+            "campaigns_active": kpi_scope.filter(is_active=True).count(),
+            "campaigns_recently_updated": kpi_scope.filter(updated_at__gte=recently_updated_threshold).count(),
+            "campaigns_archived": all_campaigns_qs.filter(is_archived=True).count(),
             "templates_active": MessageTemplate.objects.filter(is_active=True).count(),
             "scenarios_active": NotificationScenario.objects.filter(is_active=True).count(),
             "dispatch_total": int(dispatch_stats.get("total") or 0),
@@ -96,7 +128,17 @@ class MailingsV2CampaignsHubView(TemplateView):
             "dispatch_failed": int(dispatch_stats.get("failed") or 0),
         }
 
-        context["campaigns"] = campaigns_qs[:25]
+        context["campaigns_total_filtered"] = campaigns_qs.count()
+        context["campaigns"] = campaigns_qs[:100]
+        context["filters"] = {
+            "q": q,
+            "only_active": only_active,
+            "with_errors": with_errors,
+            "show_archived": show_archived,
+            "created_from": created_from_raw,
+            "created_to": created_to_raw,
+        }
+        context["current_query_path"] = self.request.get_full_path()
         context["flow_sections"] = [
             {
                 "title": "Кампании",
@@ -201,6 +243,7 @@ class MailingsV2CampaignCreateView(_MailingsV2CampaignFormMixin, CreateView):
     def form_valid(self, form):
         self.object = form.save(commit=False)
         self.object.is_active = False
+        self.object.is_archived = False
 
         now = timezone.now()
         if hasattr(self.object, "created_at") and not self.object.created_at:
@@ -241,9 +284,33 @@ class MailingsV2CampaignOpsView(View):
 
     http_method_names = ["post"]
 
+    @staticmethod
+    def _resolve_next_url(request, default_url: str) -> str:
+        next_url = (request.POST.get("next") or "").strip()
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return next_url
+        return default_url
+
     def post(self, request, *args, **kwargs):
         mailing = get_object_or_404(Mailing, pk=kwargs["pk"])
         action = (request.POST.get("action") or "").strip()
+        list_url = reverse("mailings_v2_campaigns")
+        edit_url = reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.pk})
+
+        if mailing.is_archived and action in {
+            "toggle_active",
+            "retry_failed_rows",
+            "requeue_in_progress_rows",
+            "retry_failed_dispatch",
+            "dry_run_campaign",
+            "run_now_campaign",
+        }:
+            messages.error(request, "Архивная кампания недоступна для операционных действий.")
+            return redirect(self._resolve_next_url(request, edit_url))
 
         if action == "toggle_active":
             mailing.is_active = not bool(mailing.is_active)
@@ -254,7 +321,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Кампания #{mailing.id} запущена.")
             else:
                 messages.success(request, f"Кампания #{mailing.id} поставлена на паузу.")
-            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+            return redirect(self._resolve_next_url(request, edit_url))
 
         if action == "retry_failed_rows":
             updated = MailingGuest.objects.filter(
@@ -270,7 +337,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Возвращено в planned строк: {updated}.")
             else:
                 messages.info(request, "Строк со статусом error не найдено.")
-            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+            return redirect(self._resolve_next_url(request, edit_url))
 
         if action == "requeue_in_progress_rows":
             updated = MailingGuest.objects.filter(
@@ -284,7 +351,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Возвращено из in_progress в planned строк: {updated}.")
             else:
                 messages.info(request, "Зависших строк in_progress не найдено.")
-            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+            return redirect(self._resolve_next_url(request, edit_url))
 
         if action == "retry_failed_dispatch":
             now = timezone.now()
@@ -306,7 +373,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Dispatch-задач переведено в pending: {updated}.")
             else:
                 messages.info(request, "Dispatch-задач со статусом failed не найдено.")
-            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+            return redirect(self._resolve_next_url(request, edit_url))
 
         if action == "dry_run_campaign":
             report = _build_mailing_dry_run_report(mailing=mailing, now=timezone.now())
@@ -320,7 +387,7 @@ class MailingsV2CampaignOpsView(View):
                     f"blocked={report['ready_rows_without_targets']}."
                 ),
             )
-            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+            return redirect(self._resolve_next_url(request, edit_url))
 
         if action == "run_now_campaign":
             report = _run_mailing_now(
@@ -350,10 +417,77 @@ class MailingsV2CampaignOpsView(View):
                         f"ready={report['ready_rows_before']})."
                     ),
                 )
-            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+            return redirect(self._resolve_next_url(request, edit_url))
+
+        if action == "archive_campaign":
+            if mailing.is_archived:
+                messages.info(request, f"Кампания #{mailing.id} уже в архиве.")
+            else:
+                now = timezone.now()
+                mailing.is_archived = True
+                mailing.is_active = False
+                if hasattr(mailing, "updated_at"):
+                    mailing.updated_at = now
+                    mailing.save(update_fields=["is_archived", "is_active", "updated_at"])
+                else:
+                    mailing.save(update_fields=["is_archived", "is_active"])
+                messages.success(request, f"Кампания #{mailing.id} перенесена в архив.")
+            return redirect(self._resolve_next_url(request, list_url))
+
+        if action == "duplicate_campaign":
+            now = timezone.now()
+            with transaction.atomic():
+                duplicate = Mailing.objects.create(
+                    name=f"{mailing.name} (копия)",
+                    template=mailing.template,
+                    scheduled_date=mailing.scheduled_date,
+                    scheduled_time_begin=mailing.scheduled_time_begin,
+                    scheduled_time_end=mailing.scheduled_time_end,
+                    is_active=False,
+                    is_archived=False,
+                    created_at=now,
+                    updated_at=now,
+                    send_window_begin=mailing.send_window_begin,
+                    send_window_end=mailing.send_window_end,
+                    target_mode=mailing.target_mode,
+                    queue_priority=mailing.queue_priority,
+                )
+                duplicate.bot_profiles.set(mailing.bot_profiles.all())
+                source_rows = mailing.guests_rows.values(
+                    "guest_id",
+                    "phone",
+                    "email",
+                    "text_mailing_list",
+                    "scheduled_datetime",
+                )
+                duplicate_rows = [
+                    MailingGuest(
+                        mailing=duplicate,
+                        guest_id=row["guest_id"],
+                        phone=row["phone"],
+                        email=row["email"],
+                        text_mailing_list=row["text_mailing_list"],
+                        scheduled_datetime=row["scheduled_datetime"],
+                        status=MailingGuest.Status.PLANNED,
+                        error_description=None,
+                        external_id=None,
+                        sent_at=None,
+                        delivery_status="duplicated_from_campaign",
+                        created_at=now,
+                    )
+                    for row in source_rows
+                ]
+                if duplicate_rows:
+                    MailingGuest.objects.bulk_create(duplicate_rows, batch_size=1000)
+
+            messages.success(
+                request,
+                f"Кампания #{mailing.id} продублирована: создана #{duplicate.id}, строк аудитории={len(duplicate_rows)}.",
+            )
+            return redirect("mailings_v2_campaigns_edit", pk=duplicate.pk)
 
         messages.error(request, "Неизвестное действие кампании.")
-        return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+        return redirect(self._resolve_next_url(request, edit_url))
 
 
 class MailingsV2CampaignAudienceView(TemplateView):

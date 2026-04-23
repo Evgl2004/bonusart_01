@@ -175,6 +175,11 @@ class Mailing(models.Model):
     scheduled_time_end = models.DateTimeField()
 
     is_active = models.BooleanField(default=False)
+    is_archived = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Архивная кампания скрывается из списка по умолчанию и недоступна к запуску.",
+    )
 
     created_at = models.DateTimeField()
     updated_at = models.DateTimeField()
