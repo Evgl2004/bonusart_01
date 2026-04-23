@@ -1,0 +1,228 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки v2: запуски кампании #{{ mailing.id }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Запуски и история кампании #{{ mailing.id }}</h1>
+      <p class="text-muted mb-0">{{ mailing.name }}</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Назад к кампании</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_audience' mailing.id %}">Аудитория</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailing_logs' mailing.id %}">Legacy логи</a>
+    </div>
+  </div>
+
+  <form method="get" class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-12 col-xl-4">
+          <label class="form-label mb-1">Поиск</label>
+          <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="телефон / ошибка / chat id">
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+          <label class="form-label mb-1">Статус строки аудитории</label>
+          <select name="row_status" class="form-select">
+            <option value="">Все</option>
+            {% for value, label in row_status_choices %}
+              <option value="{{ value }}" {% if selected_row_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-4 col-xl-3">
+          <label class="form-label mb-1">Статус dispatch</label>
+          <select name="task_status" class="form-select">
+            <option value="">Все</option>
+            {% for value, label in task_status_choices %}
+              <option value="{{ value }}" {% if selected_task_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label mb-1">Провайдер</label>
+          <select name="provider_type" class="form-select">
+            <option value="">Все</option>
+            {% for value, label in provider_choices %}
+              <option value="{{ value }}" {% if selected_provider_type == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-primary">Применить</button>
+        <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_runs' mailing.id %}">Сбросить</a>
+      </div>
+    </div>
+  </form>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Строки аудитории</div>
+          <div class="h3 mb-0">{{ row_stats.total }}</div>
+          <div class="small text-muted">После фильтра: {{ rows_filtered_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Dispatch задачи</div>
+          <div class="h3 mb-0">{{ task_stats.total }}</div>
+          <div class="small text-muted">После фильтра: {{ tasks_filtered_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Ошибки</div>
+          <div class="h3 mb-0">{{ row_stats.error }}</div>
+          <div class="small text-muted">failed dispatch: {{ task_stats.failed }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">В очереди/в работе</div>
+          <div class="h3 mb-0">{{ task_stats.pending|add:task_stats.queued|add:task_stats.in_progress }}</div>
+          <div class="small text-muted">pending + queued + in_progress</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-xxl-5">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Таймлайн dispatch (последние {{ timeline|length }})</h2>
+        </div>
+        <div class="card-body">
+          {% if timeline %}
+            <div class="list-group list-group-flush">
+              {% for item in timeline %}
+                <div class="list-group-item px-0">
+                  <div class="d-flex justify-content-between gap-2">
+                    <div>
+                      <div class="fw-semibold">#{{ item.task_id }} · {{ item.provider_type }} · {{ item.status }}</div>
+                      <div class="small text-muted">
+                        {% if item.guest_phone %}{{ item.guest_phone }}{% else %}без телефона{% endif %}
+                      </div>
+                      {% if item.message %}
+                        <div class="small text-danger">{{ item.message }}</div>
+                      {% endif %}
+                    </div>
+                    <div class="small text-muted text-nowrap">
+                      {{ item.event_time|date:"Y-m-d H:i:s" }}
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="text-muted">События не найдены.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-xxl-7">
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Строки аудитории (первые 200)</h2>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>ID</th>
+                  <th>Телефон</th>
+                  <th>Статус</th>
+                  <th>Delivery</th>
+                  <th>Запланировано</th>
+                  <th>Sent at</th>
+                  <th>Ошибка</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in rows %}
+                  <tr>
+                    <td>{{ row.id }}</td>
+                    <td>{{ row.phone|default:"—" }}</td>
+                    <td>{{ row.status }}</td>
+                    <td>{{ row.delivery_status|default:"—" }}</td>
+                    <td>{{ row.scheduled_datetime|date:"Y-m-d H:i:s" }}</td>
+                    <td>{{ row.sent_at|date:"Y-m-d H:i:s"|default:"—" }}</td>
+                    <td class="small text-danger">{{ row.error_description|default:"—" }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="7" class="text-center text-muted py-3">Нет строк.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card border-0 shadow-sm">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Dispatch задачи (первые 200)</h2>
+        </div>
+        <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>ID</th>
+                  <th>Статус</th>
+                  <th>Провайдер</th>
+                  <th>Приоритет</th>
+                  <th>Попытка</th>
+                  <th>Телефон</th>
+                  <th>Chat ID</th>
+                  <th>Время</th>
+                  <th>Ошибка</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for task in tasks %}
+                  <tr>
+                    <td>{{ task.id }}</td>
+                    <td>{{ task.status }}</td>
+                    <td>{{ task.provider_type }}</td>
+                    <td>{{ task.priority }}</td>
+                    <td>{{ task.attempt }}/{{ task.max_attempts }}</td>
+                    <td>{% if task.guest and task.guest.phone %}{{ task.guest.phone }}{% else %}—{% endif %}</td>
+                    <td>{{ task.external_chat_id|default:"—" }}</td>
+                    <td>
+                      {% if task.finished_at %}
+                        done: {{ task.finished_at|date:"Y-m-d H:i:s" }}
+                      {% elif task.started_at %}
+                        start: {{ task.started_at|date:"Y-m-d H:i:s" }}
+                      {% elif task.enqueued_at %}
+                        queue: {{ task.enqueued_at|date:"Y-m-d H:i:s" }}
+                      {% else %}
+                        created: {{ task.created_at|date:"Y-m-d H:i:s" }}
+                      {% endif %}
+                    </td>
+                    <td class="small text-danger">{{ task.last_error|default:"—" }}</td>
+                  </tr>
+                {% empty %}
+                  <tr><td colspan="9" class="text-center text-muted py-3">Нет dispatch-задач.</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

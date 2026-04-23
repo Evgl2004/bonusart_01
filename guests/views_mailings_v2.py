@@ -151,6 +151,7 @@ class _MailingsV2CampaignFormMixin:
             context["guests_count"] = mailing.guests_rows.count()
             context["legacy_edit_url"] = reverse("mailing_edit", kwargs={"pk": mailing.pk})
             context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
+            context["runs_url"] = reverse("mailings_v2_campaigns_runs", kwargs={"pk": mailing.pk})
             context["ops_url"] = reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.pk})
             context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
             context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
@@ -163,6 +164,7 @@ class _MailingsV2CampaignFormMixin:
             context["guests_count"] = 0
             context["legacy_edit_url"] = ""
             context["audience_url"] = ""
+            context["runs_url"] = ""
             context["ops_url"] = ""
             context["mailing_import_report"] = None
             context["mailing_import_error"] = None
@@ -323,6 +325,94 @@ class MailingsV2CampaignAudienceView(TemplateView):
         snapshot = _get_workbench_snapshot(self.request, mailing.pk)
         context["workbench_snapshot"] = snapshot
         context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
+        return context
+
+
+class MailingsV2CampaignRunsView(TemplateView):
+    """
+    Экран запусков/истории по конкретной кампании.
+
+    Даёт операционный срез по двум связанным слоям:
+    1. строки получателей (`MailingGuest`);
+    2. задачи доставки (`DispatchTask`).
+    """
+
+    template_name = "mailing_v2/campaign_runs.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mailing = get_object_or_404(Mailing, pk=self.kwargs["pk"])
+
+        query = (self.request.GET.get("q") or "").strip()
+        selected_row_status = (self.request.GET.get("row_status") or "").strip()
+        selected_task_status = (self.request.GET.get("task_status") or "").strip()
+        selected_provider_type = (self.request.GET.get("provider_type") or "").strip()
+
+        valid_row_statuses = {value for value, _ in MailingGuest.Status.choices}
+        valid_task_statuses = {value for value, _ in DispatchTask.Status.choices}
+        valid_providers = {value for value, _ in BotProfile.ProviderType.choices}
+
+        rows_scope = MailingGuest.objects.filter(mailing=mailing).select_related("guest")
+        if selected_row_status in valid_row_statuses:
+            rows_scope = rows_scope.filter(status=selected_row_status)
+        else:
+            selected_row_status = ""
+
+        tasks_scope = DispatchTask.objects.filter(mailing_guest__mailing=mailing).select_related(
+            "mailing_guest",
+            "guest",
+            "bot_profile",
+        )
+        if selected_task_status in valid_task_statuses:
+            tasks_scope = tasks_scope.filter(status=selected_task_status)
+        else:
+            selected_task_status = ""
+
+        if selected_provider_type in valid_providers:
+            tasks_scope = tasks_scope.filter(provider_type=selected_provider_type)
+        else:
+            selected_provider_type = ""
+
+        if query:
+            rows_scope = rows_scope.filter(
+                Q(phone__icontains=query)
+                | Q(delivery_status__icontains=query)
+                | Q(error_description__icontains=query)
+                | Q(guest__phone__icontains=query)
+                | Q(guest__first_name__icontains=query)
+                | Q(guest__last_name__icontains=query)
+            )
+            tasks_scope = tasks_scope.filter(
+                Q(external_chat_id__icontains=query)
+                | Q(last_error__icontains=query)
+                | Q(message_text__icontains=query)
+                | Q(guest__phone__icontains=query)
+                | Q(mailing_guest__phone__icontains=query)
+            )
+
+        rows_filtered_total = rows_scope.count()
+        tasks_filtered_total = tasks_scope.count()
+
+        rows = list(rows_scope.order_by("-id")[:200])
+        tasks = list(tasks_scope.order_by("-id")[:200])
+
+        timeline = _build_dispatch_timeline(tasks_scope.order_by("-updated_at")[:60])
+
+        context["mailing"] = mailing
+        context["rows"] = rows
+        context["tasks"] = tasks
+        context["timeline"] = timeline
+        context["rows_filtered_total"] = rows_filtered_total
+        context["tasks_filtered_total"] = tasks_filtered_total
+        context["row_stats"] = _build_mailing_row_stats(mailing)
+        context["task_stats"] = _build_mailing_dispatch_stats(mailing)
+        context["row_status_choices"] = list(MailingGuest.Status.choices)
+        context["task_status_choices"] = list(DispatchTask.Status.choices)
+        context["provider_choices"] = list(BotProfile.ProviderType.choices)
+        context["selected_row_status"] = selected_row_status
+        context["selected_task_status"] = selected_task_status
+        context["selected_provider_type"] = selected_provider_type
+        context["query"] = query
         return context
 
 
@@ -643,3 +733,24 @@ def _build_mailing_dispatch_stats(mailing: Mailing) -> dict[str, int]:
     for key in result.keys():
         result[key] = int(stats.get(key) or 0)
     return result
+
+
+def _build_dispatch_timeline(tasks: list[DispatchTask]) -> list[dict[str, object]]:
+    """
+    Формирует компактный таймлайн по последним задачам dispatch.
+    """
+    timeline: list[dict[str, object]] = []
+    for task in tasks:
+        event_time = task.finished_at or task.started_at or task.enqueued_at or task.created_at
+        timeline.append(
+            {
+                "task_id": int(task.id),
+                "status": str(task.status),
+                "provider_type": str(task.provider_type),
+                "guest_phone": str(task.guest.phone) if task.guest and task.guest.phone else "",
+                "event_time": event_time,
+                "message": (task.last_error or "")[:200],
+            }
+        )
+    timeline.sort(key=lambda item: item["event_time"] or timezone.now(), reverse=True)
+    return timeline[:60]

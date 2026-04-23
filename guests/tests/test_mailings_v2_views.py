@@ -306,6 +306,81 @@ class MailingsV2ViewsTests(TestCase):
         self.assertIsNone(task.finished_at)
         self.assertIsNone(task.last_error)
 
+    def test_campaign_runs_page_filters_rows_and_tasks(self):
+        """
+        Экран запусков v2 должен фильтровать строки аудитории и dispatch-задачи.
+        """
+        mailing = self._create_mailing()
+        guest_ok = Guest.objects.create(
+            phone="+79990000666",
+            first_name="Мария",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        guest_err = Guest.objects.create(
+            phone="+79990000777",
+            first_name="Светлана",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row_ok = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest_ok,
+            phone=guest_ok.phone,
+            email="",
+            text_mailing_list="Текст 1",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.DONE,
+            created_at=self.now,
+        )
+        row_err = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest_err,
+            phone=guest_err.phone,
+            email="",
+            text_mailing_list="Текст 2",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.ERROR,
+            error_description="provider timeout",
+            created_at=self.now,
+        )
+
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.VK,
+            status=DispatchTask.Status.DONE,
+            mailing_guest=row_ok,
+            guest=guest_ok,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            mailing_guest=row_err,
+            guest=guest_err,
+            last_error="timeout 429",
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_runs", kwargs={"pk": mailing.id}),
+            {
+                "q": "777",
+                "row_status": MailingGuest.Status.ERROR,
+                "task_status": DispatchTask.Status.FAILED,
+                "provider_type": BotProfile.ProviderType.TELEGRAM,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Запуски и история кампании")
+        self.assertEqual(response.context["rows_filtered_total"], 1)
+        self.assertEqual(response.context["tasks_filtered_total"], 1)
+        self.assertEqual(len(response.context["rows"]), 1)
+        self.assertEqual(len(response.context["tasks"]), 1)
+        self.assertEqual(response.context["rows"][0].status, MailingGuest.Status.ERROR)
+        self.assertEqual(response.context["tasks"][0].status, DispatchTask.Status.FAILED)
+        self.assertEqual(response.context["tasks"][0].provider_type, BotProfile.ProviderType.TELEGRAM)
+
     def test_create_template_v2_and_open_detail(self):
         """
         Создание шаблона через v2 должно вести на v2-карточку шаблона.
