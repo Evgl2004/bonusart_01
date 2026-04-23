@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки v2: аудитория кампании{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Аудитория кампании #{{ mailing.id }}</h1>
+      <p class="text-muted mb-0">{{ mailing.name }}</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Назад к кампании</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">К списку v2</a>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Всего строк</div>
+          <div class="h3 mb-0">{{ stats.total|default:0 }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Planned</div>
+          <div class="h3 mb-0">{{ stats.planned|default:0 }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Done</div>
+          <div class="h3 mb-0">{{ stats.done|default:0 }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-sm-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Error</div>
+          <div class="h3 mb-0">{{ stats.error|default:0 }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Первые 300 строк аудитории</h2>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>ID строки</th>
+              <th>Телефон</th>
+              <th>Email</th>
+              <th>Статус</th>
+              <th>Запланировано</th>
+              <th>Доставка</th>
+              <th>Ошибка</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td>{{ row.id }}</td>
+                <td>{{ row.phone|default:"—" }}</td>
+                <td>{{ row.email|default:"—" }}</td>
+                <td>{{ row.status }}</td>
+                <td>{{ row.scheduled_datetime|date:"Y-m-d H:i" }}</td>
+                <td>{{ row.delivery_status|default:"—" }}</td>
+                <td>{{ row.error_description|default:"—" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-4">Аудитория пока пуста.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

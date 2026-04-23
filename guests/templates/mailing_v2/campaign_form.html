@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {% if is_create %}Рассылки v2: новая кампания{% else %}Рассылки v2: кампания #{{ object.id }}{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">
+        {% if is_create %}
+          Новая кампания
+        {% else %}
+          Кампания #{{ object.id }}: {{ object.name }}
+        {% endif %}
+      </h1>
+      <p class="text-muted mb-0">
+        {% if is_create %}
+          Шаг 1/3: базовая настройка кампании.
+        {% else %}
+          Шаг 2/3: уточнение аудитории и операционный контроль.
+        {% endif %}
+      </p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ v2_list_url }}">Назад в mailings-v2</a>
+      {% if object and object.pk %}
+        <a class="btn btn-outline-secondary" href="{{ legacy_edit_url }}">Открыть legacy</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-12 col-xl-8">
+      <div class="card border-0 shadow-sm">
+        <div class="card-body">
+          {% if form.non_field_errors %}
+            <div class="alert alert-danger">
+              {{ form.non_field_errors }}
+            </div>
+          {% endif %}
+
+          <form method="post">
+            {% csrf_token %}
+
+            <div class="mb-3">
+              {{ form.name.label_tag }}
+              {{ form.name }}
+              {% if form.name.errors %}
+                <div class="text-danger small mt-1">{{ form.name.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+
+            <div class="mb-3">
+              {{ form.template.label_tag }}
+              {{ form.template }}
+              {% if form.template.errors %}
+                <div class="text-danger small mt-1">{{ form.template.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+
+            <div class="mb-3">
+              {{ form.scheduled_date.label_tag }}
+              {{ form.scheduled_date }}
+              {% if form.scheduled_date.errors %}
+                <div class="text-danger small mt-1">{{ form.scheduled_date.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                {{ form.scheduled_time_begin.label_tag }}
+                {{ form.scheduled_time_begin }}
+                {% if form.scheduled_time_begin.errors %}
+                  <div class="text-danger small mt-1">{{ form.scheduled_time_begin.errors|join:", " }}</div>
+                {% endif %}
+              </div>
+              <div class="col-md-6 mb-3">
+                {{ form.scheduled_time_end.label_tag }}
+                {{ form.scheduled_time_end }}
+                {% if form.scheduled_time_end.errors %}
+                  <div class="text-danger small mt-1">{{ form.scheduled_time_end.errors|join:", " }}</div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                {{ form.send_window_begin.label_tag }}
+                {{ form.send_window_begin }}
+                {% if form.send_window_begin.errors %}
+                  <div class="text-danger small mt-1">{{ form.send_window_begin.errors|join:", " }}</div>
+                {% endif %}
+              </div>
+              <div class="col-md-6 mb-3">
+                {{ form.send_window_end.label_tag }}
+                {{ form.send_window_end }}
+                {% if form.send_window_end.errors %}
+                  <div class="text-danger small mt-1">{{ form.send_window_end.errors|join:", " }}</div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="row">
+              <div class="col-md-6 mb-3">
+                {{ form.target_mode.label_tag }}
+                {{ form.target_mode }}
+                {% if form.target_mode.errors %}
+                  <div class="text-danger small mt-1">{{ form.target_mode.errors|join:", " }}</div>
+                {% endif %}
+              </div>
+              <div class="col-md-6 mb-3">
+                {{ form.queue_priority.label_tag }}
+                {{ form.queue_priority }}
+                {% if form.queue_priority.errors %}
+                  <div class="text-danger small mt-1">{{ form.queue_priority.errors|join:", " }}</div>
+                {% endif %}
+              </div>
+            </div>
+
+            <div class="mb-3">
+              {{ form.bot_profiles.label_tag }}
+              <div class="border rounded p-3">
+                {{ form.bot_profiles }}
+              </div>
+              <small class="text-muted">
+                Выберите конкретных активных ботов, через которых должна идти эта рассылка.
+              </small>
+              {% if form.bot_profiles.errors %}
+                <div class="text-danger small mt-1">{{ form.bot_profiles.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+
+            <button type="submit" class="btn btn-primary">
+              {% if is_create %}Создать кампанию{% else %}Сохранить изменения{% endif %}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-xl-4">
+      <div class="card border-0 shadow-sm mb-3">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Статус кампании</h2>
+        </div>
+        <div class="card-body">
+          {% if object and object.pk %}
+            <div class="mb-2">ID: <b>{{ object.id }}</b></div>
+            <div class="mb-2">Активность:
+              {% if object.is_active %}
+                <span class="badge text-bg-success">включена</span>
+              {% else %}
+                <span class="badge text-bg-secondary">выключена</span>
+              {% endif %}
+            </div>
+            <div class="mb-2">Получателей: <b>{{ guests_count }}</b></div>
+            <div class="d-grid gap-2 mt-3">
+              <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Проверить аудиторию</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs' object.id %}">Логи отправки</a>
+              <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs_txt' object.id %}">Скачать лог txt</a>
+            </div>
+          {% else %}
+            <p class="text-muted mb-0">После создания кампании здесь появится сводка по получателям и статусам.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      {% if object and object.id %}
+        <div class="card border-0 shadow-sm">
+          <div class="card-header bg-white d-flex justify-content-between align-items-center">
+            <h2 class="h6 mb-0">Импорт телефонов</h2>
+            <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_import_template' %}">Шаблон Excel</a>
+          </div>
+          <div class="card-body">
+            {% if mailing_import_error %}
+              <div class="alert alert-danger">{{ mailing_import_error }}</div>
+            {% endif %}
+
+            <form method="post" action="{% url 'mailing_import_phones' object.id %}" enctype="multipart/form-data">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <input type="file" name="file" accept=".xlsx" class="form-control" required>
+              <button class="btn btn-primary mt-2" type="submit">Импортировать</button>
+            </form>
+
+            {% if mailing_import_report %}
+              <div class="alert alert-info mt-3 mb-0">
+                <b>Отчет импорта</b><br>
+                Загружено строк: {{ mailing_import_report.total_loaded }}<br>
+                Уникальных телефонов: {{ mailing_import_report.unique_phones }}<br>
+                Найдено гостей в базе: {{ mailing_import_report.found }}<br>
+                Добавлено в кампанию: <b>{{ mailing_import_report.added }}</b><br>
+                Уже были в кампании: {{ mailing_import_report.already }}<br>
+                Не найдено в базе: {{ mailing_import_report.not_found }}<br>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -12,7 +12,7 @@
       </p>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-primary" href="{% url 'mailings_create' %}">Создать кампанию</a>
+      <a class="btn btn-primary" href="{% url 'mailings_v2_campaigns_new' %}">Создать кампанию</a>
       <a class="btn btn-outline-primary" href="{% url 'message_templates_create' %}">Создать шаблон</a>
     </div>
   </div>
@@ -81,7 +81,7 @@
   <div class="card border-0 shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
       <h2 class="h6 mb-0">Последние кампании</h2>
-      <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings' %}">Полный список</a>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings' %}">Legacy список</a>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -123,7 +123,7 @@
                 <td>{{ row.recipients_error }}</td>
                 <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
                 <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="{% url 'mailing_edit' row.id %}">Открыть</a>
+                  <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_campaigns_edit' row.id %}">Открыть</a>
                 </td>
               </tr>
             {% empty %}

@@ -5,6 +5,7 @@ from django.views import View
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.http import HttpResponse
 from openpyxl import load_workbook, Workbook
 
@@ -48,18 +49,36 @@ def read_phones_from_xlsx(file_obj) -> list[str]:
     return phones
 
 
+def resolve_next_url(request, fallback_url: str) -> str:
+    """
+    Безопасно вернуть URL для redirect после импорта.
+
+    Позволяет new UI передавать `next`, не ломая legacy поведение.
+    """
+    next_url = (request.POST.get("next") or request.GET.get("next") or "").strip()
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return next_url
+    return fallback_url
+
+
 class MailingImportPhonesView(View):
     """
     POST: загрузить Excel, сопоставить телефоны с Guest, добавить в MailingGuest.
     """
     def post(self, request, pk: int):
         mailing = get_object_or_404(Mailing, pk=pk)
+        fallback_url = reverse("mailing_edit", args=[mailing.id])
+        redirect_url = resolve_next_url(request, fallback_url)
         form = MailingImportPhonesForm(request.POST, request.FILES)
 
         if not form.is_valid():
             # возвращаем на форму редактирования (или куда тебе удобнее)
             request.session["mailing_import_error"] = str(form.errors)
-            return redirect(reverse("mailing_edit", args=[mailing.id]))
+            return redirect(redirect_url)
 
         phones_raw = read_phones_from_xlsx(form.cleaned_data["file"])
 
@@ -167,7 +186,7 @@ class MailingImportPhonesView(View):
             "not_found": not_found_count,
         }
 
-        return redirect(reverse("mailing_edit", args=[mailing.id]))
+        return redirect(redirect_url)
 
 
 class MailingImportTemplateDownloadView(View):

@@ -11,11 +11,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.contrib import messages
 from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils import timezone
-from django.views.generic import TemplateView
+from django.views.generic import CreateView, TemplateView, UpdateView
 
+from guests.forms import MailingForm
 from guests.models import DispatchTask, Mailing, MailingGuest, MessageTemplate, NotificationScenario
 
 
@@ -85,15 +88,15 @@ class MailingsV2CampaignsHubView(TemplateView):
                 "title": "Кампании",
                 "description": "Создание, запуск и контроль ручных рассылок.",
                 "primary_label": "Открыть кампании",
-                "primary_url": reverse("mailings"),
+                "primary_url": reverse("mailings_v2_campaigns"),
                 "secondary_label": "Создать кампанию",
-                "secondary_url": reverse("mailings_create"),
+                "secondary_url": reverse("mailings_v2_campaigns_new"),
             },
             {
                 "title": "Шаблоны",
                 "description": "Управление текстами, переменными и превью сообщений.",
                 "primary_label": "Открыть шаблоны",
-                "primary_url": reverse("message_templates"),
+                "primary_url": reverse("mailings_v2_templates"),
                 "secondary_label": "Создать шаблон",
                 "secondary_url": reverse("message_templates_create"),
             },
@@ -114,6 +117,113 @@ class MailingsV2CampaignsHubView(TemplateView):
                 "secondary_url": "/admin/guests/notificationscenario/",
             },
         ]
+        return context
+
+
+class _MailingsV2CampaignFormMixin:
+    """
+    Общая логика формы кампании в новом UI.
+
+    Используем текущую backend-модель и форму без смены контракта.
+    """
+
+    model = Mailing
+    form_class = MailingForm
+    template_name = "mailing_v2/campaign_form.html"
+
+    def get_form(self, form_class=None):
+        form = super().get_form(form_class)
+        # В v2 по умолчанию показываем только активные шаблоны.
+        if "template" in form.fields:
+            form.fields["template"].queryset = MessageTemplate.objects.filter(is_active=True).order_by("-created_at")
+        return form
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mailing = getattr(self, "object", None)
+        context["is_create"] = not bool(mailing and mailing.pk)
+        context["legacy_list_url"] = reverse("mailings")
+        context["v2_list_url"] = reverse("mailings_v2_campaigns")
+
+        if mailing and mailing.pk:
+            context["guests_count"] = mailing.guests_rows.count()
+            context["legacy_edit_url"] = reverse("mailing_edit", kwargs={"pk": mailing.pk})
+            context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
+            context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
+            context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
+        else:
+            context["guests_count"] = 0
+            context["legacy_edit_url"] = ""
+            context["audience_url"] = ""
+            context["mailing_import_report"] = None
+            context["mailing_import_error"] = None
+        return context
+
+
+class MailingsV2CampaignCreateView(_MailingsV2CampaignFormMixin, CreateView):
+    """
+    Создание кампании в новом UI.
+
+    Логика сохранения соответствует текущей legacy-форме.
+    """
+
+    def form_valid(self, form):
+        self.object = form.save(commit=False)
+        self.object.is_active = False
+
+        now = timezone.now()
+        if hasattr(self.object, "created_at") and not self.object.created_at:
+            self.object.created_at = now
+        if hasattr(self.object, "updated_at"):
+            self.object.updated_at = now
+
+        self.object.save()
+        form.save_m2m()
+        messages.success(self.request, f"Кампания создана (ID {self.object.id}).")
+        return redirect("mailings_v2_campaigns_edit", pk=self.object.pk)
+
+
+class MailingsV2CampaignUpdateView(_MailingsV2CampaignFormMixin, UpdateView):
+    """
+    Редактирование кампании в новом UI.
+    """
+
+    def form_valid(self, form):
+        self.object = form.save(commit=False)
+        if hasattr(self.object, "updated_at"):
+            self.object.updated_at = timezone.now()
+        self.object.save()
+        form.save_m2m()
+        messages.success(self.request, "Изменения кампании сохранены.")
+        return redirect("mailings_v2_campaigns_edit", pk=self.object.pk)
+
+
+class MailingsV2CampaignAudienceView(TemplateView):
+    """
+    Просмотр аудитории выбранной кампании.
+
+    Экран нужен как промежуточная валидация состава перед отправкой.
+    """
+
+    template_name = "mailing_v2/campaign_audience.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mailing = get_object_or_404(Mailing, pk=self.kwargs["pk"])
+        rows_qs = (
+            MailingGuest.objects.filter(mailing=mailing)
+            .select_related("guest")
+            .order_by("-id")
+        )
+        context["mailing"] = mailing
+        context["rows"] = rows_qs[:300]
+        context["stats"] = rows_qs.aggregate(
+            total=Count("id"),
+            planned=Count("id", filter=Q(status=MailingGuest.Status.PLANNED)),
+            in_progress=Count("id", filter=Q(status=MailingGuest.Status.IN_PROGRESS)),
+            done=Count("id", filter=Q(status=MailingGuest.Status.DONE)),
+            error=Count("id", filter=Q(status=MailingGuest.Status.ERROR)),
+        )
         return context
 
 
