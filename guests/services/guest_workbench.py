@@ -342,7 +342,7 @@ def build_guest_workbench_payload(
     base_segmentation, base_segment_by_key = _build_segmentation_state(
         base_scope, allowed_guest_keys=None
     )
-    base_segment_focus_matrix, _ = _build_segment_focus_matrix(
+    base_segment_focus_matrix, base_focus_guest_keys_by_code = _build_segment_focus_matrix(
         as_of_date=target_as_of,
         selected_window_days=selected_window_days,
         selected_department_id=selected_department_id,
@@ -435,17 +435,25 @@ def build_guest_workbench_payload(
         for row in department_rows
     ]
 
-    segmentation, segment_by_key = _build_segmentation_state(
-        base_scope, allowed_guest_keys=allowed_guest_keys
-    )
-    segment_focus_matrix, focus_guest_keys_by_code = _build_segment_focus_matrix(
-        as_of_date=target_as_of,
-        selected_window_days=selected_window_days,
-        selected_department_id=selected_department_id,
-        segment_by_key=segment_by_key,
-        segment_totals=segmentation,
-        allowed_guest_keys=allowed_guest_keys,
-    )
+    if not use_category_window_metrics and allowed_guest_keys is None:
+        # Оптимизация: для базового режима без сложных условий
+        # сегментация и матрица совпадают с уже посчитанными стартовыми данными.
+        segmentation = base_segmentation
+        segment_by_key = base_segment_by_key
+        segment_focus_matrix = base_segment_focus_matrix
+        focus_guest_keys_by_code = base_focus_guest_keys_by_code
+    else:
+        segmentation, segment_by_key = _build_segmentation_state(
+            active_metrics_scope, allowed_guest_keys=allowed_guest_keys
+        )
+        segment_focus_matrix, focus_guest_keys_by_code = _build_segment_focus_matrix(
+            as_of_date=target_as_of,
+            selected_window_days=selected_window_days,
+            selected_department_id=selected_department_id,
+            segment_by_key=segment_by_key,
+            segment_totals=segmentation,
+            allowed_guest_keys=allowed_guest_keys,
+        )
     focus_category_options = [
         {
             "code": (col.get("focus_category_code") or "").strip(),
@@ -811,7 +819,7 @@ def _build_segment_focus_matrix(
     cell_sets: dict[tuple[str, int], set[tuple[int, str]]] = defaultdict(set)
     category_sets: dict[int, set[tuple[int, str]]] = defaultdict(set)
 
-    for row in daily_scope.values("guest_id", "department_id", "focus_category_id"):
+    for row in daily_scope.values("guest_id", "department_id", "focus_category_id").distinct():
         guest_id = int(row["guest_id"])
         department_id = _normalize_department_id(row.get("department_id"))
         guest_key = (guest_id, department_id)
