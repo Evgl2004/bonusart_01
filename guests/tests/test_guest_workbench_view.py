@@ -226,6 +226,8 @@ class GuestsWorkbenchViewTests(TestCase):
         payload = response.context["payload"]
         self.assertEqual(payload["filters"]["segment_code"], "active_30d")
         self.assertEqual(payload["filters"]["focus_category_code"], "beer_ermolaev")
+        self.assertEqual(payload["cards"]["guests_total"], 1)
+        self.assertEqual(payload["cards"]["orders_total"], 3)
         self.assertEqual(payload["selected_guests"]["total"], 1)
         self.assertEqual(len(payload["selected_guests"]["rows"]), 1)
         self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
@@ -275,6 +277,7 @@ class GuestsWorkbenchViewTests(TestCase):
 
         payload = response.context["payload"]
         self.assertEqual(len(payload["filters"]["complex_filters"]), 2)
+        self.assertEqual(payload["cards"]["guests_total"], 1)
         self.assertEqual(payload["selected_guests"]["total"], 1)
         self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
 

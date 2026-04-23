@@ -16,8 +16,7 @@ from decimal import Decimal
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Avg, Count, Max, Sum
-from django.db.models.functions import Coalesce
+from django.db.models import Max
 
 from guests.models import (
     FocusCategory,
@@ -410,56 +409,12 @@ def build_guest_workbench_payload(
         if selected_department_id:
             active_metrics_scope = active_metrics_scope.filter(department_id=selected_department_id)
 
-    work_scope = active_metrics_scope.filter(window_days=selected_window_days).select_related("guest")
-    work_scope = _apply_complex_filters(work_scope, normalized_complex_filters)
-
     allowed_guest_keys = _collect_allowed_guest_keys_by_complex_filters(
         base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
         segment_code=selected_segment_code,
         normalized_filters=normalized_complex_filters,
     )
-
-    cards_agg = work_scope.aggregate(
-        guests_total=Count("guest_id", distinct=True),
-        orders_total=Coalesce(Sum("orders_count"), 0),
-        visits_total=Coalesce(Sum("visits_count"), 0),
-        net_total=Coalesce(Sum("sum_net"), Decimal("0")),
-        bonus_in_total=Coalesce(Sum("bonus_in_sum"), Decimal("0")),
-        bonus_out_total=Coalesce(Sum("bonus_out_sum"), Decimal("0")),
-        avg_rating=Coalesce(Avg("rating_score"), Decimal("0")),
-    )
-
-    top_rating_rows = list(work_scope.order_by("-rating_score", "-sum_net", "guest_id")[:20])
-    anti_rating_rows = list(
-        work_scope.filter(orders_count__gt=0).order_by("rating_score", "sum_net", "guest_id")[:20]
-    )
-
-    department_rows = list(
-        work_scope.values("department_id")
-        .annotate(
-            guests_count=Count("guest_id", distinct=True),
-            net_total=Coalesce(Sum("sum_net"), Decimal("0")),
-            avg_rating=Coalesce(Avg("rating_score"), Decimal("0")),
-            bonus_in_total=Coalesce(Sum("bonus_in_sum"), Decimal("0")),
-            bonus_out_total=Coalesce(Sum("bonus_out_sum"), Decimal("0")),
-        )
-        .order_by("-net_total", "-guests_count", "department_id")
-    )
-
-    department_names_map = _load_department_names()
-    department_competition = [
-        {
-            "department_id": row["department_id"] or "",
-            "department_name": department_names_map.get(row["department_id"] or "", row["department_id"] or "—"),
-            "guests_count": int(row["guests_count"] or 0),
-            "net_total": _to_money_ui(row["net_total"]),
-            "avg_rating": _to_decimal_str(row["avg_rating"]),
-            "bonus_in_total": _to_money_str(row["bonus_in_total"]),
-            "bonus_out_total": _to_money_str(row["bonus_out_total"]),
-        }
-        for row in department_rows
-    ]
 
     if not use_category_window_metrics and allowed_guest_keys is None:
         # Оптимизация: для базового режима без сложных условий
@@ -502,6 +457,16 @@ def build_guest_workbench_payload(
             }
         )
 
+    selected_guest_rows = _collect_selected_guest_rows(
+        base_scope=active_metrics_scope,
+        selected_window_days=selected_window_days,
+        segment_by_key=segment_by_key,
+        focus_guest_keys_by_code=focus_guest_keys_by_code,
+        segment_code=selected_segment_code,
+        focus_category_code=selected_focus_category_code,
+        allowed_guest_keys=allowed_guest_keys,
+    )
+
     selected_guests = _build_selected_guests_rows(
         base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
@@ -511,8 +476,85 @@ def build_guest_workbench_payload(
         focus_category_code=selected_focus_category_code,
         allowed_guest_keys=allowed_guest_keys,
         limit=SELECTED_GUESTS_LIMIT,
+        selected_guest_rows=selected_guest_rows,
     )
-    scatter_points = _build_scatter_points(work_scope)
+
+    cards_orders_total = 0
+    cards_visits_total = 0
+    cards_net_total = Decimal("0")
+    cards_bonus_in_total = Decimal("0")
+    cards_bonus_out_total = Decimal("0")
+    cards_rating_total = Decimal("0")
+
+    for row, _ in selected_guest_rows:
+        cards_orders_total += int(row.orders_count or 0)
+        cards_visits_total += int(row.visits_count or 0)
+        cards_net_total += Decimal(str(row.sum_net or 0))
+        cards_bonus_in_total += Decimal(str(row.bonus_in_sum or 0))
+        cards_bonus_out_total += Decimal(str(row.bonus_out_sum or 0))
+        cards_rating_total += Decimal(str(row.rating_score or 0))
+
+    cards_guests_total = len(selected_guest_rows)
+    cards_avg_rating = (
+        (cards_rating_total / Decimal(cards_guests_total))
+        if cards_guests_total > 0
+        else Decimal("0")
+    )
+
+    top_rating_rows = [row for row, _ in selected_guest_rows[:20]]
+    anti_rating_rows = sorted(
+        [row for row, _ in selected_guest_rows if int(row.orders_count or 0) > 0],
+        key=lambda row: (
+            float(row.rating_score or 0),
+            float(row.sum_net or 0),
+            int(row.guest_id),
+        ),
+    )[:20]
+
+    department_names_map = _load_department_names()
+    department_agg: dict[str, dict[str, Any]] = {}
+    for row, _ in selected_guest_rows:
+        department_id = (row.department_id or "").strip()
+        bucket = department_agg.setdefault(
+            department_id,
+            {
+                "guests_count": 0,
+                "net_total": Decimal("0"),
+                "rating_total": Decimal("0"),
+                "bonus_in_total": Decimal("0"),
+                "bonus_out_total": Decimal("0"),
+            },
+        )
+        bucket["guests_count"] += 1
+        bucket["net_total"] += Decimal(str(row.sum_net or 0))
+        bucket["rating_total"] += Decimal(str(row.rating_score or 0))
+        bucket["bonus_in_total"] += Decimal(str(row.bonus_in_sum or 0))
+        bucket["bonus_out_total"] += Decimal(str(row.bonus_out_sum or 0))
+
+    department_competition = [
+        {
+            "department_id": department_id,
+            "department_name": department_names_map.get(department_id, department_id or "—"),
+            "guests_count": int(values["guests_count"] or 0),
+            "net_total": _to_money_ui(values["net_total"]),
+            "avg_rating": _to_decimal_str(
+                (values["rating_total"] / Decimal(values["guests_count"]))
+                if int(values["guests_count"] or 0) > 0
+                else Decimal("0")
+            ),
+            "bonus_in_total": _to_money_str(values["bonus_in_total"]),
+            "bonus_out_total": _to_money_str(values["bonus_out_total"]),
+        }
+        for department_id, values in sorted(
+            department_agg.items(),
+            key=lambda item: (
+                -float(item[1]["net_total"]),
+                -int(item[1]["guests_count"]),
+                item[0],
+            ),
+        )
+    ]
+    scatter_points = _build_scatter_points(selected_guest_rows)
 
     return {
         "filters": {
@@ -538,13 +580,13 @@ def build_guest_workbench_payload(
             "saved_presets": saved_presets,
         },
         "cards": {
-            "guests_total": int(cards_agg["guests_total"] or 0),
-            "orders_total": int(cards_agg["orders_total"] or 0),
-            "visits_total": int(cards_agg["visits_total"] or 0),
-            "net_total": _to_money_ui(cards_agg["net_total"]),
-            "bonus_in_total": _to_money_str(cards_agg["bonus_in_total"]),
-            "bonus_out_total": _to_money_str(cards_agg["bonus_out_total"]),
-            "avg_rating": _to_decimal_str(cards_agg["avg_rating"]),
+            "guests_total": int(cards_guests_total),
+            "orders_total": int(cards_orders_total),
+            "visits_total": int(cards_visits_total),
+            "net_total": _to_money_ui(cards_net_total),
+            "bonus_in_total": _to_money_str(cards_bonus_in_total),
+            "bonus_out_total": _to_money_str(cards_bonus_out_total),
+            "avg_rating": _to_decimal_str(cards_avg_rating),
         },
         "segments": segmentation,
         "segment_focus_matrix": segment_focus_matrix,
@@ -932,12 +974,12 @@ def _build_segment_focus_matrix(
     )
 
 
-def _build_scatter_points(scope_qs) -> list[dict[str, Any]]:
+def _build_scatter_points(selected_guest_rows: list[tuple[Any, str]]) -> list[dict[str, Any]]:
     """
     Готовит точки для диаграммы «частота × средний чек».
     """
     points: list[dict[str, Any]] = []
-    for row in scope_qs.order_by("-rating_score", "-sum_net")[:500]:
+    for row, _ in selected_guest_rows[:500]:
         points.append(
             {
                 "guest_id": int(row.guest_id),
@@ -951,7 +993,7 @@ def _build_scatter_points(scope_qs) -> list[dict[str, Any]]:
     return points
 
 
-def _build_selected_guests_rows(
+def _collect_selected_guest_rows(
     *,
     base_scope,
     selected_window_days: int,
@@ -960,29 +1002,19 @@ def _build_selected_guests_rows(
     segment_code: str,
     focus_category_code: str,
     allowed_guest_keys: set[tuple[int, str]] | None = None,
-    limit: int,
-) -> dict[str, Any]:
+) -> list[tuple[Any, str]]:
     """
-    Строит список гостей для выбранных фильтров сегмента и фокусной категории.
+    Возвращает отфильтрованные строки гостей для таблицы/карточек в единой логике.
     """
-    rows: list[dict[str, Any]] = []
-    total = 0
     focus_keys = focus_guest_keys_by_code.get(focus_category_code, set()) if focus_category_code else None
-
     representative_rows = _build_representative_rows(
         base_scope=base_scope,
         selected_window_days=selected_window_days,
         segment_code=segment_code,
         allowed_guest_keys=allowed_guest_keys,
     )
-    representative_rows.sort(
-        key=lambda item: (
-            -(float(item.rating_score or 0)),
-            -(float(item.sum_net or 0)),
-            int(item.guest_id),
-        )
-    )
 
+    selected: list[tuple[Any, str]] = []
     for row in representative_rows:
         key = (int(row.guest_id), _normalize_department_id(row.department_id))
         row_segment_code = segment_by_key.get(key, "")
@@ -994,7 +1026,48 @@ def _build_selected_guests_rows(
         if focus_keys is not None and key not in focus_keys:
             continue
 
-        total += 1
+        selected.append((row, row_segment_code))
+
+    selected.sort(
+        key=lambda item: (
+            -(float(item[0].rating_score or 0)),
+            -(float(item[0].sum_net or 0)),
+            int(item[0].guest_id),
+        )
+    )
+    return selected
+
+
+def _build_selected_guests_rows(
+    *,
+    base_scope,
+    selected_window_days: int,
+    segment_by_key: dict[tuple[int, str], str],
+    focus_guest_keys_by_code: dict[str, set[tuple[int, str]]],
+    segment_code: str,
+    focus_category_code: str,
+    allowed_guest_keys: set[tuple[int, str]] | None = None,
+    limit: int,
+    selected_guest_rows: list[tuple[Any, str]] | None = None,
+) -> dict[str, Any]:
+    """
+    Строит список гостей для выбранных фильтров сегмента и фокусной категории.
+    """
+    rows: list[dict[str, Any]] = []
+    selected_rows = selected_guest_rows
+    if selected_rows is None:
+        selected_rows = _collect_selected_guest_rows(
+            base_scope=base_scope,
+            selected_window_days=selected_window_days,
+            segment_by_key=segment_by_key,
+            focus_guest_keys_by_code=focus_guest_keys_by_code,
+            segment_code=segment_code,
+            focus_category_code=focus_category_code,
+            allowed_guest_keys=allowed_guest_keys,
+        )
+
+    total = len(selected_rows)
+    for row, row_segment_code in selected_rows:
         if len(rows) < limit:
             item = _serialize_metric_row(row)
             item["segment_code"] = row_segment_code
