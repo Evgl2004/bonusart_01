@@ -573,8 +573,16 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(mailing.template_id, self.template.id)
         self.assertEqual(
             response.url,
-            reverse("mailing_edit", kwargs={"pk": mailing.id}),
+            reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}),
         )
+
+        snapshots = self.client.session.get("mailings_v2_workbench_snapshots", {})
+        self.assertIn(str(mailing.id), snapshots)
+        snapshot = snapshots[str(mailing.id)]
+        self.assertEqual(snapshot["window_days"], "30")
+        self.assertEqual(snapshot["segment_code"], "active_30d")
+        self.assertEqual(snapshot["focus_category_code"], "beer_ermolaev")
+        self.assertEqual(snapshot["selected_total"], 1)
 
         rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
         self.assertEqual(len(rows), 1)

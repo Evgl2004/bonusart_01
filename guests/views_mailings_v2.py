@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.db.models import Count, Q
@@ -151,12 +152,17 @@ class _MailingsV2CampaignFormMixin:
             context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
             context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
             context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
+            snapshot = _get_workbench_snapshot(self.request, mailing.pk)
+            context["workbench_snapshot"] = snapshot
+            context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
         else:
             context["guests_count"] = 0
             context["legacy_edit_url"] = ""
             context["audience_url"] = ""
             context["mailing_import_report"] = None
             context["mailing_import_error"] = None
+            context["workbench_snapshot"] = None
+            context["workbench_snapshot_url"] = ""
         return context
 
 
@@ -224,6 +230,9 @@ class MailingsV2CampaignAudienceView(TemplateView):
             done=Count("id", filter=Q(status=MailingGuest.Status.DONE)),
             error=Count("id", filter=Q(status=MailingGuest.Status.ERROR)),
         )
+        snapshot = _get_workbench_snapshot(self.request, mailing.pk)
+        context["workbench_snapshot"] = snapshot
+        context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
         return context
 
 
@@ -419,3 +428,69 @@ class MailingsV2ScenariosView(TemplateView):
         context["scenarios_total"] = scenarios.count()
         context["scenarios_active"] = scenarios.filter(is_active=True).count()
         return context
+
+
+def _get_workbench_snapshot(request, mailing_id: int) -> dict | None:
+    """
+    Достаёт и нормализует снимок фильтров Workbench для кампании из сессии.
+    """
+    all_snapshots = request.session.get("mailings_v2_workbench_snapshots", {})
+    if not isinstance(all_snapshots, dict):
+        return None
+    raw_snapshot = all_snapshots.get(str(mailing_id))
+    if not isinstance(raw_snapshot, dict):
+        return None
+
+    snapshot = {
+        "as_of_date": str(raw_snapshot.get("as_of_date") or "").strip(),
+        "window_days": str(raw_snapshot.get("window_days") or "").strip(),
+        "department_id": str(raw_snapshot.get("department_id") or "").strip(),
+        "segment_code": str(raw_snapshot.get("segment_code") or "").strip(),
+        "focus_category_code": str(raw_snapshot.get("focus_category_code") or "").strip(),
+        "selected_total": int(raw_snapshot.get("selected_total") or 0),
+        "selected_rows_count": int(raw_snapshot.get("selected_rows_count") or 0),
+        "source_layer": str(raw_snapshot.get("source_layer") or "").strip(),
+        "saved_at": str(raw_snapshot.get("saved_at") or "").strip(),
+        "complex_filters": [],
+    }
+
+    complex_filters_raw = raw_snapshot.get("complex_filters") or []
+    if isinstance(complex_filters_raw, list):
+        for item in complex_filters_raw:
+            if not isinstance(item, dict):
+                continue
+            field = str(item.get("field") or "").strip()
+            operator = str(item.get("operator") or "").strip()
+            value = str(item.get("value") or "").strip()
+            if not (field or operator or value):
+                continue
+            snapshot["complex_filters"].append(
+                {
+                    "field": field,
+                    "operator": operator,
+                    "value": value,
+                }
+            )
+    return snapshot
+
+
+def _build_workbench_url_from_snapshot(snapshot: dict) -> str:
+    """
+    Собирает URL перехода в Workbench по сохранённому snapshot фильтров.
+    """
+    params = {}
+    for key in ("as_of_date", "window_days", "department_id", "segment_code", "focus_category_code"):
+        value = str(snapshot.get(key) or "").strip()
+        if value:
+            params[key] = value
+
+    complex_filters = snapshot.get("complex_filters") or []
+    if isinstance(complex_filters, list) and complex_filters:
+        params["cf_field"] = [str(item.get("field") or "").strip() for item in complex_filters]
+        params["cf_op"] = [str(item.get("operator") or "").strip() for item in complex_filters]
+        params["cf_value"] = [str(item.get("value") or "").strip() for item in complex_filters]
+
+    base_url = reverse("guests_workbench")
+    if not params:
+        return base_url
+    return f"{base_url}?{urlencode(params, doseq=True)}"

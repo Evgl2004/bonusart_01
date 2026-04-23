@@ -126,6 +126,48 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(audience_response.status_code, 200)
         self.assertContains(audience_response, guest.phone)
 
+    def test_campaign_views_show_workbench_snapshot(self):
+        """
+        Для кампании, созданной из Workbench, v2-экраны должны показывать сохранённый snapshot фильтров.
+        """
+        mailing = self._create_mailing()
+        session = self.client.session
+        session["mailings_v2_workbench_snapshots"] = {
+            str(mailing.id): {
+                "as_of_date": self.now.date().isoformat(),
+                "window_days": "30",
+                "department_id": "dep-1",
+                "segment_code": "active_30d",
+                "focus_category_code": "sushi_rolls",
+                "complex_filters": [
+                    {"field": "orders_count", "operator": "gte", "value": "2"},
+                ],
+                "selected_total": 10,
+                "selected_rows_count": 10,
+                "source_layer": "category_window",
+                "saved_at": self.now.isoformat(),
+            }
+        }
+        session.save()
+
+        edit_response = self.client.get(
+            reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+        self.assertEqual(edit_response.status_code, 200)
+        self.assertContains(edit_response, "Источник аудитории: Workbench")
+        self.assertContains(edit_response, "active_30d")
+        self.assertContains(edit_response, "sushi_rolls")
+        self.assertContains(edit_response, reverse("guests_workbench"))
+
+        audience_response = self.client.get(
+            reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+        self.assertEqual(audience_response.status_code, 200)
+        self.assertContains(audience_response, "Аудитория собрана из Workbench")
+        self.assertContains(audience_response, "active_30d")
+
     def test_import_phones_view_respects_next_url(self):
         """
         Импорт телефонов должен возвращать в переданный `next` URL.

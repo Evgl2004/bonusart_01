@@ -167,6 +167,35 @@
         </div>
       </div>
 
+      {% if object and object.pk and workbench_snapshot %}
+        <div class="card border-0 shadow-sm mb-3">
+          <div class="card-header bg-white">
+            <h2 class="h6 mb-0">Источник аудитории: Workbench</h2>
+          </div>
+          <div class="card-body">
+            <div class="small text-muted mb-2">Снимок отбора сохранён при создании черновика.</div>
+            <div class="d-flex flex-wrap gap-2 mb-3">
+              {% if workbench_snapshot.as_of_date %}<span class="badge text-bg-light border">Срез: {{ workbench_snapshot.as_of_date }}</span>{% endif %}
+              {% if workbench_snapshot.window_days %}<span class="badge text-bg-light border">Окно: {{ workbench_snapshot.window_days }} дн</span>{% endif %}
+              {% if workbench_snapshot.department_id %}<span class="badge text-bg-light border">Заведение: {{ workbench_snapshot.department_id }}</span>{% endif %}
+              {% if workbench_snapshot.segment_code %}<span class="badge text-bg-light border">Сегмент: {{ workbench_snapshot.segment_code }}</span>{% endif %}
+              {% if workbench_snapshot.focus_category_code %}<span class="badge text-bg-light border">Категория: {{ workbench_snapshot.focus_category_code }}</span>{% endif %}
+              {% if workbench_snapshot.source_layer %}<span class="badge text-bg-light border">Слой: {{ workbench_snapshot.source_layer }}</span>{% endif %}
+            </div>
+            <div class="small mb-2">
+              В выборке: <b>{{ workbench_snapshot.selected_total }}</b>,
+              в черновик перенесено: <b>{{ workbench_snapshot.selected_rows_count }}</b>.
+            </div>
+            <div class="small mb-3">
+              Сложных условий: <b>{{ workbench_snapshot.complex_filters|length }}</b>
+            </div>
+            <div class="d-grid">
+              <a class="btn btn-outline-primary btn-sm" href="{{ workbench_snapshot_url }}">Открыть Workbench с этими фильтрами</a>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
       {% if object and object.id %}
         <div class="card border-0 shadow-sm">
           <div class="card-header bg-white d-flex justify-content-between align-items-center">

@@ -152,11 +152,20 @@ class GuestsWorkbenchActionsView(View):
 
             MailingGuest.objects.bulk_create(rows, ignore_conflicts=True, batch_size=1000)
 
+        self._store_workbench_snapshot_for_mailing(
+            request=request,
+            mailing_id=mailing.id,
+            filters=filters,
+            payload=payload,
+            selected_total=total_selected,
+            selected_rows_count=len(selected_rows),
+        )
+
         messages.success(
             request,
             f"Создан черновик рассылки (ID {mailing.id}) по {len(guests)} гостям.",
         )
-        return redirect(reverse("mailing_edit", kwargs={"pk": mailing.id}))
+        return redirect(reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
 
     def _save_filter_preset(self, request):
         """
@@ -282,6 +291,68 @@ class GuestsWorkbenchActionsView(View):
             "complex_filters": _extract_complex_filters_from_post(request),
             "show_all_presets": _to_bool_flag(request.POST.get("show_all_presets")),
         }
+
+    @staticmethod
+    def _store_workbench_snapshot_for_mailing(
+        request,
+        mailing_id: int,
+        filters: dict[str, object],
+        payload: dict,
+        selected_total: int,
+        selected_rows_count: int,
+    ) -> None:
+        """
+        Сохраняет в сессии источник аудитории для созданной кампании.
+        """
+        as_of_date = filters.get("as_of_date")
+        as_of_date_value = as_of_date.isoformat() if as_of_date else ""
+        window_days_value = str(filters.get("window_days") or "").strip()
+        department_id_value = str(filters.get("department_id") or "").strip()
+        segment_code_value = str(filters.get("segment_code") or "").strip()
+        focus_category_code_value = str(filters.get("focus_category_code") or "").strip()
+
+        complex_filters_raw = filters.get("complex_filters") or []
+        complex_filters: list[dict[str, str]] = []
+        for item in complex_filters_raw:
+            if not isinstance(item, dict):
+                continue
+            field = str(item.get("field") or "").strip()
+            operator = str(item.get("operator") or "").strip()
+            value = str(item.get("value") or "").strip()
+            if not (field or operator or value):
+                continue
+            complex_filters.append(
+                {
+                    "field": field,
+                    "operator": operator,
+                    "value": value,
+                }
+            )
+
+        payload_filters = payload.get("filters") if isinstance(payload, dict) else {}
+        source_layer = ""
+        if isinstance(payload_filters, dict):
+            source_layer = str(payload_filters.get("metrics_layer") or "").strip()
+
+        snapshot = {
+            "as_of_date": as_of_date_value,
+            "window_days": window_days_value,
+            "department_id": department_id_value,
+            "segment_code": segment_code_value,
+            "focus_category_code": focus_category_code_value,
+            "complex_filters": complex_filters,
+            "selected_total": int(selected_total or 0),
+            "selected_rows_count": int(selected_rows_count or 0),
+            "source_layer": source_layer,
+            "saved_at": timezone.now().isoformat(),
+        }
+
+        all_snapshots = request.session.get("mailings_v2_workbench_snapshots", {})
+        if not isinstance(all_snapshots, dict):
+            all_snapshots = {}
+        all_snapshots[str(mailing_id)] = snapshot
+        request.session["mailings_v2_workbench_snapshots"] = all_snapshots
+        request.session.modified = True
 
     @staticmethod
     def _build_workbench_redirect_url(request) -> str:
