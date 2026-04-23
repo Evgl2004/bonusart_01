@@ -494,6 +494,36 @@ def _env_text_set(name: str, default_csv: str = "") -> set[str]:
 
 # Управление отправкой balance-уведомлений в ботов из webhook-контура.
 # Позволяет включать/выключать создание DispatchTask без изменений кода.
+# Автосинхронизация `settings.Q_CLUSTER["schedule"]` -> `django_q_schedule`.
+# Срабатывает на старте `manage.py qcluster` (см. guests.apps.GuestsConfig.ready).
+DJANGO_Q_SCHEDULE_AUTOSYNC_ON_QCLUSTER_START = _env_bool(
+    "DJANGO_Q_SCHEDULE_AUTOSYNC_ON_QCLUSTER_START",
+    True,
+)
+DJANGO_Q_SCHEDULE_AUTOSYNC_PRUNE_STALE = _env_bool(
+    "DJANGO_Q_SCHEDULE_AUTOSYNC_PRUNE_STALE",
+    True,
+)
+# Дополнительные managed-имена расписаний (CSV), которые нужно удалять при stale-prune.
+DJANGO_Q_SCHEDULE_MANAGED_EXTRA_NAMES = _env_text_set(
+    "DJANGO_Q_SCHEDULE_MANAGED_EXTRA_NAMES",
+    "",
+)
+# Базовый набор managed-имен расписаний проекта.
+DJANGO_Q_SCHEDULE_MANAGED_NAMES = (
+    "sync_webhooks_recent",
+    "run_notification_scenarios",
+    "run_olap_sync_windowed",
+    "run_olap_rebuild_nightly",
+    "run_order_fact_tail",
+    "run_daily_fact_tail",
+    "run_daily_order_fact_tail",
+    "run_order_focus_fact_tail",
+    "run_window_metrics_hourly",
+    "run_window_category_metrics_hourly",
+    "run_olap_control_pull_daily",
+)
+
 BALANCE_WEBHOOK_NOTIFY_ENABLED = _env_bool(
     "BALANCE_WEBHOOK_NOTIFY_ENABLED",
     True,
