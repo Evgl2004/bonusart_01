@@ -772,6 +772,94 @@ class MailingsV2ViewsTests(TestCase):
         self.assertIn("row", kinds)
         self.assertIn("dispatch", kinds)
 
+    def test_campaign_jobs_page_filters_and_shows_feedback(self):
+        """
+        Экран заданий должен фильтровать DispatchTask и показывать агрегаты обратной связи.
+        """
+        mailing = self._create_mailing()
+        guest_ok = Guest.objects.create(
+            phone="+79990000123",
+            first_name="Ольга",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        guest_fail = Guest.objects.create(
+            phone="+79990000456",
+            first_name="Антон",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row_ok = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest_ok,
+            phone=guest_ok.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.DONE,
+            delivery_status="queued_to_dispatch",
+            created_at=self.now,
+        )
+        row_fail = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest_fail,
+            phone=guest_fail.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.ERROR,
+            delivery_status="dispatch_enqueue_error",
+            error_description="provider timeout",
+            created_at=self.now,
+        )
+
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.DONE,
+            mailing_guest=row_ok,
+            guest=guest_ok,
+            queue_name="dispatch:telegram:normal",
+            external_chat_id="ok-chat",
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            mailing_guest=row_fail,
+            guest=guest_fail,
+            queue_name="dispatch:telegram:normal",
+            external_chat_id="fail-chat",
+            last_error="timeout 429",
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.VK,
+            status=DispatchTask.Status.PENDING,
+            mailing_guest=row_fail,
+            guest=guest_fail,
+            queue_name="dispatch:vk:bulk",
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_jobs", kwargs={"pk": mailing.id}),
+            {
+                "task_status": DispatchTask.Status.FAILED,
+                "provider_type": BotProfile.ProviderType.TELEGRAM,
+                "queue_name": "dispatch:telegram:normal",
+                "q": "fail-chat",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Задания отправки кампании")
+        self.assertEqual(response.context["tasks_filtered_total"], 1)
+        self.assertEqual(len(response.context["tasks"]), 1)
+        self.assertEqual(response.context["tasks"][0].status, DispatchTask.Status.FAILED)
+        self.assertEqual(response.context["tasks"][0].provider_type, BotProfile.ProviderType.TELEGRAM)
+        self.assertTrue(any(item["delivery_status"] == "dispatch_enqueue_error" for item in response.context["delivery_feedback_rows"]))
+        self.assertTrue(any(item["last_error"] == "timeout 429" for item in response.context["top_errors"]))
+
     def test_create_template_v2_and_open_detail(self):
         """
         Создание шаблона через v2 должно вести на v2-карточку шаблона.

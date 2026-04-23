@@ -12,6 +12,7 @@
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Назад к кампании</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_audience' mailing.id %}">Аудитория</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_jobs' mailing.id %}">Задания</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_errors' mailing.id %}">Ошибки</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_logs' mailing.id %}">Логи (v2)</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailing_logs' mailing.id %}">Legacy логи</a>

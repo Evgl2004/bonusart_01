@@ -610,6 +610,109 @@ class MailingsV2CampaignRunsView(TemplateView):
         return context
 
 
+class MailingsV2CampaignJobsView(TemplateView):
+    """
+    Экран заданий отправки по конкретной кампании.
+
+    Фокус:
+    1. операционный срез по DispatchTask;
+    2. фильтры по статусу/провайдеру/очереди;
+    3. агрегаты для быстрой диагностики по результатам доставки.
+    """
+
+    template_name = "mailing_v2/campaign_jobs.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mailing = get_object_or_404(Mailing, pk=self.kwargs["pk"])
+
+        query = (self.request.GET.get("q") or "").strip()
+        selected_task_status = (self.request.GET.get("task_status") or "").strip()
+        selected_provider_type = (self.request.GET.get("provider_type") or "").strip()
+        selected_queue_name = (self.request.GET.get("queue_name") or "").strip()
+
+        valid_task_statuses = {value for value, _ in DispatchTask.Status.choices}
+        valid_providers = {value for value, _ in BotProfile.ProviderType.choices}
+
+        tasks_scope = DispatchTask.objects.filter(mailing_guest__mailing=mailing).select_related(
+            "mailing_guest",
+            "guest",
+            "bot_profile",
+        )
+
+        if selected_task_status in valid_task_statuses:
+            tasks_scope = tasks_scope.filter(status=selected_task_status)
+        else:
+            selected_task_status = ""
+
+        if selected_provider_type in valid_providers:
+            tasks_scope = tasks_scope.filter(provider_type=selected_provider_type)
+        else:
+            selected_provider_type = ""
+
+        if selected_queue_name:
+            tasks_scope = tasks_scope.filter(queue_name=selected_queue_name)
+
+        if query:
+            tasks_scope = tasks_scope.filter(
+                Q(external_chat_id__icontains=query)
+                | Q(last_error__icontains=query)
+                | Q(message_text__icontains=query)
+                | Q(guest__phone__icontains=query)
+                | Q(mailing_guest__phone__icontains=query)
+            )
+
+        tasks_filtered_total = int(tasks_scope.count())
+        tasks = list(tasks_scope.order_by("-updated_at", "-id")[:250])
+
+        provider_status_rows = list(
+            tasks_scope.values("provider_type", "status").annotate(total=Count("id")).order_by("provider_type", "status")
+        )
+        queue_rows = list(
+            tasks_scope.values("queue_name").annotate(total=Count("id")).order_by("-total", "queue_name")[:30]
+        )
+        top_errors = list(
+            tasks_scope.filter(status=DispatchTask.Status.FAILED)
+            .exclude(last_error__isnull=True)
+            .exclude(last_error__exact="")
+            .values("provider_type", "last_error")
+            .annotate(total=Count("id"))
+            .order_by("-total", "provider_type", "last_error")[:25]
+        )
+        delivery_feedback_rows = list(
+            MailingGuest.objects.filter(mailing=mailing)
+            .exclude(delivery_status__isnull=True)
+            .exclude(delivery_status__exact="")
+            .values("delivery_status")
+            .annotate(total=Count("id"))
+            .order_by("-total", "delivery_status")[:25]
+        )
+
+        context["mailing"] = mailing
+        context["query"] = query
+        context["selected_task_status"] = selected_task_status
+        context["selected_provider_type"] = selected_provider_type
+        context["selected_queue_name"] = selected_queue_name
+        context["task_status_choices"] = list(DispatchTask.Status.choices)
+        context["provider_choices"] = list(BotProfile.ProviderType.choices)
+        context["queue_name_choices"] = list(
+            DispatchTask.objects.filter(mailing_guest__mailing=mailing)
+            .exclude(queue_name__isnull=True)
+            .exclude(queue_name__exact="")
+            .values_list("queue_name", flat=True)
+            .distinct()
+            .order_by("queue_name")
+        )
+        context["tasks"] = tasks
+        context["tasks_filtered_total"] = tasks_filtered_total
+        context["task_stats"] = _build_mailing_dispatch_stats(mailing)
+        context["provider_status_rows"] = provider_status_rows
+        context["queue_rows"] = queue_rows
+        context["top_errors"] = top_errors
+        context["delivery_feedback_rows"] = delivery_feedback_rows
+        return context
+
+
 class MailingsV2CampaignErrorsView(TemplateView):
     """
     Экран ошибок кампании в mailings-v2.
