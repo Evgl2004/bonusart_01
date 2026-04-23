@@ -21,7 +21,19 @@ from django.views import View
 from django.views.generic import CreateView, DetailView, TemplateView, UpdateView
 
 from guests.forms import MailingForm, MessageTemplateForm
-from guests.models import BotProfile, DispatchTask, Guest, Mailing, MailingGuest, MessageTemplate, NotificationScenario
+from guests.management.commands import mailing_worker as mailing_worker_cmd
+from guests.models import (
+    BotProfile,
+    DispatchTask,
+    Guest,
+    GuestBotBinding,
+    Mailing,
+    MailingGuest,
+    MessageTemplate,
+    NotificationScenario,
+)
+
+MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
 
 
 class MailingsV2CampaignsHubView(TemplateView):
@@ -155,6 +167,8 @@ class _MailingsV2CampaignFormMixin:
             context["ops_url"] = reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.pk})
             context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
             context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
+            context["mailing_ops_dry_run_report"] = self.request.session.pop("mailing_ops_dry_run_report", None)
+            context["mailing_ops_run_now_report"] = self.request.session.pop("mailing_ops_run_now_report", None)
             snapshot = _get_workbench_snapshot(self.request, mailing.pk)
             context["workbench_snapshot"] = snapshot
             context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
@@ -168,6 +182,8 @@ class _MailingsV2CampaignFormMixin:
             context["ops_url"] = ""
             context["mailing_import_report"] = None
             context["mailing_import_error"] = None
+            context["mailing_ops_dry_run_report"] = None
+            context["mailing_ops_run_now_report"] = None
             context["workbench_snapshot"] = None
             context["workbench_snapshot_url"] = ""
             context["mailing_row_stats"] = _empty_mailing_row_stats()
@@ -290,6 +306,50 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Dispatch-задач переведено в pending: {updated}.")
             else:
                 messages.info(request, "Dispatch-задач со статусом failed не найдено.")
+            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+
+        if action == "dry_run_campaign":
+            report = _build_mailing_dry_run_report(mailing=mailing, now=timezone.now())
+            request.session["mailing_ops_dry_run_report"] = report
+            request.session.modified = True
+            messages.info(
+                request,
+                (
+                    f"Dry-run: ready={report['ready_rows']} "
+                    f"targetable={report['ready_rows_with_targets']} "
+                    f"blocked={report['ready_rows_without_targets']}."
+                ),
+            )
+            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+
+        if action == "run_now_campaign":
+            report = _run_mailing_now(
+                mailing=mailing,
+                now=timezone.now(),
+                max_batches=MAILINGS_V2_RUN_NOW_MAX_BATCHES,
+            )
+            request.session["mailing_ops_run_now_report"] = report
+            request.session.modified = True
+            processed_rows = int(report.get("processed_rows_total") or 0)
+            if processed_rows > 0:
+                messages.success(
+                    request,
+                    (
+                        f"Run-now: обработано строк {processed_rows}, "
+                        f"батчей {report['processed_batches']}, "
+                        f"лимит-достигнут={report['reached_batch_limit']}."
+                    ),
+                )
+            else:
+                messages.info(
+                    request,
+                    (
+                        f"Run-now: строки не обработаны "
+                        f"(schedule_open={report['schedule_window_open']}, "
+                        f"send_open={report['send_window_open']}, "
+                        f"ready={report['ready_rows_before']})."
+                    ),
+                )
             return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
 
         messages.error(request, "Неизвестное действие кампании.")
@@ -608,6 +668,106 @@ class MailingsV2ScenariosView(TemplateView):
         context["scenarios_total"] = scenarios.count()
         context["scenarios_active"] = scenarios.filter(is_active=True).count()
         return context
+
+
+def _is_time_in_window(current_time, window_begin, window_end) -> bool:
+    """
+    Проверяет вхождение времени в окно отправки.
+
+    Повторяет текущую логику `mailing_worker.process_one_mailing`,
+    чтобы dry-run и run-now давали одинаковый результат.
+    """
+    return window_begin <= current_time <= window_end
+
+
+def _build_mailing_dry_run_report(mailing: Mailing, now) -> dict[str, object]:
+    """
+    Формирует dry-run отчёт по готовности кампании к немедленному запуску.
+    """
+    local_now = timezone.localtime(now)
+    current_time = local_now.time()
+    selected_bot_ids = list(
+        mailing.bot_profiles.filter(is_active=True).values_list("id", flat=True).order_by("id")
+    )
+
+    rows_scope = MailingGuest.objects.filter(mailing=mailing)
+    ready_scope = rows_scope.filter(status=MailingGuest.Status.PLANNED, scheduled_datetime__lte=now)
+    ready_rows = int(ready_scope.count())
+
+    ready_rows_with_targets = 0
+    ready_rows_without_targets = 0
+    if ready_rows > 0 and selected_bot_ids:
+        targetable_guest_ids_qs = (
+            GuestBotBinding.objects.filter(
+                guest_id__in=ready_scope.values_list("guest_id", flat=True),
+                bot_id__in=selected_bot_ids,
+                is_active=True,
+                is_opt_in=True,
+                is_stop_sending=False,
+                bot__is_active=True,
+            )
+            .exclude(external_chat_id__isnull=True)
+            .exclude(external_chat_id="")
+            .values_list("guest_id", flat=True)
+            .distinct()
+        )
+        ready_rows_with_targets = int(ready_scope.filter(guest_id__in=targetable_guest_ids_qs).count())
+        ready_rows_without_targets = max(ready_rows - ready_rows_with_targets, 0)
+
+    report = {
+        "generated_at": now.isoformat(),
+        "mailing_id": int(mailing.id),
+        "mailing_is_active": bool(mailing.is_active),
+        "schedule_window_open": bool(mailing.scheduled_time_begin <= now <= mailing.scheduled_time_end),
+        "send_window_open": bool(_is_time_in_window(current_time, mailing.send_window_begin, mailing.send_window_end)),
+        "selected_bots_total": int(mailing.bot_profiles.count()),
+        "selected_bots_active": int(len(selected_bot_ids)),
+        "rows_total": int(rows_scope.count()),
+        "planned_rows_total": int(rows_scope.filter(status=MailingGuest.Status.PLANNED).count()),
+        "ready_rows": ready_rows,
+        "future_rows": int(rows_scope.filter(status=MailingGuest.Status.PLANNED, scheduled_datetime__gt=now).count()),
+        "in_progress_rows": int(rows_scope.filter(status=MailingGuest.Status.IN_PROGRESS).count()),
+        "done_rows": int(rows_scope.filter(status=MailingGuest.Status.DONE).count()),
+        "error_rows": int(rows_scope.filter(status=MailingGuest.Status.ERROR).count()),
+        "ready_rows_with_targets": int(ready_rows_with_targets),
+        "ready_rows_without_targets": int(ready_rows_without_targets),
+    }
+    return report
+
+
+def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, object]:
+    """
+    Выполняет ограниченный one-shot запуск кампании через существующий producer-путь.
+    """
+    report_before = _build_mailing_dry_run_report(mailing=mailing, now=now)
+    processed_rows_total = 0
+    processed_batches = 0
+    reached_batch_limit = False
+
+    if report_before["send_window_open"] and report_before["ready_rows"] > 0:
+        for _ in range(max_batches):
+            processed = int(mailing_worker_cmd.process_one_mailing(mailing=mailing, now=now) or 0)
+            if processed <= 0:
+                break
+            processed_rows_total += processed
+            processed_batches += 1
+        if processed_batches >= max_batches:
+            reached_batch_limit = True
+
+    report_after = _build_mailing_dry_run_report(mailing=mailing, now=timezone.now())
+    return {
+        "generated_at": timezone.now().isoformat(),
+        "mailing_id": int(mailing.id),
+        "schedule_window_open": bool(report_before["schedule_window_open"]),
+        "send_window_open": bool(report_before["send_window_open"]),
+        "ready_rows_before": int(report_before["ready_rows"]),
+        "ready_rows_after": int(report_after["ready_rows"]),
+        "processed_batches": int(processed_batches),
+        "processed_rows_total": int(processed_rows_total),
+        "batch_size": int(mailing_worker_cmd.BATCH_SIZE),
+        "max_batches": int(max_batches),
+        "reached_batch_limit": bool(reached_batch_limit),
+    }
 
 
 def _get_workbench_snapshot(request, mailing_id: int) -> dict | None:

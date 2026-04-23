@@ -208,7 +208,44 @@
                   Retry failed dispatch ({{ dispatch_stats.failed }})
                 </button>
               </form>
+              <form method="post" action="{{ ops_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="dry_run_campaign">
+                <button type="submit" class="btn btn-outline-info btn-sm w-100">
+                  Dry-run (предпросмотр запуска)
+                </button>
+              </form>
+              <form method="post" action="{{ ops_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="run_now_campaign">
+                <button type="submit" class="btn btn-outline-primary btn-sm w-100">
+                  Run-now (запустить сейчас)
+                </button>
+              </form>
             </div>
+
+            {% if mailing_ops_dry_run_report %}
+              <div class="alert alert-info small mt-3 mb-0">
+                <b>Dry-run отчёт</b><br>
+                ready: <b>{{ mailing_ops_dry_run_report.ready_rows }}</b>,
+                targetable: <b>{{ mailing_ops_dry_run_report.ready_rows_with_targets }}</b>,
+                blocked: <b>{{ mailing_ops_dry_run_report.ready_rows_without_targets }}</b><br>
+                bots(active/total): <b>{{ mailing_ops_dry_run_report.selected_bots_active }}/{{ mailing_ops_dry_run_report.selected_bots_total }}</b>,
+                schedule_open: <b>{{ mailing_ops_dry_run_report.schedule_window_open }}</b>,
+                send_open: <b>{{ mailing_ops_dry_run_report.send_window_open }}</b>
+              </div>
+            {% endif %}
+
+            {% if mailing_ops_run_now_report %}
+              <div class="alert alert-secondary small mt-3 mb-0">
+                <b>Run-now отчёт</b><br>
+                processed_rows: <b>{{ mailing_ops_run_now_report.processed_rows_total }}</b>,
+                batches: <b>{{ mailing_ops_run_now_report.processed_batches }}</b> (max={{ mailing_ops_run_now_report.max_batches }})<br>
+                ready_before: <b>{{ mailing_ops_run_now_report.ready_rows_before }}</b>,
+                ready_after: <b>{{ mailing_ops_run_now_report.ready_rows_after }}</b>,
+                reached_limit: <b>{{ mailing_ops_run_now_report.reached_batch_limit }}</b>
+              </div>
+            {% endif %}
           {% else %}
             <p class="text-muted mb-0">После создания кампании здесь появится сводка по получателям и статусам.</p>
           {% endif %}

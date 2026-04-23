@@ -15,7 +15,16 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils import timezone
 
-from guests.models import BotProfile, DispatchTask, Guest, Mailing, MailingGuest, MessageTemplate, NotificationScenario
+from guests.models import (
+    BotProfile,
+    DispatchTask,
+    Guest,
+    GuestBotBinding,
+    Mailing,
+    MailingGuest,
+    MessageTemplate,
+    NotificationScenario,
+)
 
 
 class MailingsV2ViewsTests(TestCase):
@@ -305,6 +314,105 @@ class MailingsV2ViewsTests(TestCase):
         self.assertIsNone(task.started_at)
         self.assertIsNone(task.finished_at)
         self.assertIsNone(task.last_error)
+
+    def test_campaign_ops_dry_run_stores_report_in_session(self):
+        """
+        Dry-run операция должна сохранять отчёт в сессии для отображения на форме кампании.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000881",
+            first_name="Павел",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now - timedelta(minutes=1),
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=self.bot,
+            external_chat_id="tg-dry-run-1",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "dry_run_campaign"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+
+        report = self.client.session.get("mailing_ops_dry_run_report")
+        self.assertIsInstance(report, dict)
+        self.assertEqual(report.get("mailing_id"), mailing.id)
+        self.assertEqual(report.get("ready_rows"), 1)
+        self.assertEqual(report.get("ready_rows_with_targets"), 1)
+
+    def test_campaign_ops_run_now_creates_dispatch_for_ready_rows(self):
+        """
+        Run-now операция должна провести one-shot постановку задач в DispatchTask.
+        """
+        mailing = self._create_mailing()
+        mailing.send_window_begin = time(0, 0)
+        mailing.send_window_end = time(23, 59)
+        mailing.save(update_fields=["send_window_begin", "send_window_end", "updated_at"])
+
+        guest = Guest.objects.create(
+            phone="+79990000882",
+            first_name="Никита",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now - timedelta(minutes=1),
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=self.bot,
+            external_chat_id="tg-run-now-1",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "run_now_campaign"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+
+        row.refresh_from_db()
+        self.assertEqual(row.status, MailingGuest.Status.DONE)
+        self.assertEqual(row.delivery_status, "queued_to_dispatch")
+        self.assertEqual(DispatchTask.objects.filter(mailing_guest=row).count(), 1)
+
+        report = self.client.session.get("mailing_ops_run_now_report")
+        self.assertIsInstance(report, dict)
+        self.assertEqual(report.get("mailing_id"), mailing.id)
+        self.assertEqual(report.get("processed_rows_total"), 1)
+        self.assertEqual(report.get("processed_batches"), 1)
 
     def test_campaign_runs_page_filters_rows_and_tasks(self):
         """
