@@ -156,10 +156,57 @@
               {% endif %}
             </div>
             <div class="mb-2">Получателей: <b>{{ guests_count }}</b></div>
+            <div class="small text-muted mt-3 mb-1">Строки аудитории</div>
+            <div class="small mb-2">
+              planned: <b>{{ mailing_row_stats.planned }}</b> |
+              in_progress: <b>{{ mailing_row_stats.in_progress }}</b> |
+              done: <b>{{ mailing_row_stats.done }}</b> |
+              error: <b>{{ mailing_row_stats.error }}</b>
+            </div>
+            <div class="small text-muted mb-1">Dispatch задачи</div>
+            <div class="small mb-3">
+              pending: <b>{{ dispatch_stats.pending }}</b> |
+              queued: <b>{{ dispatch_stats.queued }}</b> |
+              in_progress: <b>{{ dispatch_stats.in_progress }}</b> |
+              failed: <b>{{ dispatch_stats.failed }}</b>
+            </div>
             <div class="d-grid gap-2 mt-3">
               <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Проверить аудиторию</a>
               <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs' object.id %}">Логи отправки</a>
               <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs_txt' object.id %}">Скачать лог txt</a>
+            </div>
+            <hr>
+            <div class="d-grid gap-2">
+              <form method="post" action="{{ ops_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="toggle_active">
+                {% if object.is_active %}
+                  <button type="submit" class="btn btn-warning btn-sm w-100">Поставить на паузу</button>
+                {% else %}
+                  <button type="submit" class="btn btn-success btn-sm w-100">Запустить кампанию</button>
+                {% endif %}
+              </form>
+              <form method="post" action="{{ ops_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="retry_failed_rows">
+                <button type="submit" class="btn btn-outline-danger btn-sm w-100" {% if mailing_row_stats.error <= 0 %}disabled{% endif %}>
+                  Повторить error-строки ({{ mailing_row_stats.error }})
+                </button>
+              </form>
+              <form method="post" action="{{ ops_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="requeue_in_progress_rows">
+                <button type="submit" class="btn btn-outline-secondary btn-sm w-100" {% if mailing_row_stats.in_progress <= 0 %}disabled{% endif %}>
+                  Вернуть in_progress в planned ({{ mailing_row_stats.in_progress }})
+                </button>
+              </form>
+              <form method="post" action="{{ ops_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="retry_failed_dispatch">
+                <button type="submit" class="btn btn-outline-danger btn-sm w-100" {% if dispatch_stats.failed <= 0 %}disabled{% endif %}>
+                  Retry failed dispatch ({{ dispatch_stats.failed }})
+                </button>
+              </form>
             </div>
           {% else %}
             <p class="text-muted mb-0">После создания кампании здесь появится сводка по получателям и статусам.</p>

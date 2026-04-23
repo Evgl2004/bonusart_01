@@ -17,6 +17,7 @@ from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils import timezone
+from django.views import View
 from django.views.generic import CreateView, DetailView, TemplateView, UpdateView
 
 from guests.forms import MailingForm, MessageTemplateForm
@@ -150,19 +151,25 @@ class _MailingsV2CampaignFormMixin:
             context["guests_count"] = mailing.guests_rows.count()
             context["legacy_edit_url"] = reverse("mailing_edit", kwargs={"pk": mailing.pk})
             context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
+            context["ops_url"] = reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.pk})
             context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
             context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
             snapshot = _get_workbench_snapshot(self.request, mailing.pk)
             context["workbench_snapshot"] = snapshot
             context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
+            context["mailing_row_stats"] = _build_mailing_row_stats(mailing)
+            context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
         else:
             context["guests_count"] = 0
             context["legacy_edit_url"] = ""
             context["audience_url"] = ""
+            context["ops_url"] = ""
             context["mailing_import_report"] = None
             context["mailing_import_error"] = None
             context["workbench_snapshot"] = None
             context["workbench_snapshot_url"] = ""
+            context["mailing_row_stats"] = _empty_mailing_row_stats()
+            context["dispatch_stats"] = _empty_dispatch_stats()
         return context
 
 
@@ -202,6 +209,89 @@ class MailingsV2CampaignUpdateView(_MailingsV2CampaignFormMixin, UpdateView):
         form.save_m2m()
         messages.success(self.request, "Изменения кампании сохранены.")
         return redirect("mailings_v2_campaigns_edit", pk=self.object.pk)
+
+
+class MailingsV2CampaignOpsView(View):
+    """
+    Операционные POST-действия для кампании в mailings-v2.
+
+    Поддерживает:
+    1. безопасный старт/пауза кампании;
+    2. возврат error/in_progress строк в planned;
+    3. ручной retry задач dispatch со статусом failed.
+    """
+
+    http_method_names = ["post"]
+
+    def post(self, request, *args, **kwargs):
+        mailing = get_object_or_404(Mailing, pk=kwargs["pk"])
+        action = (request.POST.get("action") or "").strip()
+
+        if action == "toggle_active":
+            mailing.is_active = not bool(mailing.is_active)
+            if hasattr(mailing, "updated_at"):
+                mailing.updated_at = timezone.now()
+            mailing.save(update_fields=["is_active"] + (["updated_at"] if hasattr(mailing, "updated_at") else []))
+            if mailing.is_active:
+                messages.success(request, f"Кампания #{mailing.id} запущена.")
+            else:
+                messages.success(request, f"Кампания #{mailing.id} поставлена на паузу.")
+            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+
+        if action == "retry_failed_rows":
+            updated = MailingGuest.objects.filter(
+                mailing=mailing,
+                status=MailingGuest.Status.ERROR,
+            ).update(
+                status=MailingGuest.Status.PLANNED,
+                delivery_status="retry_requested",
+                error_description=None,
+                scheduled_datetime=timezone.now(),
+            )
+            if updated > 0:
+                messages.success(request, f"Возвращено в planned строк: {updated}.")
+            else:
+                messages.info(request, "Строк со статусом error не найдено.")
+            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+
+        if action == "requeue_in_progress_rows":
+            updated = MailingGuest.objects.filter(
+                mailing=mailing,
+                status=MailingGuest.Status.IN_PROGRESS,
+            ).update(
+                status=MailingGuest.Status.PLANNED,
+                delivery_status="requeued_from_ui",
+            )
+            if updated > 0:
+                messages.success(request, f"Возвращено из in_progress в planned строк: {updated}.")
+            else:
+                messages.info(request, "Зависших строк in_progress не найдено.")
+            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+
+        if action == "retry_failed_dispatch":
+            now = timezone.now()
+            updated = DispatchTask.objects.filter(
+                mailing_guest__mailing=mailing,
+                status=DispatchTask.Status.FAILED,
+            ).update(
+                status=DispatchTask.Status.PENDING,
+                enqueued_at=None,
+                queue_name=None,
+                started_at=None,
+                finished_at=None,
+                last_error=None,
+                available_at=now,
+                updated_at=now,
+                attempt=0,
+            )
+            if updated > 0:
+                messages.success(request, f"Dispatch-задач переведено в pending: {updated}.")
+            else:
+                messages.info(request, "Dispatch-задач со статусом failed не найдено.")
+            return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
+
+        messages.error(request, "Неизвестное действие кампании.")
+        return redirect("mailings_v2_campaigns_edit", pk=mailing.pk)
 
 
 class MailingsV2CampaignAudienceView(TemplateView):
@@ -494,3 +584,62 @@ def _build_workbench_url_from_snapshot(snapshot: dict) -> str:
     if not params:
         return base_url
     return f"{base_url}?{urlencode(params, doseq=True)}"
+
+
+def _empty_mailing_row_stats() -> dict[str, int]:
+    return {
+        "total": 0,
+        "planned": 0,
+        "in_progress": 0,
+        "done": 0,
+        "error": 0,
+    }
+
+
+def _empty_dispatch_stats() -> dict[str, int]:
+    return {
+        "total": 0,
+        "pending": 0,
+        "queued": 0,
+        "in_progress": 0,
+        "done": 0,
+        "failed": 0,
+        "canceled": 0,
+    }
+
+
+def _build_mailing_row_stats(mailing: Mailing) -> dict[str, int]:
+    """
+    Сводка по статусам строк получателей для конкретной кампании.
+    """
+    stats = mailing.guests_rows.aggregate(
+        total=Count("id"),
+        planned=Count("id", filter=Q(status=MailingGuest.Status.PLANNED)),
+        in_progress=Count("id", filter=Q(status=MailingGuest.Status.IN_PROGRESS)),
+        done=Count("id", filter=Q(status=MailingGuest.Status.DONE)),
+        error=Count("id", filter=Q(status=MailingGuest.Status.ERROR)),
+    )
+    result = _empty_mailing_row_stats()
+    for key in result.keys():
+        result[key] = int(stats.get(key) or 0)
+    return result
+
+
+def _build_mailing_dispatch_stats(mailing: Mailing) -> dict[str, int]:
+    """
+    Сводка по статусам dispatch-задач, связанных с кампанией.
+    """
+    scope = DispatchTask.objects.filter(mailing_guest__mailing=mailing)
+    stats = scope.aggregate(
+        total=Count("id"),
+        pending=Count("id", filter=Q(status=DispatchTask.Status.PENDING)),
+        queued=Count("id", filter=Q(status=DispatchTask.Status.QUEUED)),
+        in_progress=Count("id", filter=Q(status=DispatchTask.Status.IN_PROGRESS)),
+        done=Count("id", filter=Q(status=DispatchTask.Status.DONE)),
+        failed=Count("id", filter=Q(status=DispatchTask.Status.FAILED)),
+        canceled=Count("id", filter=Q(status=DispatchTask.Status.CANCELED)),
+    )
+    result = _empty_dispatch_stats()
+    for key in result.keys():
+        result[key] = int(stats.get(key) or 0)
+    return result

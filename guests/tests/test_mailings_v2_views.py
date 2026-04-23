@@ -183,6 +183,129 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, next_url)
 
+    def test_campaign_ops_toggle_and_retry_rows(self):
+        """
+        Операционные действия v2 должны уметь запускать кампанию
+        и переводить error/in_progress строки обратно в planned.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000333",
+            first_name="Ольга",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row_error = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.ERROR,
+            error_description="test error",
+            created_at=self.now,
+        )
+        row_progress = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=Guest.objects.create(
+                phone="+79990000334",
+                first_name="Ирина",
+                created_at=self.now,
+                updated_at=self.now,
+            ),
+            phone="+79990000334",
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.IN_PROGRESS,
+            created_at=self.now,
+        )
+
+        toggle_response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "toggle_active"},
+            secure=True,
+        )
+        self.assertEqual(toggle_response.status_code, 302)
+        self.assertEqual(toggle_response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+        mailing.refresh_from_db()
+        self.assertTrue(mailing.is_active)
+
+        retry_rows_response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "retry_failed_rows"},
+            secure=True,
+        )
+        self.assertEqual(retry_rows_response.status_code, 302)
+        row_error.refresh_from_db()
+        self.assertEqual(row_error.status, MailingGuest.Status.PLANNED)
+        self.assertEqual(row_error.delivery_status, "retry_requested")
+        self.assertIsNone(row_error.error_description)
+
+        requeue_response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "requeue_in_progress_rows"},
+            secure=True,
+        )
+        self.assertEqual(requeue_response.status_code, 302)
+        row_progress.refresh_from_db()
+        self.assertEqual(row_progress.status, MailingGuest.Status.PLANNED)
+        self.assertEqual(row_progress.delivery_status, "requeued_from_ui")
+
+    def test_campaign_ops_retry_failed_dispatch(self):
+        """
+        Retry failed dispatch должен переводить failed-задачи кампании обратно в pending.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000444",
+            first_name="Дмитрий",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        mailing_guest = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.DONE,
+            created_at=self.now,
+        )
+        task = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            mailing_guest=mailing_guest,
+            guest=guest,
+            attempt=5,
+            max_attempts=5,
+            queue_name="dispatch:telegram:high",
+            last_error="permanent",
+            started_at=self.now,
+            finished_at=self.now,
+            enqueued_at=self.now,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "retry_failed_dispatch"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+
+        task.refresh_from_db()
+        self.assertEqual(task.status, DispatchTask.Status.PENDING)
+        self.assertEqual(task.attempt, 0)
+        self.assertIsNone(task.queue_name)
+        self.assertIsNone(task.enqueued_at)
+        self.assertIsNone(task.started_at)
+        self.assertIsNone(task.finished_at)
+        self.assertIsNone(task.last_error)
+
     def test_create_template_v2_and_open_detail(self):
         """
         Создание шаблона через v2 должно вести на v2-карточку шаблона.
