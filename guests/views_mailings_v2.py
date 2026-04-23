@@ -610,6 +610,192 @@ class MailingsV2CampaignRunsView(TemplateView):
         return context
 
 
+class MailingsV2CampaignErrorsView(TemplateView):
+    """
+    Экран ошибок кампании в mailings-v2.
+
+    Показывает две проблемные зоны:
+    1. error-строки аудитории (`MailingGuest`);
+    2. failed-задачи доставки (`DispatchTask`).
+    """
+
+    template_name = "mailing_v2/campaign_errors.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mailing = get_object_or_404(Mailing, pk=self.kwargs["pk"])
+
+        query = (self.request.GET.get("q") or "").strip()
+        selected_delivery_status = (self.request.GET.get("delivery_status") or "").strip()
+        selected_provider_type = (self.request.GET.get("provider_type") or "").strip()
+
+        delivery_status_choices = list(
+            MailingGuest.objects.filter(mailing=mailing)
+            .exclude(delivery_status__isnull=True)
+            .exclude(delivery_status__exact="")
+            .values_list("delivery_status", flat=True)
+            .distinct()
+            .order_by("delivery_status")
+        )
+        if selected_delivery_status and selected_delivery_status not in set(delivery_status_choices):
+            selected_delivery_status = ""
+
+        valid_providers = {value for value, _ in BotProfile.ProviderType.choices}
+        if selected_provider_type not in valid_providers:
+            selected_provider_type = ""
+
+        row_error_codes = {
+            "dispatch_no_targets",
+            "dispatch_no_bot_profiles",
+            "dispatch_enqueue_error",
+            "dispatch_enqueue_exception",
+            "retry_requested",
+            "requeued_from_ui",
+        }
+        row_errors_scope = MailingGuest.objects.filter(mailing=mailing).filter(
+            Q(status=MailingGuest.Status.ERROR)
+            | Q(error_description__isnull=False)
+            | Q(delivery_status__in=row_error_codes)
+        ).select_related("guest")
+        row_errors_scope = row_errors_scope.exclude(
+            Q(error_description__isnull=True)
+            & (Q(delivery_status__isnull=True) | Q(delivery_status__exact=""))
+            & ~Q(status=MailingGuest.Status.ERROR)
+        )
+        if selected_delivery_status:
+            row_errors_scope = row_errors_scope.filter(delivery_status=selected_delivery_status)
+        if query:
+            row_errors_scope = row_errors_scope.filter(
+                Q(phone__icontains=query)
+                | Q(delivery_status__icontains=query)
+                | Q(error_description__icontains=query)
+                | Q(guest__phone__icontains=query)
+                | Q(guest__first_name__icontains=query)
+                | Q(guest__last_name__icontains=query)
+            )
+
+        failed_dispatch_scope = DispatchTask.objects.filter(
+            mailing_guest__mailing=mailing,
+            status=DispatchTask.Status.FAILED,
+        ).select_related("mailing_guest", "guest", "bot_profile")
+        if selected_provider_type:
+            failed_dispatch_scope = failed_dispatch_scope.filter(provider_type=selected_provider_type)
+        if query:
+            failed_dispatch_scope = failed_dispatch_scope.filter(
+                Q(external_chat_id__icontains=query)
+                | Q(last_error__icontains=query)
+                | Q(message_text__icontains=query)
+                | Q(guest__phone__icontains=query)
+                | Q(mailing_guest__phone__icontains=query)
+            )
+
+        row_errors_total = row_errors_scope.count()
+        failed_dispatch_total = failed_dispatch_scope.count()
+
+        context["mailing"] = mailing
+        context["query"] = query
+        context["selected_delivery_status"] = selected_delivery_status
+        context["selected_provider_type"] = selected_provider_type
+        context["delivery_status_choices"] = delivery_status_choices
+        context["provider_choices"] = list(BotProfile.ProviderType.choices)
+        context["row_errors_total"] = row_errors_total
+        context["failed_dispatch_total"] = failed_dispatch_total
+        context["row_error_groups"] = (
+            row_errors_scope.values("delivery_status")
+            .annotate(total=Count("id"))
+            .order_by("-total", "delivery_status")[:20]
+        )
+        context["dispatch_error_groups"] = (
+            failed_dispatch_scope.values("provider_type", "last_error")
+            .annotate(total=Count("id"))
+            .order_by("-total", "provider_type", "last_error")[:20]
+        )
+        context["row_errors"] = list(row_errors_scope.order_by("-id")[:200])
+        context["failed_dispatch"] = list(failed_dispatch_scope.order_by("-updated_at", "-id")[:200])
+        context["current_query_path"] = self.request.get_full_path()
+        context["row_stats"] = _build_mailing_row_stats(mailing)
+        context["task_stats"] = _build_mailing_dispatch_stats(mailing)
+        return context
+
+
+class MailingsV2CampaignLogsView(TemplateView):
+    """
+    Экран логов кампании в mailings-v2.
+
+    Даёт комбинированный журнал:
+    1. изменения строк аудитории (`MailingGuest`);
+    2. события dispatch-задач (`DispatchTask`).
+    """
+
+    template_name = "mailing_v2/campaign_logs.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mailing = get_object_or_404(Mailing, pk=self.kwargs["pk"])
+
+        query = (self.request.GET.get("q") or "").strip()
+        selected_row_status = (self.request.GET.get("row_status") or "").strip()
+        selected_task_status = (self.request.GET.get("task_status") or "").strip()
+
+        valid_row_statuses = {value for value, _ in MailingGuest.Status.choices}
+        valid_task_statuses = {value for value, _ in DispatchTask.Status.choices}
+
+        rows_scope = MailingGuest.objects.filter(mailing=mailing).select_related("guest")
+        if selected_row_status in valid_row_statuses:
+            rows_scope = rows_scope.filter(status=selected_row_status)
+        else:
+            selected_row_status = ""
+
+        tasks_scope = DispatchTask.objects.filter(mailing_guest__mailing=mailing).select_related(
+            "mailing_guest",
+            "guest",
+            "bot_profile",
+        )
+        if selected_task_status in valid_task_statuses:
+            tasks_scope = tasks_scope.filter(status=selected_task_status)
+        else:
+            selected_task_status = ""
+
+        if query:
+            rows_scope = rows_scope.filter(
+                Q(phone__icontains=query)
+                | Q(delivery_status__icontains=query)
+                | Q(error_description__icontains=query)
+                | Q(guest__phone__icontains=query)
+                | Q(guest__first_name__icontains=query)
+                | Q(guest__last_name__icontains=query)
+            )
+            tasks_scope = tasks_scope.filter(
+                Q(external_chat_id__icontains=query)
+                | Q(last_error__icontains=query)
+                | Q(message_text__icontains=query)
+                | Q(guest__phone__icontains=query)
+                | Q(mailing_guest__phone__icontains=query)
+            )
+
+        rows_filtered_total = rows_scope.count()
+        tasks_filtered_total = tasks_scope.count()
+
+        rows = list(rows_scope.order_by("-id")[:200])
+        tasks = list(tasks_scope.order_by("-updated_at", "-id")[:200])
+        timeline = _build_mailing_log_timeline(rows=rows[:120], tasks=tasks[:120])
+
+        context["mailing"] = mailing
+        context["query"] = query
+        context["selected_row_status"] = selected_row_status
+        context["selected_task_status"] = selected_task_status
+        context["row_status_choices"] = list(MailingGuest.Status.choices)
+        context["task_status_choices"] = list(DispatchTask.Status.choices)
+        context["rows"] = rows
+        context["tasks"] = tasks
+        context["timeline"] = timeline
+        context["rows_filtered_total"] = rows_filtered_total
+        context["tasks_filtered_total"] = tasks_filtered_total
+        context["row_stats"] = _build_mailing_row_stats(mailing)
+        context["task_stats"] = _build_mailing_dispatch_stats(mailing)
+        return context
+
+
 class MailingsV2TemplatesView(TemplateView):
     """
     Каркас раздела шаблонов в новом контуре.
@@ -1048,3 +1234,43 @@ def _build_dispatch_timeline(tasks: list[DispatchTask]) -> list[dict[str, object
         )
     timeline.sort(key=lambda item: item["event_time"] or timezone.now(), reverse=True)
     return timeline[:60]
+
+
+def _build_mailing_log_timeline(
+    *,
+    rows: list[MailingGuest],
+    tasks: list[DispatchTask],
+) -> list[dict[str, object]]:
+    """
+    Собирает общий таймлайн изменений по строкам аудитории и dispatch-задачам.
+    """
+    timeline: list[dict[str, object]] = []
+
+    for row in rows:
+        event_time = row.sent_at or row.updated_at or row.created_at
+        timeline.append(
+            {
+                "kind": "row",
+                "event_time": event_time,
+                "status": str(row.status),
+                "phone": str(row.phone or (row.guest.phone if row.guest and row.guest.phone else "")),
+                "title": f"Строка #{row.id}",
+                "message": str(row.error_description or row.delivery_status or ""),
+            }
+        )
+
+    for task in tasks:
+        event_time = task.finished_at or task.started_at or task.enqueued_at or task.created_at
+        timeline.append(
+            {
+                "kind": "dispatch",
+                "event_time": event_time,
+                "status": str(task.status),
+                "phone": str(task.guest.phone) if task.guest and task.guest.phone else "",
+                "title": f"Dispatch #{task.id}",
+                "message": str(task.last_error or task.message_text or "")[:240],
+            }
+        )
+
+    timeline.sort(key=lambda item: item["event_time"] or timezone.now(), reverse=True)
+    return timeline[:120]

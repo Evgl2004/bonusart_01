@@ -660,6 +660,118 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.context["tasks"][0].status, DispatchTask.Status.FAILED)
         self.assertEqual(response.context["tasks"][0].provider_type, BotProfile.ProviderType.TELEGRAM)
 
+    def test_campaign_errors_page_filters_row_and_dispatch_errors(self):
+        """
+        Экран ошибок v2 должен фильтровать error-строки и failed dispatch по выбранным параметрам.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000888",
+            first_name="Юлия",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.ERROR,
+            delivery_status="dispatch_enqueue_error",
+            error_description="queue timeout",
+            created_at=self.now,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            mailing_guest=row,
+            guest=guest,
+            last_error="provider timeout",
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.VK,
+            status=DispatchTask.Status.DONE,
+            mailing_guest=row,
+            guest=guest,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_errors", kwargs={"pk": mailing.id}),
+            {
+                "q": "888",
+                "delivery_status": "dispatch_enqueue_error",
+                "provider_type": BotProfile.ProviderType.TELEGRAM,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Ошибки кампании")
+        self.assertEqual(response.context["row_errors_total"], 1)
+        self.assertEqual(response.context["failed_dispatch_total"], 1)
+        self.assertEqual(len(response.context["row_errors"]), 1)
+        self.assertEqual(len(response.context["failed_dispatch"]), 1)
+        self.assertEqual(response.context["row_errors"][0].status, MailingGuest.Status.ERROR)
+        self.assertEqual(response.context["failed_dispatch"][0].status, DispatchTask.Status.FAILED)
+
+    def test_campaign_logs_page_builds_combined_timeline(self):
+        """
+        Экран логов v2 должен отдавать объединённый таймлайн по строкам аудитории и dispatch.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000999",
+            first_name="Игорь",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.DONE,
+            delivery_status="queued_to_dispatch",
+            sent_at=self.now,
+            created_at=self.now,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.DONE,
+            mailing_guest=row,
+            guest=guest,
+            enqueued_at=self.now,
+            started_at=self.now,
+            finished_at=self.now,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_logs", kwargs={"pk": mailing.id}),
+            {
+                "q": "999",
+                "row_status": MailingGuest.Status.DONE,
+                "task_status": DispatchTask.Status.DONE,
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Логи кампании")
+        self.assertEqual(response.context["rows_filtered_total"], 1)
+        self.assertEqual(response.context["tasks_filtered_total"], 1)
+        self.assertEqual(len(response.context["rows"]), 1)
+        self.assertEqual(len(response.context["tasks"]), 1)
+        timeline = response.context["timeline"]
+        self.assertGreaterEqual(len(timeline), 2)
+        kinds = {item.get("kind") for item in timeline}
+        self.assertIn("row", kinds)
+        self.assertIn("dispatch", kinds)
+
     def test_create_template_v2_and_open_detail(self):
         """
         Создание шаблона через v2 должно вести на v2-карточку шаблона.

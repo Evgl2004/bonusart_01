@@ -173,6 +173,8 @@
             <div class="d-grid gap-2 mt-3">
               <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Проверить аудиторию</a>
               <a class="btn btn-outline-primary btn-sm" href="{{ runs_url }}">Запуски и история</a>
+              <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_errors' object.id %}">Ошибки кампании</a>
+              <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_logs' object.id %}">Логи кампании (v2)</a>
               <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs' object.id %}">Логи отправки</a>
               <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs_txt' object.id %}">Скачать лог txt</a>
             </div>

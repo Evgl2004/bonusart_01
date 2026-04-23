@@ -30,6 +30,8 @@ from .views_navigation import (
 from .views_mailings_v2 import (
     MailingsV2CampaignAudienceView,
     MailingsV2CampaignCreateView,
+    MailingsV2CampaignErrorsView,
+    MailingsV2CampaignLogsView,
     MailingsV2CampaignOpsView,
     MailingsV2CampaignRunsView,
     MailingsV2CampaignUpdateView,
@@ -59,6 +61,16 @@ urlpatterns = [
     path("mailings-v2/campaigns/<int:pk>/", MailingsV2CampaignUpdateView.as_view(), name="mailings_v2_campaigns_edit"),
     path("mailings-v2/campaigns/<int:pk>/ops/", MailingsV2CampaignOpsView.as_view(), name="mailings_v2_campaigns_ops"),
     path("mailings-v2/campaigns/<int:pk>/runs/", MailingsV2CampaignRunsView.as_view(), name="mailings_v2_campaigns_runs"),
+    path(
+        "mailings-v2/campaigns/<int:pk>/errors/",
+        MailingsV2CampaignErrorsView.as_view(),
+        name="mailings_v2_campaigns_errors",
+    ),
+    path(
+        "mailings-v2/campaigns/<int:pk>/logs/",
+        MailingsV2CampaignLogsView.as_view(),
+        name="mailings_v2_campaigns_logs",
+    ),
     path(
         "mailings-v2/campaigns/<int:pk>/audience/",
         MailingsV2CampaignAudienceView.as_view(),
