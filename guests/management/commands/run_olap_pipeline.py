@@ -7,6 +7,7 @@ from typing import Callable, Iterable
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from guests.services.daily_order_fact import rebuild_daily_order_fact_from_order_facts
 from guests.services.daily_category_fact import rebuild_daily_category_fact_from_raw_lines
 from guests.services.iiko_olap_client import build_iiko_olap_client_from_settings
 from guests.services.olap_catalogs import (
@@ -15,6 +16,7 @@ from guests.services.olap_catalogs import (
 )
 from guests.services.olap_check_sync import OlapCheckSyncWorkerService
 from guests.services.order_fact import rebuild_order_fact_from_raw_lines
+from guests.services.order_focus_fact import rebuild_order_focus_fact_from_raw_lines
 from guests.services.window_metrics import rebuild_window_metrics_from_daily_facts
 
 logger = logging.getLogger(__name__)
@@ -57,13 +59,16 @@ class Command(BaseCommand):
     2. синхронизация справочников OLAP;
     3. пересборка resolved-связей фокусных категорий;
     4. пересборка `order_fact`;
-    5. пересборка `guest_restaurant_daily_category_fact`;
-    6. пересборка `guest_restaurant_window_metrics`.
+    5. пересборка `guest_restaurant_daily_order_fact`;
+    6. пересборка `guest_restaurant_daily_category_fact`;
+    7. пересборка `guest_order_focus_fact`;
+    8. пересборка `guest_restaurant_window_metrics`.
     """
 
     help = (
         "Оркестратор полного OLAP-контура: "
-        "olap_sync -> catalogs -> resolved -> order_fact -> daily_category -> window_metrics."
+        "olap_sync -> catalogs -> resolved -> order_fact -> daily_order -> daily_category -> "
+        "order_focus -> window_metrics."
     )
 
     def __init__(self, *args, **kwargs):
@@ -115,10 +120,16 @@ class Command(BaseCommand):
         # Шаг 4: order_fact
         parser.add_argument("--skip-order-fact", action="store_true")
 
-        # Шаг 5: daily facts
+        # Шаг 5: daily_order_fact
+        parser.add_argument("--skip-daily-order-fact", action="store_true")
+
+        # Шаг 6: daily_category_fact
         parser.add_argument("--skip-daily-fact", action="store_true")
 
-        # Шаг 6: window metrics
+        # Шаг 7: order_focus_fact
+        parser.add_argument("--skip-order-focus-fact", action="store_true")
+
+        # Шаг 8: window metrics
         parser.add_argument("--skip-window-metrics", action="store_true")
         parser.add_argument("--as-of-date", type=str, default=None)
         parser.add_argument("--window-days", action="append", default=[])
@@ -310,6 +321,34 @@ class Command(BaseCommand):
                         continue_on_error=continue_on_error,
                     )
 
+                if not bool(options["skip_daily_order_fact"]):
+                    def _run_daily_order_fact_step() -> None:
+                        stats = rebuild_daily_order_fact_from_order_facts(
+                            business_date_from=business_date_from,
+                            business_date_to=business_date_to,
+                            department_id=options["department_id"],
+                            batch_size=batch_size,
+                        )
+                        self.stdout.write(
+                            (
+                                "[daily_order] scanned={scanned} skipped_without_guest={skipped_without_guest} "
+                                "grouped={grouped} created={created} updated={updated} deleted={deleted}"
+                            ).format(
+                                scanned=stats.scanned_order_facts,
+                                skipped_without_guest=stats.skipped_without_guest,
+                                grouped=stats.grouped_rows,
+                                created=stats.created_rows,
+                                updated=stats.updated_rows,
+                                deleted=stats.deleted_rows,
+                            )
+                        )
+
+                    self._run_step(
+                        title="daily_order_fact",
+                        run_callable=_run_daily_order_fact_step,
+                        continue_on_error=continue_on_error,
+                    )
+
                 if not bool(options["skip_daily_fact"]):
                     def _run_daily_fact_step() -> None:
                         stats = rebuild_daily_category_fact_from_raw_lines(
@@ -336,6 +375,35 @@ class Command(BaseCommand):
                     self._run_step(
                         title="daily_fact",
                         run_callable=_run_daily_fact_step,
+                        continue_on_error=continue_on_error,
+                    )
+
+                if not bool(options["skip_order_focus_fact"]):
+                    def _run_order_focus_fact_step() -> None:
+                        stats = rebuild_order_focus_fact_from_raw_lines(
+                            business_date_from=business_date_from,
+                            business_date_to=business_date_to,
+                            department_id=options["department_id"],
+                            batch_size=batch_size,
+                        )
+                        self.stdout.write(
+                            (
+                                "[order_focus] scanned={scanned} grouped={grouped} without_mapping={without_mapping} "
+                                "skipped_invalid={skipped_invalid} created={created} updated={updated} deleted={deleted}"
+                            ).format(
+                                scanned=stats.scanned_raw_lines,
+                                grouped=stats.grouped_rows,
+                                without_mapping=stats.lines_without_focus_mapping,
+                                skipped_invalid=stats.skipped_invalid_lines,
+                                created=stats.created_rows,
+                                updated=stats.updated_rows,
+                                deleted=stats.deleted_rows,
+                            )
+                        )
+
+                    self._run_step(
+                        title="order_focus_fact",
+                        run_callable=_run_order_focus_fact_step,
                         continue_on_error=continue_on_error,
                     )
 

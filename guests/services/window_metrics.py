@@ -13,7 +13,7 @@ from typing import Iterable
 from django.db import transaction
 from django.utils import timezone
 
-from guests.models import GuestRestaurantDailyCategoryFact, GuestRestaurantWindowMetrics
+from guests.models import GuestRestaurantDailyOrderFact, GuestRestaurantWindowMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +92,7 @@ def rebuild_window_metrics_from_daily_facts(
     batch_size: int = 2000,
 ) -> WindowMetricsBuildStats:
     """
-    Пересобирает `guest_restaurant_window_metrics` по дневному слою.
+    Пересобирает `guest_restaurant_window_metrics` по дневному слою полных чеков.
     """
 
     target_date = as_of_date or timezone.localdate()
@@ -107,7 +107,7 @@ def rebuild_window_metrics_from_daily_facts(
         stats.windows_processed += 1
         date_from = target_date - timedelta(days=window - 1)
 
-        query = GuestRestaurantDailyCategoryFact.objects.filter(
+        query = GuestRestaurantDailyOrderFact.objects.filter(
             business_date__gte=date_from,
             business_date__lte=target_date,
         ).values(
@@ -116,7 +116,8 @@ def rebuild_window_metrics_from_daily_facts(
             "business_date",
             "orders_count",
             "sum_net",
-            "bonus_sum",
+            "bonus_in_sum",
+            "bonus_out_sum",
         )
         if target_department_id:
             query = query.filter(department_id=target_department_id)
@@ -144,11 +145,8 @@ def rebuild_window_metrics_from_daily_facts(
             sum_net_value = Decimal(str(row["sum_net"] or 0))
             aggregate.sum_net += sum_net_value
 
-            bonus_value = Decimal(str(row["bonus_sum"] or 0))
-            if bonus_value >= 0:
-                aggregate.bonus_in_sum += bonus_value
-            else:
-                aggregate.bonus_out_sum += abs(bonus_value)
+            aggregate.bonus_in_sum += Decimal(str(row["bonus_in_sum"] or 0))
+            aggregate.bonus_out_sum += Decimal(str(row["bonus_out_sum"] or 0))
 
             if aggregate.last_visit_at is None or business_day > aggregate.last_visit_at:
                 aggregate.last_visit_at = business_day
@@ -261,4 +259,3 @@ def rebuild_window_metrics_from_daily_facts(
         stats.updated_rows,
     )
     return stats
-

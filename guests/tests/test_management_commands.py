@@ -552,7 +552,7 @@ class RunOlapPipelineCommandTests(SimpleTestCase):
 
     def test_handle_once_runs_pipeline_without_olap_sync(self):
         """
-        В режиме --once команда должна выполнить шаги catalogs -> resolved -> order -> daily -> windows.
+        В режиме --once команда должна выполнить шаги catalogs -> resolved -> order -> daily_order -> daily -> order_focus -> windows.
         """
         output = io.StringIO()
         fake_catalog_stats = SimpleNamespace(
@@ -586,6 +586,23 @@ class RunOlapPipelineCommandTests(SimpleTestCase):
             created_rows=3,
             updated_rows=1,
         )
+        fake_daily_order_stats = SimpleNamespace(
+            scanned_order_facts=8,
+            skipped_without_guest=1,
+            grouped_rows=3,
+            created_rows=2,
+            updated_rows=1,
+            deleted_rows=0,
+        )
+        fake_order_focus_stats = SimpleNamespace(
+            scanned_raw_lines=8,
+            skipped_invalid_lines=0,
+            lines_without_focus_mapping=1,
+            grouped_rows=4,
+            created_rows=3,
+            updated_rows=1,
+            deleted_rows=0,
+        )
         fake_window_stats = SimpleNamespace(
             as_of_date=timezone.localdate(),
             windows_processed=2,
@@ -613,6 +630,14 @@ class RunOlapPipelineCommandTests(SimpleTestCase):
                 "guests.management.commands.run_olap_pipeline.rebuild_daily_category_fact_from_raw_lines",
                 return_value=fake_daily_stats,
             ) as mocked_daily,
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_daily_order_fact_from_order_facts",
+                return_value=fake_daily_order_stats,
+            ) as mocked_daily_order,
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_order_focus_fact_from_raw_lines",
+                return_value=fake_order_focus_stats,
+            ) as mocked_order_focus,
             patch(
                 "guests.management.commands.run_olap_pipeline.rebuild_window_metrics_from_daily_facts",
                 return_value=fake_window_stats,
@@ -642,7 +667,9 @@ class RunOlapPipelineCommandTests(SimpleTestCase):
         )
         mocked_resolved.assert_called_once_with(focus_codes=["meat_focus"])
         mocked_order.assert_called_once()
+        mocked_daily_order.assert_called_once()
         mocked_daily.assert_called_once()
+        mocked_order_focus.assert_called_once()
         mocked_window.assert_called_once()
 
     def test_handle_once_with_olap_sync_runs_worker_and_closes_client(self):
@@ -694,6 +721,23 @@ class RunOlapPipelineCommandTests(SimpleTestCase):
             created_rows=0,
             updated_rows=0,
         )
+        empty_daily_order_stats = SimpleNamespace(
+            scanned_order_facts=0,
+            skipped_without_guest=0,
+            grouped_rows=0,
+            created_rows=0,
+            updated_rows=0,
+            deleted_rows=0,
+        )
+        empty_order_focus_stats = SimpleNamespace(
+            scanned_raw_lines=0,
+            skipped_invalid_lines=0,
+            lines_without_focus_mapping=0,
+            grouped_rows=0,
+            created_rows=0,
+            updated_rows=0,
+            deleted_rows=0,
+        )
         empty_window_stats = SimpleNamespace(
             as_of_date=timezone.localdate(),
             windows_processed=0,
@@ -728,6 +772,14 @@ class RunOlapPipelineCommandTests(SimpleTestCase):
             patch(
                 "guests.management.commands.run_olap_pipeline.rebuild_daily_category_fact_from_raw_lines",
                 return_value=empty_daily_stats,
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_daily_order_fact_from_order_facts",
+                return_value=empty_daily_order_stats,
+            ),
+            patch(
+                "guests.management.commands.run_olap_pipeline.rebuild_order_focus_fact_from_raw_lines",
+                return_value=empty_order_focus_stats,
             ),
             patch(
                 "guests.management.commands.run_olap_pipeline.rebuild_window_metrics_from_daily_facts",
@@ -785,7 +837,9 @@ class RunOlapPipelineCommandTests(SimpleTestCase):
                 "--once",
                 "--skip-olap-sync",
                 "--skip-resolved-rebuild",
+                "--skip-daily-order-fact",
                 "--skip-daily-fact",
+                "--skip-order-focus-fact",
                 "--skip-window-metrics",
                 "--continue-on-step-error",
                 stdout=output,
@@ -899,6 +953,117 @@ class SyncDailyCategoryFactCommandTests(SimpleTestCase):
         Обработчик сигнала должен выставлять флаг should_stop.
         """
         from guests.management.commands.sync_daily_category_fact import Command
+
+        command = Command()
+        self.assertFalse(command.should_stop)
+        command._signal_handler(signal.SIGTERM, None)
+        self.assertTrue(command.should_stop)
+
+
+class SyncDailyOrderFactCommandTests(SimpleTestCase):
+    """
+    Тесты команды sync_daily_order_fact.
+    """
+
+    def test_handle_once_calls_rebuild_service(self):
+        """
+        В режиме --once команда должна вызвать сервис пересчёта daily_order_fact.
+        """
+        output = io.StringIO()
+        fake_stats = SimpleNamespace(
+            scanned_order_facts=50,
+            skipped_without_guest=2,
+            grouped_rows=20,
+            created_rows=11,
+            updated_rows=4,
+            deleted_rows=1,
+        )
+
+        with (
+            patch("guests.management.commands.sync_daily_order_fact.signal.signal"),
+            patch(
+                "guests.management.commands.sync_daily_order_fact.rebuild_daily_order_fact_from_order_facts",
+                return_value=fake_stats,
+            ) as mocked_rebuild,
+        ):
+            call_command(
+                "sync_daily_order_fact",
+                "--once",
+                "--business-date-from=2026-03-01",
+                "--business-date-to=2026-03-31",
+                "--department-id=dept-77",
+                "--batch-size=1800",
+                stdout=output,
+            )
+
+        mocked_rebuild.assert_called_once()
+        kwargs = mocked_rebuild.call_args.kwargs
+        self.assertEqual(str(kwargs["business_date_from"]), "2026-03-01")
+        self.assertEqual(str(kwargs["business_date_to"]), "2026-03-31")
+        self.assertEqual(kwargs["department_id"], "dept-77")
+        self.assertEqual(kwargs["batch_size"], 1800)
+
+    def test_signal_handler_sets_stop_flag(self):
+        """
+        Обработчик сигнала должен выставлять флаг should_stop.
+        """
+        from guests.management.commands.sync_daily_order_fact import Command
+
+        command = Command()
+        self.assertFalse(command.should_stop)
+        command._signal_handler(signal.SIGINT, None)
+        self.assertTrue(command.should_stop)
+
+
+class SyncOrderFocusFactCommandTests(SimpleTestCase):
+    """
+    Тесты команды sync_order_focus_fact.
+    """
+
+    def test_handle_once_calls_rebuild_service(self):
+        """
+        В режиме --once команда должна вызвать сервис пересчёта order_focus_fact.
+        """
+        output = io.StringIO()
+        fake_stats = SimpleNamespace(
+            scanned_raw_lines=120,
+            skipped_invalid_lines=3,
+            lines_without_focus_mapping=10,
+            grouped_rows=40,
+            created_rows=20,
+            updated_rows=5,
+            deleted_rows=2,
+        )
+
+        with (
+            patch("guests.management.commands.sync_order_focus_fact.signal.signal"),
+            patch(
+                "guests.management.commands.sync_order_focus_fact.rebuild_order_focus_fact_from_raw_lines",
+                return_value=fake_stats,
+            ) as mocked_rebuild,
+        ):
+            call_command(
+                "sync_order_focus_fact",
+                "--once",
+                "--business-date-from=2026-03-01",
+                "--business-date-to=2026-03-31",
+                "--department-id=dept-11",
+                "--batch-size=1700",
+                stdout=output,
+            )
+
+        mocked_rebuild.assert_called_once()
+        kwargs = mocked_rebuild.call_args.kwargs
+        self.assertEqual(str(kwargs["business_date_from"]), "2026-03-01")
+        self.assertEqual(str(kwargs["business_date_to"]), "2026-03-31")
+        self.assertEqual(kwargs["department_id"], "dept-11")
+        self.assertEqual(kwargs["batch_size"], 1700)
+
+    def test_signal_handler_sets_stop_flag(self):
+        """
+        Обработчик сигнала должен выставлять флаг should_stop.
+        """
+        from guests.management.commands.sync_order_focus_fact import Command
 
         command = Command()
         self.assertFalse(command.should_stop)

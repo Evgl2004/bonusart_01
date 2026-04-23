@@ -5,7 +5,7 @@ from datetime import date
 
 from django.core.management.base import BaseCommand
 
-from guests.services.window_metrics import rebuild_window_metrics_from_daily_facts
+from guests.services.order_focus_fact import rebuild_order_focus_fact_from_raw_lines
 
 logger = logging.getLogger(__name__)
 
@@ -21,11 +21,11 @@ def _parse_date(value: str | None) -> date | None:
 
 class Command(BaseCommand):
     """
-    Синхронизирует таблицу `guest_restaurant_window_metrics`.
+    Синхронизирует таблицу `guest_order_focus_fact`.
     """
 
     help = (
-        "Пересчитывает оконные метрики из дневного слоя полных чеков. "
+        "Пересчитывает order-level мост заказа и фокусной категории. "
         "Поддерживает один проход (--once) и циклический режим."
     )
 
@@ -42,32 +42,32 @@ class Command(BaseCommand):
         parser.add_argument(
             "--sleep-seconds",
             type=float,
-            default=3600.0,
+            default=1800.0,
             help="Пауза между проходами в циклическом режиме.",
         )
         parser.add_argument(
-            "--as-of-date",
+            "--business-date-from",
             type=str,
             default=None,
-            help="Дата среза (YYYY-MM-DD). По умолчанию сегодняшняя локальная дата.",
+            help="Нижняя граница бизнес-даты (YYYY-MM-DD).",
         )
         parser.add_argument(
-            "--window-days",
-            action="append",
-            default=[],
-            help="Размер окна в днях (можно передавать несколько раз).",
+            "--business-date-to",
+            type=str,
+            default=None,
+            help="Верхняя граница бизнес-даты (YYYY-MM-DD).",
         )
         parser.add_argument(
             "--department-id",
             type=str,
             default=None,
-            help="Фильтр на одно заведение (Department.Id).",
+            help="Опциональный фильтр по Department.Id.",
         )
         parser.add_argument(
             "--batch-size",
             type=int,
             default=2000,
-            help="Размер порции чтения дневного слоя.",
+            help="Размер порции чтения сырых строк.",
         )
 
     def _setup_signal_handlers(self) -> None:
@@ -77,7 +77,7 @@ class Command(BaseCommand):
     def _signal_handler(self, signum, frame) -> None:
         self.should_stop = True
         logger.info(
-            "Получен сигнал %s, sync_window_metrics завершится после текущего прохода.",
+            "Получен сигнал %s, sync_order_focus_fact завершится после текущего прохода.",
             signum,
         )
 
@@ -88,40 +88,28 @@ class Command(BaseCommand):
             time.sleep(step)
             remaining -= step
 
-    @staticmethod
-    def _normalize_windows(raw_windows: list[str]) -> list[int] | None:
-        normalized: list[int] = []
-        for raw in raw_windows:
-            text = str(raw).strip()
-            if not text:
-                continue
-            value = int(text)
-            if value <= 0:
-                continue
-            if value not in normalized:
-                normalized.append(value)
-        return normalized or None
-
     def _run_once(self, *, options) -> None:
-        target_date = _parse_date(options["as_of_date"])
-        windows = self._normalize_windows(options["window_days"])
-        stats = rebuild_window_metrics_from_daily_facts(
-            as_of_date=target_date,
-            window_days=windows,
+        business_date_from = _parse_date(options["business_date_from"])
+        business_date_to = _parse_date(options["business_date_to"])
+        stats = rebuild_order_focus_fact_from_raw_lines(
+            business_date_from=business_date_from,
+            business_date_to=business_date_to,
             department_id=options["department_id"],
             batch_size=max(100, int(options["batch_size"])),
         )
+
         self.stdout.write(
             (
-                "[window_metrics] as_of={as_of} windows={windows} scanned={scanned} grouped={grouped} "
-                "created={created} updated={updated}"
+                "[order_focus] scanned={scanned} grouped={grouped} without_mapping={without_mapping} "
+                "skipped_invalid={skipped_invalid} created={created} updated={updated} deleted={deleted}"
             ).format(
-                as_of=stats.as_of_date,
-                windows=stats.windows_processed,
-                scanned=stats.scanned_daily_rows,
+                scanned=stats.scanned_raw_lines,
                 grouped=stats.grouped_rows,
+                without_mapping=stats.lines_without_focus_mapping,
+                skipped_invalid=stats.skipped_invalid_lines,
                 created=stats.created_rows,
                 updated=stats.updated_rows,
+                deleted=stats.deleted_rows,
             )
         )
 
@@ -130,11 +118,12 @@ class Command(BaseCommand):
         once_mode = bool(options["once"])
         sleep_seconds = max(1.0, float(options["sleep_seconds"]))
 
-        self.stdout.write(self.style.SUCCESS("Запущен sync_window_metrics"))
+        self.stdout.write(self.style.SUCCESS("Запущен sync_order_focus_fact"))
         self.stdout.write(f"mode={'once' if once_mode else 'loop'}")
         self.stdout.write(f"sleep_seconds={sleep_seconds}")
-        self.stdout.write(f"as_of_date={options['as_of_date']}")
-        self.stdout.write(f"window_days={options['window_days']}")
+        self.stdout.write(
+            f"business_date_from={options['business_date_from']} business_date_to={options['business_date_to']}"
+        )
         self.stdout.write(f"department_id={options['department_id']}")
         self.stdout.write(f"batch_size={max(100, int(options['batch_size']))}")
 

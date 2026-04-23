@@ -11,11 +11,9 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.models import (
-    FocusCategory,
     Guest,
-    GuestRestaurantDailyCategoryFact,
+    GuestRestaurantDailyOrderFact,
     GuestRestaurantWindowMetrics,
-    OlapCategoryDict,
 )
 from guests.services.window_metrics import rebuild_window_metrics_from_daily_facts
 
@@ -34,19 +32,6 @@ class WindowMetricsServiceTests(TestCase):
             created_at=now,
             updated_at=now,
         )
-        self.category = OlapCategoryDict.objects.create(
-            iiko_category_external_id="cat-window",
-            category_name="Категория окна",
-            first_seen_at=now,
-            last_seen_at=now,
-        )
-        self.focus = FocusCategory.objects.create(
-            code="window_focus",
-            name="Фокус окна",
-            source_type=FocusCategory.SourceType.OLAP_DIRECT,
-            olap_category=self.category,
-            is_enabled=True,
-        )
 
     def _create_daily_row(
         self,
@@ -55,18 +40,17 @@ class WindowMetricsServiceTests(TestCase):
         orders_count: int,
         items_count: int,
         sum_net: str,
-        bonus_sum: str,
+        bonus_in_sum: str,
+        bonus_out_sum: str,
     ) -> None:
-        GuestRestaurantDailyCategoryFact.objects.create(
+        GuestRestaurantDailyOrderFact.objects.create(
             business_date=business_day,
             guest=self.guest,
             department_id="dept-77",
-            focus_category=self.focus,
             orders_count=orders_count,
-            items_count=items_count,
-            sum_gross=Decimal(sum_net),
             sum_net=Decimal(sum_net),
-            bonus_sum=Decimal(bonus_sum),
+            bonus_in_sum=Decimal(bonus_in_sum),
+            bonus_out_sum=Decimal(bonus_out_sum),
         )
 
     def test_rebuild_window_metrics_creates_row(self):
@@ -78,14 +62,16 @@ class WindowMetricsServiceTests(TestCase):
             orders_count=2,
             items_count=4,
             sum_net="1000",
-            bonus_sum="10",
+            bonus_in_sum="10",
+            bonus_out_sum="0",
         )
         self._create_daily_row(
             business_day=date(2026, 3, 18),
             orders_count=1,
             items_count=2,
             sum_net="600",
-            bonus_sum="-5",
+            bonus_in_sum="0",
+            bonus_out_sum="5",
         )
 
         stats = rebuild_window_metrics_from_daily_facts(
@@ -118,7 +104,8 @@ class WindowMetricsServiceTests(TestCase):
             orders_count=1,
             items_count=1,
             sum_net="500",
-            bonus_sum="0",
+            bonus_in_sum="0",
+            bonus_out_sum="0",
         )
         rebuild_window_metrics_from_daily_facts(as_of_date=date(2026, 3, 18), window_days=[7])
         self.assertEqual(GuestRestaurantWindowMetrics.objects.count(), 1)
@@ -128,7 +115,8 @@ class WindowMetricsServiceTests(TestCase):
             orders_count=1,
             items_count=1,
             sum_net="700",
-            bonus_sum="2",
+            bonus_in_sum="2",
+            bonus_out_sum="0",
         )
         stats = rebuild_window_metrics_from_daily_facts(as_of_date=date(2026, 3, 18), window_days=[7])
 
@@ -139,4 +127,3 @@ class WindowMetricsServiceTests(TestCase):
         self.assertEqual(metric.visits_count, 2)
         self.assertEqual(metric.sum_net, Decimal("1200"))
         self.assertEqual(metric.avg_check_net, Decimal("600.00"))
-

@@ -91,7 +91,7 @@ class Command(BaseCommand):
             "--batch-size",
             type=int,
             default=2000,
-            help="Размер порции чтения для сырого и order-level слоя.",
+            help="Размер порции чтения для order-level и order_fact слоя.",
         )
 
     def _setup_signal_handlers(self) -> None:

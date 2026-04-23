@@ -1,9 +1,8 @@
-"""
+﻿"""
 Сервис построения оконных метрик по гостю, заведению и фокусной категории.
 
 Расчёт выполняется по order-level данным:
-1. заказы категории определяются по `olap_sales_raw_line` через
-   `focus_category_nomenclature_resolved`;
+1. присутствие категории в заказе берётся из `guest_order_focus_fact`;
 2. полная сумма чека и бонусы подтягиваются из `order_fact`.
 """
 
@@ -19,9 +18,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from guests.models import (
-    FocusCategoryNomenclatureResolved,
+    GuestOrderFocusFact,
     GuestRestaurantWindowCategoryMetrics,
-    OlapSalesRawLine,
     OrderFact,
 )
 
@@ -112,39 +110,6 @@ def _to_decimal(value: Any) -> Decimal:
         return Decimal(str(value))
     except Exception:  # noqa: BLE001
         return Decimal("0")
-
-
-def _line_net_value(raw_row: dict[str, Any]) -> Decimal:
-    net_value = _to_decimal(raw_row.get("dish_sum_after_discount"))
-    if net_value == Decimal("0"):
-        net_value = _to_decimal(raw_row.get("dish_sum_before_discount"))
-    return net_value
-
-
-def _build_nomenclature_to_focus_mapping() -> dict[str, list[int]]:
-    """
-    Возвращает mapping:
-    `iiko_nomenclature_external_id` -> `[focus_category_id, ...]`.
-    """
-    query = (
-        FocusCategoryNomenclatureResolved.objects.select_related("nomenclature")
-        .filter(
-            focus_category__is_enabled=True,
-            nomenclature__is_active=True,
-        )
-        .values("focus_category_id", "nomenclature__iiko_nomenclature_external_id")
-    )
-
-    mapping: dict[str, list[int]] = {}
-    for row in query.iterator(chunk_size=2000):
-        external_id = _normalize_text(row["nomenclature__iiko_nomenclature_external_id"])
-        if not external_id:
-            continue
-        focus_id = int(row["focus_category_id"])
-        focus_list = mapping.setdefault(external_id, [])
-        if focus_id not in focus_list:
-            focus_list.append(focus_id)
-    return mapping
 
 
 def _delete_stale_category_rows(
@@ -246,33 +211,27 @@ def _build_aggregates_for_window(
     as_of_date: date,
     window_days: int,
     department_id: str,
-    nomenclature_to_focus: dict[str, list[int]],
     batch_size: int,
     stats: WindowCategoryMetricsBuildStats,
 ) -> dict[tuple[int, str, int, int], _WindowCategoryAggregate]:
     """
-    Собирает агрегаты по окну из сырого слоя.
+    Собирает агрегаты по окну из order-level слоя `guest_order_focus_fact`.
     """
-    if not nomenclature_to_focus:
-        return {}
 
     date_from = as_of_date - timedelta(days=window_days - 1)
     safe_department_id = (department_id or "").strip()
-    dish_codes = list(nomenclature_to_focus.keys())
 
-    query = OlapSalesRawLine.objects.filter(
+    query = GuestOrderFocusFact.objects.filter(
         business_date__gte=date_from,
         business_date__lte=as_of_date,
-        dish_code__in=dish_codes,
     ).values(
         "guest_id",
         "business_date",
         "department_id",
         "order_number",
         "uniq_order_id",
-        "dish_code",
-        "dish_sum_after_discount",
-        "dish_sum_before_discount",
+        "focus_category_id",
+        "sum_focus_net",
     )
     if safe_department_id:
         query = query.filter(department_id=safe_department_id)
@@ -284,36 +243,30 @@ def _build_aggregates_for_window(
         guest_id = row["guest_id"]
         business_day = row["business_date"]
         order_number = row["order_number"]
-        if guest_id is None or business_day is None or order_number is None:
-            continue
-
-        dish_code = _normalize_text(row["dish_code"])
-        focus_ids = nomenclature_to_focus.get(dish_code, [])
-        if not focus_ids:
+        focus_category_id = row["focus_category_id"]
+        if guest_id is None or business_day is None or order_number is None or focus_category_id is None:
             continue
 
         dep_id = _normalize_text(row["department_id"])
         uniq_order_id = _normalize_text(row["uniq_order_id"])
         order_key: OrderKey = (business_day, dep_id, int(order_number), uniq_order_id)
-        line_net = _line_net_value(row)
 
-        for focus_category_id in focus_ids:
-            key = (int(guest_id), dep_id, int(window_days), int(focus_category_id))
-            aggregate = aggregates.get(key)
-            if aggregate is None:
-                aggregate = _WindowCategoryAggregate(
-                    guest_id=int(guest_id),
-                    department_id=dep_id,
-                    window_days=int(window_days),
-                    focus_category_id=int(focus_category_id),
-                )
-                aggregates[key] = aggregate
+        key = (int(guest_id), dep_id, int(window_days), int(focus_category_id))
+        aggregate = aggregates.get(key)
+        if aggregate is None:
+            aggregate = _WindowCategoryAggregate(
+                guest_id=int(guest_id),
+                department_id=dep_id,
+                window_days=int(window_days),
+                focus_category_id=int(focus_category_id),
+            )
+            aggregates[key] = aggregate
 
-            aggregate.order_keys.add(order_key)
-            aggregate.business_dates.add(business_day)
-            aggregate.sum_focus_net += line_net
-            if aggregate.last_visit_at is None or business_day > aggregate.last_visit_at:
-                aggregate.last_visit_at = business_day
+        aggregate.order_keys.add(order_key)
+        aggregate.business_dates.add(business_day)
+        aggregate.sum_focus_net += _to_decimal(row["sum_focus_net"])
+        if aggregate.last_visit_at is None or business_day > aggregate.last_visit_at:
+            aggregate.last_visit_at = business_day
 
     return aggregates
 
@@ -328,8 +281,8 @@ def rebuild_window_category_metrics_from_order_facts(
     """
     Пересобирает `guest_restaurant_window_category_metrics`.
 
-    Метрики строятся по заказам, где фокусная категория действительно встречалась
-    в строках сырого OLAP-слоя.
+    Метрики строятся по заказам, где фокусная категория действительно встречалась,
+    а сумма заказа/бонусы берутся из `order_fact`.
     """
     target_date = as_of_date or timezone.localdate()
     windows = _normalize_window_days(window_days)
@@ -337,17 +290,12 @@ def rebuild_window_category_metrics_from_order_facts(
     safe_department_id = (department_id or "").strip()
     stats = WindowCategoryMetricsBuildStats(as_of_date=target_date)
 
-    nomenclature_to_focus = _build_nomenclature_to_focus_mapping()
-    if not nomenclature_to_focus:
-        logger.info("rebuild_window_category_metrics_from_order_facts: нет активных связей focus -> nomenclature")
-
     for window in windows:
         stats.windows_processed += 1
         aggregates = _build_aggregates_for_window(
             as_of_date=target_date,
             window_days=window,
             department_id=safe_department_id,
-            nomenclature_to_focus=nomenclature_to_focus,
             batch_size=safe_batch_size,
             stats=stats,
         )

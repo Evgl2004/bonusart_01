@@ -709,6 +709,7 @@ class OlapSalesRawLine(models.Model):
             models.Index(fields=["department_id", "business_date"], name="osrl_dept_date_idx"),
             models.Index(fields=["order_number", "business_date"], name="osrl_ord_date_idx"),
             models.Index(fields=["dish_category_id", "business_date"], name="osrl_cat_date_idx"),
+            models.Index(fields=["business_date", "department_id", "dish_code"], name="osrl_date_dep_dish_idx"),
         ]
 
     def __str__(self):
