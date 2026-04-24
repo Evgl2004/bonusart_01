@@ -14,7 +14,8 @@ from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import Count, Max, Q
+from django.db.models import Count, F, Max, Q
+from django.http import QueryDict
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.dateparse import parse_date
@@ -1041,50 +1042,147 @@ class MailingsV2MonitorView(TemplateView):
 
     template_name = "mailing_v2/monitor_hub.html"
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        base_scope = DispatchTask.objects.filter(
+    @staticmethod
+    def _build_redirect_url(*, return_query: str) -> str:
+        """
+        Собирает URL возврата на monitor с сохранением активных фильтров.
+        """
+        base_url = reverse("mailings_v2_monitor")
+        safe_query = str(return_query or "").strip()
+        if not safe_query:
+            return base_url
+        return f"{base_url}?{safe_query}"
+
+    @staticmethod
+    def _normalize_filters(params) -> dict[str, str]:
+        """
+        Нормализует входные фильтры monitor из QueryDict/словаря.
+        """
+        selected_mailing_id = str(params.get("mailing_id") or "").strip()
+        selected_status = str(params.get("status") or "").strip()
+        selected_provider = str(params.get("provider_type") or "").strip()
+        selected_scenario_id = str(params.get("scenario_id") or "").strip()
+
+        if not selected_mailing_id.isdigit():
+            selected_mailing_id = ""
+        if not selected_scenario_id.isdigit():
+            selected_scenario_id = ""
+
+        valid_statuses = {value for value, _ in DispatchTask.Status.choices}
+        if selected_status not in valid_statuses:
+            selected_status = ""
+
+        valid_providers = {value for value, _ in BotProfile.ProviderType.choices}
+        if selected_provider not in valid_providers:
+            selected_provider = ""
+
+        return {
+            "mailing_id": selected_mailing_id,
+            "status": selected_status,
+            "provider_type": selected_provider,
+            "scenario_id": selected_scenario_id,
+        }
+
+    @classmethod
+    def _build_filtered_scope(cls, params):
+        """
+        Возвращает queryset DispatchTask по фильтрам monitor.
+        """
+        scope = DispatchTask.objects.filter(
             Q(mailing_guest__isnull=False) | Q(notification_scenario__isnull=False)
-        )
-        scope = base_scope.select_related(
+        ).select_related(
             "mailing_guest__mailing",
             "notification_scenario",
             "bot_profile",
             "guest",
         )
+        filters = cls._normalize_filters(params)
 
-        selected_mailing_id = (self.request.GET.get("mailing_id") or "").strip()
-        selected_status = (self.request.GET.get("status") or "").strip()
-        selected_provider = (self.request.GET.get("provider_type") or "").strip()
-        selected_scenario_id = (self.request.GET.get("scenario_id") or "").strip()
+        if filters["mailing_id"]:
+            scope = scope.filter(mailing_guest__mailing_id=int(filters["mailing_id"]))
+        if filters["status"]:
+            scope = scope.filter(status=filters["status"])
+        if filters["provider_type"]:
+            scope = scope.filter(provider_type=filters["provider_type"])
+        if filters["scenario_id"]:
+            scope = scope.filter(notification_scenario_id=int(filters["scenario_id"]))
 
-        if selected_mailing_id.isdigit():
-            scope = scope.filter(mailing_guest__mailing_id=int(selected_mailing_id))
-        else:
-            selected_mailing_id = ""
+        return scope, filters
 
-        valid_statuses = {value for value, _ in DispatchTask.Status.choices}
-        if selected_status in valid_statuses:
-            scope = scope.filter(status=selected_status)
-        else:
-            selected_status = ""
+    def post(self, request, *args, **kwargs):
+        """
+        Быстрые операционные действия по задачам dispatch на monitor-экране.
 
-        valid_providers = {value for value, _ in BotProfile.ProviderType.choices}
-        if selected_provider in valid_providers:
-            scope = scope.filter(provider_type=selected_provider)
-        else:
-            selected_provider = ""
+        Поддерживает:
+        1. retry failed -> pending (сброс попыток);
+        2. requeue pending/queued -> pending с available_at=now.
+        """
+        action = str(request.POST.get("action") or "").strip()
+        return_query = str(request.POST.get("return_query") or "").strip()
+        redirect_url = self._build_redirect_url(return_query=return_query)
 
-        if selected_scenario_id.isdigit():
-            scope = scope.filter(notification_scenario_id=int(selected_scenario_id))
-        else:
-            selected_scenario_id = ""
+        filter_params = QueryDict(return_query, mutable=False) if return_query else request.POST
+        scope, filters = self._build_filtered_scope(filter_params)
+        now = timezone.now()
+
+        if action == "retry_failed_tasks":
+            candidates = scope.filter(status=DispatchTask.Status.FAILED)
+            updated = candidates.update(
+                status=DispatchTask.Status.PENDING,
+                enqueued_at=None,
+                queue_name=None,
+                started_at=None,
+                finished_at=None,
+                available_at=now,
+                updated_at=now,
+                attempt=0,
+                last_error=None,
+            )
+            request.session["mailings_v2_monitor_ops_report"] = {
+                "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+                "action": "retry_failed_tasks",
+                "updated_tasks": int(updated),
+                "filters": filters,
+            }
+            if updated > 0:
+                messages.success(request, f"Переведено failed -> pending задач: {updated}.")
+            else:
+                messages.info(request, "Под выбранный фильтр failed-задачи не найдены.")
+            return redirect(redirect_url)
+
+        if action == "requeue_waiting_tasks":
+            candidates = scope.filter(status__in=[DispatchTask.Status.PENDING, DispatchTask.Status.QUEUED])
+            updated = candidates.update(
+                status=DispatchTask.Status.PENDING,
+                enqueued_at=None,
+                queue_name=None,
+                started_at=None,
+                finished_at=None,
+                available_at=now,
+                updated_at=now,
+            )
+            request.session["mailings_v2_monitor_ops_report"] = {
+                "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+                "action": "requeue_waiting_tasks",
+                "updated_tasks": int(updated),
+                "filters": filters,
+            }
+            if updated > 0:
+                messages.success(request, f"Переоткрыто pending/queued задач: {updated}.")
+            else:
+                messages.info(request, "Под выбранный фильтр pending/queued задачи не найдены.")
+            return redirect(redirect_url)
+
+        messages.error(request, "Неизвестное действие monitor.")
+        return redirect(redirect_url)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        scope, filters = self._build_filtered_scope(self.request.GET)
 
         status_rows = scope.values("status").annotate(total=Count("id")).order_by("status")
         provider_rows = scope.values("provider_type").annotate(total=Count("id")).order_by("-total")
-
         recent_rows = scope.order_by("-id")[:200]
-
         campaigns = Mailing.objects.order_by("-created_at")[:200]
         scenarios = NotificationScenario.objects.order_by("code")[:200]
 
@@ -1094,20 +1192,42 @@ class MailingsV2MonitorView(TemplateView):
             | Q(status=DispatchTask.Status.IN_PROGRESS)
         ).count()
 
+        retry_candidates = scope.filter(
+            status=DispatchTask.Status.FAILED,
+            attempt__lt=F("max_attempts"),
+        ).count()
+        retry_exhausted = scope.filter(
+            status=DispatchTask.Status.FAILED,
+            attempt__gte=F("max_attempts"),
+        ).count()
+        retry_in_queue = scope.filter(
+            status__in=[DispatchTask.Status.PENDING, DispatchTask.Status.QUEUED],
+            attempt__gt=0,
+        ).count()
+        retry_attempted = scope.filter(attempt__gt=0).count()
+        max_attempt_observed = int(scope.aggregate(max_attempt=Max("attempt")).get("max_attempt") or 0)
+
         context["campaigns"] = campaigns
         context["scenarios"] = scenarios
         context["status_choices"] = list(DispatchTask.Status.choices)
         context["provider_choices"] = list(BotProfile.ProviderType.choices)
-        context["selected_mailing_id"] = selected_mailing_id
-        context["selected_status"] = selected_status
-        context["selected_provider_type"] = selected_provider
-        context["selected_scenario_id"] = selected_scenario_id
+        context["selected_mailing_id"] = filters["mailing_id"]
+        context["selected_status"] = filters["status"]
+        context["selected_provider_type"] = filters["provider_type"]
+        context["selected_scenario_id"] = filters["scenario_id"]
         context["recent_rows"] = recent_rows
         context["dispatch_pending"] = dispatch_pending
         context["status_rows"] = status_rows
         context["provider_rows"] = provider_rows
         context["total_tasks"] = scope.count()
         context["failed_tasks"] = scope.filter(status=DispatchTask.Status.FAILED).count()
+        context["retry_candidates"] = int(retry_candidates)
+        context["retry_exhausted"] = int(retry_exhausted)
+        context["retry_in_queue"] = int(retry_in_queue)
+        context["retry_attempted"] = int(retry_attempted)
+        context["max_attempt_observed"] = max_attempt_observed
+        context["return_query"] = self.request.GET.urlencode()
+        context["monitor_ops_report"] = self.request.session.pop("mailings_v2_monitor_ops_report", None)
         return context
 
 

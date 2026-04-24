@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: Монитор{% endblock %}
+{% block title %}Рассылки v2: монитор{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Рассылки v2: монитор</h1>
-      <p class="text-muted mb-0">Операционный срез по `DispatchTask` для рассылок и автосценариев.</p>
+      <p class="text-muted mb-0">Операционный срез по DispatchTask для рассылок и автосценариев.</p>
     </div>
     <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад в hub</a>
   </div>
@@ -63,7 +63,7 @@
     </div>
   </form>
 
-  <div class="row g-3 mb-4">
+  <div class="row g-3 mb-3">
     <div class="col-12 col-md-4">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
@@ -89,6 +89,86 @@
       </div>
     </div>
   </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Retry кандидаты</div>
+          <div class="h4 mb-0">{{ retry_candidates }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Исчерпали попытки</div>
+          <div class="h4 mb-0">{{ retry_exhausted }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">В очереди после retry</div>
+          <div class="h4 mb-0">{{ retry_in_queue }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Макс. попыток (наблюдение)</div>
+          <div class="h4 mb-0">{{ max_attempt_observed }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Быстрые действия</h2>
+    </div>
+    <div class="card-body">
+      <div class="row g-2">
+        <div class="col-12 col-md-6">
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="retry_failed_tasks">
+            <input type="hidden" name="return_query" value="{{ return_query }}">
+            <button type="submit" class="btn btn-outline-danger w-100">
+              Retry failed -> pending (сброс попыток)
+            </button>
+          </form>
+        </div>
+        <div class="col-12 col-md-6">
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="requeue_waiting_tasks">
+            <input type="hidden" name="return_query" value="{{ return_query }}">
+            <button type="submit" class="btn btn-outline-primary w-100">
+              Requeue pending/queued (available_at = сейчас)
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if monitor_ops_report %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <h2 class="h6 mb-0">Последняя операция monitor</h2>
+        <span class="text-muted small">{{ monitor_ops_report.generated_at }}</span>
+      </div>
+      <div class="card-body">
+        <div>
+          Действие: <strong>{{ monitor_ops_report.action }}</strong>,
+          изменено задач: <strong>{{ monitor_ops_report.updated_tasks }}</strong>.
+        </div>
+      </div>
+    </div>
+  {% endif %}
 
   <div class="row g-3 mb-3">
     <div class="col-12 col-lg-6">
@@ -167,10 +247,13 @@
             <tr>
               <th>ID</th>
               <th>Статус</th>
+              <th>Попытки</th>
               <th>Провайдер</th>
               <th>Кампания</th>
               <th>Сценарий</th>
               <th>Гость</th>
+              <th>Доступна с</th>
+              <th>Ошибка</th>
               <th>Создана</th>
             </tr>
           </thead>
@@ -179,6 +262,7 @@
               <tr>
                 <td>{{ row.id }}</td>
                 <td>{{ row.status }}</td>
+                <td>{{ row.attempt }}/{{ row.max_attempts }}</td>
                 <td>{{ row.provider_type }}</td>
                 <td>
                   {% if row.mailing_guest and row.mailing_guest.mailing %}
@@ -201,11 +285,13 @@
                     —
                   {% endif %}
                 </td>
+                <td>{{ row.available_at|date:"Y-m-d H:i" }}</td>
+                <td>{{ row.last_error|default:"—"|truncatechars:80 }}</td>
                 <td>{{ row.created_at|date:"Y-m-d H:i" }}</td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="7" class="text-center text-muted py-4">Задач нет.</td>
+                <td colspan="10" class="text-center text-muted py-4">Задач нет.</td>
               </tr>
             {% endfor %}
           </tbody>

@@ -979,6 +979,123 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.context["failed_tasks"], 1)
         self.assertEqual(len(response.context["recent_rows"]), 1)
 
+    def test_monitor_ops_retry_and_requeue_waiting(self):
+        """
+        Monitor v2 должен поддерживать быстрые операции:
+        1. retry_failed_tasks: failed -> pending со сбросом attempt/last_error;
+        2. requeue_waiting_tasks: pending/queued -> pending с очисткой очереди.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000177",
+            first_name="Нина",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        mailing_guest = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+
+        failed_retryable = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            mailing_guest=mailing_guest,
+            guest=guest,
+            attempt=1,
+            max_attempts=5,
+            last_error="temporary timeout",
+        )
+        failed_exhausted = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            mailing_guest=mailing_guest,
+            guest=guest,
+            attempt=5,
+            max_attempts=5,
+            last_error="attempts exhausted",
+        )
+        pending_task = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.VK,
+            status=DispatchTask.Status.PENDING,
+            mailing_guest=mailing_guest,
+            guest=guest,
+            attempt=2,
+            max_attempts=5,
+        )
+        queued_task = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.VK,
+            status=DispatchTask.Status.QUEUED,
+            mailing_guest=mailing_guest,
+            guest=guest,
+            attempt=3,
+            max_attempts=5,
+            queue_name="dispatch:vk:bulk",
+            enqueued_at=self.now,
+        )
+
+        monitor_url = reverse("mailings_v2_monitor")
+        report_query = f"mailing_id={mailing.id}"
+        preview = self.client.get(
+            monitor_url,
+            {"mailing_id": mailing.id},
+            secure=True,
+        )
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.context["retry_candidates"], 1)
+        self.assertEqual(preview.context["retry_exhausted"], 1)
+        self.assertEqual(preview.context["retry_in_queue"], 2)
+
+        retry_response = self.client.post(
+            monitor_url,
+            {
+                "action": "retry_failed_tasks",
+                "return_query": report_query,
+            },
+            secure=True,
+            follow=True,
+        )
+        self.assertEqual(retry_response.status_code, 200)
+
+        failed_retryable.refresh_from_db()
+        failed_exhausted.refresh_from_db()
+        self.assertEqual(failed_retryable.status, DispatchTask.Status.PENDING)
+        self.assertEqual(failed_retryable.attempt, 0)
+        self.assertIsNone(failed_retryable.last_error)
+        self.assertEqual(failed_exhausted.status, DispatchTask.Status.PENDING)
+        self.assertEqual(failed_exhausted.attempt, 0)
+        self.assertEqual(retry_response.context["monitor_ops_report"]["action"], "retry_failed_tasks")
+        self.assertEqual(retry_response.context["monitor_ops_report"]["updated_tasks"], 2)
+
+        requeue_response = self.client.post(
+            monitor_url,
+            {
+                "action": "requeue_waiting_tasks",
+                "return_query": report_query,
+            },
+            secure=True,
+            follow=True,
+        )
+        self.assertEqual(requeue_response.status_code, 200)
+
+        pending_task.refresh_from_db()
+        queued_task.refresh_from_db()
+        self.assertEqual(pending_task.status, DispatchTask.Status.PENDING)
+        self.assertEqual(queued_task.status, DispatchTask.Status.PENDING)
+        self.assertIsNone(queued_task.queue_name)
+        self.assertIsNone(queued_task.enqueued_at)
+        self.assertEqual(requeue_response.context["monitor_ops_report"]["action"], "requeue_waiting_tasks")
+
     def test_scenarios_hub_filters_and_manual_schedule_run(self):
         """
         Экран сценариев v2 должен:
