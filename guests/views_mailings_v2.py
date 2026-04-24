@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, Max, Q
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils.dateparse import parse_date
@@ -33,7 +33,12 @@ from guests.models import (
     Mailing,
     MailingGuest,
     MessageTemplate,
+    NotificationEvent,
     NotificationScenario,
+)
+from guests.services.notification_handler_registry import (
+    get_registered_schedule_scenario_codes,
+    run_registered_schedule_scenarios,
 )
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
@@ -1115,16 +1120,179 @@ class MailingsV2ScenariosView(TemplateView):
 
     template_name = "mailing_v2/scenarios_hub.html"
 
+    @staticmethod
+    def _parse_limit_per_scenario(raw_value: str, *, default: int = 500) -> int:
+        """
+        Нормализует лимит обработки одного сценария для ручного запуска.
+        """
+        try:
+            parsed = int(str(raw_value or "").strip())
+        except (TypeError, ValueError):
+            return int(default)
+        if parsed <= 0:
+            return int(default)
+        return min(parsed, 5000)
+
+    @staticmethod
+    def _build_redirect_url(*, return_query: str) -> str:
+        """
+        Собирает URL возврата на экран сценариев с сохранением фильтров.
+        """
+        base_url = reverse("mailings_v2_scenarios")
+        safe_query = str(return_query or "").strip()
+        if not safe_query:
+            return base_url
+        return f"{base_url}?{safe_query}"
+
+    def post(self, request, *args, **kwargs):
+        """
+        Обрабатывает ручной one-shot запуск плановых сценариев.
+        """
+        action = str(request.POST.get("action") or "").strip()
+        return_query = str(request.POST.get("return_query") or "").strip()
+        redirect_url = self._build_redirect_url(return_query=return_query)
+
+        if action != "run_schedule_once":
+            messages.error(request, "Неизвестное действие для экрана сценариев.")
+            return redirect(redirect_url)
+
+        scenario_code = str(request.POST.get("scenario_code") or "").strip()
+        limit_per_scenario = self._parse_limit_per_scenario(request.POST.get("limit_per_scenario"))
+        scenario_codes = [scenario_code] if scenario_code else None
+        stats = run_registered_schedule_scenarios(
+            scenario_codes=scenario_codes,
+            limit_per_scenario=limit_per_scenario,
+        )
+
+        report_rows: list[dict[str, int | str]] = []
+        total_created_tasks = 0
+        for code, stat in stats.items():
+            created_tasks = int(getattr(stat, "created_tasks", 0) or 0)
+            row = {
+                "scenario_code": str(code),
+                "scanned_guests": int(getattr(stat, "scanned_guests", 0) or 0),
+                "matched_guests": int(getattr(stat, "matched_guests", 0) or 0),
+                "created_tasks": created_tasks,
+                "skipped_without_coupon": int(getattr(stat, "skipped_without_coupon", 0) or 0),
+                "skipped_duplicate_or_no_targets": int(
+                    getattr(stat, "skipped_duplicate_or_no_targets", 0) or 0
+                ),
+            }
+            report_rows.append(row)
+            total_created_tasks += created_tasks
+
+        request.session["mailings_v2_scenarios_run_report"] = {
+            "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+            "limit_per_scenario": int(limit_per_scenario),
+            "selected_scenario_code": scenario_code,
+            "rows": report_rows,
+            "total_created_tasks": int(total_created_tasks),
+        }
+
+        if scenario_code:
+            messages.success(
+                request,
+                (
+                    f"Сценарий '{scenario_code}' обработан: "
+                    f"создано задач={total_created_tasks}, лимит={limit_per_scenario}."
+                ),
+            )
+        else:
+            messages.success(
+                request,
+                (
+                    "Плановые сценарии обработаны вручную: "
+                    f"создано задач={total_created_tasks}, лимит={limit_per_scenario}."
+                ),
+            )
+        return redirect(redirect_url)
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        scenarios = (
-            NotificationScenario.objects.select_related("template")
-            .annotate(events_total=Count("events", distinct=True))
-            .order_by("code")
+        now = timezone.now()
+        since_24h = now - timedelta(hours=24)
+
+        query = str(self.request.GET.get("q") or "").strip()
+        selected_trigger_type = str(self.request.GET.get("trigger_type") or "").strip()
+        show_inactive = bool(self.request.GET.get("show_inactive"))
+        only_system = bool(self.request.GET.get("only_system"))
+        with_errors = bool(self.request.GET.get("with_errors"))
+
+        scenarios_scope = NotificationScenario.objects.select_related("template").annotate(
+            events_total=Count("events", distinct=True),
+            events_24h=Count("events", filter=Q(events__created_at__gte=since_24h), distinct=True),
+            events_error_24h=Count(
+                "events",
+                filter=Q(
+                    events__created_at__gte=since_24h,
+                    events__status=NotificationEvent.Status.ERROR,
+                ),
+                distinct=True,
+            ),
+            tasks_24h=Count("dispatch_tasks", filter=Q(dispatch_tasks__created_at__gte=since_24h), distinct=True),
+            tasks_failed_24h=Count(
+                "dispatch_tasks",
+                filter=Q(
+                    dispatch_tasks__created_at__gte=since_24h,
+                    dispatch_tasks__status=DispatchTask.Status.FAILED,
+                ),
+                distinct=True,
+            ),
+            last_event_at=Max("events__created_at"),
         )
-        context["scenarios"] = scenarios
-        context["scenarios_total"] = scenarios.count()
-        context["scenarios_active"] = scenarios.filter(is_active=True).count()
+
+        if not show_inactive:
+            scenarios_scope = scenarios_scope.filter(is_active=True)
+        if only_system:
+            scenarios_scope = scenarios_scope.filter(is_system=True)
+
+        valid_trigger_types = {value for value, _ in NotificationScenario.TriggerType.choices}
+        if selected_trigger_type in valid_trigger_types:
+            scenarios_scope = scenarios_scope.filter(trigger_type=selected_trigger_type)
+        else:
+            selected_trigger_type = ""
+
+        if with_errors:
+            scenarios_scope = scenarios_scope.filter(
+                Q(events_error_24h__gt=0) | Q(tasks_failed_24h__gt=0)
+            )
+
+        if query:
+            scenarios_scope = scenarios_scope.filter(
+                Q(code__icontains=query)
+                | Q(name__icontains=query)
+                | Q(description__icontains=query)
+                | Q(template__name__icontains=query)
+            )
+
+        scenarios_scope = scenarios_scope.order_by("code")
+        scenario_ids = scenarios_scope.values_list("id", flat=True)
+
+        context["scenarios"] = scenarios_scope[:200]
+        context["scenarios_total"] = scenarios_scope.count()
+        context["scenarios_active"] = scenarios_scope.filter(is_active=True).count()
+        context["events_24h_total"] = NotificationEvent.objects.filter(
+            scenario_id__in=scenario_ids,
+            created_at__gte=since_24h,
+        ).count()
+        context["tasks_24h_total"] = DispatchTask.objects.filter(
+            notification_scenario_id__in=scenario_ids,
+            created_at__gte=since_24h,
+        ).count()
+        context["tasks_failed_24h_total"] = DispatchTask.objects.filter(
+            notification_scenario_id__in=scenario_ids,
+            created_at__gte=since_24h,
+            status=DispatchTask.Status.FAILED,
+        ).count()
+        context["schedule_scenario_codes"] = list(get_registered_schedule_scenario_codes())
+        context["trigger_type_choices"] = list(NotificationScenario.TriggerType.choices)
+        context["selected_trigger_type"] = selected_trigger_type
+        context["show_inactive"] = show_inactive
+        context["only_system"] = only_system
+        context["with_errors"] = with_errors
+        context["query"] = query
+        context["return_query"] = self.request.GET.urlencode()
+        context["scenarios_run_report"] = self.request.session.pop("mailings_v2_scenarios_run_report", None)
         return context
 
 

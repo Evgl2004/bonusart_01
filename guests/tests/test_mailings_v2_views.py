@@ -10,6 +10,8 @@ Smoke-тесты нового контура mailings-v2.
 from __future__ import annotations
 
 from datetime import time, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
@@ -23,6 +25,7 @@ from guests.models import (
     Mailing,
     MailingGuest,
     MessageTemplate,
+    NotificationEvent,
     NotificationScenario,
 )
 
@@ -975,3 +978,128 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.context["total_tasks"], 1)
         self.assertEqual(response.context["failed_tasks"], 1)
         self.assertEqual(len(response.context["recent_rows"]), 1)
+
+    def test_scenarios_hub_filters_and_manual_schedule_run(self):
+        """
+        Экран сценариев v2 должен:
+        1. поддерживать фильтры списка;
+        2. выполнять ручной one-shot запуск плановых сценариев;
+        3. показывать отчет о последнем ручном запуске.
+        """
+        from guests.services.notification_registry import (
+            SCENARIO_CODE_INACTIVE_30D_COUPON,
+            SCENARIO_CODE_INACTIVE_7D,
+        )
+
+        schedule_scenario = NotificationScenario.objects.create(
+            code=SCENARIO_CODE_INACTIVE_7D,
+            name="Inactive 7d",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+        NotificationScenario.objects.create(
+            code=SCENARIO_CODE_INACTIVE_30D_COUPON,
+            name="Inactive 30d",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        manual_scenario = NotificationScenario.objects.create(
+            code="manual_test_v2",
+            name="Manual test",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.MANUAL,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+
+        guest = Guest.objects.create(
+            phone="+79990000999",
+            first_name="Тест",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        NotificationEvent.objects.create(
+            scenario=schedule_scenario,
+            guest=guest,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            dedupe_key="sched-1",
+            status=NotificationEvent.Status.ERROR,
+            event_at=self.now,
+            planned_send_at=self.now,
+        )
+        NotificationEvent.objects.create(
+            scenario=manual_scenario,
+            guest=guest,
+            source_type=NotificationEvent.SourceType.MANUAL,
+            dedupe_key="manual-1",
+            status=NotificationEvent.Status.NEW,
+            event_at=self.now,
+            planned_send_at=self.now,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            notification_scenario=schedule_scenario,
+            guest=guest,
+        )
+
+        filtered = self.client.get(
+            reverse("mailings_v2_scenarios"),
+            {
+                "trigger_type": NotificationScenario.TriggerType.SCHEDULE,
+                "with_errors": "1",
+            },
+            secure=True,
+        )
+        self.assertEqual(filtered.status_code, 200)
+        self.assertContains(filtered, SCENARIO_CODE_INACTIVE_7D)
+        self.assertNotContains(filtered, "manual_test_v2")
+        self.assertEqual(filtered.context["scenarios_total"], 1)
+
+        with patch("guests.views_mailings_v2.run_registered_schedule_scenarios") as run_mock:
+            run_mock.return_value = {
+                SCENARIO_CODE_INACTIVE_7D: SimpleNamespace(
+                    scanned_guests=25,
+                    matched_guests=8,
+                    created_tasks=3,
+                    skipped_without_coupon=1,
+                    skipped_duplicate_or_no_targets=4,
+                )
+            }
+            run_response = self.client.post(
+                reverse("mailings_v2_scenarios"),
+                {
+                    "action": "run_schedule_once",
+                    "scenario_code": SCENARIO_CODE_INACTIVE_7D,
+                    "limit_per_scenario": "42",
+                    "return_query": "trigger_type=schedule&with_errors=1",
+                },
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(run_response.status_code, 200)
+        run_mock.assert_called_once_with(
+            scenario_codes=[SCENARIO_CODE_INACTIVE_7D],
+            limit_per_scenario=42,
+        )
+        self.assertIsNotNone(run_response.context["scenarios_run_report"])
+        self.assertEqual(
+            run_response.context["scenarios_run_report"]["total_created_tasks"],
+            3,
+        )
+        self.assertContains(run_response, "Последний ручной запуск")
