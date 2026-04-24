@@ -1,0 +1,30 @@
+{% if wizard_state %}
+  <div class="card border-0 shadow-sm mb-3" data-testid="mailing-wizard" data-current-step="{{ wizard_state.current_step }}">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+        <div class="fw-semibold">Мастер запуска кампании</div>
+        <span class="badge text-bg-light border">Шаг {{ wizard_state.current_step }} из 3</span>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 mb-2">
+        {% for step in wizard_state.steps %}
+          <a
+            href="{{ step.url }}"
+            class="btn btn-sm {% if step.status == 'current' %}btn-primary{% elif step.status == 'done' %}btn-outline-success{% else %}btn-outline-secondary{% endif %}"
+            data-step-number="{{ step.number }}"
+            data-step-status="{{ step.status }}"
+          >
+            {{ step.number }}. {{ step.title }}
+          </a>
+        {% endfor %}
+      </div>
+
+      <div class="small text-muted">{{ wizard_state.summary }}</div>
+      {% if wizard_state.cta_url %}
+        <div class="mt-2">
+          <a class="btn btn-outline-primary btn-sm" href="{{ wizard_state.cta_url }}">{{ wizard_state.cta_label }}</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}

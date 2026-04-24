@@ -71,6 +71,11 @@ class MailingsV2ViewsTests(TestCase):
         """
         Создание кампании через mailings-v2 должно сохранять запись и вести на v2-edit.
         """
+        new_page = self.client.get(reverse("mailings_v2_campaigns_new"), secure=True)
+        self.assertEqual(new_page.status_code, 200)
+        self.assertEqual(new_page.context["wizard_state"]["current_step"], 1)
+        self.assertEqual(len(new_page.context["wizard_state"]["steps"]), 3)
+
         begin = (self.now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
         end = (self.now + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
         response = self.client.post(
@@ -126,6 +131,7 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(edit_response.status_code, 200)
+        self.assertEqual(edit_response.context["wizard_state"]["current_step"], 3)
         self.assertContains(edit_response, "Проверить аудиторию")
 
         audience_response = self.client.get(
@@ -133,7 +139,20 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(audience_response.status_code, 200)
+        self.assertEqual(audience_response.context["wizard_state"]["current_step"], 2)
         self.assertContains(audience_response, guest.phone)
+
+    def test_edit_page_wizard_requires_audience_before_launch(self):
+        """
+        Если аудитория пустая, мастер на экране кампании должен оставаться на шаге 2.
+        """
+        mailing = self._create_mailing()
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["wizard_state"]["current_step"], 2)
 
     def test_campaign_views_show_workbench_snapshot(self):
         """

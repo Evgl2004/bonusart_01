@@ -217,6 +217,10 @@ class _MailingsV2CampaignFormMixin:
             context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
             context["mailing_row_stats"] = _build_mailing_row_stats(mailing)
             context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
+            context["wizard_state"] = _build_campaign_wizard_state(
+                mailing=mailing,
+                active_tab=context["campaign_active_tab"],
+            )
         else:
             context["guests_count"] = 0
             context["campaign_active_tab"] = ""
@@ -232,6 +236,10 @@ class _MailingsV2CampaignFormMixin:
             context["workbench_snapshot_url"] = ""
             context["mailing_row_stats"] = _empty_mailing_row_stats()
             context["dispatch_stats"] = _empty_dispatch_stats()
+            context["wizard_state"] = _build_campaign_wizard_state(
+                mailing=None,
+                active_tab="overview",
+            )
         return context
 
 
@@ -522,6 +530,10 @@ class MailingsV2CampaignAudienceView(TemplateView):
         context["workbench_snapshot"] = snapshot
         context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
         context["campaign_active_tab"] = "audience"
+        context["wizard_state"] = _build_campaign_wizard_state(
+            mailing=mailing,
+            active_tab=context["campaign_active_tab"],
+        )
         return context
 
 
@@ -611,6 +623,10 @@ class MailingsV2CampaignRunsView(TemplateView):
         context["selected_provider_type"] = selected_provider_type
         context["query"] = query
         context["campaign_active_tab"] = "runs"
+        context["wizard_state"] = _build_campaign_wizard_state(
+            mailing=mailing,
+            active_tab=context["campaign_active_tab"],
+        )
         return context
 
 
@@ -715,6 +731,10 @@ class MailingsV2CampaignJobsView(TemplateView):
         context["top_errors"] = top_errors
         context["delivery_feedback_rows"] = delivery_feedback_rows
         context["campaign_active_tab"] = "jobs"
+        context["wizard_state"] = _build_campaign_wizard_state(
+            mailing=mailing,
+            active_tab=context["campaign_active_tab"],
+        )
         return context
 
 
@@ -824,6 +844,10 @@ class MailingsV2CampaignErrorsView(TemplateView):
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
         context["campaign_active_tab"] = "errors"
+        context["wizard_state"] = _build_campaign_wizard_state(
+            mailing=mailing,
+            active_tab=context["campaign_active_tab"],
+        )
         return context
 
 
@@ -903,6 +927,10 @@ class MailingsV2CampaignLogsView(TemplateView):
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
         context["campaign_active_tab"] = "logs"
+        context["wizard_state"] = _build_campaign_wizard_state(
+            mailing=mailing,
+            active_tab=context["campaign_active_tab"],
+        )
         return context
 
 
@@ -1264,6 +1292,102 @@ def _build_workbench_url_from_snapshot(snapshot: dict) -> str:
     if not params:
         return base_url
     return f"{base_url}?{urlencode(params, doseq=True)}"
+
+
+def _build_campaign_wizard_state(*, mailing: Mailing | None, active_tab: str) -> dict[str, object]:
+    """
+    Формирует состояние мастер-флоу кампании (3 шага) для нового UI.
+
+    Шаги:
+    1. параметры кампании;
+    2. аудитория;
+    3. проверка и запуск.
+    """
+    if not mailing or not mailing.pk:
+        return {
+            "current_step": 1,
+            "summary": "Шаг 1 из 3: заполните параметры кампании и сохраните черновик.",
+            "cta_label": "Сохранить шаг 1",
+            "cta_url": "",
+            "steps": [
+                {"number": 1, "title": "Параметры", "status": "current", "url": ""},
+                {"number": 2, "title": "Аудитория", "status": "todo", "url": ""},
+                {"number": 3, "title": "Проверка и запуск", "status": "todo", "url": ""},
+            ],
+        }
+
+    rows_total = int(mailing.guests_rows.count())
+    has_audience = rows_total > 0
+    has_dispatch_activity = DispatchTask.objects.filter(mailing_guest__mailing=mailing).exists()
+    has_send_results = mailing.guests_rows.filter(status__in=[MailingGuest.Status.DONE, MailingGuest.Status.ERROR]).exists()
+
+    if not has_audience:
+        recommended_step = 2
+    elif has_dispatch_activity or has_send_results or mailing.is_active:
+        recommended_step = 3
+    else:
+        recommended_step = 3
+
+    tab_to_step = {
+        "overview": recommended_step,
+        "audience": 2,
+        "runs": 3,
+        "jobs": 3,
+        "errors": 3,
+        "logs": 3,
+    }
+    current_step = int(tab_to_step.get(active_tab or "overview", recommended_step))
+
+    step1_url = reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.pk})
+    step2_url = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
+    step3_url = reverse("mailings_v2_campaigns_runs", kwargs={"pk": mailing.pk})
+
+    if current_step <= 1:
+        summary = "Шаг 1 из 3: проверьте шаблон, окна отправки, режим и выбранных ботов."
+        cta_label = "Перейти к аудитории"
+        cta_url = step2_url
+    elif current_step == 2:
+        summary = (
+            f"Шаг 2 из 3: соберите аудиторию. Сейчас строк в кампании: {rows_total}."
+            " Когда состав готов, переходите к запуску."
+        )
+        cta_label = "Перейти к запуску"
+        cta_url = step3_url
+    else:
+        summary = (
+            "Шаг 3 из 3: выполните dry-run, проверьте задания/ошибки и запустите кампанию."
+        )
+        cta_label = "Открыть экран запусков"
+        cta_url = step3_url
+
+    steps = []
+    for number, title, url in (
+        (1, "Параметры", step1_url),
+        (2, "Аудитория", step2_url),
+        (3, "Проверка и запуск", step3_url),
+    ):
+        if number < current_step:
+            status = "done"
+        elif number == current_step:
+            status = "current"
+        else:
+            status = "todo"
+        steps.append(
+            {
+                "number": number,
+                "title": title,
+                "status": status,
+                "url": url,
+            }
+        )
+
+    return {
+        "current_step": current_step,
+        "summary": summary,
+        "cta_label": cta_label,
+        "cta_url": cta_url,
+        "steps": steps,
+    }
 
 
 def _empty_mailing_row_stats() -> dict[str, int]:

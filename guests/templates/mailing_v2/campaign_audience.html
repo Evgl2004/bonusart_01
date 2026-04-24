@@ -15,6 +15,7 @@
     </div>
   </div>
   {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}
+  {% include "mailing_v2/_campaign_wizard.html" with wizard_state=wizard_state %}
 
   {% if workbench_snapshot %}
     <div class="card border-0 shadow-sm mb-3">
