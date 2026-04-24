@@ -201,11 +201,51 @@ class _MailingsV2CampaignFormMixin:
     form_class = MailingForm
     template_name = "mailing_v2/campaign_form.html"
 
+    @staticmethod
+    def _active_templates_queryset():
+        """
+        Базовый queryset активных шаблонов для формы кампании.
+        """
+        return MessageTemplate.objects.filter(is_active=True).order_by("-created_at")
+
+    @staticmethod
+    def _is_system_template(template_obj: MessageTemplate) -> bool:
+        """
+        Определяет, является ли шаблон системным.
+
+        На текущем этапе в проекте нет отдельного поля `is_system` у MessageTemplate,
+        поэтому используем устойчивые эвристики:
+        1. created_by == "system";
+        2. имя шаблона в формате SYSTEM_*_TEMPLATE.
+        """
+        if template_obj is None:
+            return False
+        created_by = str(getattr(template_obj, "created_by", "") or "").strip().lower()
+        raw_name = str(getattr(template_obj, "name", "") or "").strip()
+        return created_by == "system" or (raw_name.startswith("SYSTEM_") and raw_name.endswith("_TEMPLATE"))
+
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
         # В v2 по умолчанию показываем только активные шаблоны.
         if "template" in form.fields:
-            form.fields["template"].queryset = MessageTemplate.objects.filter(is_active=True).order_by("-created_at")
+            active_templates = list(self._active_templates_queryset())
+            user_templates = [template_obj for template_obj in active_templates if not self._is_system_template(template_obj)]
+            selected_templates = user_templates if user_templates else active_templates
+
+            selected_template_ids = [template_obj.pk for template_obj in selected_templates]
+            template_qs = self._active_templates_queryset().filter(pk__in=selected_template_ids)
+
+            self._only_system_templates_available = bool(active_templates) and not bool(user_templates)
+            self._active_templates_count = len(active_templates)
+
+            form.fields["template"].queryset = template_qs
+            form.fields["template"].label_from_instance = lambda template_obj: _resolve_template_title(template_obj)[0]
+
+        if "bot_profiles" in form.fields:
+            active_bot_profiles_qs = BotProfile.objects.filter(is_active=True).order_by("name", "id")
+            form.fields["bot_profiles"].queryset = active_bot_profiles_qs
+            self._has_active_bot_profiles = active_bot_profiles_qs.exists()
+
         return form
 
     def get_context_data(self, **kwargs):
@@ -214,6 +254,10 @@ class _MailingsV2CampaignFormMixin:
         context["is_create"] = not bool(mailing and mailing.pk)
         context["legacy_list_url"] = reverse("mailings")
         context["v2_list_url"] = reverse("mailings_v2_campaigns")
+        context["only_system_templates_available"] = bool(getattr(self, "_only_system_templates_available", False))
+        context["active_templates_count"] = int(getattr(self, "_active_templates_count", 0))
+        context["has_active_bot_profiles"] = bool(getattr(self, "_has_active_bot_profiles", False))
+        context["bot_profiles_admin_url"] = "/admin/guests/botprofile/"
 
         if mailing and mailing.pk:
             context["guests_count"] = mailing.guests_rows.count()

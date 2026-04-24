@@ -5,6 +5,24 @@
 {% endblock %}
 
 {% block content %}
+<style>
+  .mail-help-btn {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    line-height: 1;
+    padding: 0;
+    font-size: 0.8rem;
+  }
+
+  .mail-label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.35rem;
+  }
+</style>
+
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
@@ -57,15 +75,41 @@
             </div>
 
             <div class="mb-3">
-              {{ form.template.label_tag }}
+              <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+                <div class="mail-label-row mb-0">
+                  {{ form.template.label_tag }}
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary mail-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Шаблон текста, который получит гость. Для ручных рассылок используйте свои шаблоны, а не системные."
+                  >?</button>
+                </div>
+                <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
+              </div>
               {{ form.template }}
+              {% if only_system_templates_available %}
+                <small class="text-muted d-block mt-1">
+                  Доступны только системные шаблоны ({{ active_templates_count }} шт.). Рекомендуется создать отдельный пользовательский шаблон.
+                </small>
+              {% endif %}
               {% if form.template.errors %}
                 <div class="text-danger small mt-1">{{ form.template.errors|join:", " }}</div>
               {% endif %}
             </div>
 
             <div class="mb-3">
-              {{ form.scheduled_date.label_tag }}
+              <div class="mail-label-row">
+                {{ form.scheduled_date.label_tag }}
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary mail-help-btn"
+                  data-bs-toggle="tooltip"
+                  data-bs-placement="top"
+                  title="Базовая дата рассылки для карточки кампании и учета. Обычно совпадает со стартом кампании."
+                >?</button>
+              </div>
               {{ form.scheduled_date }}
               {% if form.scheduled_date.errors %}
                 <div class="text-danger small mt-1">{{ form.scheduled_date.errors|join:", " }}</div>
@@ -74,14 +118,32 @@
 
             <div class="row">
               <div class="col-md-6 mb-3">
-                {{ form.scheduled_time_begin.label_tag }}
+                <div class="mail-label-row">
+                  {{ form.scheduled_time_begin.label_tag }}
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary mail-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Момент, начиная с которого кампания считается активной и может обрабатываться воркером."
+                  >?</button>
+                </div>
                 {{ form.scheduled_time_begin }}
                 {% if form.scheduled_time_begin.errors %}
                   <div class="text-danger small mt-1">{{ form.scheduled_time_begin.errors|join:", " }}</div>
                 {% endif %}
               </div>
               <div class="col-md-6 mb-3">
-                {{ form.scheduled_time_end.label_tag }}
+                <div class="mail-label-row">
+                  {{ form.scheduled_time_end.label_tag }}
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary mail-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Момент окончания активности кампании. После него кампания не берется в обработку."
+                  >?</button>
+                </div>
                 {{ form.scheduled_time_end }}
                 {% if form.scheduled_time_end.errors %}
                   <div class="text-danger small mt-1">{{ form.scheduled_time_end.errors|join:", " }}</div>
@@ -91,14 +153,32 @@
 
             <div class="row">
               <div class="col-md-6 mb-3">
-                {{ form.send_window_begin.label_tag }}
+                <div class="mail-label-row">
+                  {{ form.send_window_begin.label_tag }}
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary mail-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Ежедневное время, с которого разрешена отправка внутри периода кампании."
+                  >?</button>
+                </div>
                 {{ form.send_window_begin }}
                 {% if form.send_window_begin.errors %}
                   <div class="text-danger small mt-1">{{ form.send_window_begin.errors|join:", " }}</div>
                 {% endif %}
               </div>
               <div class="col-md-6 mb-3">
-                {{ form.send_window_end.label_tag }}
+                <div class="mail-label-row">
+                  {{ form.send_window_end.label_tag }}
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary mail-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Ежедневное время, до которого разрешена отправка. Вне окна сообщения не ставятся в очередь."
+                  >?</button>
+                </div>
                 {{ form.send_window_end }}
                 {% if form.send_window_end.errors %}
                   <div class="text-danger small mt-1">{{ form.send_window_end.errors|join:", " }}</div>
@@ -108,14 +188,32 @@
 
             <div class="row">
               <div class="col-md-6 mb-3">
-                {{ form.target_mode.label_tag }}
+                <div class="mail-label-row">
+                  {{ form.target_mode.label_tag }}
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary mail-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Как выбирать чат-цели гостя: только основной бот или все активные привязки."
+                  >?</button>
+                </div>
                 {{ form.target_mode }}
                 {% if form.target_mode.errors %}
                   <div class="text-danger small mt-1">{{ form.target_mode.errors|join:", " }}</div>
                 {% endif %}
               </div>
               <div class="col-md-6 mb-3">
-                {{ form.queue_priority.label_tag }}
+                <div class="mail-label-row">
+                  {{ form.queue_priority.label_tag }}
+                  <button
+                    type="button"
+                    class="btn btn-outline-secondary mail-help-btn"
+                    data-bs-toggle="tooltip"
+                    data-bs-placement="top"
+                    title="Приоритет задач в универсальной очереди: высокий, обычный или массовый."
+                  >?</button>
+                </div>
                 {{ form.queue_priority }}
                 {% if form.queue_priority.errors %}
                   <div class="text-danger small mt-1">{{ form.queue_priority.errors|join:", " }}</div>
@@ -124,13 +222,29 @@
             </div>
 
             <div class="mb-3">
-              {{ form.bot_profiles.label_tag }}
+              <div class="mail-label-row">
+                {{ form.bot_profiles.label_tag }}
+                <button
+                  type="button"
+                  class="btn btn-outline-secondary mail-help-btn"
+                  data-bs-toggle="tooltip"
+                  data-bs-placement="top"
+                  title="Через какие активные профили ботов отправлять сообщения этой кампании."
+                >?</button>
+              </div>
               <div class="border rounded p-3">
                 {{ form.bot_profiles }}
               </div>
-              <small class="text-muted">
-                Выберите конкретных активных ботов, через которых должна идти эта рассылка.
-              </small>
+              {% if has_active_bot_profiles %}
+                <small class="text-muted">
+                  Выберите конкретных активных ботов, через которых должна идти эта рассылка.
+                </small>
+              {% else %}
+                <small class="text-danger d-block">
+                  Нет активных ботов для рассылки. Добавьте и активируйте профиль бота в
+                  <a href="{{ bot_profiles_admin_url }}">админке</a>, затем обновите страницу.
+                </small>
+              {% endif %}
               {% if form.bot_profiles.errors %}
                 <div class="text-danger small mt-1">{{ form.bot_profiles.errors|join:", " }}</div>
               {% endif %}
@@ -323,4 +437,12 @@
     </div>
   </div>
 </div>
+<script>
+(function () {
+  const nodes = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  if (!nodes.length) return;
+  if (!window.bootstrap || !window.bootstrap.Tooltip) return;
+  nodes.forEach((node) => new window.bootstrap.Tooltip(node));
+})();
+</script>
 {% endblock %}
