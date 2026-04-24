@@ -203,6 +203,7 @@ class _MailingsV2CampaignFormMixin:
 
         if mailing and mailing.pk:
             context["guests_count"] = mailing.guests_rows.count()
+            context["campaign_active_tab"] = "overview"
             context["legacy_edit_url"] = reverse("mailing_edit", kwargs={"pk": mailing.pk})
             context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
             context["runs_url"] = reverse("mailings_v2_campaigns_runs", kwargs={"pk": mailing.pk})
@@ -218,6 +219,7 @@ class _MailingsV2CampaignFormMixin:
             context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
         else:
             context["guests_count"] = 0
+            context["campaign_active_tab"] = ""
             context["legacy_edit_url"] = ""
             context["audience_url"] = ""
             context["runs_url"] = ""
@@ -519,6 +521,7 @@ class MailingsV2CampaignAudienceView(TemplateView):
         snapshot = _get_workbench_snapshot(self.request, mailing.pk)
         context["workbench_snapshot"] = snapshot
         context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
+        context["campaign_active_tab"] = "audience"
         return context
 
 
@@ -607,6 +610,7 @@ class MailingsV2CampaignRunsView(TemplateView):
         context["selected_task_status"] = selected_task_status
         context["selected_provider_type"] = selected_provider_type
         context["query"] = query
+        context["campaign_active_tab"] = "runs"
         return context
 
 
@@ -710,6 +714,7 @@ class MailingsV2CampaignJobsView(TemplateView):
         context["queue_rows"] = queue_rows
         context["top_errors"] = top_errors
         context["delivery_feedback_rows"] = delivery_feedback_rows
+        context["campaign_active_tab"] = "jobs"
         return context
 
 
@@ -818,6 +823,7 @@ class MailingsV2CampaignErrorsView(TemplateView):
         context["current_query_path"] = self.request.get_full_path()
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
+        context["campaign_active_tab"] = "errors"
         return context
 
 
@@ -896,6 +902,7 @@ class MailingsV2CampaignLogsView(TemplateView):
         context["tasks_filtered_total"] = tasks_filtered_total
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
+        context["campaign_active_tab"] = "logs"
         return context
 
 

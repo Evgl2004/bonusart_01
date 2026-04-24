@@ -30,6 +30,9 @@
       {% endif %}
     </div>
   </div>
+  {% if object and object.pk %}
+    {% include "mailing_v2/_campaign_nav.html" with mailing=object campaign_active_tab=campaign_active_tab %}
+  {% endif %}
 
   <div class="row g-3">
     <div class="col-12 col-xl-8">

@@ -16,6 +16,7 @@
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_errors' mailing.id %}">Ошибки</a>
     </div>
   </div>
+  {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}
 
   <form method="get" class="card border-0 shadow-sm mb-3">
     <div class="card-body">
