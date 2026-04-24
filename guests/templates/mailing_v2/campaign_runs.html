@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: запуски кампании #{{ mailing.id }}{% endblock %}
+{% block title %}Рассылки: запуски кампании #{{ mailing.id }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -14,8 +14,8 @@
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_audience' mailing.id %}">Аудитория</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_jobs' mailing.id %}">Задания</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_errors' mailing.id %}">Ошибки</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_logs' mailing.id %}">Логи (v2)</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailing_logs' mailing.id %}">Legacy логи</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_logs' mailing.id %}">Логи</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailing_logs' mailing.id %}">Старые логи</a>
     </div>
   </div>
   {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}

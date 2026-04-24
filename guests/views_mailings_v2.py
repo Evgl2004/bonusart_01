@@ -134,8 +134,15 @@ class MailingsV2CampaignsHubView(TemplateView):
             "dispatch_failed": int(dispatch_stats.get("failed") or 0),
         }
 
+        campaigns = list(campaigns_qs[:100])
+        for campaign in campaigns:
+            template_obj = getattr(campaign, "template", None)
+            display_name, technical_name = _resolve_template_title(template_obj)
+            campaign.template_display_name = display_name
+            campaign.template_technical_name = technical_name
+
         context["campaigns_total_filtered"] = campaigns_qs.count()
-        context["campaigns"] = campaigns_qs[:100]
+        context["campaigns"] = campaigns
         context["filters"] = {
             "q": q,
             "only_active": only_active,
@@ -167,7 +174,7 @@ class MailingsV2CampaignsHubView(TemplateView):
                 "description": "Статусы доставки, ошибки и ретраи по отправкам.",
                 "primary_label": "Открыть монитор",
                 "primary_url": reverse("mailings_v2_monitor"),
-                "secondary_label": "Логи кампаний",
+                "secondary_label": "Логи рассылок",
                 "secondary_url": reverse("mailings"),
             },
             {
@@ -247,7 +254,6 @@ class _MailingsV2CampaignFormMixin:
                 mailing=None,
                 active_tab="overview",
             )
-        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="campaigns")
         return context
 
 
@@ -983,12 +989,17 @@ class MailingsV2TemplatesView(TemplateView):
                 Q(name__icontains=query) | Q(description__icontains=query) | Q(message_text__icontains=query)
             )
 
+        templates = list(template_rows[:100])
+        for template_obj in templates:
+            display_name, technical_name = _resolve_template_title(template_obj)
+            template_obj.display_name = display_name
+            template_obj.technical_name = technical_name
+
         context["templates_total"] = MessageTemplate.objects.count()
         context["templates_active"] = MessageTemplate.objects.filter(is_active=True).count()
-        context["templates"] = template_rows[:100]
+        context["templates"] = templates
         context["show_inactive"] = show_inactive
         context["query"] = query
-        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="templates")
         return context
 
 
@@ -1021,8 +1032,14 @@ class MailingsV2TemplateDetailView(DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["guests"] = Guest.objects.all()[:50]
-        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="templates")
+        guests = list(Guest.objects.all().order_by("-id")[:50])
+        for guest in guests:
+            guest.display_name = _build_guest_display_name(guest)
+        context["guests"] = guests
+
+        display_name, technical_name = _resolve_template_title(self.object)
+        context["template_display_name"] = display_name
+        context["template_technical_name"] = technical_name
         context["campaign_prefill_url"] = (
             f"{reverse('mailings_v2_campaigns_new')}?{urlencode({'template_id': self.object.id})}"
         )
@@ -1033,8 +1050,13 @@ class MailingsV2TemplateDetailView(DetailView):
             if guest:
                 from guests.services.template_render import render_message_for_guest
 
-                context["preview_text"] = render_message_for_guest(self.object.message_text, guest)
+                context["preview_text"] = render_message_for_guest(
+                    self.object.message_text,
+                    guest,
+                    extra_context=_build_template_preview_context(template_obj=self.object, guest=guest),
+                )
                 context["preview_guest"] = guest
+                context["preview_guest_display_name"] = _build_guest_display_name(guest)
                 context["selected_guest_id"] = str(guest.id)
         return context
 
@@ -1162,6 +1184,7 @@ class MailingsV2MonitorView(TemplateView):
             request.session["mailings_v2_monitor_ops_report"] = {
                 "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
                 "action": "retry_failed_tasks",
+                "action_label": "Перезапуск ошибочных задач",
                 "updated_tasks": int(updated),
                 "filters": filters,
             }
@@ -1185,6 +1208,7 @@ class MailingsV2MonitorView(TemplateView):
             request.session["mailings_v2_monitor_ops_report"] = {
                 "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
                 "action": "requeue_waiting_tasks",
+                "action_label": "Повторная постановка ожидающих задач",
                 "updated_tasks": int(updated),
                 "filters": filters,
             }
@@ -1249,7 +1273,6 @@ class MailingsV2MonitorView(TemplateView):
         context["max_attempt_observed"] = max_attempt_observed
         context["return_query"] = self.request.GET.urlencode()
         context["monitor_ops_report"] = self.request.session.pop("mailings_v2_monitor_ops_report", None)
-        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="monitor")
         return context
 
 
@@ -1410,7 +1433,14 @@ class MailingsV2ScenariosView(TemplateView):
         scenarios_scope = scenarios_scope.order_by("code")
         scenario_ids = scenarios_scope.values_list("id", flat=True)
 
-        context["scenarios"] = scenarios_scope[:200]
+        scenarios = list(scenarios_scope[:200])
+        for scenario in scenarios:
+            template_obj = getattr(scenario, "template", None)
+            display_name, technical_name = _resolve_template_title(template_obj)
+            scenario.template_display_name = display_name
+            scenario.template_technical_name = technical_name
+
+        context["scenarios"] = scenarios
         context["scenarios_total"] = scenarios_scope.count()
         context["scenarios_active"] = scenarios_scope.filter(is_active=True).count()
         context["events_24h_total"] = NotificationEvent.objects.filter(
@@ -1435,8 +1465,104 @@ class MailingsV2ScenariosView(TemplateView):
         context["query"] = query
         context["return_query"] = self.request.GET.urlencode()
         context["scenarios_run_report"] = self.request.session.pop("mailings_v2_scenarios_run_report", None)
-        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="scenarios")
         return context
+
+
+SYSTEM_TEMPLATE_NAME_MAP = {
+    "SYSTEM_BALANCE_CHANGED_TEMPLATE": "Системный шаблон: изменение баланса",
+    "SYSTEM_INACTIVE_7D_TEMPLATE": "Системный шаблон: неактивные 7 дней",
+    "SYSTEM_INACTIVE_30D_COUPON_TEMPLATE": "Системный шаблон: неактивные 30 дней + купон",
+    "SYSTEM_MEAT_LOVER_30D_TEMPLATE": "Системный шаблон: любитель мяса 30 дней",
+}
+
+
+def _resolve_template_title(template_obj: MessageTemplate | None) -> tuple[str, str]:
+    """
+    Возвращает пару названий шаблона:
+    1. display_name — человеко-понятный заголовок;
+    2. technical_name — техническое имя (если отличается от display).
+    """
+    if template_obj is None:
+        return "", ""
+
+    raw_name = str(getattr(template_obj, "name", "") or "").strip()
+    if not raw_name:
+        return "Шаблон без названия", ""
+
+    mapped_name = SYSTEM_TEMPLATE_NAME_MAP.get(raw_name)
+    if mapped_name:
+        return mapped_name, raw_name
+
+    if raw_name.startswith("SYSTEM_") and raw_name.endswith("_TEMPLATE"):
+        normalized = raw_name.removeprefix("SYSTEM_").removesuffix("_TEMPLATE").strip("_")
+        words = [w for w in normalized.split("_") if w]
+        pretty_name = " ".join(word.capitalize() if not word.isdigit() else word for word in words)
+        if pretty_name:
+            return f"Системный шаблон: {pretty_name}", raw_name
+
+    return raw_name, ""
+
+
+def _build_guest_display_name(guest: Guest) -> str:
+    """
+    Возвращает компактное человеко-понятное имя гостя для селекторов.
+    """
+    first_name = str(getattr(guest, "first_name", "") or "").strip()
+    last_name = str(getattr(guest, "last_name", "") or "").strip()
+    fio = " ".join(part for part in [first_name, last_name] if part)
+    if fio:
+        return fio
+
+    phone = str(getattr(guest, "phone", "") or "").strip()
+    if phone:
+        return phone
+
+    return f"Гость #{guest.id}"
+
+
+def _build_template_preview_context(*, template_obj: MessageTemplate, guest: Guest) -> dict[str, object]:
+    """
+    Формирует расширенный контекст предпросмотра шаблона.
+
+    Приоритет:
+    1. payload/coupon последнего NotificationEvent для связки guest+template;
+    2. fallback-расчёт days_without_visits по последнему визиту гостя.
+    """
+    context: dict[str, object] = {}
+
+    latest_event = (
+        NotificationEvent.objects.filter(
+            guest=guest,
+            scenario__template=template_obj,
+        )
+        .order_by("-event_at", "-id")
+        .first()
+    )
+
+    if latest_event and isinstance(latest_event.payload, dict):
+        for key, value in latest_event.payload.items():
+            if isinstance(key, str):
+                context[key] = value
+
+    if latest_event and latest_event.coupon_code and not context.get("coupon_code"):
+        context["coupon_code"] = str(latest_event.coupon_code)
+
+    if "days_without_visits" not in context:
+        last_visit_date = getattr(guest, "last_visit_date", None)
+        if last_visit_date is not None:
+            if hasattr(last_visit_date, "date"):
+                last_visit_date = last_visit_date.date()
+            try:
+                context["days_without_visits"] = max((timezone.localdate() - last_visit_date).days, 0)
+            except Exception:
+                context["days_without_visits"] = ""
+        else:
+            context["days_without_visits"] = ""
+
+    if "coupon_code" not in context:
+        context["coupon_code"] = ""
+
+    return context
 
 
 def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:

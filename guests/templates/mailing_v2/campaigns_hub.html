@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2{% endblock %}
+{% block title %}Рассылки{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
-      <h1 class="h4 mb-1">Рассылки v2</h1>
+      <h1 class="h4 mb-1">Рассылки</h1>
       <p class="text-muted mb-0">
-        Единая точка входа в контур рассылок. Текущий этап: bridge с существующими рабочими формами.
+        Единая точка входа в контур рассылок. Текущий этап: поэтапный переход с существующих рабочих форм.
       </p>
     </div>
     <div class="d-flex gap-2">
@@ -60,7 +60,7 @@
 
   <div class="card border-0 shadow-sm mb-4">
     <div class="card-header bg-white">
-      <h2 class="h6 mb-0">Флоу и переходы</h2>
+      <h2 class="h6 mb-0">Разделы и переходы</h2>
     </div>
     <div class="card-body">
       <div class="row g-3">
@@ -131,7 +131,7 @@
   <div class="card border-0 shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
       <h2 class="h6 mb-0">Кампании</h2>
-      <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings' %}">Legacy список</a>
+      <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings' %}">Старый список</a>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -156,7 +156,10 @@
                 <td>{{ row.name }}</td>
                 <td>
                   {% if row.template %}
-                    {{ row.template.name }}
+                    <div>{{ row.template_display_name|default:row.template.name }}</div>
+                    {% if row.template_technical_name %}
+                      <div class="small text-muted">{{ row.template_technical_name }}</div>
+                    {% endif %}
                   {% else %}
                     <span class="text-muted">—</span>
                   {% endif %}

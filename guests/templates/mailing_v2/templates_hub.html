@@ -1,20 +1,38 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: Шаблоны{% endblock %}
+{% block title %}Рассылки: шаблоны{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
-      <h1 class="h4 mb-1">Рассылки v2: шаблоны</h1>
-      <p class="text-muted mb-0">Список и управление шаблонами в новом контуре.</p>
+      <h1 class="h4 mb-1">Шаблоны рассылок</h1>
+      <p class="text-muted mb-0">Список и управление шаблонами сообщений.</p>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
-      <a class="btn btn-outline-secondary" href="{% url 'message_templates' %}">Legacy список</a>
+      <a class="btn btn-outline-secondary" href="{% url 'message_templates' %}">Старый список</a>
     </div>
   </div>
-  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Шаблонов всего</div>
+          <div class="h3 mb-0">{{ templates_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Активных шаблонов</div>
+          <div class="h3 mb-0">{{ templates_active }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <form method="get" class="card border-0 shadow-sm mb-3">
     <div class="card-body">
@@ -39,25 +57,6 @@
     </div>
   </form>
 
-  <div class="row g-3 mb-4">
-    <div class="col-12 col-md-6">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Шаблонов всего</div>
-          <div class="h3 mb-0">{{ templates_total }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-12 col-md-6">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Активных шаблонов</div>
-          <div class="h3 mb-0">{{ templates_active }}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <div class="card border-0 shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
       <h2 class="h6 mb-0">Последние шаблоны</h2>
@@ -81,7 +80,12 @@
             {% for row in templates %}
               <tr>
                 <td>{{ row.id }}</td>
-                <td>{{ row.name }}</td>
+                <td>
+                  <div>{{ row.display_name|default:row.name }}</div>
+                  {% if row.technical_name %}
+                    <div class="small text-muted">{{ row.technical_name }}</div>
+                  {% endif %}
+                </td>
                 <td>
                   {% if row.is_active %}
                     <span class="badge text-bg-success">да</span>
@@ -108,3 +112,4 @@
   </div>
 </div>
 {% endblock %}
+

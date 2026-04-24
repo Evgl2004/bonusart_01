@@ -1,5 +1,18 @@
 from datetime import date
-from django.template import Template, Context
+from typing import Any
+
+from django.template import Context, Template
+
+
+class _SafeTemplateContext(dict):
+    """
+    Безопасный контекст для format_map.
+
+    Если ключ отсутствует, оставляем плейсхолдер без изменений.
+    """
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
 
 def calc_age(birthdate):
     if not birthdate:
@@ -10,7 +23,14 @@ def calc_age(birthdate):
         years -= 1
     return years
 
-def render_message_for_guest(message_text, guest):
+def render_message_for_guest(message_text, guest, extra_context: dict[str, Any] | None = None):
+    """
+    Рендерит сообщение для гостя.
+
+    Поддерживает оба исторически используемых формата:
+    1. Django-стиль: `{{ first_name }}`;
+    2. format-стиль: `{first_name}`.
+    """
     context = {
         "first_name": guest.first_name or "",
         "last_name": guest.last_name or "",
@@ -19,6 +39,19 @@ def render_message_for_guest(message_text, guest):
         "birthdate": guest.birthdate.strftime("%d.%m.%Y") if guest.birthdate else "",
         "age": calc_age(guest.birthdate),
     }
+    if extra_context:
+        context.update(extra_context)
 
-    template = Template(message_text)
-    return template.render(Context(context))
+    normalized_context = {
+        key: ("" if value is None else value)
+        for key, value in context.items()
+    }
+
+    django_rendered = Template(message_text).render(Context(normalized_context))
+
+    try:
+        return django_rendered.format_map(_SafeTemplateContext(normalized_context))
+    except Exception:
+        # Если текст содержит неподдерживаемую комбинацию фигурных скобок,
+        # возвращаем результат Django-рендера без падения предпросмотра.
+        return django_rendered

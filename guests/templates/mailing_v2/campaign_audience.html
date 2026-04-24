@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: аудитория кампании{% endblock %}
+{% block title %}Рассылки: аудитория кампании{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -11,7 +11,7 @@
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Назад к кампании</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">К списку v2</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">К списку рассылок</a>
     </div>
   </div>
   {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}

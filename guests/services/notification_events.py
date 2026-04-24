@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from django.db import transaction
 from django.db.models import F
+from django.template import Context, Template
 from django.utils import timezone
 
 from guests.models import DispatchTask, Guest, NotificationEvent, NotificationScenario
@@ -128,9 +129,19 @@ def _render_scenario_message(
     if not template_text:
         return str(fallback_message_text or "").strip()
 
-    context = _SafeTemplateContext(template_context or {})
+    raw_context = template_context or {}
+    safe_context = _SafeTemplateContext(raw_context)
     try:
-        rendered = template_text.format_map(context).strip()
+        django_rendered = Template(template_text).render(Context(raw_context))
+    except Exception:
+        logger.exception(
+            "Ошибка Django-рендера шаблона scenario_code=%s. Пробуем format_map напрямую.",
+            scenario.code,
+        )
+        django_rendered = template_text
+
+    try:
+        rendered = django_rendered.format_map(safe_context).strip()
         if rendered:
             return rendered
     except Exception:

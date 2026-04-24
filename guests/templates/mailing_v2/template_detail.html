@@ -1,12 +1,15 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: Шаблон{% endblock %}
+{% block title %}Рассылки: шаблон{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start mb-3">
     <div>
-      <h1 class="h4 mb-1">{{ template_obj.name }}</h1>
+      <h1 class="h4 mb-1">{{ template_display_name|default:template_obj.name }}</h1>
+      {% if template_technical_name %}
+        <div class="small text-muted">{{ template_technical_name }}</div>
+      {% endif %}
       {% if template_obj.description %}
         <div class="text-muted">{{ template_obj.description }}</div>
       {% endif %}
@@ -17,13 +20,12 @@
       </div>
     </div>
 
-    <div class="d-flex gap-2">
+  <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates' %}">Назад к шаблонам</a>
       <a class="btn btn-outline-primary" href="{{ campaign_prefill_url }}">Создать кампанию по шаблону</a>
       <a class="btn btn-primary" href="{% url 'mailings_v2_templates_edit' template_obj.id %}">Редактировать</a>
     </div>
   </div>
-  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">
@@ -36,7 +38,7 @@
             <option value="">-- выбрать --</option>
             {% for g in guests %}
               <option value="{{ g.id }}" {% if selected_guest_id == g.id|stringformat:"s" %}selected{% endif %}>
-                {{ g.first_name }} {{ g.last_name }} ({{ g.phone }})
+                {{ g.display_name }} ({{ g.phone|default:"без телефона" }})
               </option>
             {% endfor %}
           </select>
@@ -48,7 +50,7 @@
 
       {% if preview_text %}
         <hr>
-        <div class="small text-muted mb-2">Для: {{ preview_guest.first_name }} {{ preview_guest.last_name }}</div>
+        <div class="small text-muted mb-2">Для: {{ preview_guest_display_name }}</div>
         <pre style="min-height: 180px; white-space: pre-wrap;">{{ preview_text }}</pre>
       {% endif %}
     </div>

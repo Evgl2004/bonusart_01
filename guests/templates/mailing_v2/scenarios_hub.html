@@ -1,20 +1,19 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: автосценарии{% endblock %}
+{% block title %}Рассылки: автосценарии{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
-      <h1 class="h4 mb-1">Рассылки v2: автосценарии</h1>
-      <p class="text-muted mb-0">Операционный экран сценарных отправок и ручного one-shot запуска.</p>
+      <h1 class="h4 mb-1">Автосценарии рассылок</h1>
+      <p class="text-muted mb-0">Операционный экран сценарных отправок и ручного разового запуска.</p>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-primary" href="/admin/guests/notificationscenario/">Открыть admin сценариев</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад в hub</a>
+      <a class="btn btn-outline-primary" href="/admin/guests/notificationscenario/">Открыть админку сценариев</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад к рассылкам</a>
     </div>
   </div>
-  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <form method="get" class="card border-0 shadow-sm mb-3">
     <div class="card-body">
@@ -112,7 +111,7 @@
           <input class="form-control" type="number" name="limit_per_scenario" min="1" max="5000" value="500">
         </div>
         <div class="col-12 col-md-4">
-          <button type="submit" class="btn btn-primary w-100">Запустить one-shot</button>
+          <button type="submit" class="btn btn-primary w-100">Запустить разово</button>
         </div>
       </form>
     </div>
@@ -193,7 +192,10 @@
                 <td>{{ row.get_trigger_type_display }}</td>
                 <td>
                   {% if row.template %}
-                    {{ row.template.name }}
+                    <div>{{ row.template_display_name|default:row.template.name }}</div>
+                    {% if row.template_technical_name %}
+                      <div class="small text-muted">{{ row.template_technical_name }}</div>
+                    {% endif %}
                   {% else %}
                     <span class="text-muted">—</span>
                   {% endif %}

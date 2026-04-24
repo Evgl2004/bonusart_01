@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: Шаблон{% endblock %}
+{% block title %}Рассылки: шаблон{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
@@ -53,6 +53,14 @@
 
           <button type="button" class="btn btn-sm btn-outline-primary var-btn" data-var="{% templatetag openvariable %} email {% templatetag closevariable %}">
             Email
+          </button>
+
+          <button type="button" class="btn btn-sm btn-outline-primary var-btn" data-var="{days_without_visits}">
+            Дней без визита
+          </button>
+
+          <button type="button" class="btn btn-sm btn-outline-primary var-btn" data-var="{coupon_code}">
+            Код купона
           </button>
         </div>
 

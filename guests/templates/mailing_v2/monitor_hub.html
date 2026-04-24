@@ -1,17 +1,16 @@
 {% extends "base.html" %}
 
-{% block title %}Рассылки v2: монитор{% endblock %}
+{% block title %}Рассылки: монитор{% endblock %}
 
 {% block content %}
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
-      <h1 class="h4 mb-1">Рассылки v2: монитор</h1>
+      <h1 class="h4 mb-1">Монитор рассылок</h1>
       <p class="text-muted mb-0">Операционный срез по DispatchTask для рассылок и автосценариев.</p>
     </div>
-    <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад в hub</a>
+    <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад к рассылкам</a>
   </div>
-  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <form method="get" class="card border-0 shadow-sm mb-3">
     <div class="card-body">
@@ -95,7 +94,7 @@
     <div class="col-12 col-md-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Retry кандидаты</div>
+          <div class="text-muted small">Кандидаты на повтор</div>
           <div class="h4 mb-0">{{ retry_candidates }}</div>
         </div>
       </div>
@@ -138,9 +137,10 @@
             <input type="hidden" name="action" value="retry_failed_tasks">
             <input type="hidden" name="return_query" value="{{ return_query }}">
             <button type="submit" class="btn btn-outline-danger w-100">
-              Retry failed -> pending (сброс попыток)
+              Перезапустить ошибочные задачи: «Ошибка» → «Ожидание» (сброс попыток)
             </button>
           </form>
+          <div class="small text-muted mt-1">Используйте после устранения причины ошибки.</div>
         </div>
         <div class="col-12 col-md-6">
           <form method="post">
@@ -148,9 +148,10 @@
             <input type="hidden" name="action" value="requeue_waiting_tasks">
             <input type="hidden" name="return_query" value="{{ return_query }}">
             <button type="submit" class="btn btn-outline-primary w-100">
-              Requeue pending/queued (available_at = сейчас)
+              Переоткрыть ожидающие задачи: «В очереди» → «Ожидание» (доступны сейчас)
             </button>
           </form>
+          <div class="small text-muted mt-1">Полезно, если задачи «зависли» в очереди.</div>
         </div>
       </div>
     </div>
@@ -159,12 +160,12 @@
   {% if monitor_ops_report %}
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-header bg-white d-flex justify-content-between align-items-center">
-        <h2 class="h6 mb-0">Последняя операция monitor</h2>
+        <h2 class="h6 mb-0">Последняя операция монитора</h2>
         <span class="text-muted small">{{ monitor_ops_report.generated_at }}</span>
       </div>
       <div class="card-body">
         <div>
-          Действие: <strong>{{ monitor_ops_report.action }}</strong>,
+          Действие: <strong>{{ monitor_ops_report.action_label|default:monitor_ops_report.action }}</strong>,
           изменено задач: <strong>{{ monitor_ops_report.updated_tasks }}</strong>.
         </div>
       </div>

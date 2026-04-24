@@ -118,7 +118,7 @@ class MailingsV2ViewsTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(str(response.context["form"]["template"].value()), str(self.template.id))
-        self.assertContains(response, "Маршрут маркетолога")
+        self.assertContains(response, "Новая кампания")
 
     def test_edit_and_audience_pages_v2(self):
         """
@@ -924,22 +924,76 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(detail_response.status_code, 200)
         self.assertContains(detail_response, "Привет")
         self.assertContains(detail_response, "Создать кампанию по шаблону")
-        self.assertContains(detail_response, "Маршрут маркетолога")
+        self.assertContains(detail_response, "Предпросмотр для гостя")
 
-    def test_flow_bridge_visible_on_key_mailings_v2_pages(self):
+    def test_flow_bridge_visible_only_on_campaigns_hub(self):
         """
-        Ключевые страницы mailings-v2 должны показывать единый bridge-флоу маркетолога.
+        Блок маршрута маркетолога должен быть только на главном экране раздела рассылок.
         """
-        pages = [
-            reverse("mailings_v2_campaigns"),
+        hub_response = self.client.get(reverse("mailings_v2_campaigns"), secure=True)
+        self.assertEqual(hub_response.status_code, 200)
+        self.assertContains(hub_response, "Маршрут маркетолога")
+
+        other_pages = [
             reverse("mailings_v2_templates"),
             reverse("mailings_v2_monitor"),
             reverse("mailings_v2_scenarios"),
         ]
-        for url in pages:
+        for url in other_pages:
             response = self.client.get(url, secure=True)
             self.assertEqual(response.status_code, 200)
-            self.assertContains(response, "Маршрут маркетолога")
+            self.assertNotContains(response, "Маршрут маркетолога")
+
+    def test_template_preview_supports_django_and_format_placeholders(self):
+        """
+        Предпросмотр шаблона должен подставлять оба формата переменных:
+        1. `{{ first_name }}`;
+        2. `{days_without_visits}` и `{coupon_code}`.
+        """
+        template_obj = MessageTemplate.objects.create(
+            name="SYSTEM_INACTIVE_30D_COUPON_TEMPLATE",
+            description="Системный шаблон",
+            message_text="Привет, {{ first_name }}. Вас не было {days_without_visits} дней. Купон: {coupon_code}",
+            is_active=True,
+        )
+        guest = Guest.objects.create(
+            phone="+79990000777",
+            first_name="Мария",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_preview_test",
+            name="Preview test",
+            template=template_obj,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+        )
+        NotificationEvent.objects.create(
+            scenario=scenario,
+            guest=guest,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            dedupe_key="preview-test-1",
+            status=NotificationEvent.Status.NEW,
+            event_at=self.now,
+            planned_send_at=self.now,
+            payload={"days_without_visits": 34},
+            coupon_code="CPN-123",
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_templates_detail", kwargs={"pk": template_obj.id}),
+            {"guest_id": str(guest.id)},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Привет, Мария.")
+        self.assertContains(response, "34 дней")
+        self.assertContains(response, "CPN-123")
+        self.assertContains(response, "Системный шаблон: неактивные 30 дней + купон")
 
     def test_monitor_filters_by_campaign_status_and_provider(self):
         """

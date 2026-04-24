@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 
 {% block title %}
-  {% if is_create %}Рассылки v2: новая кампания{% else %}Рассылки v2: кампания #{{ object.id }}{% endif %}
+  {% if is_create %}Рассылки: новая кампания{% else %}Рассылки: кампания #{{ object.id }}{% endif %}
 {% endblock %}
 
 {% block content %}
@@ -24,9 +24,9 @@
       </p>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{{ v2_list_url }}">Назад в mailings-v2</a>
+      <a class="btn btn-outline-secondary" href="{{ v2_list_url }}">Назад к рассылкам</a>
       {% if object and object.pk %}
-        <a class="btn btn-outline-secondary" href="{{ legacy_edit_url }}">Открыть legacy</a>
+        <a class="btn btn-outline-secondary" href="{{ legacy_edit_url }}">Открыть старую форму</a>
       {% endif %}
     </div>
   </div>
@@ -34,7 +34,6 @@
     {% include "mailing_v2/_campaign_nav.html" with mailing=object campaign_active_tab=campaign_active_tab %}
   {% endif %}
   {% include "mailing_v2/_campaign_wizard.html" with wizard_state=wizard_state %}
-  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <div class="row g-3">
     <div class="col-12 col-xl-8">
@@ -180,7 +179,7 @@
               <a class="btn btn-outline-primary btn-sm" href="{{ runs_url }}">Запуски и история</a>
               <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_jobs' object.id %}">Задания отправки</a>
               <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_errors' object.id %}">Ошибки кампании</a>
-              <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_logs' object.id %}">Логи кампании (v2)</a>
+              <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_logs' object.id %}">Логи кампании</a>
               <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs' object.id %}">Логи отправки</a>
               <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs_txt' object.id %}">Скачать лог txt</a>
             </div>
@@ -213,21 +212,21 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="retry_failed_dispatch">
                 <button type="submit" class="btn btn-outline-danger btn-sm w-100" {% if dispatch_stats.failed <= 0 %}disabled{% endif %}>
-                  Retry failed dispatch ({{ dispatch_stats.failed }})
+                  Повторить ошибочные dispatch-задачи ({{ dispatch_stats.failed }})
                 </button>
               </form>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="dry_run_campaign">
                 <button type="submit" class="btn btn-outline-info btn-sm w-100">
-                  Dry-run (предпросмотр запуска)
+                  Проверка перед запуском (dry-run)
                 </button>
               </form>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="run_now_campaign">
                 <button type="submit" class="btn btn-outline-primary btn-sm w-100">
-                  Run-now (запустить сейчас)
+                  Запустить сейчас (run-now)
                 </button>
               </form>
             </div>
