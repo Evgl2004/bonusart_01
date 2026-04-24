@@ -179,6 +179,7 @@ class MailingsV2CampaignsHubView(TemplateView):
                 "secondary_url": "/admin/guests/notificationscenario/",
             },
         ]
+        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="campaigns")
         return context
 
 
@@ -246,6 +247,7 @@ class _MailingsV2CampaignFormMixin:
                 mailing=None,
                 active_tab="overview",
             )
+        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="campaigns")
         return context
 
 
@@ -255,6 +257,20 @@ class MailingsV2CampaignCreateView(_MailingsV2CampaignFormMixin, CreateView):
 
     Логика сохранения соответствует текущей legacy-форме.
     """
+
+    def get_initial(self):
+        """
+        Поддерживает prefill шаблона при переходе из раздела templates.
+        """
+        initial = super().get_initial()
+        template_id_raw = str(self.request.GET.get("template_id") or "").strip()
+        if template_id_raw.isdigit():
+            template = MessageTemplate.objects.filter(pk=int(template_id_raw), is_active=True).first()
+            if template:
+                initial["template"] = template.pk
+                if not initial.get("name"):
+                    initial["name"] = f"Кампания: {template.name}"
+        return initial
 
     def form_valid(self, form):
         self.object = form.save(commit=False)
@@ -972,6 +988,7 @@ class MailingsV2TemplatesView(TemplateView):
         context["templates"] = template_rows[:100]
         context["show_inactive"] = show_inactive
         context["query"] = query
+        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="templates")
         return context
 
 
@@ -1005,6 +1022,10 @@ class MailingsV2TemplateDetailView(DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["guests"] = Guest.objects.all()[:50]
+        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="templates")
+        context["campaign_prefill_url"] = (
+            f"{reverse('mailings_v2_campaigns_new')}?{urlencode({'template_id': self.object.id})}"
+        )
 
         guest_id = self.request.GET.get("guest_id")
         if guest_id:
@@ -1228,6 +1249,7 @@ class MailingsV2MonitorView(TemplateView):
         context["max_attempt_observed"] = max_attempt_observed
         context["return_query"] = self.request.GET.urlencode()
         context["monitor_ops_report"] = self.request.session.pop("mailings_v2_monitor_ops_report", None)
+        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="monitor")
         return context
 
 
@@ -1413,7 +1435,88 @@ class MailingsV2ScenariosView(TemplateView):
         context["query"] = query
         context["return_query"] = self.request.GET.urlencode()
         context["scenarios_run_report"] = self.request.session.pop("mailings_v2_scenarios_run_report", None)
+        context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="scenarios")
         return context
+
+
+def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
+    """
+    Формирует единый bridge-флоу для экранов mailings-v2.
+
+    Шаги:
+    1. гипотеза и отбор в workbench;
+    2. подготовка шаблона;
+    3. настройка и запуск кампании;
+    4. мониторинг результата и разбор проблем.
+    """
+    rank_map = {
+        "workbench": 1,
+        "templates": 2,
+        "campaigns": 3,
+        "monitor": 4,
+        "scenarios": 4,
+    }
+    current_rank = int(rank_map.get(str(active_area or ""), 3))
+
+    monitor_url = reverse("mailings_v2_monitor")
+    scenarios_url = reverse("mailings_v2_scenarios")
+    step4_url = scenarios_url if active_area == "scenarios" else monitor_url
+
+    steps = [
+        {
+            "number": 1,
+            "title": "Гипотеза в Workbench",
+            "description": "Соберите сегмент и создайте черновик рассылки из отбора.",
+            "url": reverse("guests_workbench"),
+            "cta": "Открыть Workbench",
+        },
+        {
+            "number": 2,
+            "title": "Шаблон сообщения",
+            "description": "Подготовьте текст и проверьте предпросмотр на реальном госте.",
+            "url": reverse("mailings_v2_templates"),
+            "cta": "Открыть шаблоны",
+        },
+        {
+            "number": 3,
+            "title": "Кампания и запуск",
+            "description": "Проверьте аудиторию, выполните dry-run и запускайте кампанию.",
+            "url": reverse("mailings_v2_campaigns"),
+            "cta": "Открыть кампании",
+        },
+        {
+            "number": 4,
+            "title": "Мониторинг и обратная связь",
+            "description": "Контролируйте dispatch, retry, ошибки и корректируйте следующий запуск.",
+            "url": step4_url,
+            "cta": "Открыть мониторинг",
+        },
+    ]
+
+    for step in steps:
+        number = int(step["number"])
+        if number < current_rank:
+            step["status"] = "done"
+        elif number == current_rank:
+            step["status"] = "current"
+        else:
+            step["status"] = "todo"
+
+    subtitle_map = {
+        "templates": "Сейчас вы на шаге подготовки контента. После шаблона переходите к запуску кампании.",
+        "campaigns": "Сейчас вы на шаге запуска. После старта контролируйте отработку на экране мониторинга.",
+        "monitor": "Сейчас вы на шаге контроля и обратной связи по отправкам.",
+        "scenarios": "Сейчас вы на шаге контроля автосценариев и их операционного запуска.",
+    }
+
+    return {
+        "title": "Маршрут маркетолога",
+        "subtitle": subtitle_map.get(
+            active_area,
+            "Единый сценарий: от гипотезы до запуска и операционного контроля.",
+        ),
+        "steps": steps,
+    }
 
 
 def _is_time_in_window(current_time, window_begin, window_end) -> bool:

@@ -16,6 +16,7 @@
       <a class="btn btn-outline-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
     </div>
   </div>
+  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <div class="row g-3 mb-4">
     <div class="col-12 col-md-6 col-xl-3">

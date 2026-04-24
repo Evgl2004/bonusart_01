@@ -34,6 +34,7 @@
     {% include "mailing_v2/_campaign_nav.html" with mailing=object campaign_active_tab=campaign_active_tab %}
   {% endif %}
   {% include "mailing_v2/_campaign_wizard.html" with wizard_state=wizard_state %}
+  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <div class="row g-3">
     <div class="col-12 col-xl-8">

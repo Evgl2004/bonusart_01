@@ -11,6 +11,7 @@
     </div>
     <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад в hub</a>
   </div>
+  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <form method="get" class="card border-0 shadow-sm mb-3">
     <div class="card-body">

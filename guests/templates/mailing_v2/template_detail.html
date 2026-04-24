@@ -19,9 +19,11 @@
 
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates' %}">Назад к шаблонам</a>
+      <a class="btn btn-outline-primary" href="{{ campaign_prefill_url }}">Создать кампанию по шаблону</a>
       <a class="btn btn-primary" href="{% url 'mailings_v2_templates_edit' template_obj.id %}">Редактировать</a>
     </div>
   </div>
+  {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">

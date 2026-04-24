@@ -1,0 +1,35 @@
+{% if mailings_v2_flow %}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <div>
+          <h2 class="h6 mb-1">{{ mailings_v2_flow.title }}</h2>
+          <p class="text-muted small mb-0">{{ mailings_v2_flow.subtitle }}</p>
+        </div>
+      </div>
+
+      <div class="row g-2 mt-1">
+        {% for step in mailings_v2_flow.steps %}
+          <div class="col-12 col-md-6 col-xl-3">
+            <div class="border rounded p-2 h-100 {% if step.status == 'current' %}bg-light{% endif %}">
+              <div class="d-flex justify-content-between align-items-start gap-2 mb-1">
+                <div class="fw-semibold small">{{ step.number }}. {{ step.title }}</div>
+                {% if step.status == "done" %}
+                  <span class="badge text-bg-success">готово</span>
+                {% elif step.status == "current" %}
+                  <span class="badge text-bg-primary">текущий</span>
+                {% else %}
+                  <span class="badge text-bg-secondary">следующий</span>
+                {% endif %}
+              </div>
+              <div class="small text-muted mb-2">{{ step.description }}</div>
+              {% if step.url %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ step.url }}">{{ step.cta }}</a>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+{% endif %}

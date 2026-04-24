@@ -107,6 +107,19 @@ class MailingsV2ViewsTests(TestCase):
         self.assertFalse(mailing.is_active)
         self.assertEqual(mailing.bot_profiles.count(), 1)
 
+    def test_create_campaign_v2_prefills_template_from_query(self):
+        """
+        Страница создания кампании должна поддерживать prefill шаблона по параметру template_id.
+        """
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_new"),
+            {"template_id": self.template.id},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(str(response.context["form"]["template"].value()), str(self.template.id))
+        self.assertContains(response, "Маршрут маркетолога")
+
     def test_edit_and_audience_pages_v2(self):
         """
         Экран редактирования и экран аудитории должны открываться и показывать данные кампании.
@@ -910,6 +923,23 @@ class MailingsV2ViewsTests(TestCase):
         )
         self.assertEqual(detail_response.status_code, 200)
         self.assertContains(detail_response, "Привет")
+        self.assertContains(detail_response, "Создать кампанию по шаблону")
+        self.assertContains(detail_response, "Маршрут маркетолога")
+
+    def test_flow_bridge_visible_on_key_mailings_v2_pages(self):
+        """
+        Ключевые страницы mailings-v2 должны показывать единый bridge-флоу маркетолога.
+        """
+        pages = [
+            reverse("mailings_v2_campaigns"),
+            reverse("mailings_v2_templates"),
+            reverse("mailings_v2_monitor"),
+            reverse("mailings_v2_scenarios"),
+        ]
+        for url in pages:
+            response = self.client.get(url, secure=True)
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, "Маршрут маркетолога")
 
     def test_monitor_filters_by_campaign_status_and_provider(self):
         """
