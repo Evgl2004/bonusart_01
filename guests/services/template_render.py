@@ -47,6 +47,20 @@ def render_message_for_guest(message_text, guest, extra_context: dict[str, Any] 
         for key, value in context.items()
     }
 
+    # Почтовые/рассылочные шаблоны часто используют эти переменные.
+    # Заполняем безопасные значения, чтобы в сообщениях не оставались "сырые" маркеры.
+    coupon_value = str(
+        normalized_context.get("coupon_code")
+        or normalized_context.get("courpon_code")  # legacy-опечатка в части шаблонов
+        or ""
+    )
+    normalized_context.setdefault("coupon_code", coupon_value)
+    normalized_context.setdefault("courpon_code", coupon_value)
+    normalized_context.setdefault(
+        "days_without_visits",
+        normalized_context.get("days_without_visits") or "",
+    )
+
     django_rendered = Template(message_text).render(Context(normalized_context))
 
     try:

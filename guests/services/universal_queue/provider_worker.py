@@ -9,7 +9,7 @@ from asgiref.sync import sync_to_async
 from django.db.models import F
 from django.utils import timezone
 
-from guests.models import DispatchTask, GuestBotBinding
+from guests.models import DispatchTask, GuestBotBinding, MailingGuest
 from guests.services.universal_queue.provider_clients import (
     ProviderBlockedError,
     ProviderPermanentError,
@@ -297,8 +297,9 @@ class AsyncProviderWorker:
 
     @staticmethod
     def _mark_done_sync(task_id: int, result: ProviderSendResult) -> None:
-        task = DispatchTask.objects.filter(id=task_id).only("payload").first()
-        payload = task.payload if task and isinstance(task.payload, dict) else {}
+        task_row = DispatchTask.objects.filter(id=task_id).values("payload", "mailing_guest_id").first()
+        payload = task_row["payload"] if task_row and isinstance(task_row.get("payload"), dict) else {}
+        mailing_guest_id = int(task_row["mailing_guest_id"]) if task_row and task_row.get("mailing_guest_id") else None
         payload.update(
             {
                 "provider_message_id": result.provider_message_id,
@@ -315,6 +316,16 @@ class AsyncProviderWorker:
             last_error=None,
             payload=payload,
         )
+
+        # Синхронизируем пользовательский статус строки рассылки:
+        # если dispatch реально отправлен, в аудитории должен быть "done".
+        if mailing_guest_id:
+            MailingGuest.objects.filter(id=mailing_guest_id).update(
+                status=MailingGuest.Status.DONE,
+                sent_at=now,
+                delivery_status="done",
+                error_description=None,
+            )
 
     @staticmethod
     def _requeue_task_sync(task_id: int, delay_seconds: float, reason: str) -> None:
@@ -333,6 +344,8 @@ class AsyncProviderWorker:
 
     @staticmethod
     def _fail_task_sync(task_id: int, reason: str) -> None:
+        task_row = DispatchTask.objects.filter(id=task_id).values("mailing_guest_id").first()
+        mailing_guest_id = int(task_row["mailing_guest_id"]) if task_row and task_row.get("mailing_guest_id") else None
         now = timezone.now()
         DispatchTask.objects.filter(id=task_id).update(
             status=DispatchTask.Status.FAILED,
@@ -340,6 +353,19 @@ class AsyncProviderWorker:
             updated_at=now,
             last_error=str(reason)[:2000],
         )
+
+        # Ошибку строки поднимаем только если по этой строке нет успешных dispatch-задач.
+        if mailing_guest_id:
+            has_success = DispatchTask.objects.filter(
+                mailing_guest_id=mailing_guest_id,
+                status=DispatchTask.Status.DONE,
+            ).exists()
+            if not has_success:
+                MailingGuest.objects.filter(id=mailing_guest_id).update(
+                    status=MailingGuest.Status.ERROR,
+                    delivery_status="dispatch_failed",
+                    error_description=str(reason)[:2000],
+                )
 
     @staticmethod
     def _mark_binding_blocked_sync(task: DispatchTask) -> None:

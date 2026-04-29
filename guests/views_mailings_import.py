@@ -11,6 +11,7 @@ from openpyxl import load_workbook, Workbook
 
 from .forms import MailingImportPhonesForm
 from .models import GuestBotBinding, Guest, Mailing, MailingGuest
+from guests.services.template_render import render_message_for_guest
 
 
 def normalize_phone(raw: str) -> str | None:
@@ -154,17 +155,18 @@ class MailingImportPhonesView(View):
 
         # 3) создаём строки MailingGuest
         now = timezone.now()
-        text = mailing.template.message_text
+        template_text = mailing.template.message_text
         scheduled_dt = mailing.scheduled_time_begin  # логика: отправлять можно не раньше начала окна
 
         rows = []
         for g in to_add:
+            rendered_text = render_message_for_guest(template_text, g)
             rows.append(MailingGuest(
                 mailing=mailing,
                 guest=g,
                 phone=g.phone,
                 email=g.email,
-                text_mailing_list=text,
+                text_mailing_list=rendered_text,
                 scheduled_datetime=scheduled_dt,
                 status=MailingGuest.Status.PLANNED,
                 created_at=now,

@@ -22,7 +22,7 @@ from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
-from guests.models import BotProfile, DispatchTask, Guest, GuestBotBinding
+from guests.models import BotProfile, DispatchTask, Guest, GuestBotBinding, Mailing, MailingGuest, MessageTemplate
 from guests.services.universal_queue.dispatcher import UniversalTaskDispatcher
 from guests.services.universal_queue.maintenance import UniversalQueueMaintenanceService
 from guests.services.universal_queue.provider_clients import (
@@ -971,11 +971,12 @@ class ProviderWorkerTests(TestCase):
 
     def setUp(self):
         super().setUp()
+        now = timezone.now()
         self.guest = Guest.objects.create(
             phone="+79990001199",
             first_name="Воркер",
-            created_at=timezone.now(),
-            updated_at=timezone.now(),
+            created_at=now,
+            updated_at=now,
         )
         self.bot = BotProfile.objects.create(
             code="tg_worker_test",
@@ -993,13 +994,53 @@ class ProviderWorkerTests(TestCase):
             is_stop_sending=False,
         )
 
-    def _create_queued_task(self, *, attempt: int = 0, max_attempts: int = 3, external_chat_id: str = "321654") -> DispatchTask:
+        self.template = MessageTemplate.objects.create(
+            name="worker-template",
+            description="template for worker tests",
+            message_text="Тест",
+            is_active=True,
+        )
+        self.mailing = Mailing.objects.create(
+            name="worker-mailing",
+            template=self.template,
+            scheduled_date=now.date(),
+            scheduled_time_begin=now,
+            scheduled_time_end=now + timedelta(hours=1),
+            is_active=True,
+            is_archived=False,
+            created_at=now,
+            updated_at=now,
+            send_window_begin=now.time().replace(second=0, microsecond=0),
+            send_window_end=(now + timedelta(hours=1)).time().replace(second=0, microsecond=0),
+            target_mode=Mailing.TargetMode.PRIMARY_ONLY,
+            queue_priority=Mailing.QueuePriority.BULK,
+        )
+        self.mailing_guest = MailingGuest.objects.create(
+            mailing=self.mailing,
+            guest=self.guest,
+            phone=self.guest.phone,
+            email=self.guest.email,
+            text_mailing_list="Привет, {{ first_name }}",
+            scheduled_datetime=now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=now,
+        )
+
+    def _create_queued_task(
+        self,
+        *,
+        attempt: int = 0,
+        max_attempts: int = 3,
+        external_chat_id: str = "321654",
+        mailing_guest: MailingGuest | None = None,
+    ) -> DispatchTask:
         return DispatchTask.objects.create(
             source_type=DispatchTask.SourceType.SYSTEM,
             provider_type="telegram",
             priority=DispatchTask.Priority.HIGH,
             status=DispatchTask.Status.QUEUED,
             guest=self.guest,
+            mailing_guest=mailing_guest,
             guest_binding=self.binding,
             external_chat_id=external_chat_id,
             message_text="worker test",
@@ -1056,6 +1097,22 @@ class ProviderWorkerTests(TestCase):
         self.assertEqual(task.payload.get("provider_message_id"), "provider_msg_1")
         self.assertEqual(len(limiter.acquire_calls), 1)
         self.assertEqual(limiter.acquire_calls[0][2], "321654")
+
+    def test_process_envelope_success_syncs_mailing_guest_delivery_status(self):
+        """
+        При успешной отправке dispatch-задачи для MailingGuest строка аудитории
+        должна получить delivery_status=done и sent_at.
+        """
+        task = self._create_queued_task(mailing_guest=self.mailing_guest)
+        envelope = self._envelope_for_task(task)
+        worker, _ = self._build_worker(sender=_SuccessSender())
+
+        async_to_sync(worker._process_envelope)("high", envelope)
+
+        self.mailing_guest.refresh_from_db()
+        self.assertEqual(self.mailing_guest.status, MailingGuest.Status.DONE)
+        self.assertEqual(self.mailing_guest.delivery_status, "done")
+        self.assertIsNotNone(self.mailing_guest.sent_at)
 
     def test_process_envelope_rate_limit_requeues_and_registers_pause(self):
         """
