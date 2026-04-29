@@ -926,6 +926,34 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(detail_response, "Создать кампанию по шаблону")
         self.assertContains(detail_response, "Проверка шаблона на госте")
 
+    def test_template_preview_on_create_without_save(self):
+        """
+        Предпросмотр на форме создания шаблона должен работать без сохранения.
+        """
+        guest = Guest.objects.create(
+            phone="+79990000888",
+            first_name="Ирина",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_templates_new"),
+            {
+                "action": "preview",
+                "name": "Черновой шаблон",
+                "description": "Проверка без сохранения",
+                "message_text": "Здравствуйте, {{ first_name }}!",
+                "is_active": "on",
+                "preview_guest_id": str(guest.id),
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Проверка шаблона на госте")
+        self.assertContains(response, "Здравствуйте, Ирина!")
+        self.assertFalse(MessageTemplate.objects.filter(name="Черновой шаблон").exists())
+
     def test_flow_bridge_visible_only_on_campaigns_hub(self):
         """
         Блок маршрута маркетолога должен быть только на главном экране раздела рассылок.

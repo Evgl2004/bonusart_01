@@ -1020,6 +1020,51 @@ class MailingsV2TemplateCreateView(CreateView):
     form_class = MessageTemplateForm
     template_name = "mailing_v2/template_form.html"
 
+    @staticmethod
+    def _build_new_template_preview_source() -> MessageTemplate:
+        """
+        Возвращает временный объект шаблона для предпросмотра на форме создания.
+        """
+        return MessageTemplate()
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        selected_guest_id = str(self.request.GET.get("guest_id") or "").strip()
+        form = context.get("form")
+        message_text_override = ""
+        if form is not None:
+            message_text_override = str(form.data.get("message_text") or form.initial.get("message_text") or "")
+
+        context.update(
+            _build_template_preview_state(
+                template_obj=self._build_new_template_preview_source(),
+                selected_guest_id=selected_guest_id,
+                message_text_override=message_text_override,
+            )
+        )
+        context["preview_requested"] = bool(selected_guest_id)
+        return context
+
+    def post(self, request, *args, **kwargs):
+        if str(request.POST.get("action") or "").strip() == "preview":
+            self.object = None
+            form = self.get_form()
+            selected_guest_id = str(request.POST.get("preview_guest_id") or "").strip()
+            message_text_override = str(request.POST.get("message_text") or "")
+
+            context = self.get_context_data(form=form)
+            context["selected_guest_id"] = selected_guest_id
+            context.update(
+                _build_template_preview_state(
+                    template_obj=self._build_new_template_preview_source(),
+                    selected_guest_id=selected_guest_id,
+                    message_text_override=message_text_override,
+                )
+            )
+            context["preview_requested"] = True
+            return self.render_to_response(context)
+        return super().post(request, *args, **kwargs)
+
     def form_valid(self, form):
         obj = form.save(commit=False)
         # На этом этапе сохраняем совместимость с текущим backend-контрактом.
@@ -1587,15 +1632,16 @@ def _build_template_preview_context(*, template_obj: MessageTemplate, guest: Gue
     2. fallback-расчёт days_without_visits по последнему визиту гостя.
     """
     context: dict[str, object] = {}
-
-    latest_event = (
-        NotificationEvent.objects.filter(
-            guest=guest,
-            scenario__template=template_obj,
+    latest_event = None
+    if getattr(template_obj, "pk", None):
+        latest_event = (
+            NotificationEvent.objects.filter(
+                guest=guest,
+                scenario__template=template_obj,
+            )
+            .order_by("-event_at", "-id")
+            .first()
         )
-        .order_by("-event_at", "-id")
-        .first()
-    )
 
     if latest_event and isinstance(latest_event.payload, dict):
         for key, value in latest_event.payload.items():
