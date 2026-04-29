@@ -2042,7 +2042,8 @@ def _build_mailing_log_timeline(
     timeline: list[dict[str, object]] = []
 
     for row in rows:
-        event_time = row.sent_at or row.updated_at or row.created_at
+        # У модели MailingGuest нет updated_at, поэтому используем доступные временные поля.
+        event_time = row.sent_at or row.created_at or row.scheduled_datetime
         timeline.append(
             {
                 "kind": "row",
