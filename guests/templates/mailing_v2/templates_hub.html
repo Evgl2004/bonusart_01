@@ -4,6 +4,24 @@
 
 {% block content %}
 <div class="container-fluid">
+  <style>
+    .templates-kpi-compact .card-body {
+      padding: 0.65rem 0.8rem;
+    }
+    .templates-kpi-compact .kpi-label {
+      font-size: 0.76rem;
+      color: #6c757d;
+      line-height: 1.1;
+      margin-bottom: 0.15rem;
+    }
+    .templates-kpi-compact .kpi-value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1.1;
+      margin: 0;
+    }
+  </style>
+
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Шаблоны рассылок</h1>
@@ -12,25 +30,6 @@
     <div class="d-flex gap-2">
       <a class="btn btn-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
       <a class="btn btn-outline-secondary" href="{% url 'message_templates' %}">Старый список</a>
-    </div>
-  </div>
-
-  <div class="row g-3 mb-3">
-    <div class="col-12 col-md-6">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Шаблонов всего</div>
-          <div class="h3 mb-0">{{ templates_total }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-12 col-md-6">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Активных шаблонов</div>
-          <div class="h3 mb-0">{{ templates_active }}</div>
-        </div>
-      </div>
     </div>
   </div>
 
@@ -110,6 +109,24 @@
       </div>
     </div>
   </div>
+
+  <div class="row g-2 mt-3 templates-kpi-compact">
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="kpi-label">Шаблонов всего</div>
+          <p class="kpi-value">{{ templates_total }}</p>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="kpi-label">Активных шаблонов</div>
+          <p class="kpi-value">{{ templates_active }}</p>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 {% endblock %}
-

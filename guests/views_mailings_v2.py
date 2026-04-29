@@ -37,6 +37,7 @@ from guests.models import (
     NotificationEvent,
     NotificationScenario,
 )
+from guests.services.template_render import render_message_for_guest
 from guests.services.notification_handler_registry import (
     get_registered_schedule_scenario_codes,
     run_registered_schedule_scenarios,
@@ -208,28 +209,12 @@ class _MailingsV2CampaignFormMixin:
         """
         return MessageTemplate.objects.filter(is_active=True).order_by("-created_at")
 
-    @staticmethod
-    def _is_system_template(template_obj: MessageTemplate) -> bool:
-        """
-        Определяет, является ли шаблон системным.
-
-        На текущем этапе в проекте нет отдельного поля `is_system` у MessageTemplate,
-        поэтому используем устойчивые эвристики:
-        1. created_by == "system";
-        2. имя шаблона в формате SYSTEM_*_TEMPLATE.
-        """
-        if template_obj is None:
-            return False
-        created_by = str(getattr(template_obj, "created_by", "") or "").strip().lower()
-        raw_name = str(getattr(template_obj, "name", "") or "").strip()
-        return created_by == "system" or (raw_name.startswith("SYSTEM_") and raw_name.endswith("_TEMPLATE"))
-
     def get_form(self, form_class=None):
         form = super().get_form(form_class)
         # В v2 по умолчанию показываем только активные шаблоны.
         if "template" in form.fields:
             active_templates = list(self._active_templates_queryset())
-            user_templates = [template_obj for template_obj in active_templates if not self._is_system_template(template_obj)]
+            user_templates = [template_obj for template_obj in active_templates if not _is_system_template(template_obj)]
             selected_templates = user_templates if user_templates else active_templates
 
             selected_template_ids = [template_obj.pk for template_obj in selected_templates]
@@ -1019,6 +1004,9 @@ class MailingsV2TemplatesView(TemplateView):
         context = super().get_context_data(**kwargs)
         show_inactive = bool(self.request.GET.get("show_inactive"))
         query = (self.request.GET.get("q") or "").strip()
+        template_kind = str(self.request.GET.get("template_kind") or "all").strip().lower()
+        if template_kind not in {"all", "user", "system"}:
+            template_kind = "all"
 
         template_rows = MessageTemplate.objects.annotate(
             mailings_total=Count("mailings", distinct=True),
@@ -1033,17 +1021,27 @@ class MailingsV2TemplatesView(TemplateView):
                 Q(name__icontains=query) | Q(description__icontains=query) | Q(message_text__icontains=query)
             )
 
+        system_filter_q = Q(created_by__iexact="system") | (
+            Q(name__startswith="SYSTEM_") & Q(name__endswith="_TEMPLATE")
+        )
+        if template_kind == "system":
+            template_rows = template_rows.filter(system_filter_q)
+        elif template_kind == "user":
+            template_rows = template_rows.exclude(system_filter_q)
+
         templates = list(template_rows[:100])
         for template_obj in templates:
             display_name, technical_name = _resolve_template_title(template_obj)
             template_obj.display_name = display_name
             template_obj.technical_name = technical_name
+            template_obj.is_system_template = _is_system_template(template_obj)
 
         context["templates_total"] = MessageTemplate.objects.count()
         context["templates_active"] = MessageTemplate.objects.filter(is_active=True).count()
         context["templates"] = templates
         context["show_inactive"] = show_inactive
         context["query"] = query
+        context["template_kind"] = template_kind
         return context
 
 
@@ -1062,7 +1060,7 @@ class MailingsV2TemplateCreateView(CreateView):
         obj.created_by = "mailings_v2_user"
         obj.save()
         messages.success(self.request, f"Шаблон создан (ID {obj.id}).")
-        return redirect("mailings_v2_templates_detail", pk=obj.pk)
+        return redirect("mailings_v2_templates_edit", pk=obj.pk)
 
 
 class MailingsV2TemplateDetailView(DetailView):
@@ -1076,32 +1074,20 @@ class MailingsV2TemplateDetailView(DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        guests = list(Guest.objects.all().order_by("-id")[:50])
-        for guest in guests:
-            guest.display_name = _build_guest_display_name(guest)
-        context["guests"] = guests
-
         display_name, technical_name = _resolve_template_title(self.object)
         context["template_display_name"] = display_name
         context["template_technical_name"] = technical_name
+        context["template_is_system"] = _is_system_template(self.object)
         context["campaign_prefill_url"] = (
             f"{reverse('mailings_v2_campaigns_new')}?{urlencode({'template_id': self.object.id})}"
         )
 
-        guest_id = self.request.GET.get("guest_id")
-        if guest_id:
-            guest = Guest.objects.filter(pk=guest_id).first()
-            if guest:
-                from guests.services.template_render import render_message_for_guest
-
-                context["preview_text"] = render_message_for_guest(
-                    self.object.message_text,
-                    guest,
-                    extra_context=_build_template_preview_context(template_obj=self.object, guest=guest),
-                )
-                context["preview_guest"] = guest
-                context["preview_guest_display_name"] = _build_guest_display_name(guest)
-                context["selected_guest_id"] = str(guest.id)
+        preview_context = _build_template_preview_state(
+            template_obj=self.object,
+            selected_guest_id=str(self.request.GET.get("guest_id") or "").strip(),
+            message_text_override=self.object.message_text,
+        )
+        context.update(preview_context)
         return context
 
 
@@ -1114,10 +1100,53 @@ class MailingsV2TemplateUpdateView(UpdateView):
     form_class = MessageTemplateForm
     template_name = "mailing_v2/template_form.html"
 
+    def _build_editor_context(self) -> dict[str, object]:
+        display_name, technical_name = _resolve_template_title(self.object)
+        return {
+            "template_display_name": display_name,
+            "template_technical_name": technical_name,
+            "template_is_system": _is_system_template(self.object),
+            "campaign_prefill_url": f"{reverse('mailings_v2_campaigns_new')}?{urlencode({'template_id': self.object.id})}",
+        }
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(self._build_editor_context())
+
+        selected_guest_id = str(self.request.GET.get("guest_id") or "").strip()
+        preview_context = _build_template_preview_state(
+            template_obj=self.object,
+            selected_guest_id=selected_guest_id,
+            message_text_override=self.object.message_text,
+        )
+        context.update(preview_context)
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        if str(request.POST.get("action") or "").strip() == "preview":
+            form = self.get_form()
+            selected_guest_id = str(request.POST.get("preview_guest_id") or "").strip()
+            message_text_override = str(request.POST.get("message_text") or "")
+
+            context = self.get_context_data(form=form, object=self.object)
+            context.update(self._build_editor_context())
+            context["selected_guest_id"] = selected_guest_id
+            context.update(
+                _build_template_preview_state(
+                    template_obj=self.object,
+                    selected_guest_id=selected_guest_id,
+                    message_text_override=message_text_override,
+                )
+            )
+            context["preview_requested"] = True
+            return self.render_to_response(context)
+        return super().post(request, *args, **kwargs)
+
     def form_valid(self, form):
         self.object = form.save()
         messages.success(self.request, "Шаблон сохранен.")
-        return redirect("mailings_v2_templates_detail", pk=self.object.pk)
+        return redirect("mailings_v2_templates_edit", pk=self.object.pk)
 
 
 class MailingsV2MonitorView(TemplateView):
@@ -1518,6 +1547,25 @@ SYSTEM_TEMPLATE_NAME_MAP = {
     "SYSTEM_INACTIVE_30D_COUPON_TEMPLATE": "Системный шаблон: неактивные 30 дней + купон",
     "SYSTEM_MEAT_LOVER_30D_TEMPLATE": "Системный шаблон: любитель мяса 30 дней",
 }
+
+
+def _is_system_template(template_obj: MessageTemplate | None) -> bool:
+    """
+    Определяет, относится ли шаблон к системным.
+
+    На текущем этапе используем совместимый эвристический признак:
+    1. `created_by == "system"`;
+    2. техническое имя формата `SYSTEM_*_TEMPLATE`.
+    """
+    if template_obj is None:
+        return False
+
+    created_by = str(getattr(template_obj, "created_by", "") or "").strip().lower()
+    if created_by == "system":
+        return True
+
+    raw_name = str(getattr(template_obj, "name", "") or "").strip().upper()
+    return raw_name.startswith("SYSTEM_") and raw_name.endswith("_TEMPLATE")
 
 
 def _resolve_template_title(template_obj: MessageTemplate | None) -> tuple[str, str]:
