@@ -68,6 +68,12 @@
         border-left: 3px solid #60a5fa;
       }
 
+      .sidebar a.submenu-link {
+        font-size: 0.94rem;
+        padding-left: 1.85rem;
+        margin-top: -0.1rem;
+      }
+
       .sidebar .menu-divider {
         border-top: 1px solid #1f2937;
         margin: 0.8rem 0;
@@ -112,17 +118,18 @@
 
         <a
           href="{% url 'mailings_v2_campaigns' %}"
-          class="{% if current == 'mailings_v2_campaigns' or current == 'mailings_v2_campaigns_new' or current == 'mailings_v2_campaigns_edit' or current == 'mailings_v2_campaigns_audience' or current == 'mailings_v2_campaigns_runs' or current == 'mailings_v2_templates' or current == 'mailings_v2_templates_new' or current == 'mailings_v2_templates_detail' or current == 'mailings_v2_templates_edit' or current == 'mailings_v2_monitor' or current == 'mailings' or current == 'mailings_create' or current == 'mailing_edit' or current == 'mailing_logs' or current == 'message_templates' or current == 'message_templates_create' or current == 'message_templates_detail' or current == 'message_templates_edit' %}active{% endif %}"
+          class="{% if current == 'mailings_v2_campaigns' or current == 'mailings_v2_campaigns_new' or current == 'mailings_v2_campaigns_edit' or current == 'mailings_v2_campaigns_audience' or current == 'mailings_v2_campaigns_runs' or current == 'mailings_v2_templates' or current == 'mailings_v2_templates_new' or current == 'mailings_v2_templates_detail' or current == 'mailings_v2_templates_edit' or current == 'mailings_v2_monitor' or current == 'mailings_v2_scenarios' or current == 'mailings' or current == 'mailings_create' or current == 'mailing_edit' or current == 'mailing_logs' or current == 'message_templates' or current == 'message_templates_create' or current == 'message_templates_detail' or current == 'message_templates_edit' %}active{% endif %}"
         >
           Рассылки
         </a>
-
-        <a
-          href="{% url 'mailings_v2_scenarios' %}"
-          class="{% if current == 'mailings_v2_scenarios' %}active{% endif %}"
-        >
-          Автосценарии
-        </a>
+        {% if 'mailings_v2' in current or current == 'mailings' or current == 'mailings_create' or current == 'mailing_edit' or current == 'mailing_logs' or current == 'message_templates' or current == 'message_templates_create' or current == 'message_templates_detail' or current == 'message_templates_edit' %}
+          <a
+            href="{% url 'mailings_v2_scenarios' %}"
+            class="submenu-link {% if current == 'mailings_v2_scenarios' %}active{% endif %}"
+          >
+            Автосценарий
+          </a>
+        {% endif %}
 
         <a
           href="{% url 'focus_categories' %}"
