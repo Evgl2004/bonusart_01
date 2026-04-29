@@ -4,6 +4,30 @@
 
 {% block content %}
 <div class="container-fluid">
+  <style>
+    .campaigns-kpi-compact .card-body {
+      padding: 0.65rem 0.8rem;
+    }
+    .campaigns-kpi-compact .kpi-label {
+      font-size: 0.76rem;
+      color: #6c757d;
+      line-height: 1.1;
+      margin-bottom: 0.15rem;
+    }
+    .campaigns-kpi-compact .kpi-value {
+      font-size: 1.1rem;
+      font-weight: 700;
+      line-height: 1.1;
+      margin: 0;
+    }
+    .campaigns-kpi-compact .kpi-meta {
+      font-size: 0.75rem;
+      color: #6c757d;
+      line-height: 1.15;
+      margin-top: 0.2rem;
+    }
+  </style>
+
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Рассылки</h1>
@@ -11,74 +35,8 @@
         Единая точка входа в контур рассылок. Текущий этап: поэтапный переход с существующих рабочих форм.
       </p>
     </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-primary" href="{% url 'mailings_v2_campaigns_new' %}">Создать кампанию</a>
-      <a class="btn btn-outline-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
-    </div>
   </div>
   {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
-
-  <div class="row g-3 mb-4">
-    <div class="col-12 col-md-6 col-xl-3">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Кампаний всего</div>
-          <div class="h3 mb-1">{{ kpi.campaigns_total }}</div>
-          <div class="small text-muted">Активных: {{ kpi.campaigns_active }}</div>
-          <div class="small text-muted">В архиве: {{ kpi.campaigns_archived }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-12 col-md-6 col-xl-3">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Шаблонов (активных)</div>
-          <div class="h3 mb-1">{{ kpi.templates_active }}</div>
-          <div class="small text-muted">Сценариев (активных): {{ kpi.scenarios_active }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-12 col-md-6 col-xl-3">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Очередь dispatch</div>
-          <div class="h3 mb-1">{{ kpi.dispatch_pending }}</div>
-          <div class="small text-muted">Всего задач: {{ kpi.dispatch_total }}</div>
-        </div>
-      </div>
-    </div>
-    <div class="col-12 col-md-6 col-xl-3">
-      <div class="card border-0 shadow-sm h-100">
-        <div class="card-body">
-          <div class="text-muted small">Ошибки dispatch</div>
-          <div class="h3 mb-1">{{ kpi.dispatch_failed }}</div>
-          <div class="small text-muted">Успешно: {{ kpi.dispatch_done }}</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div class="card border-0 shadow-sm mb-4">
-    <div class="card-header bg-white">
-      <h2 class="h6 mb-0">Разделы и переходы</h2>
-    </div>
-    <div class="card-body">
-      <div class="row g-3">
-        {% for section in flow_sections %}
-          <div class="col-12 col-lg-6">
-            <div class="border rounded p-3 h-100">
-              <div class="fw-semibold mb-1">{{ section.title }}</div>
-              <div class="text-muted small mb-3">{{ section.description }}</div>
-              <div class="d-flex gap-2 flex-wrap">
-                <a class="btn btn-sm btn-primary" href="{{ section.primary_url }}">{{ section.primary_label }}</a>
-                <a class="btn btn-sm btn-outline-secondary" href="{{ section.secondary_url }}">{{ section.secondary_label }}</a>
-              </div>
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-    </div>
-  </div>
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white">
@@ -131,7 +89,7 @@
   <div class="card border-0 shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between align-items-center">
       <h2 class="h6 mb-0">Кампании</h2>
-      <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings' %}">Старый список</a>
+      <a class="btn btn-sm btn-primary" href="{% url 'mailings_v2_campaigns_new' %}">Создать кампанию</a>
     </div>
     <div class="card-body p-0">
       <div class="table-responsive">
@@ -204,6 +162,45 @@
             {% endfor %}
           </tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-2 mt-3 campaigns-kpi-compact">
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="kpi-label">Кампаний всего</div>
+          <p class="kpi-value">{{ kpi.campaigns_total }}</p>
+          <div class="kpi-meta">Активных: {{ kpi.campaigns_active }} · В архиве: {{ kpi.campaigns_archived }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="kpi-label">Шаблонов (активных)</div>
+          <p class="kpi-value">{{ kpi.templates_active }}</p>
+          <div class="kpi-meta">Сценариев (активных): {{ kpi.scenarios_active }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="kpi-label">Очередь dispatch</div>
+          <p class="kpi-value">{{ kpi.dispatch_pending }}</p>
+          <div class="kpi-meta">Всего задач: {{ kpi.dispatch_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="kpi-label">Ошибки dispatch</div>
+          <p class="kpi-value">{{ kpi.dispatch_failed }}</p>
+          <div class="kpi-meta">Успешно: {{ kpi.dispatch_done }}</div>
+        </div>
       </div>
     </div>
   </div>

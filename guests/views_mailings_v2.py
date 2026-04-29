@@ -153,40 +153,6 @@ class MailingsV2CampaignsHubView(TemplateView):
             "created_to": created_to_raw,
         }
         context["current_query_path"] = self.request.get_full_path()
-        context["flow_sections"] = [
-            {
-                "title": "Кампании",
-                "description": "Создание, запуск и контроль ручных рассылок.",
-                "primary_label": "Открыть кампании",
-                "primary_url": reverse("mailings_v2_campaigns"),
-                "secondary_label": "Создать кампанию",
-                "secondary_url": reverse("mailings_v2_campaigns_new"),
-            },
-            {
-                "title": "Шаблоны",
-                "description": "Управление текстами, переменными и превью сообщений.",
-                "primary_label": "Открыть шаблоны",
-                "primary_url": reverse("mailings_v2_templates"),
-                "secondary_label": "Создать шаблон",
-                "secondary_url": reverse("mailings_v2_templates_new"),
-            },
-            {
-                "title": "Монитор",
-                "description": "Статусы доставки, ошибки и ретраи по отправкам.",
-                "primary_label": "Открыть монитор",
-                "primary_url": reverse("mailings_v2_monitor"),
-                "secondary_label": "Логи рассылок",
-                "secondary_url": reverse("mailings"),
-            },
-            {
-                "title": "Автосценарии",
-                "description": "Сценарные отправки и регулярные проверки условий.",
-                "primary_label": "Открыть сценарии",
-                "primary_url": reverse("mailings_v2_scenarios"),
-                "secondary_label": "Открыть admin",
-                "secondary_url": "/admin/guests/notificationscenario/",
-            },
-        ]
         context["mailings_v2_flow"] = _build_mailings_v2_flow(active_area="campaigns")
         return context
 
@@ -1753,13 +1719,15 @@ def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
             "description": "Подготовьте текст и проверьте предпросмотр на реальном госте.",
             "url": reverse("mailings_v2_templates"),
             "cta": "Открыть шаблоны",
+            "secondary_url": reverse("mailings_v2_templates_new"),
+            "secondary_cta": "Создать шаблон",
         },
         {
             "number": 3,
             "title": "Кампания и запуск",
             "description": "Проверьте аудиторию, выполните dry-run и запускайте кампанию.",
-            "url": reverse("mailings_v2_campaigns"),
-            "cta": "Открыть кампании",
+            "url": reverse("mailings_v2_campaigns_new"),
+            "cta": "Создать кампанию",
         },
         {
             "number": 4,
