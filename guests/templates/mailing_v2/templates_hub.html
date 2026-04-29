@@ -96,7 +96,7 @@
                 <td>{{ row.scenarios_total }}</td>
                 <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
                 <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_detail' row.id %}">Открыть</a>
+                  <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_edit' row.id %}">Открыть</a>
                 </td>
               </tr>
             {% empty %}

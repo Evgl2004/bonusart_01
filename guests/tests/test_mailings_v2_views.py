@@ -895,9 +895,9 @@ class MailingsV2ViewsTests(TestCase):
         self.assertTrue(any(item["delivery_status"] == "dispatch_enqueue_error" for item in response.context["delivery_feedback_rows"]))
         self.assertTrue(any(item["last_error"] == "timeout 429" for item in response.context["top_errors"]))
 
-    def test_create_template_v2_and_open_detail(self):
+    def test_create_template_v2_and_open_editor(self):
         """
-        Создание шаблона через v2 должно вести на v2-карточку шаблона.
+        Создание шаблона через v2 должно вести в режим редактирования.
         """
         response = self.client.post(
             reverse("mailings_v2_templates_new"),
@@ -914,17 +914,17 @@ class MailingsV2ViewsTests(TestCase):
         template_obj = MessageTemplate.objects.get(name="Шаблон v2")
         self.assertEqual(
             response.url,
-            reverse("mailings_v2_templates_detail", kwargs={"pk": template_obj.id}),
+            reverse("mailings_v2_templates_edit", kwargs={"pk": template_obj.id}),
         )
 
         detail_response = self.client.get(
-            reverse("mailings_v2_templates_detail", kwargs={"pk": template_obj.id}),
+            reverse("mailings_v2_templates_edit", kwargs={"pk": template_obj.id}),
             secure=True,
         )
         self.assertEqual(detail_response.status_code, 200)
         self.assertContains(detail_response, "Привет")
         self.assertContains(detail_response, "Создать кампанию по шаблону")
-        self.assertContains(detail_response, "Предпросмотр для гостя")
+        self.assertContains(detail_response, "Проверка шаблона на госте")
 
     def test_flow_bridge_visible_only_on_campaigns_hub(self):
         """
@@ -984,9 +984,16 @@ class MailingsV2ViewsTests(TestCase):
             coupon_code="CPN-123",
         )
 
-        response = self.client.get(
-            reverse("mailings_v2_templates_detail", kwargs={"pk": template_obj.id}),
-            {"guest_id": str(guest.id)},
+        response = self.client.post(
+            reverse("mailings_v2_templates_edit", kwargs={"pk": template_obj.id}),
+            {
+                "action": "preview",
+                "name": template_obj.name,
+                "description": template_obj.description or "",
+                "message_text": template_obj.message_text,
+                "is_active": "on",
+                "preview_guest_id": str(guest.id),
+            },
             secure=True,
         )
         self.assertEqual(response.status_code, 200)

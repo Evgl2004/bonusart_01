@@ -1657,6 +1657,65 @@ def _build_template_preview_context(*, template_obj: MessageTemplate, guest: Gue
     return context
 
 
+def _build_template_preview_state(
+    *,
+    template_obj: MessageTemplate,
+    selected_guest_id: str,
+    message_text_override: str | None,
+) -> dict[str, object]:
+    """
+    Собирает состояние предпросмотра шаблона для detail/edit экрана.
+
+    Возвращает:
+    1. список гостей для выбора;
+    2. текущий выбранный guest_id;
+    3. итоговый предпросмотр текста;
+    4. подпись выбранного гостя.
+    """
+    safe_selected_guest_id = str(selected_guest_id or "").strip()
+
+    guests = list(Guest.objects.order_by("-updated_at", "-id")[:300])
+    for guest in guests:
+        guest.display_name = _build_guest_display_name(guest)
+
+    selected_guest: Guest | None = None
+    if safe_selected_guest_id.isdigit():
+        selected_guest = next(
+            (guest for guest in guests if guest.id == int(safe_selected_guest_id)),
+            None,
+        )
+        if selected_guest is None:
+            selected_guest = Guest.objects.filter(id=int(safe_selected_guest_id)).first()
+            if selected_guest is not None:
+                selected_guest.display_name = _build_guest_display_name(selected_guest)
+                guests.insert(0, selected_guest)
+
+    preview_text = ""
+    preview_guest_display_name = ""
+    if selected_guest is not None:
+        preview_guest_display_name = str(
+            getattr(selected_guest, "display_name", "") or _build_guest_display_name(selected_guest)
+        )
+        preview_context = _build_template_preview_context(template_obj=template_obj, guest=selected_guest)
+        message_text = (
+            message_text_override
+            if message_text_override is not None
+            else str(getattr(template_obj, "message_text", "") or "")
+        )
+        preview_text = render_message_for_guest(
+            message_text,
+            selected_guest,
+            extra_context=preview_context,
+        )
+
+    return {
+        "guests": guests,
+        "selected_guest_id": safe_selected_guest_id,
+        "preview_text": preview_text,
+        "preview_guest_display_name": preview_guest_display_name,
+    }
+
+
 def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
     """
     Формирует единый bridge-флоу для экранов mailings-v2.
