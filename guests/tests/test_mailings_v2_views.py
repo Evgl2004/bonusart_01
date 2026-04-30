@@ -76,8 +76,7 @@ class MailingsV2ViewsTests(TestCase):
         """
         new_page = self.client.get(reverse("mailings_v2_campaigns_new"), secure=True)
         self.assertEqual(new_page.status_code, 200)
-        self.assertEqual(new_page.context["wizard_state"]["current_step"], 1)
-        self.assertEqual(len(new_page.context["wizard_state"]["steps"]), 3)
+        self.assertContains(new_page, "Параметры запуска кампании")
 
         begin = (self.now + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
         end = (self.now + timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M")
@@ -147,20 +146,18 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(edit_response.status_code, 200)
-        self.assertEqual(edit_response.context["wizard_state"]["current_step"], 3)
-        self.assertContains(edit_response, "Проверить аудиторию")
+        self.assertContains(edit_response, "Параметры запуска кампании")
 
         audience_response = self.client.get(
             reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.id}),
             secure=True,
         )
         self.assertEqual(audience_response.status_code, 200)
-        self.assertEqual(audience_response.context["wizard_state"]["current_step"], 2)
         self.assertContains(audience_response, guest.phone)
 
-    def test_edit_page_wizard_requires_audience_before_launch(self):
+    def test_edit_page_shows_campaign_nav_without_wizard(self):
         """
-        Если аудитория пустая, мастер на экране кампании должен оставаться на шаге 2.
+        Экран параметров должен показывать каркас кампании без мастера.
         """
         mailing = self._create_mailing()
         response = self.client.get(
@@ -168,7 +165,9 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["wizard_state"]["current_step"], 2)
+        self.assertContains(response, "Каркас кампании")
+        self.assertContains(response, "Статус")
+        self.assertNotContains(response, "Мастер запуска кампании")
 
     def test_campaign_views_show_workbench_snapshot(self):
         """
@@ -199,18 +198,16 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(edit_response.status_code, 200)
-        self.assertContains(edit_response, "Источник аудитории: Workbench")
-        self.assertContains(edit_response, "active_30d")
-        self.assertContains(edit_response, "sushi_rolls")
-        self.assertContains(edit_response, reverse("guests_workbench"))
+        self.assertContains(edit_response, "Параметры запуска кампании")
 
         audience_response = self.client.get(
             reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.id}),
             secure=True,
         )
         self.assertEqual(audience_response.status_code, 200)
-        self.assertContains(audience_response, "Аудитория собрана из Workbench")
+        self.assertContains(audience_response, "Аудитория собрана из экрана «Гости»")
         self.assertContains(audience_response, "active_30d")
+        self.assertContains(audience_response, reverse("guests_workbench"))
 
     def test_import_phones_view_respects_next_url(self):
         """
@@ -443,7 +440,7 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(toggle_response.status_code, 302)
-        self.assertEqual(toggle_response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+        self.assertEqual(toggle_response.url, reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}))
         mailing.refresh_from_db()
         self.assertTrue(mailing.is_active)
 
@@ -510,7 +507,7 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}))
 
         task.refresh_from_db()
         self.assertEqual(task.status, DispatchTask.Status.PENDING)
@@ -558,7 +555,7 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}))
 
         report = self.client.session.get("mailing_ops_dry_run_report")
         self.assertIsInstance(report, dict)
@@ -607,7 +604,7 @@ class MailingsV2ViewsTests(TestCase):
             secure=True,
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.url, reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}))
 
         row.refresh_from_db()
         self.assertEqual(row.status, MailingGuest.Status.DONE)

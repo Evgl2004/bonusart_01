@@ -31,9 +31,7 @@
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Рассылки</h1>
-      <p class="text-muted mb-0">
-        Единая точка входа в контур рассылок. Текущий этап: поэтапный переход с существующих рабочих форм.
-      </p>
+      <p class="text-muted mb-0">Единая точка входа в контур рассылок.</p>
     </div>
   </div>
   {% include "mailing_v2/_flow_bridge.html" with mailings_v2_flow=mailings_v2_flow %}
@@ -137,7 +135,7 @@
                 <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
                 <td class="text-end">
                   <div class="d-flex gap-1 justify-content-end">
-                    <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_campaigns_edit' row.id %}">Открыть</a>
+                    <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_campaigns_status' row.id %}">Открыть</a>
                     <form method="post" action="{% url 'mailings_v2_campaigns_ops' row.id %}">
                       {% csrf_token %}
                       <input type="hidden" name="action" value="duplicate_campaign">

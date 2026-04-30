@@ -10,19 +10,17 @@
       <p class="text-muted mb-0">{{ mailing.name }}</p>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Назад к кампании</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">К списку рассылок</a>
     </div>
   </div>
   {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}
-  {% include "mailing_v2/_campaign_wizard.html" with wizard_state=wizard_state %}
 
   {% if workbench_snapshot %}
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-body">
         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
           <div>
-            <div class="fw-semibold mb-2">Аудитория собрана из Workbench</div>
+            <div class="fw-semibold mb-2">Аудитория собрана из экрана «Гости»</div>
             <div class="d-flex flex-wrap gap-2 mb-2">
               {% if workbench_snapshot.as_of_date %}<span class="badge text-bg-light border">Срез: {{ workbench_snapshot.as_of_date }}</span>{% endif %}
               {% if workbench_snapshot.window_days %}<span class="badge text-bg-light border">Окно: {{ workbench_snapshot.window_days }} дн</span>{% endif %}
@@ -37,12 +35,43 @@
             </div>
           </div>
           <div>
-            <a class="btn btn-outline-primary btn-sm" href="{{ workbench_snapshot_url }}">Открыть фильтры в Workbench</a>
+            <a class="btn btn-outline-primary btn-sm" href="{{ workbench_snapshot_url }}">Открыть фильтры в экране «Гости»</a>
           </div>
         </div>
       </div>
     </div>
   {% endif %}
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <h2 class="h6 mb-0">Импорт телефонов</h2>
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_import_template' %}">Шаблон Excel</a>
+    </div>
+    <div class="card-body">
+      {% if mailing_import_error %}
+        <div class="alert alert-danger">{{ mailing_import_error }}</div>
+      {% endif %}
+
+      <form method="post" action="{% url 'mailing_import_phones' mailing.id %}" enctype="multipart/form-data">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <input type="file" name="file" accept=".xlsx" class="form-control" required>
+        <button class="btn btn-primary mt-2" type="submit">Импортировать</button>
+      </form>
+
+      {% if mailing_import_report %}
+        <div class="alert alert-info mt-3 mb-0">
+          <b>Отчет импорта</b><br>
+          Загружено строк: {{ mailing_import_report.total_loaded }}<br>
+          Уникальных телефонов: {{ mailing_import_report.unique_phones }}<br>
+          Найдено гостей в базе: {{ mailing_import_report.found }}<br>
+          Добавлено в кампанию: <b>{{ mailing_import_report.added }}</b><br>
+          Уже были в кампании: {{ mailing_import_report.already }}<br>
+          Не найдено в базе: {{ mailing_import_report.not_found }}<br>
+        </div>
+      {% endif %}
+    </div>
+  </div>
 
   <div class="row g-3 mb-4">
     <div class="col-12 col-sm-6 col-xl-3">
@@ -56,7 +85,7 @@
     <div class="col-12 col-sm-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Planned</div>
+          <div class="text-muted small">Запланировано</div>
           <div class="h3 mb-0">{{ stats.planned|default:0 }}</div>
         </div>
       </div>
@@ -64,7 +93,7 @@
     <div class="col-12 col-sm-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Done</div>
+          <div class="text-muted small">Успешно</div>
           <div class="h3 mb-0">{{ stats.done|default:0 }}</div>
         </div>
       </div>
@@ -72,7 +101,7 @@
     <div class="col-12 col-sm-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Error</div>
+          <div class="text-muted small">Ошибки</div>
           <div class="h3 mb-0">{{ stats.error|default:0 }}</div>
         </div>
       </div>

@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылки: статус кампании #{{ mailing.id }}{% endblock %}
+
+{% block content %}
+<style>
+  .mail-help-btn {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    line-height: 1;
+    padding: 0;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mail-status-row {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.5rem;
+    padding: 0.3rem 0;
+    border-bottom: 1px dashed #e5e7eb;
+  }
+
+  .mail-status-row:last-child {
+    border-bottom: 0;
+  }
+</style>
+
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Статус кампании #{{ mailing.id }}</h1>
+      <p class="text-muted mb-0">{{ mailing.name }}</p>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ v2_list_url }}">К списку рассылок</a>
+    </div>
+  </div>
+
+  {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Сводка кампании</h2>
+        </div>
+        <div class="card-body">
+          <div class="mb-2">ID: <b>{{ mailing.id }}</b></div>
+          <div class="mb-2">
+            Активность:
+            {% if mailing.is_active %}
+              <span class="badge text-bg-success">включена</span>
+            {% else %}
+              <span class="badge text-bg-secondary">выключена</span>
+            {% endif %}
+          </div>
+          <div class="mb-3">Получателей: <b>{{ guests_count }}</b></div>
+
+          <div class="small text-muted mb-2">Строки аудитории</div>
+          <div class="mail-status-row"><span>Запланировано</span><b>{{ mailing_row_stats.planned }}</b></div>
+          <div class="mail-status-row"><span>В обработке</span><b>{{ mailing_row_stats.in_progress }}</b></div>
+          <div class="mail-status-row"><span>Успешно</span><b>{{ mailing_row_stats.done }}</b></div>
+          <div class="mail-status-row mb-3"><span>С ошибкой</span><b>{{ mailing_row_stats.error }}</b></div>
+
+          <div class="small text-muted mb-2">Dispatch-задачи</div>
+          <div class="mail-status-row"><span>Ожидают</span><b>{{ dispatch_stats.pending }}</b></div>
+          <div class="mail-status-row"><span>В очереди</span><b>{{ dispatch_stats.queued }}</b></div>
+          <div class="mail-status-row"><span>В обработке</span><b>{{ dispatch_stats.in_progress }}</b></div>
+          <div class="mail-status-row"><span>Завершились с ошибкой</span><b>{{ dispatch_stats.failed }}</b></div>
+
+          <div class="d-grid gap-2 mt-3">
+            <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Проверить аудиторию</a>
+            <a class="btn btn-outline-primary btn-sm" href="{{ runs_url }}">Запуски и история</a>
+            <a class="btn btn-outline-primary btn-sm" href="{{ jobs_url }}">Задания отправки</a>
+            <a class="btn btn-outline-primary btn-sm" href="{{ errors_url }}">Ошибки кампании</a>
+            <a class="btn btn-outline-primary btn-sm" href="{{ logs_url }}">Логи кампании</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Управление кампанией</h2>
+        </div>
+        <div class="card-body">
+          <div class="d-grid gap-2">
+            <form method="post" action="{{ ops_url }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="toggle_active">
+              {% if mailing.is_active %}
+                <button
+                  type="submit"
+                  class="btn btn-warning btn-sm w-100"
+                  data-bs-toggle="tooltip"
+                  data-bs-placement="top"
+                  title="Останавливает выдачу новых задач и ставит кампанию на паузу."
+                >Поставить на паузу</button>
+              {% else %}
+                <button
+                  type="submit"
+                  class="btn btn-success btn-sm w-100"
+                  data-bs-toggle="tooltip"
+                  data-bs-placement="top"
+                  title="Включает кампанию и разрешает обработку её аудитории."
+                >Запустить кампанию</button>
+              {% endif %}
+            </form>
+
+            <form method="post" action="{{ ops_url }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="retry_failed_rows">
+              <button
+                type="submit"
+                class="btn btn-outline-danger btn-sm w-100"
+                {% if mailing_row_stats.error <= 0 %}disabled{% endif %}
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Возвращает error-строки аудитории обратно в «запланировано»."
+              >Повторить ошибочные строки ({{ mailing_row_stats.error }})</button>
+            </form>
+
+            <form method="post" action="{{ ops_url }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="requeue_in_progress_rows">
+              <button
+                type="submit"
+                class="btn btn-outline-secondary btn-sm w-100"
+                {% if mailing_row_stats.in_progress <= 0 %}disabled{% endif %}
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Возвращает зависшие «в обработке» строки обратно в «запланировано»."
+              >Вернуть зависшие строки в «запланировано» ({{ mailing_row_stats.in_progress }})</button>
+            </form>
+
+            <form method="post" action="{{ ops_url }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="retry_failed_dispatch">
+              <button
+                type="submit"
+                class="btn btn-outline-danger btn-sm w-100"
+                {% if dispatch_stats.failed <= 0 %}disabled{% endif %}
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Перезапускает dispatch-задачи со статусом «ошибка»."
+              >Повторить ошибочные dispatch-задачи ({{ dispatch_stats.failed }})</button>
+            </form>
+
+            <form method="post" action="{{ ops_url }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="dry_run_campaign">
+              <button
+                type="submit"
+                class="btn btn-outline-info btn-sm w-100"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Показывает готовность кампании к запуску без отправки сообщений."
+              >Проверка перед запуском (dry-run)</button>
+            </form>
+
+            <form method="post" action="{{ ops_url }}">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="run_now_campaign">
+              <button
+                type="submit"
+                class="btn btn-outline-primary btn-sm w-100"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Сразу запускает обработку готовых строк (в пределах лимита батчей)."
+              >Запустить сейчас (run-now)</button>
+            </form>
+          </div>
+
+          {% if mailing_ops_dry_run_report %}
+            <div class="alert alert-info small mt-3 mb-0">
+              <b>Отчет dry-run</b><br>
+              Готовых строк: <b>{{ mailing_ops_dry_run_report.ready_rows }}</b>,
+              доступных для отправки: <b>{{ mailing_ops_dry_run_report.ready_rows_with_targets }}</b>,
+              заблокированных: <b>{{ mailing_ops_dry_run_report.ready_rows_without_targets }}</b><br>
+              Активных ботов: <b>{{ mailing_ops_dry_run_report.selected_bots_active }}/{{ mailing_ops_dry_run_report.selected_bots_total }}</b>,
+              окно кампании открыто: <b>{{ mailing_ops_dry_run_report.schedule_window_open }}</b>,
+              окно отправки открыто: <b>{{ mailing_ops_dry_run_report.send_window_open }}</b>
+            </div>
+          {% endif %}
+
+          {% if mailing_ops_run_now_report %}
+            <div class="alert alert-secondary small mt-3 mb-0">
+              <b>Отчет run-now</b><br>
+              Обработано строк: <b>{{ mailing_ops_run_now_report.processed_rows_total }}</b>,
+              батчей: <b>{{ mailing_ops_run_now_report.processed_batches }}</b> (max={{ mailing_ops_run_now_report.max_batches }})<br>
+              Готово до запуска: <b>{{ mailing_ops_run_now_report.ready_rows_before }}</b>,
+              готово после запуска: <b>{{ mailing_ops_run_now_report.ready_rows_after }}</b>,
+              достигнут лимит батчей: <b>{{ mailing_ops_run_now_report.reached_batch_limit }}</b>
+            </div>
+          {% endif %}
+
+          <div class="d-flex gap-2 mt-3">
+            <a class="btn btn-outline-secondary btn-sm" href="{{ legacy_logs_url }}">Старые логи</a>
+            <a class="btn btn-outline-secondary btn-sm" href="{{ legacy_logs_txt_url }}">Скачать лог txt</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const nodes = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+  if (!nodes.length) return;
+  if (!window.bootstrap || !window.bootstrap.Tooltip) return;
+  nodes.forEach((node) => {
+    if (!window.bootstrap.Tooltip.getInstance(node)) {
+      new window.bootstrap.Tooltip(node);
+    }
+  });
+})();
+</script>
+{% endblock %}

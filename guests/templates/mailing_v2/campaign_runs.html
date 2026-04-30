@@ -10,16 +10,10 @@
       <p class="text-muted mb-0">{{ mailing.name }}</p>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Назад к кампании</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_audience' mailing.id %}">Аудитория</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_jobs' mailing.id %}">Задания</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_errors' mailing.id %}">Ошибки</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns_logs' mailing.id %}">Логи</a>
-      <a class="btn btn-outline-secondary" href="{% url 'mailing_logs' mailing.id %}">Старые логи</a>
+      <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">К списку рассылок</a>
     </div>
   </div>
   {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}
-  {% include "mailing_v2/_campaign_wizard.html" with wizard_state=wizard_state %}
 
   <form method="get" class="card border-0 shadow-sm mb-3">
     <div class="card-body">

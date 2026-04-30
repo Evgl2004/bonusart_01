@@ -212,43 +212,29 @@ class _MailingsV2CampaignFormMixin:
 
         if mailing and mailing.pk:
             context["guests_count"] = mailing.guests_rows.count()
-            context["campaign_active_tab"] = "overview"
+            context["campaign_active_tab"] = "params"
+            context["status_url"] = reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.pk})
             context["legacy_edit_url"] = reverse("mailing_edit", kwargs={"pk": mailing.pk})
             context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
             context["runs_url"] = reverse("mailings_v2_campaigns_runs", kwargs={"pk": mailing.pk})
             context["ops_url"] = reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.pk})
-            context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
-            context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
-            context["mailing_ops_dry_run_report"] = self.request.session.pop("mailing_ops_dry_run_report", None)
-            context["mailing_ops_run_now_report"] = self.request.session.pop("mailing_ops_run_now_report", None)
             snapshot = _get_workbench_snapshot(self.request, mailing.pk)
             context["workbench_snapshot"] = snapshot
             context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
             context["mailing_row_stats"] = _build_mailing_row_stats(mailing)
             context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
-            context["wizard_state"] = _build_campaign_wizard_state(
-                mailing=mailing,
-                active_tab=context["campaign_active_tab"],
-            )
         else:
             context["guests_count"] = 0
             context["campaign_active_tab"] = ""
+            context["status_url"] = ""
             context["legacy_edit_url"] = ""
             context["audience_url"] = ""
             context["runs_url"] = ""
             context["ops_url"] = ""
-            context["mailing_import_report"] = None
-            context["mailing_import_error"] = None
-            context["mailing_ops_dry_run_report"] = None
-            context["mailing_ops_run_now_report"] = None
             context["workbench_snapshot"] = None
             context["workbench_snapshot_url"] = ""
             context["mailing_row_stats"] = _empty_mailing_row_stats()
             context["dispatch_stats"] = _empty_dispatch_stats()
-            context["wizard_state"] = _build_campaign_wizard_state(
-                mailing=None,
-                active_tab="overview",
-            )
         return context
 
 
@@ -305,6 +291,40 @@ class MailingsV2CampaignUpdateView(_MailingsV2CampaignFormMixin, UpdateView):
         return redirect("mailings_v2_campaigns_edit", pk=self.object.pk)
 
 
+class MailingsV2CampaignStatusView(TemplateView):
+    """
+    Экран статуса и операционного управления кампанией.
+
+    Сводит в одном месте:
+    1. ключевые счётчики аудитории и dispatch;
+    2. переходы к операционным экранам;
+    3. управляющие действия (запуск/пауза/retry/dry-run/run-now).
+    """
+
+    template_name = "mailing_v2/campaign_status.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        mailing = get_object_or_404(Mailing, pk=self.kwargs["pk"])
+        context["mailing"] = mailing
+        context["v2_list_url"] = reverse("mailings_v2_campaigns")
+        context["campaign_active_tab"] = "status"
+        context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
+        context["runs_url"] = reverse("mailings_v2_campaigns_runs", kwargs={"pk": mailing.pk})
+        context["jobs_url"] = reverse("mailings_v2_campaigns_jobs", kwargs={"pk": mailing.pk})
+        context["errors_url"] = reverse("mailings_v2_campaigns_errors", kwargs={"pk": mailing.pk})
+        context["logs_url"] = reverse("mailings_v2_campaigns_logs", kwargs={"pk": mailing.pk})
+        context["ops_url"] = reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.pk})
+        context["legacy_logs_url"] = reverse("mailing_logs", kwargs={"pk": mailing.pk})
+        context["legacy_logs_txt_url"] = reverse("mailing_logs_txt", kwargs={"pk": mailing.pk})
+        context["guests_count"] = mailing.guests_rows.count()
+        context["mailing_row_stats"] = _build_mailing_row_stats(mailing)
+        context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
+        context["mailing_ops_dry_run_report"] = self.request.session.pop("mailing_ops_dry_run_report", None)
+        context["mailing_ops_run_now_report"] = self.request.session.pop("mailing_ops_run_now_report", None)
+        return context
+
+
 class MailingsV2CampaignOpsView(View):
     """
     Операционные POST-действия для кампании в mailings-v2.
@@ -332,7 +352,7 @@ class MailingsV2CampaignOpsView(View):
         mailing = get_object_or_404(Mailing, pk=kwargs["pk"])
         action = (request.POST.get("action") or "").strip()
         list_url = reverse("mailings_v2_campaigns")
-        edit_url = reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.pk})
+        status_url = reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.pk})
 
         if mailing.is_archived and action in {
             "toggle_active",
@@ -343,7 +363,7 @@ class MailingsV2CampaignOpsView(View):
             "run_now_campaign",
         }:
             messages.error(request, "Архивная кампания недоступна для операционных действий.")
-            return redirect(self._resolve_next_url(request, edit_url))
+            return redirect(self._resolve_next_url(request, status_url))
 
         if action == "toggle_active":
             mailing.is_active = not bool(mailing.is_active)
@@ -354,7 +374,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Кампания #{mailing.id} запущена.")
             else:
                 messages.success(request, f"Кампания #{mailing.id} поставлена на паузу.")
-            return redirect(self._resolve_next_url(request, edit_url))
+            return redirect(self._resolve_next_url(request, status_url))
 
         if action == "retry_failed_rows":
             updated = MailingGuest.objects.filter(
@@ -370,7 +390,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Возвращено в planned строк: {updated}.")
             else:
                 messages.info(request, "Строк со статусом error не найдено.")
-            return redirect(self._resolve_next_url(request, edit_url))
+            return redirect(self._resolve_next_url(request, status_url))
 
         if action == "requeue_in_progress_rows":
             updated = MailingGuest.objects.filter(
@@ -384,7 +404,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Возвращено из in_progress в planned строк: {updated}.")
             else:
                 messages.info(request, "Зависших строк in_progress не найдено.")
-            return redirect(self._resolve_next_url(request, edit_url))
+            return redirect(self._resolve_next_url(request, status_url))
 
         if action == "retry_failed_dispatch":
             now = timezone.now()
@@ -406,7 +426,7 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(request, f"Dispatch-задач переведено в pending: {updated}.")
             else:
                 messages.info(request, "Dispatch-задач со статусом failed не найдено.")
-            return redirect(self._resolve_next_url(request, edit_url))
+            return redirect(self._resolve_next_url(request, status_url))
 
         if action == "dry_run_campaign":
             report = _build_mailing_dry_run_report(mailing=mailing, now=timezone.now())
@@ -420,7 +440,7 @@ class MailingsV2CampaignOpsView(View):
                     f"blocked={report['ready_rows_without_targets']}."
                 ),
             )
-            return redirect(self._resolve_next_url(request, edit_url))
+            return redirect(self._resolve_next_url(request, status_url))
 
         if action == "run_now_campaign":
             report = _run_mailing_now(
@@ -450,7 +470,7 @@ class MailingsV2CampaignOpsView(View):
                         f"ready={report['ready_rows_before']})."
                     ),
                 )
-            return redirect(self._resolve_next_url(request, edit_url))
+            return redirect(self._resolve_next_url(request, status_url))
 
         if action == "archive_campaign":
             if mailing.is_archived:
@@ -520,7 +540,7 @@ class MailingsV2CampaignOpsView(View):
             return redirect("mailings_v2_campaigns_edit", pk=duplicate.pk)
 
         messages.error(request, "Неизвестное действие кампании.")
-        return redirect(self._resolve_next_url(request, edit_url))
+        return redirect(self._resolve_next_url(request, status_url))
 
 
 class MailingsV2CampaignAudienceView(TemplateView):
@@ -549,14 +569,12 @@ class MailingsV2CampaignAudienceView(TemplateView):
             done=Count("id", filter=Q(status=MailingGuest.Status.DONE)),
             error=Count("id", filter=Q(status=MailingGuest.Status.ERROR)),
         )
+        context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
+        context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
         snapshot = _get_workbench_snapshot(self.request, mailing.pk)
         context["workbench_snapshot"] = snapshot
         context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
         context["campaign_active_tab"] = "audience"
-        context["wizard_state"] = _build_campaign_wizard_state(
-            mailing=mailing,
-            active_tab=context["campaign_active_tab"],
-        )
         return context
 
 
@@ -646,10 +664,6 @@ class MailingsV2CampaignRunsView(TemplateView):
         context["selected_provider_type"] = selected_provider_type
         context["query"] = query
         context["campaign_active_tab"] = "runs"
-        context["wizard_state"] = _build_campaign_wizard_state(
-            mailing=mailing,
-            active_tab=context["campaign_active_tab"],
-        )
         return context
 
 
@@ -754,10 +768,6 @@ class MailingsV2CampaignJobsView(TemplateView):
         context["top_errors"] = top_errors
         context["delivery_feedback_rows"] = delivery_feedback_rows
         context["campaign_active_tab"] = "jobs"
-        context["wizard_state"] = _build_campaign_wizard_state(
-            mailing=mailing,
-            active_tab=context["campaign_active_tab"],
-        )
         return context
 
 
@@ -867,10 +877,6 @@ class MailingsV2CampaignErrorsView(TemplateView):
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
         context["campaign_active_tab"] = "errors"
-        context["wizard_state"] = _build_campaign_wizard_state(
-            mailing=mailing,
-            active_tab=context["campaign_active_tab"],
-        )
         return context
 
 
@@ -950,10 +956,6 @@ class MailingsV2CampaignLogsView(TemplateView):
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
         context["campaign_active_tab"] = "logs"
-        context["wizard_state"] = _build_campaign_wizard_state(
-            mailing=mailing,
-            active_tab=context["campaign_active_tab"],
-        )
         return context
 
 
@@ -1738,15 +1740,6 @@ def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
     3. настройка и запуск кампании;
     4. мониторинг результата и разбор проблем.
     """
-    rank_map = {
-        "workbench": 1,
-        "templates": 2,
-        "campaigns": 3,
-        "monitor": 4,
-        "scenarios": 4,
-    }
-    current_rank = int(rank_map.get(str(active_area or ""), 3))
-
     monitor_url = reverse("mailings_v2_monitor")
     scenarios_url = reverse("mailings_v2_scenarios")
     step4_url = scenarios_url if active_area == "scenarios" else monitor_url
@@ -1754,15 +1747,17 @@ def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
     steps = [
         {
             "number": 1,
-            "title": "Гипотеза в Workbench",
+            "title": "Гипотеза в рабочем экране гостей",
             "description": "Соберите сегмент и создайте черновик рассылки из отбора.",
+            "help": "Вы формируете бизнес-гипотезу в экране «Гости»: выбираете фильтры и сохраняете отбор в черновик рассылки.",
             "url": reverse("guests_workbench"),
-            "cta": "Открыть Workbench",
+            "cta": "Открыть экран «Гости»",
         },
         {
             "number": 2,
             "title": "Шаблон сообщения",
             "description": "Подготовьте текст и проверьте предпросмотр на реальном госте.",
+            "help": "На этом шаге создаётся или редактируется текст сообщения, а также проверяется итоговый вид сообщения для конкретного гостя.",
             "url": reverse("mailings_v2_templates"),
             "cta": "Открыть шаблоны",
             "secondary_url": reverse("mailings_v2_templates_new"),
@@ -1772,6 +1767,7 @@ def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
             "number": 3,
             "title": "Кампания и запуск",
             "description": "Проверьте аудиторию, выполните dry-run и запускайте кампанию.",
+            "help": "Здесь настраиваются параметры запуска, состав аудитории и операционные действия: dry-run, run-now, запуск/пауза и повторы.",
             "url": reverse("mailings_v2_campaigns_new"),
             "cta": "Создать кампанию",
         },
@@ -1779,33 +1775,14 @@ def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
             "number": 4,
             "title": "Мониторинг и обратная связь",
             "description": "Контролируйте dispatch, retry, ошибки и корректируйте следующий запуск.",
+            "help": "В мониторинге вы видите статусы доставки, ошибки и результаты отправок, чтобы улучшать следующий запуск.",
             "url": step4_url,
             "cta": "Открыть мониторинг",
         },
     ]
 
-    for step in steps:
-        number = int(step["number"])
-        if number < current_rank:
-            step["status"] = "done"
-        elif number == current_rank:
-            step["status"] = "current"
-        else:
-            step["status"] = "todo"
-
-    subtitle_map = {
-        "templates": "Сейчас вы на шаге подготовки контента. После шаблона переходите к запуску кампании.",
-        "campaigns": "Сейчас вы на шаге запуска. После старта контролируйте отработку на экране мониторинга.",
-        "monitor": "Сейчас вы на шаге контроля и обратной связи по отправкам.",
-        "scenarios": "Сейчас вы на шаге контроля автосценариев и их операционного запуска.",
-    }
-
     return {
         "title": "Маршрут маркетолога",
-        "subtitle": subtitle_map.get(
-            active_area,
-            "Единый сценарий: от гипотезы до запуска и операционного контроля.",
-        ),
         "steps": steps,
     }
 

@@ -3,7 +3,8 @@
     <div class="card-body py-2">
       <div class="d-flex flex-wrap align-items-center gap-2">
         <span class="small text-muted me-1">Каркас кампании:</span>
-        <a class="btn btn-sm {% if campaign_active_tab == 'overview' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Обзор</a>
+        <a class="btn btn-sm {% if campaign_active_tab == 'params' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_edit' mailing.id %}">Параметры</a>
+        <a class="btn btn-sm {% if campaign_active_tab == 'status' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_status' mailing.id %}">Статус</a>
         <a class="btn btn-sm {% if campaign_active_tab == 'audience' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_audience' mailing.id %}">Аудитория</a>
         <a class="btn btn-sm {% if campaign_active_tab == 'runs' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_runs' mailing.id %}">Запуски</a>
         <a class="btn btn-sm {% if campaign_active_tab == 'jobs' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_jobs' mailing.id %}">Задания</a>

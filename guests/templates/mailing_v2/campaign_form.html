@@ -13,6 +13,9 @@
     line-height: 1;
     padding: 0;
     font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .mail-label-row {
@@ -33,416 +36,230 @@
           Кампания #{{ object.id }}: {{ object.name }}
         {% endif %}
       </h1>
-      <p class="text-muted mb-0">
-        {% if is_create %}
-          Шаг 1/3: базовая настройка кампании.
-        {% else %}
-          Шаг 2/3: уточнение аудитории и операционный контроль.
-        {% endif %}
-      </p>
+      <p class="text-muted mb-0">Параметры запуска кампании.</p>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ v2_list_url }}">Назад к рассылкам</a>
-      {% if object and object.pk %}
-        <a class="btn btn-outline-secondary" href="{{ legacy_edit_url }}">Открыть старую форму</a>
-      {% endif %}
     </div>
   </div>
+
   {% if object and object.pk %}
     {% include "mailing_v2/_campaign_nav.html" with mailing=object campaign_active_tab=campaign_active_tab %}
   {% endif %}
-  {% include "mailing_v2/_campaign_wizard.html" with wizard_state=wizard_state %}
 
-  <div class="row g-3">
-    <div class="col-12 col-xl-8">
-      <div class="card border-0 shadow-sm">
-        <div class="card-body">
-          {% if form.non_field_errors %}
-            <div class="alert alert-danger">
-              {{ form.non_field_errors }}
-            </div>
+  <div class="card border-0 shadow-sm">
+    <div class="card-body">
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger">
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
+      <form method="post">
+        {% csrf_token %}
+
+        <div class="mb-3">
+          {{ form.name.label_tag }}
+          {{ form.name }}
+          {% if form.name.errors %}
+            <div class="text-danger small mt-1">{{ form.name.errors|join:", " }}</div>
           {% endif %}
-
-          <form method="post">
-            {% csrf_token %}
-
-            <div class="mb-3">
-              {{ form.name.label_tag }}
-              {{ form.name }}
-              {% if form.name.errors %}
-                <div class="text-danger small mt-1">{{ form.name.errors|join:", " }}</div>
-              {% endif %}
-            </div>
-
-            <div class="mb-3">
-              <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
-                <div class="mail-label-row mb-0">
-                  {{ form.template.label_tag }}
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary mail-help-btn"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Шаблон текста, который получит гость. Для ручных рассылок используйте свои шаблоны, а не системные."
-                  >?</button>
-                </div>
-                <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
-              </div>
-              {{ form.template }}
-              {% if only_system_templates_available %}
-                <small class="text-muted d-block mt-1">
-                  Доступны только системные шаблоны ({{ active_templates_count }} шт.). Рекомендуется создать отдельный пользовательский шаблон.
-                </small>
-              {% endif %}
-              {% if form.template.errors %}
-                <div class="text-danger small mt-1">{{ form.template.errors|join:", " }}</div>
-              {% endif %}
-            </div>
-
-            <div class="mb-3">
-              <div class="mail-label-row">
-                {{ form.scheduled_date.label_tag }}
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary mail-help-btn"
-                  data-bs-toggle="tooltip"
-                  data-bs-placement="top"
-                  title="Базовая дата рассылки для карточки кампании и учета. Обычно совпадает со стартом кампании."
-                >?</button>
-              </div>
-              {{ form.scheduled_date }}
-              {% if form.scheduled_date.errors %}
-                <div class="text-danger small mt-1">{{ form.scheduled_date.errors|join:", " }}</div>
-              {% endif %}
-            </div>
-
-            <div class="row">
-              <div class="col-md-6 mb-3">
-                <div class="mail-label-row">
-                  {{ form.scheduled_time_begin.label_tag }}
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary mail-help-btn"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Момент, начиная с которого кампания считается активной и может обрабатываться воркером."
-                  >?</button>
-                </div>
-                {{ form.scheduled_time_begin }}
-                {% if form.scheduled_time_begin.errors %}
-                  <div class="text-danger small mt-1">{{ form.scheduled_time_begin.errors|join:", " }}</div>
-                {% endif %}
-              </div>
-              <div class="col-md-6 mb-3">
-                <div class="mail-label-row">
-                  {{ form.scheduled_time_end.label_tag }}
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary mail-help-btn"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Момент окончания активности кампании. После него кампания не берется в обработку."
-                  >?</button>
-                </div>
-                {{ form.scheduled_time_end }}
-                {% if form.scheduled_time_end.errors %}
-                  <div class="text-danger small mt-1">{{ form.scheduled_time_end.errors|join:", " }}</div>
-                {% endif %}
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col-md-6 mb-3">
-                <div class="mail-label-row">
-                  {{ form.send_window_begin.label_tag }}
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary mail-help-btn"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Ежедневное время, с которого разрешена отправка внутри периода кампании."
-                  >?</button>
-                </div>
-                {{ form.send_window_begin }}
-                {% if form.send_window_begin.errors %}
-                  <div class="text-danger small mt-1">{{ form.send_window_begin.errors|join:", " }}</div>
-                {% endif %}
-              </div>
-              <div class="col-md-6 mb-3">
-                <div class="mail-label-row">
-                  {{ form.send_window_end.label_tag }}
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary mail-help-btn"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Ежедневное время, до которого разрешена отправка. Вне окна сообщения не ставятся в очередь."
-                  >?</button>
-                </div>
-                {{ form.send_window_end }}
-                {% if form.send_window_end.errors %}
-                  <div class="text-danger small mt-1">{{ form.send_window_end.errors|join:", " }}</div>
-                {% endif %}
-              </div>
-            </div>
-
-            <div class="row">
-              <div class="col-md-6 mb-3">
-                <div class="mail-label-row">
-                  {{ form.target_mode.label_tag }}
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary mail-help-btn"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Как выбирать чат-цели гостя: только основной бот или все активные привязки."
-                  >?</button>
-                </div>
-                {{ form.target_mode }}
-                {% if form.target_mode.errors %}
-                  <div class="text-danger small mt-1">{{ form.target_mode.errors|join:", " }}</div>
-                {% endif %}
-              </div>
-              <div class="col-md-6 mb-3">
-                <div class="mail-label-row">
-                  {{ form.queue_priority.label_tag }}
-                  <button
-                    type="button"
-                    class="btn btn-outline-secondary mail-help-btn"
-                    data-bs-toggle="tooltip"
-                    data-bs-placement="top"
-                    title="Приоритет задач в универсальной очереди: высокий, обычный или массовый."
-                  >?</button>
-                </div>
-                {{ form.queue_priority }}
-                {% if form.queue_priority.errors %}
-                  <div class="text-danger small mt-1">{{ form.queue_priority.errors|join:", " }}</div>
-                {% endif %}
-              </div>
-            </div>
-
-            <div class="mb-3">
-              <div class="mail-label-row">
-                {{ form.bot_profiles.label_tag }}
-                <button
-                  type="button"
-                  class="btn btn-outline-secondary mail-help-btn"
-                  data-bs-toggle="tooltip"
-                  data-bs-placement="top"
-                  title="Через какие активные профили ботов отправлять сообщения этой кампании."
-                >?</button>
-              </div>
-              <div class="border rounded p-3">
-                {{ form.bot_profiles }}
-              </div>
-              {% if has_active_bot_profiles %}
-                <small class="text-muted">
-                  Выберите конкретных активных ботов, через которых должна идти эта рассылка.
-                </small>
-              {% else %}
-                <small class="text-danger d-block">
-                  Нет активных ботов для рассылки. Добавьте и активируйте профиль бота в
-                  <a href="{{ bot_profiles_admin_url }}">админке</a>, затем обновите страницу.
-                </small>
-              {% endif %}
-              {% if form.bot_profiles.errors %}
-                <div class="text-danger small mt-1">{{ form.bot_profiles.errors|join:", " }}</div>
-              {% endif %}
-            </div>
-
-            <button type="submit" class="btn btn-primary">
-              {% if is_create %}Создать кампанию{% else %}Сохранить изменения{% endif %}
-            </button>
-          </form>
         </div>
-      </div>
-    </div>
 
-    <div class="col-12 col-xl-4">
-      <div class="card border-0 shadow-sm mb-3">
-        <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Статус кампании</h2>
+        <div class="mb-3">
+          <div class="d-flex justify-content-between align-items-center gap-2 mb-1">
+            <div class="mail-label-row mb-0">
+              {{ form.template.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Шаблон текста, который получит гость. Для ручных рассылок используйте свои шаблоны, а не системные."
+              >?</button>
+            </div>
+            <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
+          </div>
+          {{ form.template }}
+          {% if only_system_templates_available %}
+            <small class="text-muted d-block mt-1">
+              Доступны только системные шаблоны ({{ active_templates_count }} шт.). Рекомендуется создать отдельный пользовательский шаблон.
+            </small>
+          {% endif %}
+          {% if form.template.errors %}
+            <div class="text-danger small mt-1">{{ form.template.errors|join:", " }}</div>
+          {% endif %}
         </div>
-        <div class="card-body">
-          {% if object and object.pk %}
-            <div class="mb-2">ID: <b>{{ object.id }}</b></div>
-            <div class="mb-2">Активность:
-              {% if object.is_active %}
-                <span class="badge text-bg-success">включена</span>
-              {% else %}
-                <span class="badge text-bg-secondary">выключена</span>
-              {% endif %}
-            </div>
-            <div class="mb-2">Получателей: <b>{{ guests_count }}</b></div>
-            <div class="small text-muted mt-3 mb-1">Строки аудитории</div>
-            <div class="small mb-2">
-              planned: <b>{{ mailing_row_stats.planned }}</b> |
-              in_progress: <b>{{ mailing_row_stats.in_progress }}</b> |
-              done: <b>{{ mailing_row_stats.done }}</b> |
-              error: <b>{{ mailing_row_stats.error }}</b>
-            </div>
-            <div class="small text-muted mb-1">Dispatch задачи</div>
-            <div class="small mb-3">
-              pending: <b>{{ dispatch_stats.pending }}</b> |
-              queued: <b>{{ dispatch_stats.queued }}</b> |
-              in_progress: <b>{{ dispatch_stats.in_progress }}</b> |
-              failed: <b>{{ dispatch_stats.failed }}</b>
-            </div>
-            <div class="d-grid gap-2 mt-3">
-              <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Проверить аудиторию</a>
-              <a class="btn btn-outline-primary btn-sm" href="{{ runs_url }}">Запуски и история</a>
-              <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_jobs' object.id %}">Задания отправки</a>
-              <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_errors' object.id %}">Ошибки кампании</a>
-              <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_campaigns_logs' object.id %}">Логи кампании</a>
-              <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs' object.id %}">Логи отправки</a>
-              <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_logs_txt' object.id %}">Скачать лог txt</a>
-            </div>
-            <hr>
-            <div class="d-grid gap-2">
-              <form method="post" action="{{ ops_url }}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="toggle_active">
-                {% if object.is_active %}
-                  <button type="submit" class="btn btn-warning btn-sm w-100">Поставить на паузу</button>
-                {% else %}
-                  <button type="submit" class="btn btn-success btn-sm w-100">Запустить кампанию</button>
-                {% endif %}
-              </form>
-              <form method="post" action="{{ ops_url }}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="retry_failed_rows">
-                <button type="submit" class="btn btn-outline-danger btn-sm w-100" {% if mailing_row_stats.error <= 0 %}disabled{% endif %}>
-                  Повторить error-строки ({{ mailing_row_stats.error }})
-                </button>
-              </form>
-              <form method="post" action="{{ ops_url }}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="requeue_in_progress_rows">
-                <button type="submit" class="btn btn-outline-secondary btn-sm w-100" {% if mailing_row_stats.in_progress <= 0 %}disabled{% endif %}>
-                  Вернуть in_progress в planned ({{ mailing_row_stats.in_progress }})
-                </button>
-              </form>
-              <form method="post" action="{{ ops_url }}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="retry_failed_dispatch">
-                <button type="submit" class="btn btn-outline-danger btn-sm w-100" {% if dispatch_stats.failed <= 0 %}disabled{% endif %}>
-                  Повторить ошибочные dispatch-задачи ({{ dispatch_stats.failed }})
-                </button>
-              </form>
-              <form method="post" action="{{ ops_url }}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="dry_run_campaign">
-                <button type="submit" class="btn btn-outline-info btn-sm w-100">
-                  Проверка перед запуском (dry-run)
-                </button>
-              </form>
-              <form method="post" action="{{ ops_url }}">
-                {% csrf_token %}
-                <input type="hidden" name="action" value="run_now_campaign">
-                <button type="submit" class="btn btn-outline-primary btn-sm w-100">
-                  Запустить сейчас (run-now)
-                </button>
-              </form>
-            </div>
 
-            {% if mailing_ops_dry_run_report %}
-              <div class="alert alert-info small mt-3 mb-0">
-                <b>Dry-run отчёт</b><br>
-                ready: <b>{{ mailing_ops_dry_run_report.ready_rows }}</b>,
-                targetable: <b>{{ mailing_ops_dry_run_report.ready_rows_with_targets }}</b>,
-                blocked: <b>{{ mailing_ops_dry_run_report.ready_rows_without_targets }}</b><br>
-                bots(active/total): <b>{{ mailing_ops_dry_run_report.selected_bots_active }}/{{ mailing_ops_dry_run_report.selected_bots_total }}</b>,
-                schedule_open: <b>{{ mailing_ops_dry_run_report.schedule_window_open }}</b>,
-                send_open: <b>{{ mailing_ops_dry_run_report.send_window_open }}</b>
-              </div>
-            {% endif %}
+        <div class="mb-3">
+          <div class="mail-label-row">
+            {{ form.scheduled_date.label_tag }}
+            <button
+              type="button"
+              class="btn btn-outline-secondary mail-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Базовая дата рассылки для карточки кампании и учета. Обычно совпадает со стартом кампании."
+            >?</button>
+          </div>
+          {{ form.scheduled_date }}
+          {% if form.scheduled_date.errors %}
+            <div class="text-danger small mt-1">{{ form.scheduled_date.errors|join:", " }}</div>
+          {% endif %}
+        </div>
 
-            {% if mailing_ops_run_now_report %}
-              <div class="alert alert-secondary small mt-3 mb-0">
-                <b>Run-now отчёт</b><br>
-                processed_rows: <b>{{ mailing_ops_run_now_report.processed_rows_total }}</b>,
-                batches: <b>{{ mailing_ops_run_now_report.processed_batches }}</b> (max={{ mailing_ops_run_now_report.max_batches }})<br>
-                ready_before: <b>{{ mailing_ops_run_now_report.ready_rows_before }}</b>,
-                ready_after: <b>{{ mailing_ops_run_now_report.ready_rows_after }}</b>,
-                reached_limit: <b>{{ mailing_ops_run_now_report.reached_batch_limit }}</b>
-              </div>
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.scheduled_time_begin.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Момент, начиная с которого кампания считается активной и может обрабатываться воркером."
+              >?</button>
+            </div>
+            {{ form.scheduled_time_begin }}
+            {% if form.scheduled_time_begin.errors %}
+              <div class="text-danger small mt-1">{{ form.scheduled_time_begin.errors|join:", " }}</div>
             {% endif %}
+          </div>
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.scheduled_time_end.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Момент окончания активности кампании. После него кампания не берется в обработку."
+              >?</button>
+            </div>
+            {{ form.scheduled_time_end }}
+            {% if form.scheduled_time_end.errors %}
+              <div class="text-danger small mt-1">{{ form.scheduled_time_end.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.send_window_begin.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Ежедневное время, с которого разрешена отправка внутри периода кампании."
+              >?</button>
+            </div>
+            {{ form.send_window_begin }}
+            {% if form.send_window_begin.errors %}
+              <div class="text-danger small mt-1">{{ form.send_window_begin.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.send_window_end.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Ежедневное время, до которого разрешена отправка. Вне окна сообщения не ставятся в очередь."
+              >?</button>
+            </div>
+            {{ form.send_window_end }}
+            {% if form.send_window_end.errors %}
+              <div class="text-danger small mt-1">{{ form.send_window_end.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.target_mode.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Как выбирать чат-цели гостя: только основной бот или все активные привязки."
+              >?</button>
+            </div>
+            {{ form.target_mode }}
+            {% if form.target_mode.errors %}
+              <div class="text-danger small mt-1">{{ form.target_mode.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.queue_priority.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Приоритет задач в универсальной очереди: высокий, обычный или массовый."
+              >?</button>
+            </div>
+            {{ form.queue_priority }}
+            {% if form.queue_priority.errors %}
+              <div class="text-danger small mt-1">{{ form.queue_priority.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <div class="mail-label-row">
+            {{ form.bot_profiles.label_tag }}
+            <button
+              type="button"
+              class="btn btn-outline-secondary mail-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Через какие активные профили ботов отправлять сообщения этой кампании."
+            >?</button>
+          </div>
+          <div class="border rounded p-3">
+            {{ form.bot_profiles }}
+          </div>
+          {% if has_active_bot_profiles %}
+            <small class="text-muted">
+              Выберите конкретных активных ботов, через которых должна идти эта рассылка.
+            </small>
           {% else %}
-            <p class="text-muted mb-0">После создания кампании здесь появится сводка по получателям и статусам.</p>
+            <small class="text-danger d-block">
+              Нет активных ботов для рассылки. Добавьте и активируйте профиль бота в
+              <a href="{{ bot_profiles_admin_url }}">админке</a>, затем обновите страницу.
+            </small>
+          {% endif %}
+          {% if form.bot_profiles.errors %}
+            <div class="text-danger small mt-1">{{ form.bot_profiles.errors|join:", " }}</div>
           {% endif %}
         </div>
-      </div>
 
-      {% if object and object.pk and workbench_snapshot %}
-        <div class="card border-0 shadow-sm mb-3">
-          <div class="card-header bg-white">
-            <h2 class="h6 mb-0">Источник аудитории: Workbench</h2>
-          </div>
-          <div class="card-body">
-            <div class="small text-muted mb-2">Снимок отбора сохранён при создании черновика.</div>
-            <div class="d-flex flex-wrap gap-2 mb-3">
-              {% if workbench_snapshot.as_of_date %}<span class="badge text-bg-light border">Срез: {{ workbench_snapshot.as_of_date }}</span>{% endif %}
-              {% if workbench_snapshot.window_days %}<span class="badge text-bg-light border">Окно: {{ workbench_snapshot.window_days }} дн</span>{% endif %}
-              {% if workbench_snapshot.department_id %}<span class="badge text-bg-light border">Заведение: {{ workbench_snapshot.department_id }}</span>{% endif %}
-              {% if workbench_snapshot.segment_code %}<span class="badge text-bg-light border">Сегмент: {{ workbench_snapshot.segment_code }}</span>{% endif %}
-              {% if workbench_snapshot.focus_category_code %}<span class="badge text-bg-light border">Категория: {{ workbench_snapshot.focus_category_code }}</span>{% endif %}
-              {% if workbench_snapshot.source_layer %}<span class="badge text-bg-light border">Слой: {{ workbench_snapshot.source_layer }}</span>{% endif %}
-            </div>
-            <div class="small mb-2">
-              В выборке: <b>{{ workbench_snapshot.selected_total }}</b>,
-              в черновик перенесено: <b>{{ workbench_snapshot.selected_rows_count }}</b>.
-            </div>
-            <div class="small mb-3">
-              Сложных условий: <b>{{ workbench_snapshot.complex_filters|length }}</b>
-            </div>
-            <div class="d-grid">
-              <a class="btn btn-outline-primary btn-sm" href="{{ workbench_snapshot_url }}">Открыть Workbench с этими фильтрами</a>
-            </div>
-          </div>
-        </div>
-      {% endif %}
-
-      {% if object and object.id %}
-        <div class="card border-0 shadow-sm">
-          <div class="card-header bg-white d-flex justify-content-between align-items-center">
-            <h2 class="h6 mb-0">Импорт телефонов</h2>
-            <a class="btn btn-outline-secondary btn-sm" href="{% url 'mailing_import_template' %}">Шаблон Excel</a>
-          </div>
-          <div class="card-body">
-            {% if mailing_import_error %}
-              <div class="alert alert-danger">{{ mailing_import_error }}</div>
-            {% endif %}
-
-            <form method="post" action="{% url 'mailing_import_phones' object.id %}" enctype="multipart/form-data">
-              {% csrf_token %}
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <input type="file" name="file" accept=".xlsx" class="form-control" required>
-              <button class="btn btn-primary mt-2" type="submit">Импортировать</button>
-            </form>
-
-            {% if mailing_import_report %}
-              <div class="alert alert-info mt-3 mb-0">
-                <b>Отчет импорта</b><br>
-                Загружено строк: {{ mailing_import_report.total_loaded }}<br>
-                Уникальных телефонов: {{ mailing_import_report.unique_phones }}<br>
-                Найдено гостей в базе: {{ mailing_import_report.found }}<br>
-                Добавлено в кампанию: <b>{{ mailing_import_report.added }}</b><br>
-                Уже были в кампании: {{ mailing_import_report.already }}<br>
-                Не найдено в базе: {{ mailing_import_report.not_found }}<br>
-              </div>
-            {% endif %}
-          </div>
-        </div>
-      {% endif %}
+        <button type="submit" class="btn btn-primary">
+          {% if is_create %}Создать кампанию{% else %}Сохранить изменения{% endif %}
+        </button>
+      </form>
     </div>
   </div>
 </div>
+
 <script>
 (function () {
   const nodes = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
   if (!nodes.length) return;
   if (!window.bootstrap || !window.bootstrap.Tooltip) return;
-  nodes.forEach((node) => new window.bootstrap.Tooltip(node));
+  nodes.forEach((node) => {
+    if (!window.bootstrap.Tooltip.getInstance(node)) {
+      new window.bootstrap.Tooltip(node);
+    }
+  });
 })();
 </script>
 {% endblock %}
