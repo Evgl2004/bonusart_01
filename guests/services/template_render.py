@@ -47,8 +47,18 @@ def render_message_for_guest(message_text, guest, extra_context: dict[str, Any] 
         for key, value in context.items()
     }
 
-    first_name_value = str(normalized_context.get("first_name") or "").strip()
-    normalized_context["first_name"] = first_name_value or "гость"
+    text_fallbacks = {
+        "first_name": "гость",
+        "last_name": "гость",
+        "phone": "телефон не указан",
+        "email": "email не указан",
+        "birthdate": "дата рождения не указана",
+        "age": "возраст не указан",
+        "days_without_visits": "нет данных",
+    }
+    for key, fallback_value in text_fallbacks.items():
+        current_value = str(normalized_context.get(key) or "").strip()
+        normalized_context[key] = current_value or fallback_value
 
     # Почтовые/рассылочные шаблоны часто используют эти переменные.
     # Заполняем безопасные значения, чтобы в сообщениях не оставались "сырые" маркеры.
@@ -59,12 +69,8 @@ def render_message_for_guest(message_text, guest, extra_context: dict[str, Any] 
     ).strip()
     if not coupon_value:
         coupon_value = "купон отсутствует"
-    normalized_context.setdefault("coupon_code", coupon_value)
-    normalized_context.setdefault("courpon_code", coupon_value)
-    normalized_context.setdefault(
-        "days_without_visits",
-        normalized_context.get("days_without_visits") or "",
-    )
+    normalized_context["coupon_code"] = coupon_value
+    normalized_context["courpon_code"] = coupon_value
 
     django_rendered = Template(message_text).render(Context(normalized_context))
 

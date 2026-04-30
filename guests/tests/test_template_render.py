@@ -59,3 +59,32 @@ class TemplateRenderTests(TestCase):
         rendered = render_message_for_guest(message, guest_without_name, {})
         self.assertIn("Привет, гость!", rendered)
         self.assertIn("Купон: купон отсутствует", rendered)
+
+    def test_render_fallbacks_for_other_key_variables(self):
+        """
+        Для ключевых переменных шаблона должны применяться заглушки при пустых значениях.
+        """
+        guest_without_profile = Guest.objects.create(
+            phone="",
+            first_name="",
+            last_name="",
+            email="",
+            birthdate=None,
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        message = (
+            "Имя: {{ first_name }}; Фамилия: {{ last_name }}; "
+            "Телефон: {{ phone }}; Email: {{ email }}; "
+            "Дата: {{ birthdate }}; Возраст: {{ age }}; "
+            "Без визитов: {days_without_visits}; Купон: {coupon_code}"
+        )
+        rendered = render_message_for_guest(message, guest_without_profile, {})
+        self.assertIn("Имя: гость", rendered)
+        self.assertIn("Фамилия: гость", rendered)
+        self.assertIn("Телефон: телефон не указан", rendered)
+        self.assertIn("Email: email не указан", rendered)
+        self.assertIn("Дата: дата рождения не указана", rendered)
+        self.assertIn("Возраст: возраст не указан", rendered)
+        self.assertIn("Без визитов: нет данных", rendered)
+        self.assertIn("Купон: купон отсутствует", rendered)
