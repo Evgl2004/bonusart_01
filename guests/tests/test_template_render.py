@@ -43,3 +43,19 @@ class TemplateRenderTests(TestCase):
         self.assertIn("Здравствуйте, Илья!", rendered)
         self.assertIn("CPN-42", rendered)
         self.assertNotIn("{courpon_code}", rendered)
+
+    def test_render_fallbacks_for_empty_first_name_and_coupon_code(self):
+        """
+        Если имя гостя и код купона пустые, должны использоваться безопасные fallback-значения.
+        """
+        guest_without_name = Guest.objects.create(
+            phone="+79990000002",
+            first_name="",
+            last_name="",
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        message = "Привет, {{ first_name }}! Купон: {coupon_code}"
+        rendered = render_message_for_guest(message, guest_without_name, {})
+        self.assertIn("Привет, гость!", rendered)
+        self.assertIn("Купон: купон отсутствует", rendered)

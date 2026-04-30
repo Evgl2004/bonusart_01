@@ -47,13 +47,18 @@ def render_message_for_guest(message_text, guest, extra_context: dict[str, Any] 
         for key, value in context.items()
     }
 
+    first_name_value = str(normalized_context.get("first_name") or "").strip()
+    normalized_context["first_name"] = first_name_value or "гость"
+
     # Почтовые/рассылочные шаблоны часто используют эти переменные.
     # Заполняем безопасные значения, чтобы в сообщениях не оставались "сырые" маркеры.
     coupon_value = str(
         normalized_context.get("coupon_code")
         or normalized_context.get("courpon_code")  # legacy-опечатка в части шаблонов
         or ""
-    )
+    ).strip()
+    if not coupon_value:
+        coupon_value = "купон отсутствует"
     normalized_context.setdefault("coupon_code", coupon_value)
     normalized_context.setdefault("courpon_code", coupon_value)
     normalized_context.setdefault(
