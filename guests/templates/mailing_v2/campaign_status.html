@@ -79,13 +79,13 @@
 
   {% include "mailing_v2/_campaign_nav.html" with mailing=mailing campaign_active_tab=campaign_active_tab %}
 
-  <div class="card border-0 shadow-sm mb-3">
-    <div class="card-header bg-white">
-      <h2 class="h6 mb-0">Статус и управление кампанией</h2>
-    </div>
-    <div class="card-body">
-      <div class="row g-3">
-        <div class="col-12 col-xxl-5">
+  <div class="row g-3 align-items-stretch">
+    <div class="col-12 col-xxl-5 d-flex">
+      <div class="card border-0 shadow-sm w-100 h-100">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Статус кампании</h2>
+        </div>
+        <div class="card-body">
           <div class="mail-summary-chip mb-3">
             <div class="mb-1">ID: <b>{{ mailing.id }}</b></div>
             <div class="mb-1">
@@ -111,9 +111,15 @@
           <div class="mail-status-row"><span>В обработке</span><b>{{ dispatch_stats.in_progress }}</b></div>
           <div class="mail-status-row"><span>Завершились с ошибкой</span><b>{{ dispatch_stats.failed }}</b></div>
         </div>
+      </div>
+    </div>
 
-        <div class="col-12 col-xxl-7">
-          <div class="mail-section-title">Операции кампании</div>
+    <div class="col-12 col-xxl-7 d-flex">
+      <div class="card border-0 shadow-sm w-100 h-100">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Управление кампанией</h2>
+        </div>
+        <div class="card-body">
           <div class="mail-action-list">
             <div class="mail-action-row">
               <div class="mail-action-desc">Переключает активность кампании: запуск или пауза обработки.</div>
