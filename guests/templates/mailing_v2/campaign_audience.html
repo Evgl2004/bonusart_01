@@ -132,9 +132,9 @@
                 <td>{{ row.id }}</td>
                 <td>{{ row.phone|default:"—" }}</td>
                 <td>{{ row.email|default:"—" }}</td>
-                <td>{{ row.status }}</td>
+                <td>{{ row.status_label }}</td>
                 <td>{{ row.scheduled_datetime|date:"Y-m-d H:i" }}</td>
-                <td>{{ row.delivery_status|default:"—" }}</td>
+                <td>{{ row.delivery_status_label }}</td>
                 <td>{{ row.error_description|default:"—" }}</td>
               </tr>
             {% empty %}

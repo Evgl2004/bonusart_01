@@ -51,16 +51,4 @@
       </div>
     </div>
   </div>
-  <script>
-  (function () {
-    const nodes = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
-    if (!nodes.length) return;
-    if (!window.bootstrap || !window.bootstrap.Tooltip) return;
-    nodes.forEach((node) => {
-      if (!window.bootstrap.Tooltip.getInstance(node)) {
-        new window.bootstrap.Tooltip(node);
-      }
-    });
-  })();
-  </script>
 {% endif %}

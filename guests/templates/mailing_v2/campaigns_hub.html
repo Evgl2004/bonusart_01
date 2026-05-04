@@ -204,3 +204,17 @@
   </div>
 </div>
 {% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  if (!window.bootstrap || !window.bootstrap.Tooltip) return;
+  const nodes = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+  nodes.forEach((node) => {
+    if (!window.bootstrap.Tooltip.getInstance(node)) {
+      new window.bootstrap.Tooltip(node);
+    }
+  });
+})();
+</script>
+{% endblock %}

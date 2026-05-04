@@ -560,8 +560,12 @@ class MailingsV2CampaignAudienceView(TemplateView):
             .select_related("guest")
             .order_by("-id")
         )
+        rows = list(rows_qs[:300])
+        for row in rows:
+            row.status_label = _localize_mailing_row_status(row.status)
+            row.delivery_status_label = _localize_delivery_status(row.delivery_status)
         context["mailing"] = mailing
-        context["rows"] = rows_qs[:300]
+        context["rows"] = rows
         context["stats"] = rows_qs.aggregate(
             total=Count("id"),
             planned=Count("id", filter=Q(status=MailingGuest.Status.PLANNED)),
@@ -2047,6 +2051,46 @@ def _build_campaign_wizard_state(*, mailing: Mailing | None, active_tab: str) ->
         "cta_url": cta_url,
         "steps": steps,
     }
+
+
+_MAILING_ROW_STATUS_LABELS_RU: dict[str, str] = {
+    MailingGuest.Status.PLANNED: "запланировано",
+    MailingGuest.Status.IN_PROGRESS: "в обработке",
+    MailingGuest.Status.DONE: "успешно",
+    MailingGuest.Status.ERROR: "ошибка",
+}
+
+_DELIVERY_STATUS_LABELS_RU: dict[str, str] = {
+    "pending": "ожидает",
+    "queued": "в очереди",
+    "in_progress": "в обработке",
+    "done": "доставлено",
+    "success": "доставлено",
+    "delivered": "доставлено",
+    "failed": "ошибка",
+    "error": "ошибка",
+    "dispatch_no_targets": "нет целей отправки",
+    "dispatch_no_bot_profiles": "нет активных ботов",
+    "dispatch_enqueue_error": "ошибка постановки в очередь",
+    "dispatch_enqueue_exception": "исключение при постановке в очередь",
+    "retry_requested": "запрошен повтор",
+    "requeued_from_ui": "повторно поставлено из UI",
+    "duplicated_from_campaign": "скопировано из исходной кампании",
+}
+
+
+def _localize_mailing_row_status(value: str | None) -> str:
+    status = (str(value or "")).strip()
+    if not status:
+        return "—"
+    return _MAILING_ROW_STATUS_LABELS_RU.get(status, status)
+
+
+def _localize_delivery_status(value: str | None) -> str:
+    status = (str(value or "")).strip()
+    if not status:
+        return "—"
+    return _DELIVERY_STATUS_LABELS_RU.get(status, status)
 
 
 def _empty_mailing_row_stats() -> dict[str, int]:
