@@ -11,6 +11,26 @@
         <a class="btn btn-sm {% if campaign_active_tab == 'errors' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_errors' mailing.id %}">Ошибки</a>
         <a class="btn btn-sm {% if campaign_active_tab == 'logs' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{% url 'mailings_v2_campaigns_logs' mailing.id %}">Логи</a>
       </div>
+
+      <div class="small text-muted mt-2 pt-2 border-top">
+        {% if campaign_active_tab == 'params' %}
+          Заполните реквизиты кампании: шаблон, окна отправки, режим доставки и настройки очереди.
+        {% elif campaign_active_tab == 'status' %}
+          Операционный центр кампании: контроль статусов и действий запуска/повтора.
+        {% elif campaign_active_tab == 'audience' %}
+          Проверка состава аудитории: импорт, контроль первых строк и статусов перед отправкой.
+        {% elif campaign_active_tab == 'runs' %}
+          Таймлайн запусков и история обработки строк и задач по кампании.
+        {% elif campaign_active_tab == 'jobs' %}
+          Очередь задач отправки с фильтрами по статусам, провайдерам и поиску.
+        {% elif campaign_active_tab == 'errors' %}
+          Ошибки кампании: проблемные строки аудитории и задачи отправки с группировкой причин.
+        {% elif campaign_active_tab == 'logs' %}
+          Логи кампании: объединённая лента событий по строкам аудитории и задачам отправки.
+        {% else %}
+          Выберите раздел каркаса кампании для работы с параметрами, аудиторией и запусками.
+        {% endif %}
+      </div>
     </div>
   </div>
 {% endif %}

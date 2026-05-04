@@ -54,7 +54,13 @@
   }
 
   .mail-action-row .btn {
-    width: 100%;
+    width: min(100%, 340px);
+  }
+
+  @media (max-width: 992px) {
+    .mail-action-row .btn {
+      width: 100%;
+    }
   }
 </style>
 
@@ -79,7 +85,7 @@
     </div>
     <div class="card-body">
       <div class="row g-3">
-        <div class="col-12 col-xxl-4">
+        <div class="col-12 col-xxl-5">
           <div class="mail-summary-chip mb-3">
             <div class="mb-1">ID: <b>{{ mailing.id }}</b></div>
             <div class="mb-1">
@@ -106,33 +112,7 @@
           <div class="mail-status-row"><span>Завершились с ошибкой</span><b>{{ dispatch_stats.failed }}</b></div>
         </div>
 
-        <div class="col-12 col-xl-6 col-xxl-4">
-          <div class="mail-section-title">Разделы кампании</div>
-          <div class="mail-action-list">
-            <div class="mail-action-row">
-              <div class="mail-action-desc">Проверка состава аудитории и первых 300 строк со статусами.</div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Аудитория</a>
-            </div>
-            <div class="mail-action-row">
-              <div class="mail-action-desc">Таймлайн запусков и ход обработки по аудитории и задачам.</div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ runs_url }}">Запуски и история</a>
-            </div>
-            <div class="mail-action-row">
-              <div class="mail-action-desc">Очередь задач отправки с фильтрами по статусам и провайдерам.</div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ jobs_url }}">Задания отправки</a>
-            </div>
-            <div class="mail-action-row">
-              <div class="mail-action-desc">Ошибочные строки аудитории и ошибочные задачи отправки.</div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ errors_url }}">Ошибки кампании</a>
-            </div>
-            <div class="mail-action-row">
-              <div class="mail-action-desc">Объединенный журнал изменений по строкам и задачам отправки.</div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ logs_url }}">Логи кампании</a>
-            </div>
-          </div>
-        </div>
-
-        <div class="col-12 col-xl-6 col-xxl-4">
+        <div class="col-12 col-xxl-7">
           <div class="mail-section-title">Операции кампании</div>
           <div class="mail-action-list">
             <div class="mail-action-row">
