@@ -40,10 +40,13 @@
     border-radius: 0.6rem;
     padding: 0.65rem 0.7rem;
     background: #fff;
-    display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 0.75rem;
-    align-items: center;
+  }
+
+  .mail-action-desc {
+    font-size: 0.82rem;
+    color: #64748b;
+    line-height: 1.3;
+    margin-bottom: 0.55rem;
   }
 
   .mail-action-row form {
@@ -51,32 +54,7 @@
   }
 
   .mail-action-row .btn {
-    min-width: 200px;
-  }
-
-  .mail-action-label {
-    font-size: 0.88rem;
-    font-weight: 600;
-    color: #111827;
-    line-height: 1.2;
-    margin-bottom: 0.2rem;
-  }
-
-  .mail-action-desc {
-    font-size: 0.8rem;
-    color: #64748b;
-    line-height: 1.25;
-  }
-
-  @media (max-width: 992px) {
-    .mail-action-row {
-      grid-template-columns: 1fr;
-    }
-
-    .mail-action-row .btn {
-      width: 100%;
-      min-width: 0;
-    }
+    width: 100%;
   }
 </style>
 
@@ -132,39 +110,24 @@
           <div class="mail-section-title">Разделы кампании</div>
           <div class="mail-action-list">
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Аудитория</div>
-                <div class="mail-action-desc">Проверка состава аудитории и первых 300 строк со статусами.</div>
-              </div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Открыть</a>
+              <div class="mail-action-desc">Проверка состава аудитории и первых 300 строк со статусами.</div>
+              <a class="btn btn-outline-primary btn-sm" href="{{ audience_url }}">Аудитория</a>
             </div>
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Запуски и история</div>
-                <div class="mail-action-desc">Таймлайн запусков и ход обработки по аудитории и задачам.</div>
-              </div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ runs_url }}">Открыть</a>
+              <div class="mail-action-desc">Таймлайн запусков и ход обработки по аудитории и задачам.</div>
+              <a class="btn btn-outline-primary btn-sm" href="{{ runs_url }}">Запуски и история</a>
             </div>
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Задания отправки</div>
-                <div class="mail-action-desc">Очередь задач отправки с фильтрами по статусам и провайдерам.</div>
-              </div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ jobs_url }}">Открыть</a>
+              <div class="mail-action-desc">Очередь задач отправки с фильтрами по статусам и провайдерам.</div>
+              <a class="btn btn-outline-primary btn-sm" href="{{ jobs_url }}">Задания отправки</a>
             </div>
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Ошибки кампании</div>
-                <div class="mail-action-desc">Ошибочные строки аудитории и ошибочные задачи отправки.</div>
-              </div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ errors_url }}">Открыть</a>
+              <div class="mail-action-desc">Ошибочные строки аудитории и ошибочные задачи отправки.</div>
+              <a class="btn btn-outline-primary btn-sm" href="{{ errors_url }}">Ошибки кампании</a>
             </div>
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Логи кампании</div>
-                <div class="mail-action-desc">Объединенный журнал изменений по строкам и задачам отправки.</div>
-              </div>
-              <a class="btn btn-outline-primary btn-sm" href="{{ logs_url }}">Открыть</a>
+              <div class="mail-action-desc">Объединенный журнал изменений по строкам и задачам отправки.</div>
+              <a class="btn btn-outline-primary btn-sm" href="{{ logs_url }}">Логи кампании</a>
             </div>
           </div>
         </div>
@@ -173,62 +136,47 @@
           <div class="mail-section-title">Операции кампании</div>
           <div class="mail-action-list">
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">{% if mailing.is_active %}Пауза кампании{% else %}Запуск кампании{% endif %}</div>
-                <div class="mail-action-desc">Переключает активность кампании: запуск или пауза обработки.</div>
-              </div>
+              <div class="mail-action-desc">Переключает активность кампании: запуск или пауза обработки.</div>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="toggle_active">
                 {% if mailing.is_active %}
-                  <button type="submit" class="btn btn-warning btn-sm">Поставить на паузу</button>
+                  <button type="submit" class="btn btn-warning btn-sm">Пауза кампании</button>
                 {% else %}
-                  <button type="submit" class="btn btn-success btn-sm">Запустить кампанию</button>
+                  <button type="submit" class="btn btn-success btn-sm">Запуск кампании</button>
                 {% endif %}
               </form>
             </div>
 
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Повтор ошибочных строк</div>
-                <div class="mail-action-desc">Возвращает строки со статусом «ошибка» обратно в «запланировано».</div>
-              </div>
+              <div class="mail-action-desc">Возвращает строки со статусом «ошибка» обратно в «запланировано».</div>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="retry_failed_rows">
-                <button type="submit" class="btn btn-outline-danger btn-sm" {% if mailing_row_stats.error <= 0 %}disabled{% endif %}>Повторить ошибочные строки ({{ mailing_row_stats.error }})</button>
+                <button type="submit" class="btn btn-outline-danger btn-sm" {% if mailing_row_stats.error <= 0 %}disabled{% endif %}>Повтор ошибочных строк ({{ mailing_row_stats.error }})</button>
               </form>
             </div>
 
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Возврат зависших строк</div>
-                <div class="mail-action-desc">Сбрасывает «в обработке» обратно в очередь запуска.</div>
-              </div>
+              <div class="mail-action-desc">Сбрасывает «в обработке» обратно в очередь запуска.</div>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="requeue_in_progress_rows">
-                <button type="submit" class="btn btn-outline-secondary btn-sm" {% if mailing_row_stats.in_progress <= 0 %}disabled{% endif %}>Вернуть зависшие строки ({{ mailing_row_stats.in_progress }})</button>
+                <button type="submit" class="btn btn-outline-secondary btn-sm" {% if mailing_row_stats.in_progress <= 0 %}disabled{% endif %}>Возврат зависших строк ({{ mailing_row_stats.in_progress }})</button>
               </form>
             </div>
 
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Повтор ошибочных задач отправки</div>
-                <div class="mail-action-desc">Переоткрывает ошибочные задачи отправки для повторной постановки в очередь.</div>
-              </div>
+              <div class="mail-action-desc">Переоткрывает ошибочные задачи отправки для повторной постановки в очередь.</div>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="retry_failed_dispatch">
-                <button type="submit" class="btn btn-outline-danger btn-sm" {% if dispatch_stats.failed <= 0 %}disabled{% endif %}>Повторить ошибочные задачи отправки ({{ dispatch_stats.failed }})</button>
+                <button type="submit" class="btn btn-outline-danger btn-sm" {% if dispatch_stats.failed <= 0 %}disabled{% endif %}>Повтор ошибочных задач отправки ({{ dispatch_stats.failed }})</button>
               </form>
             </div>
 
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Проверка перед запуском</div>
-                <div class="mail-action-desc">Проверяет готовность кампании без фактической отправки.</div>
-              </div>
+              <div class="mail-action-desc">Проверяет готовность кампании без фактической отправки.</div>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="dry_run_campaign">
@@ -237,14 +185,11 @@
             </div>
 
             <div class="mail-action-row">
-              <div>
-                <div class="mail-action-label">Немедленный запуск</div>
-                <div class="mail-action-desc">Запускает обработку готовых строк в текущих лимитах.</div>
-              </div>
+              <div class="mail-action-desc">Запускает обработку готовых строк в текущих лимитах.</div>
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="run_now_campaign">
-                <button type="submit" class="btn btn-outline-primary btn-sm">Запустить сейчас (run-now)</button>
+                <button type="submit" class="btn btn-outline-primary btn-sm">Немедленный запуск (run-now)</button>
               </form>
             </div>
           </div>
