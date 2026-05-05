@@ -3,6 +3,7 @@ import math
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connections
 
 from guests.services.universal_queue.provider_worker import (
     AsyncProviderWorker,
@@ -36,6 +37,9 @@ class Command(BaseCommand):
         "Запускает async provider-worker: читает Redis lane-очереди, "
         "применяет централизованный rate limiter и отправляет сообщения."
     )
+
+    EXIT_SUCCESS = 0
+    EXIT_FAILURE = 1
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -105,6 +109,58 @@ class Command(BaseCommand):
             help="Квота bulk для fair-policy.",
         )
 
+        parser.add_argument(
+            "--health-check",
+            action="store_true",
+            help="Лёгкая проверка здоровья provider-worker без запуска цикла.",
+        )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Печать расширенных показателей для health-check.",
+        )
+
+    def _run_health_check(
+        self,
+        *,
+        provider_type: str,
+        redis_url: str,
+        namespace: str,
+        verbose: bool,
+    ) -> None:
+        lane_queue = None
+        try:
+            connection = connections["default"]
+            connection.ensure_connection()
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+
+            lane_queue = ProviderLaneQueue(redis_url=redis_url, namespace=namespace)
+            lane_queue.ping()
+            lane_lengths = lane_queue.lane_lengths(provider_type=provider_type)
+
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"[health] status=healthy component=run_provider_worker provider={provider_type}"
+                )
+            )
+            if verbose:
+                self.stdout.write(f"[health] lanes={lane_lengths}")
+            raise SystemExit(self.EXIT_SUCCESS)
+        except SystemExit:
+            raise
+        except Exception as err:
+            self.stdout.write(
+                self.style.ERROR(
+                    f"[health] status=unhealthy component=run_provider_worker provider={provider_type} error={err}"
+                )
+            )
+            raise SystemExit(self.EXIT_FAILURE)
+        finally:
+            if lane_queue is not None:
+                lane_queue.close()
+
     def handle(self, *args, **options):
         provider_type = str(options["provider"]).strip().lower()
         redis_url = str(options["redis_url"]).strip()
@@ -114,6 +170,14 @@ class Command(BaseCommand):
             raise CommandError("Пустой redis-url для provider-worker.")
         if not namespace:
             raise CommandError("Пустой namespace для provider-worker.")
+
+        if bool(options.get("health_check")):
+            return self._run_health_check(
+                provider_type=provider_type,
+                redis_url=redis_url,
+                namespace=namespace,
+                verbose=bool(options.get("verbose")),
+            )
 
         block_timeout = max(1, int(options["block_timeout"]))
         idle_sleep = max(0.05, float(options["idle_sleep"]))

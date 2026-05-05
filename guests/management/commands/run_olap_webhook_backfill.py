@@ -4,6 +4,7 @@ import time
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connections
 
 from guests.services.olap_webhook_backfill import (
     OlapWebhookBackfillOptions,
@@ -31,6 +32,8 @@ class Command(BaseCommand):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.should_stop = False
+        self.exit_success = 0
+        self.exit_failure = 1
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -131,6 +134,16 @@ class Command(BaseCommand):
             action="store_false",
             help="Включить запись в БД (принудительно).",
         )
+        parser.add_argument(
+            "--health-check",
+            action="store_true",
+            help="Лёгкая проверка здоровья backfill-воркера без API-вызовов.",
+        )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Печать расширенных показателей для health-check.",
+        )
         parser.set_defaults(dry_run=None)
 
     def _setup_signal_handlers(self) -> None:
@@ -221,7 +234,57 @@ class Command(BaseCommand):
             time.sleep(step)
             remaining -= step
 
+    def _run_health_check(self, *, options: dict) -> None:
+        """
+        Лёгкий health-check без запросов во внешний API.
+        Проверяем только:
+        1. подключение к БД;
+        2. наличие обязательной конфигурации доступа к SAGUR API.
+        """
+        verbose = bool(options.get("verbose"))
+        try:
+            connection = connections["default"]
+            connection.ensure_connection()
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+
+            base_url = str(getattr(settings, "SAGUR_BASE_URL", "") or "").strip()
+            username = str(getattr(settings, "SAGUR_USERNAME", "") or "").strip()
+            password = str(getattr(settings, "SAGUR_PASSWORD", "") or "").strip()
+            config_ok = bool(base_url and username and password)
+
+            if not config_ok:
+                self.stdout.write(
+                    self.style.ERROR(
+                        "[health] status=unhealthy component=run_olap_webhook_backfill reason=missing_sagur_api_credentials"
+                    )
+                )
+                raise SystemExit(self.exit_failure)
+
+            self.stdout.write(
+                self.style.SUCCESS("[health] status=healthy component=run_olap_webhook_backfill")
+            )
+            if verbose:
+                self.stdout.write(
+                    "[health] base_url_set=%s username_set=%s password_set=%s"
+                    % (bool(base_url), bool(username), bool(password))
+                )
+            raise SystemExit(self.exit_success)
+        except SystemExit:
+            raise
+        except Exception as err:
+            self.stdout.write(
+                self.style.ERROR(
+                    f"[health] status=unhealthy component=run_olap_webhook_backfill error={err}"
+                )
+            )
+            raise SystemExit(self.exit_failure)
+
     def handle(self, *args, **options):
+        if options.get("health_check"):
+            return self._run_health_check(options=options)
+
         self._setup_signal_handlers()
 
         backfill_enabled = bool(getattr(settings, "OLAP_BACKFILL_ENABLE", False))

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.conf import settings
 from django.core.management import call_command
@@ -156,6 +156,36 @@ class RunProviderWorkerCommandBugSeekingTests(SimpleTestCase):
         self.assertEqual(provider_policies["max"].rate_per_second, 20.0)
         self.assertEqual(provider_policies["vk"].rate_per_second, 20.0)
 
+    def test_health_check_success_and_queue_closed(self):
+        """
+        При --health-check команда должна завершаться успехом и закрывать Redis queue.
+        """
+        output = io.StringIO()
+        fake_queue = Mock()
+        fake_queue.lane_lengths.return_value = {"high": 0, "normal": 0, "bulk": 0}
+
+        fake_connection = MagicMock()
+        fake_cursor = Mock()
+        fake_connection.cursor.return_value.__enter__.return_value = fake_cursor
+
+        with (
+            patch("guests.management.commands.run_provider_worker.connections", {"default": fake_connection}),
+            patch("guests.management.commands.run_provider_worker.ProviderLaneQueue", return_value=fake_queue),
+        ):
+            with self.assertRaises(SystemExit) as exc:
+                call_command(
+                    "run_provider_worker",
+                    "--provider=telegram",
+                    "--health-check",
+                    "--redis-url=redis://test",
+                    "--namespace=uq:test",
+                    stdout=output,
+                )
+
+        self.assertEqual(exc.exception.code, 0)
+        fake_queue.ping.assert_called_once()
+        fake_queue.close.assert_called_once()
+
 
 class DispatchUniversalTasksCommandBugSeekingTests(SimpleTestCase):
     """
@@ -185,6 +215,44 @@ class DispatchUniversalTasksCommandBugSeekingTests(SimpleTestCase):
                     stdout=output,
                 )
 
+        fake_queue.close.assert_called_once()
+
+    def test_health_check_success_with_lightweight_metrics(self):
+        """
+        Health-check диспетчера должен отрабатывать без запуска основного цикла.
+        """
+        output = io.StringIO()
+        fake_queue = Mock()
+        fake_queue.lane_lengths.return_value = {"high": 0, "normal": 0, "bulk": 0}
+
+        fake_connection = MagicMock()
+        fake_cursor = Mock()
+        fake_connection.cursor.return_value.__enter__.return_value = fake_cursor
+
+        fake_pending_qs = Mock()
+        fake_pending_qs.exists.return_value = False
+        fake_queued_qs = Mock()
+        fake_queued_qs.exists.return_value = False
+
+        with (
+            patch("guests.management.commands.dispatch_universal_tasks.connections", {"default": fake_connection}),
+            patch("guests.management.commands.dispatch_universal_tasks.ProviderLaneQueue", return_value=fake_queue),
+            patch(
+                "guests.management.commands.dispatch_universal_tasks.DispatchTask.objects.filter",
+                side_effect=[fake_pending_qs, fake_queued_qs],
+            ),
+        ):
+            with self.assertRaises(SystemExit) as exc:
+                call_command(
+                    "dispatch_universal_tasks",
+                    "--health-check",
+                    "--redis-url=redis://test",
+                    "--namespace=uq:test",
+                    stdout=output,
+                )
+
+        self.assertEqual(exc.exception.code, 0)
+        fake_queue.ping.assert_called_once()
         fake_queue.close.assert_called_once()
 
 
@@ -252,6 +320,36 @@ class RunUniversalQueueMonitorCommandBugSeekingTests(SimpleTestCase):
             in_progress_stale_seconds=1,
             provider_type=None,
         )
+
+    def test_health_check_success_and_queue_closed(self):
+        """
+        Health-check монитора должен завершаться успехом и закрывать Redis queue.
+        """
+        output = io.StringIO()
+        fake_queue = Mock()
+        fake_queue.lane_lengths.return_value = {"high": 0, "normal": 0, "bulk": 0}
+
+        fake_connection = MagicMock()
+        fake_cursor = Mock()
+        fake_connection.cursor.return_value.__enter__.return_value = fake_cursor
+
+        with (
+            patch("guests.management.commands.run_universal_queue_monitor.connections", {"default": fake_connection}),
+            patch("guests.management.commands.run_universal_queue_monitor.ProviderLaneQueue", return_value=fake_queue),
+        ):
+            with self.assertRaises(SystemExit) as exc:
+                call_command(
+                    "run_universal_queue_monitor",
+                    "--health-check",
+                    "--provider=telegram",
+                    "--redis-url=redis://test",
+                    "--namespace=uq:test",
+                    stdout=output,
+                )
+
+        self.assertEqual(exc.exception.code, 0)
+        fake_queue.ping.assert_called_once()
+        fake_queue.close.assert_called_once()
 
 
 class RunNotificationScenariosCommandBugSeekingTests(SimpleTestCase):

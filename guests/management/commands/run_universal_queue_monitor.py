@@ -4,6 +4,7 @@ from typing import Optional
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connections
 
 from guests.services.universal_queue.maintenance import UniversalQueueMaintenanceService
 from guests.services.universal_queue.redis_lanes import ProviderLaneQueue
@@ -38,6 +39,8 @@ class Command(BaseCommand):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.should_stop = False
+        self.exit_success = 0
+        self.exit_failure = 1
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -83,6 +86,17 @@ class Command(BaseCommand):
             help="TTL для in_progress задач, после которого они считаются stale.",
         )
 
+        parser.add_argument(
+            "--health-check",
+            action="store_true",
+            help="Лёгкая проверка здоровья монитора без запуска цикла.",
+        )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Печать расширенных показателей для health-check.",
+        )
+
     def _signal_handler(self, signum, frame) -> None:
         self.should_stop = True
         self.stdout.write(self.style.WARNING(f"Получен сигнал {signum}, завершаем monitor после текущего цикла."))
@@ -110,7 +124,51 @@ class Command(BaseCommand):
             time.sleep(step)
             remaining -= step
 
+    def _run_health_check(self, *, options: dict) -> None:
+        """
+        Лёгкий health-check:
+        1. БД: SELECT 1;
+        2. Redis ping;
+        3. длины lane-очередей (без тяжёлых агрегаций по БД).
+        """
+        provider_type: Optional[str] = options["provider"]
+        redis_url = str(options["redis_url"]).strip()
+        namespace = str(options["namespace"]).strip()
+        verbose: bool = bool(options.get("verbose"))
+        queue = None
+        try:
+            connection = connections["default"]
+            connection.ensure_connection()
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+
+            queue = ProviderLaneQueue(redis_url=redis_url, namespace=namespace)
+            queue.ping()
+            providers = [provider_type] if provider_type else list(ProviderLaneQueue.PROVIDERS)
+            lane_lengths = {provider: queue.lane_lengths(provider) for provider in providers}
+
+            self.stdout.write(self.style.SUCCESS("[health] status=healthy component=run_universal_queue_monitor"))
+            if verbose:
+                self.stdout.write(f"[health] lanes={lane_lengths}")
+            raise SystemExit(self.exit_success)
+        except SystemExit:
+            raise
+        except Exception as err:
+            self.stdout.write(
+                self.style.ERROR(
+                    f"[health] status=unhealthy component=run_universal_queue_monitor error={err}"
+                )
+            )
+            raise SystemExit(self.exit_failure)
+        finally:
+            if queue is not None:
+                queue.close()
+
     def handle(self, *args, **options):
+        if options.get("health_check"):
+            return self._run_health_check(options=options)
+
         self._bind_signals()
 
         once = bool(options["once"])

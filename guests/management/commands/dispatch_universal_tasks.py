@@ -5,7 +5,10 @@ from typing import Optional
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.db import connections
+from django.utils import timezone
 
+from guests.models import DispatchTask
 from guests.services.universal_queue import ProviderLaneQueue, UniversalTaskDispatcher
 
 logger = logging.getLogger(__name__)
@@ -25,6 +28,8 @@ class Command(BaseCommand):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.should_stop = False
+        self.exit_success = 0
+        self.exit_failure = 1
 
     def add_arguments(self, parser):
         """
@@ -65,6 +70,17 @@ class Command(BaseCommand):
             type=str,
             default=getattr(settings, "UNIVERSAL_QUEUE_NAMESPACE", "uq:v1"),
             help="Namespace префикс для ключей Redis очереди.",
+        )
+
+        parser.add_argument(
+            "--health-check",
+            action="store_true",
+            help="Лёгкая проверка здоровья диспетчера без запуска цикла.",
+        )
+        parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Печать расширенных показателей для health-check.",
         )
 
     def _setup_signal_handlers(self) -> None:
@@ -112,10 +128,71 @@ class Command(BaseCommand):
             time.sleep(step)
             remaining -= step
 
+    def _run_health_check(self, *, options: dict) -> None:
+        """
+        Лёгкий health-check:
+        1. БД: SELECT 1;
+        2. Redis ping;
+        3. короткие exists-признаки по DispatchTask + длины lane.
+        """
+        redis_url: str = options["redis_url"]
+        namespace: str = options["namespace"]
+        provider_type: Optional[str] = options.get("provider")
+        verbose: bool = bool(options.get("verbose"))
+        queue: Optional[ProviderLaneQueue] = None
+        try:
+            connection = connections["default"]
+            connection.ensure_connection()
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+
+            queue = ProviderLaneQueue(redis_url=redis_url, namespace=namespace)
+            queue.ping()
+
+            providers = [provider_type] if provider_type else list(ProviderLaneQueue.PROVIDERS)
+            lane_lengths = {provider: queue.lane_lengths(provider) for provider in providers}
+
+            pending_qs = DispatchTask.objects.filter(
+                status=DispatchTask.Status.PENDING,
+                available_at__lte=timezone.now(),
+            )
+            queued_qs = DispatchTask.objects.filter(status=DispatchTask.Status.QUEUED)
+            if provider_type:
+                pending_qs = pending_qs.filter(provider_type=provider_type)
+                queued_qs = queued_qs.filter(provider_type=provider_type)
+
+            pending_exists = pending_qs.exists()
+            queued_exists = queued_qs.exists()
+
+            self.stdout.write(
+                self.style.SUCCESS("[health] status=healthy component=dispatch_universal_tasks")
+            )
+            if verbose:
+                self.stdout.write(
+                    "[health] pending_exists=%s queued_exists=%s lanes=%s"
+                    % (pending_exists, queued_exists, lane_lengths)
+                )
+            raise SystemExit(self.exit_success)
+        except SystemExit:
+            raise
+        except Exception as err:
+            self.stdout.write(
+                self.style.ERROR(
+                    f"[health] status=unhealthy component=dispatch_universal_tasks error={err}"
+                )
+            )
+            raise SystemExit(self.exit_failure)
+        finally:
+            if queue is not None:
+                queue.close()
+
     def handle(self, *args, **options):
         """
         Точка входа management command.
         """
+        if options.get("health_check"):
+            return self._run_health_check(options=options)
         self._setup_signal_handlers()
 
         once_mode: bool = options["once"]

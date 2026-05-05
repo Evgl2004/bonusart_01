@@ -17,7 +17,7 @@ from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import BaseCommand, CommandError
@@ -478,6 +478,34 @@ class RunOlapWebhookBackfillCommandTests(SimpleTestCase):
                 "--date-from=2025-12-01T00:00:00Z",
                 stdout=io.StringIO(),
             )
+
+    @override_settings(
+        SAGUR_BASE_URL="https://sagur.example.com",
+        SAGUR_USERNAME="business_service",
+        SAGUR_PASSWORD="secret",
+    )
+    def test_health_check_exits_success_without_service_start(self):
+        """
+        Health-check должен выполняться без создания backfill-сервиса и внешних API-вызовов.
+        """
+        output = io.StringIO()
+        fake_connection = MagicMock()
+        fake_cursor = Mock()
+        fake_connection.cursor.return_value.__enter__.return_value = fake_cursor
+
+        with (
+            patch("guests.management.commands.run_olap_webhook_backfill.connections", {"default": fake_connection}),
+            patch("guests.management.commands.run_olap_webhook_backfill.OlapWebhookBackfillService") as mocked_service_cls,
+        ):
+            with self.assertRaises(SystemExit) as exc:
+                call_command(
+                    "run_olap_webhook_backfill",
+                    "--health-check",
+                    stdout=output,
+                )
+
+        self.assertEqual(exc.exception.code, 0)
+        mocked_service_cls.assert_not_called()
 
 
 class RunOlapControlPullCommandTests(SimpleTestCase):
@@ -1474,6 +1502,14 @@ class MailingWorkerCommandTests(TestCase):
 
         processed = mailing_worker_cmd.process_one_mailing(mailing=self.mailing, now=timezone.now())
         self.assertEqual(processed, 0)
+
+    def test_health_check_exits_success(self):
+        """
+        Ключ --health-check должен завершать команду успешно без запуска цикла.
+        """
+        with self.assertRaises(SystemExit) as exc:
+            call_command("mailing_worker", "--health-check", stdout=io.StringIO())
+        self.assertEqual(exc.exception.code, 0)
 
     def test_run_iteration_requeues_stuck_rows_to_planned(self):
         """
