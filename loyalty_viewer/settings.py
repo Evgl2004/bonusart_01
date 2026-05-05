@@ -496,6 +496,7 @@ def _env_text_set(name: str, default_csv: str = "") -> set[str]:
 VTELEMAX_SYNC_ENABLED = _env_bool("VTELEMAX_SYNC_ENABLED", False)
 VTELEMAX_SYNC_BASE_URL = str(os.getenv("VTELEMAX_SYNC_BASE_URL", "") or "").strip()
 VTELEMAX_SYNC_HMAC_SECRET = str(os.getenv("VTELEMAX_SYNC_HMAC_SECRET", "") or "").strip()
+VTELEMAX_SYNC_REQUIRE_HTTPS = _env_bool("VTELEMAX_SYNC_REQUIRE_HTTPS", True)
 try:
     VTELEMAX_SYNC_HTTP_TIMEOUT_SECONDS = float(
         os.getenv("VTELEMAX_SYNC_HTTP_TIMEOUT_SECONDS", "20") or "20"

@@ -79,6 +79,12 @@ class Command(BaseCommand):
         hmac_secret = str(getattr(settings, "VTELEMAX_SYNC_HMAC_SECRET", "") or "").strip()
         if not base_url or not hmac_secret:
             raise CommandError("Не заполнены VTELEMAX_SYNC_BASE_URL и/или VTELEMAX_SYNC_HMAC_SECRET.")
+        require_https = bool(getattr(settings, "VTELEMAX_SYNC_REQUIRE_HTTPS", True))
+        if require_https and not base_url.lower().startswith("https://"):
+            raise CommandError(
+                "Небезопасный VTELEMAX_SYNC_BASE_URL: требуется HTTPS "
+                "(или установите VTELEMAX_SYNC_REQUIRE_HTTPS=False для доверенного внутреннего контура)."
+            )
 
         default_limit = max(1, int(getattr(settings, "VTELEMAX_SYNC_DEFAULT_LIMIT", 1000)))
         max_limit = max(default_limit, int(getattr(settings, "VTELEMAX_SYNC_MAX_LIMIT", 5000)))
@@ -215,4 +221,3 @@ class Command(BaseCommand):
                 f"max_seen_updated_at={max_seen_updated_at.isoformat() if max_seen_updated_at else 'None'}"
             )
         self.stdout.write(f"watermark={state.watermark.isoformat() if state.watermark else 'None'}")
-
