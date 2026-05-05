@@ -15,6 +15,18 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
             provider_type=BotProfile.ProviderType.TELEGRAM,
             is_active=True,
         )
+        self.max_bot = BotProfile.objects.create(
+            code="max-main",
+            name="Max Main",
+            provider_type=BotProfile.ProviderType.MAX,
+            is_active=True,
+        )
+        self.vk_bot = BotProfile.objects.create(
+            code="vk-main",
+            name="VK Main",
+            provider_type=BotProfile.ProviderType.VK,
+            is_active=True,
+        )
         self.guest = Guest.objects.create(
             phone="+79224800001",
             created_at=timezone.now(),
@@ -98,3 +110,53 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         self.assertEqual(VtelemaxRecipientChannel.objects.count(), 0)
         self.assertEqual(GuestBotBinding.objects.count(), 0)
 
+    def test_apply_items_is_idempotent_for_repeated_payload(self):
+        service = VtelemaxRecipientsApplyService(bot_code_telegram="tg-main")
+
+        first = service.apply_items(items=[self._build_item()], dry_run=False)
+        second = service.apply_items(items=[self._build_item()], dry_run=False)
+
+        self.assertEqual(first.rows_created, 1)
+        self.assertEqual(second.rows_created, 0)
+        self.assertEqual(second.rows_updated, 0)
+        self.assertEqual(second.rows_binding_updated, 0)
+        self.assertEqual(VtelemaxRecipientChannel.objects.count(), 1)
+        self.assertEqual(GuestBotBinding.objects.count(), 1)
+
+    def test_create_missing_guest_once_for_three_platforms(self):
+        person_id = uuid.uuid4()
+        service = VtelemaxRecipientsApplyService(
+            bot_code_telegram="tg-main",
+            bot_code_max="max-main",
+            bot_code_vk="vk-main",
+            create_missing_guests=True,
+        )
+
+        payloads = [
+            self._build_item(
+                person_id=str(person_id),
+                phone_e164="+79993334455",
+                platform="telegram",
+                external_id="tg-1",
+            ),
+            self._build_item(
+                person_id=str(person_id),
+                phone_e164="+79993334455",
+                platform="max",
+                external_id="max-1",
+            ),
+            self._build_item(
+                person_id=str(person_id),
+                phone_e164="+79993334455",
+                platform="vk",
+                external_id="vk-1",
+            ),
+        ]
+
+        stats = service.apply_items(items=payloads, dry_run=False)
+
+        self.assertEqual(stats.rows_total, 3)
+        self.assertEqual(VtelemaxRecipientChannel.objects.filter(phone_e164="+79993334455").count(), 3)
+        self.assertEqual(Guest.objects.filter(phone="+79993334455").count(), 1)
+        created_guest = Guest.objects.get(phone="+79993334455")
+        self.assertEqual(GuestBotBinding.objects.filter(guest=created_guest).count(), 3)

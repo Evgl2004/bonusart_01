@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from django.test import TestCase
 from django.utils import timezone
@@ -27,7 +27,7 @@ class GuestResolutionServiceTests(TestCase):
         result = resolve_or_create_guest(
             phone="+79994443322",
             iiko_id="iiko-new-1",
-            first_name="Новый",
+            first_name="New",
             allow_create=True,
             source="test",
         )
@@ -39,7 +39,7 @@ class GuestResolutionServiceTests(TestCase):
         guest = Guest.objects.get()
         self.assertEqual(guest.phone, "+79994443322")
         self.assertEqual(guest.iiko_id, "iiko-new-1")
-        self.assertEqual(guest.first_name, "Новый")
+        self.assertEqual(guest.first_name, "New")
 
     def test_resolve_returns_none_when_creation_disabled(self):
         result = resolve_or_create_guest(
@@ -64,7 +64,7 @@ class GuestResolutionServiceTests(TestCase):
         duplicate_by_phone = Guest.objects.create(
             iiko_id=None,
             phone="+79991234567",
-            first_name="Дубль",
+            first_name="Duplicate",
             created_at=now_value,
             updated_at=now_value,
         )
@@ -72,8 +72,8 @@ class GuestResolutionServiceTests(TestCase):
         result = resolve_or_create_guest(
             phone="+79991234567",
             iiko_id="iiko-777",
-            first_name="Имя",
-            last_name="Фамилия",
+            first_name="Name",
+            last_name="Surname",
             allow_create=True,
             source="test",
         )
@@ -86,7 +86,38 @@ class GuestResolutionServiceTests(TestCase):
         guest.refresh_from_db()
         duplicate_by_phone.refresh_from_db()
         self.assertEqual(guest.phone, "+79991234567")
-        self.assertEqual(guest.first_name, "Имя")
-        self.assertEqual(guest.last_name, "Фамилия")
-        self.assertEqual(duplicate_by_phone.first_name, "Дубль")
+        self.assertEqual(guest.first_name, "Name")
+        self.assertEqual(guest.last_name, "Surname")
+        self.assertEqual(duplicate_by_phone.first_name, "Duplicate")
 
+    def test_resolve_is_idempotent_for_same_guest_across_formats(self):
+        first = resolve_or_create_guest(
+            phone="+7 (999) 222-11-00",
+            iiko_id="iiko-shared-1",
+            first_name="Guest",
+            allow_create=True,
+            source="test.first",
+        )
+        second = resolve_or_create_guest(
+            phone="8 999 222 11 00",
+            iiko_id="iiko-shared-1",
+            last_name="User",
+            allow_create=True,
+            source="test.second",
+        )
+        third = resolve_or_create_guest(
+            phone="9992221100",
+            iiko_id=None,
+            allow_create=True,
+            source="test.third",
+        )
+
+        self.assertIsNotNone(first.guest)
+        self.assertIsNotNone(second.guest)
+        self.assertIsNotNone(third.guest)
+        self.assertTrue(first.created)
+        self.assertFalse(second.created)
+        self.assertFalse(third.created)
+        self.assertEqual(first.guest.id, second.guest.id)
+        self.assertEqual(first.guest.id, third.guest.id)
+        self.assertEqual(Guest.objects.count(), 1)
