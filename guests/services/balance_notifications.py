@@ -19,9 +19,8 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
-from django.utils import timezone
-
 from guests.models import DispatchTask, Guest
+from guests.services.guest_resolution import resolve_or_create_guest
 from guests.services.notification_events import (
     ScenarioNotConfiguredError,
     create_notification_event,
@@ -124,23 +123,18 @@ def _get_or_create_guest_from_iiko(phone: str) -> Optional[Guest]:
     if not iiko_id:
         return None
 
-    guest, created = Guest.objects.get_or_create(
+    resolved = resolve_or_create_guest(
+        phone=customer.get("phone") or phone,
         iiko_id=iiko_id,
-        defaults={
-            "phone": customer.get("phone"),
-            "first_name": customer.get("name") or "",
-            "last_name": customer.get("surname") or "",
-            "email": customer.get("email") or "",
-            "gender": customer.get("sex") or None,
-            "birthdate": customer.get("birthdate") or None,
-            "created_at": timezone.now(),
-            "updated_at": timezone.now(),
-        },
+        first_name=customer.get("name") or "",
+        last_name=customer.get("surname") or "",
+        email=customer.get("email") or "",
+        gender=customer.get("sex") or None,
+        birthdate=customer.get("birthdate") or None,
+        allow_create=True,
+        source="balance.iiko",
     )
-    if not created:
-        guest.updated_at = timezone.now()
-        guest.save(update_fields=["updated_at"])
-    return guest
+    return resolved.guest
 
 
 def _build_balance_dedupe_key(webhook: dict, event: dict, guest_id: int) -> str:

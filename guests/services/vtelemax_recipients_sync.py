@@ -8,7 +8,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from django.db import transaction
-from django.utils import timezone as dj_timezone
 
 from guests.models import (
     BotProfile,
@@ -16,6 +15,7 @@ from guests.models import (
     GuestBotBinding,
     VtelemaxRecipientChannel,
 )
+from guests.services.guest_resolution import resolve_or_create_guest
 
 logger = logging.getLogger(__name__)
 
@@ -334,17 +334,27 @@ class VtelemaxRecipientsApplyService:
         if guest is not None:
             return guest
 
+        resolved_existing = resolve_or_create_guest(
+            phone=phone_e164,
+            allow_create=False,
+            source="vtelemax.sync",
+        )
+        if resolved_existing.guest is not None:
+            self._guest_by_phone10[phone10] = resolved_existing.guest
+            return resolved_existing.guest
+
         if not self.create_missing_guests or dry_run:
             return None
 
-        now_value = dj_timezone.now()
-        created_guest = Guest.objects.create(
+        resolved_created = resolve_or_create_guest(
             phone=phone_e164 or phone10,
-            created_at=now_value,
-            updated_at=now_value,
+            allow_create=True,
+            source="vtelemax.sync",
         )
-        self._guest_by_phone10[phone10] = created_guest
-        return created_guest
+        if resolved_created.guest is not None:
+            self._guest_by_phone10[phone10] = resolved_created.guest
+            return resolved_created.guest
+        return None
 
     def _ensure_guest_map(self) -> None:
         if self._guest_map_built:
@@ -356,8 +366,9 @@ class VtelemaxRecipientsApplyService:
             phone10 = _phone10_from_phone(guest.phone)
             if not phone10:
                 continue
-            mapping[phone10] = guest
+            current = mapping.get(phone10)
+            if current is None or guest.id < current.id:
+                mapping[phone10] = guest
 
         self._guest_by_phone10 = mapping
         self._guest_map_built = True
-
