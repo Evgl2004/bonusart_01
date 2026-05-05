@@ -492,6 +492,33 @@ def _env_text_set(name: str, default_csv: str = "") -> set[str]:
     return fallback_values
 
 
+# Интеграция SAGUR <- vtelemax (read-only recipients API).
+VTELEMAX_SYNC_ENABLED = _env_bool("VTELEMAX_SYNC_ENABLED", False)
+VTELEMAX_SYNC_BASE_URL = str(os.getenv("VTELEMAX_SYNC_BASE_URL", "") or "").strip()
+VTELEMAX_SYNC_HMAC_SECRET = str(os.getenv("VTELEMAX_SYNC_HMAC_SECRET", "") or "").strip()
+try:
+    VTELEMAX_SYNC_HTTP_TIMEOUT_SECONDS = float(
+        os.getenv("VTELEMAX_SYNC_HTTP_TIMEOUT_SECONDS", "20") or "20"
+    )
+except ValueError:
+    VTELEMAX_SYNC_HTTP_TIMEOUT_SECONDS = 20.0
+VTELEMAX_SYNC_DEFAULT_LIMIT = _env_int("VTELEMAX_SYNC_DEFAULT_LIMIT", 1000, min_value=1)
+VTELEMAX_SYNC_MAX_LIMIT = _env_int("VTELEMAX_SYNC_MAX_LIMIT", 5000, min_value=1)
+if VTELEMAX_SYNC_MAX_LIMIT < VTELEMAX_SYNC_DEFAULT_LIMIT:
+    VTELEMAX_SYNC_MAX_LIMIT = VTELEMAX_SYNC_DEFAULT_LIMIT
+
+VTELEMAX_SYNC_CREATE_MISSING_GUESTS = _env_bool("VTELEMAX_SYNC_CREATE_MISSING_GUESTS", False)
+
+VTELEMAX_SYNC_BOT_CODE_TELEGRAM = str(
+    os.getenv("VTELEMAX_SYNC_BOT_CODE_TELEGRAM", "") or ""
+).strip()
+VTELEMAX_SYNC_BOT_CODE_MAX = str(os.getenv("VTELEMAX_SYNC_BOT_CODE_MAX", "") or "").strip()
+VTELEMAX_SYNC_BOT_CODE_VK = str(os.getenv("VTELEMAX_SYNC_BOT_CODE_VK", "") or "").strip()
+
+VTELEMAX_SYNC_SCHEDULE_ENABLED = _env_bool("VTELEMAX_SYNC_SCHEDULE_ENABLED", False)
+VTELEMAX_SYNC_SCHEDULE_MINUTES = _env_int("VTELEMAX_SYNC_SCHEDULE_MINUTES", 5, min_value=1)
+
+
 # Управление отправкой balance-уведомлений в ботов из webhook-контура.
 # Позволяет включать/выключать создание DispatchTask без изменений кода.
 # Автосинхронизация `settings.Q_CLUSTER["schedule"]` -> `django_q_schedule`.
@@ -513,6 +540,7 @@ DJANGO_Q_SCHEDULE_MANAGED_EXTRA_NAMES = _env_text_set(
 DJANGO_Q_SCHEDULE_MANAGED_NAMES = (
     "sync_webhooks_recent",
     "run_notification_scenarios",
+    "run_vtelemax_recipients_delta",
     "run_olap_sync_windowed",
     "run_olap_rebuild_nightly",
     "run_order_fact_tail",
@@ -864,8 +892,17 @@ def _register_olap_schedule_tasks() -> None:
     6. order_focus_fact tail-задача по минутному расписанию;
     7. window_metrics-задача по минутному расписанию;
     8. control_pull-задача по cron (контрольная постановка пропущенных задач в journal).
+    9. delta-синк каналов из vtelemax.
     """
     schedule_map = Q_CLUSTER.setdefault("schedule", {})
+
+    if VTELEMAX_SYNC_SCHEDULE_ENABLED:
+        schedule_map["run_vtelemax_recipients_delta"] = {
+            "func": "guests.tasks.run_vtelemax_recipients_delta_task",
+            "minutes": VTELEMAX_SYNC_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_vtelemax_recipients_delta", None)
 
     if OLAP_SYNC_SCHEDULE_ENABLED:
         schedule_map["run_olap_sync_windowed"] = {

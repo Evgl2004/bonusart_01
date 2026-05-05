@@ -471,6 +471,139 @@ class GuestBotBinding(models.Model):
         return f"guest={self.guest_id} bot={self.bot_id} chat={self.external_chat_id}"
 
 
+class VtelemaxRecipientChannel(models.Model):
+    """
+    Локальный снимок канала получателя из vtelemax.
+
+    Единица записи синка:
+    1. один `person_id` + одна `platform`;
+    2. хранит актуальные согласия/статусы канала и связь с локальным гостем.
+    """
+
+    class Platform(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
+        VK = "vk", "VK"
+
+    person_id = models.UUIDField()
+    platform = models.CharField(
+        max_length=32,
+        choices=Platform.choices,
+        db_index=True,
+    )
+    phone_e164 = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+        db_index=True,
+    )
+    external_id = models.CharField(
+        max_length=128,
+        blank=True,
+        null=True,
+        help_text="Идентификатор пользователя/чата в платформе, полученный из vtelemax.",
+    )
+    rules_accepted = models.BooleanField(default=False)
+    notifications_allowed = models.BooleanField(default=False, db_index=True)
+    is_registered = models.BooleanField(default=False)
+
+    state_updated_at = models.DateTimeField(blank=True, null=True)
+    account_created_at = models.DateTimeField(blank=True, null=True)
+    effective_updated_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Временная метка изменения записи для delta-цикла.",
+    )
+
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="vtelemax_channels",
+    )
+    guest_binding = models.ForeignKey(
+        "GuestBotBinding",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="vtelemax_channels",
+    )
+    source_payload = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Последний сырой payload строки канала из API vtelemax.",
+    )
+
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    last_synced_at = models.DateTimeField(auto_now=True, db_index=True)
+
+    class Meta:
+        managed = True
+        db_table = "vtelemax_recipient_channels"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["person_id", "platform"],
+                name="vtelemax_channels_person_platform_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["platform", "notifications_allowed"], name="vtmx_ch_platform_optin_idx"),
+            models.Index(fields=["guest", "platform"], name="vtmx_ch_guest_platform_idx"),
+        ]
+
+    def __str__(self):
+        return f"person={self.person_id} platform={self.platform}"
+
+
+class VtelemaxSyncState(models.Model):
+    """
+    Состояние потока синхронизации SAGUR <- vtelemax.
+    """
+
+    class Status(models.TextChoices):
+        IDLE = "idle", "Ожидание"
+        RUNNING = "running", "В процессе"
+        SUCCESS = "success", "Успешно"
+        ERROR = "error", "Ошибка"
+
+    key = models.CharField(
+        max_length=64,
+        unique=True,
+        default="vtelemax_recipients",
+        help_text="Ключ синхронизации (singleton для данного потока).",
+    )
+    watermark = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Текущая нижняя граница `since` для delta.",
+    )
+    last_status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.IDLE,
+        db_index=True,
+    )
+    last_mode = models.CharField(max_length=16, blank=True, null=True)
+    last_error = models.TextField(blank=True, null=True)
+    last_rows = models.PositiveIntegerField(default=0)
+    last_pages = models.PositiveIntegerField(default=0)
+    last_started_at = models.DateTimeField(blank=True, null=True)
+    last_finished_at = models.DateTimeField(blank=True, null=True)
+    last_success_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = True
+        db_table = "vtelemax_sync_state"
+
+    def __str__(self):
+        return f"{self.key}: {self.last_status}"
+
+
 class TerminalDepartmentMap(models.Model):
     """
     Сопоставление идентификатора терминала iiko (`terminalGroupId`) и `Department.Id` для OLAP.

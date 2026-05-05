@@ -33,6 +33,8 @@ from .models import (
     OrderFact,
     Restaurant,
     TerminalDepartmentMap,
+    VtelemaxRecipientChannel,
+    VtelemaxSyncState,
     VirtualCategory,
     VisitHistory,
 )
@@ -207,6 +209,57 @@ class GuestBotBindingAdmin(admin.ModelAdmin):
             updated_at=timezone.now(),
         )
         self.message_user(request, f"Обновлено привязок: {updated}", level=messages.WARNING)
+
+
+@admin.register(VtelemaxRecipientChannel)
+class VtelemaxRecipientChannelAdmin(admin.ModelAdmin):
+    """
+    Техническая панель каналов получателей, синхронизируемых из vtelemax.
+    """
+
+    list_display = (
+        "id",
+        "person_id",
+        "platform",
+        "phone_e164",
+        "external_id",
+        "notifications_allowed",
+        "is_registered",
+        "guest_id",
+        "guest_binding_id",
+        "effective_updated_at",
+        "last_synced_at",
+    )
+    list_filter = ("platform", "notifications_allowed", "is_registered", "rules_accepted")
+    search_fields = ("person_id", "phone_e164", "external_id", "guest__phone")
+    raw_id_fields = ("guest", "guest_binding")
+    readonly_fields = ("first_seen_at", "last_synced_at")
+    list_per_page = 100
+
+
+@admin.register(VtelemaxSyncState)
+class VtelemaxSyncStateAdmin(admin.ModelAdmin):
+    """
+    Singleton-состояние синхронизации SAGUR <- vtelemax.
+    """
+
+    list_display = (
+        "id",
+        "key",
+        "last_status",
+        "last_mode",
+        "watermark",
+        "last_rows",
+        "last_pages",
+        "last_started_at",
+        "last_finished_at",
+        "last_success_at",
+        "updated_at",
+    )
+    list_filter = ("last_status", "last_mode")
+    search_fields = ("key", "last_error")
+    readonly_fields = ("created_at", "updated_at")
+    list_per_page = 50
 
 
 class MailingBotProfileLinkInline(admin.TabularInline):

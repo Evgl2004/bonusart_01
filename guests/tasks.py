@@ -57,6 +57,26 @@ def run_scheduled_notification_scenarios_task() -> int:
         return 0
 
 
+def run_vtelemax_recipients_delta_task() -> int:
+    """
+    Плановый delta-синк каналов получателей из vtelemax.
+    """
+    if not bool(getattr(settings, "VTELEMAX_SYNC_ENABLED", False)):
+        logger.info("Vtelemax sync (schedule): disabled by VTELEMAX_SYNC_ENABLED.")
+        return 0
+    if not bool(getattr(settings, "VTELEMAX_SYNC_SCHEDULE_ENABLED", False)):
+        logger.info("Vtelemax sync (schedule): disabled by VTELEMAX_SYNC_SCHEDULE_ENABLED.")
+        return 0
+
+    try:
+        call_command("sync_vtelemax_recipients", mode="delta")
+        logger.info("Vtelemax sync (schedule): delta cycle completed successfully.")
+        return 1
+    except Exception as err:
+        logger.exception("Vtelemax sync (schedule): failed: %s", err)
+        return 0
+
+
 def _parse_hhmm(value: str, *, default: dt_time) -> dt_time:
     """
     Возвращает время в формате HH:MM.
