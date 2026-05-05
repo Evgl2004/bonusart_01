@@ -87,8 +87,6 @@ class Command(BaseCommand):
         Основной метод запуска Обработчика.
         """
 
-        self.stdout.write(self.style.SUCCESS("🚀 Запуск команды для Обработки Уведомлений"))
-
         # Настройка обработчиков сигналов
         self._setup_signal_handlers()
 
@@ -99,80 +97,108 @@ class Command(BaseCommand):
         if options.get('health_check'):
             return self._run_health_check(verbose=options.get('verbose', False))
 
+        self.stdout.write(self.style.SUCCESS("Запуск команды для обработки уведомлений"))
+
         # Нормальный режим работы
         self._run_worker(verbose=options.get('verbose', False))
 
     def _run_health_check(self, verbose: bool = False) -> None:
         """
-        Выполнение проверки здоровья Обработки Уведомлений.
+        Выполнение проверки здоровья обработчика уведомлений.
 
         Args:
             verbose: Флаг подробного вывода
         """
-        self.stdout.write(self.style.SUCCESS("🏥 Выполнение проверки здоровья..."))
-
         try:
             health_status = self.worker.health_check()
+            status = health_status.get("status", "unknown")
 
-            # Форматированный вывод
-            status = health_status.get('status', 'unknown')
-
-            if status == 'healthy':
-                self.stdout.write(self.style.SUCCESS("✅ Обработчик здоров"))
+            if status == "healthy":
+                self.stdout.write(self.style.SUCCESS("[health] status=healthy component=run_webhook_worker"))
                 if verbose:
                     self._print_health_details(health_status)
                 sys.exit(self.EXIT_SUCCESS)
 
-            elif status == 'unhealthy':
-                self.stdout.write(self.style.ERROR("❌ Обработчик нездоров"))
+            error_text = health_status.get("error") or "unknown_status"
+            self.stdout.write(
+                self.style.ERROR(
+                    f"[health] status=unhealthy component=run_webhook_worker error={error_text}"
+                )
+            )
+            if verbose:
                 self._print_health_details(health_status)
-                sys.exit(self.EXIT_FAILURE)
-
-            else:
-                self.stdout.write(self.style.WARNING("⚠️ Статус Обработчика неизвестен"))
-                self._print_health_details(health_status)
-                sys.exit(self.EXIT_FAILURE)
+            sys.exit(self.EXIT_FAILURE)
 
         except Exception as err:
-            self.stdout.write(self.style.ERROR(f"💥 Ошибка при проверке здоровья: {err}"))
+            self.stdout.write(
+                self.style.ERROR(f"[health] status=unhealthy component=run_webhook_worker error={err}")
+            )
+            if verbose:
+                self.stdout.write("Статус: нездоров (status=unhealthy)")
+                self.stdout.write("Компонент: обработчик уведомлений (component=run_webhook_worker)")
+                self.stdout.write(f"Ошибка: {err} (error={err})")
             logger.exception("Ошибка проверки здоровья")
             sys.exit(self.EXIT_FAILURE)
 
     def _print_health_details(self, health_status: dict) -> None:
         """
-        Вывод детальной информации о состоянии Обработчика.
+        Вывод детальной информации о состоянии обработчика.
 
         Args:
             health_status: Словарь с информацией о здоровье
         """
+        status = health_status.get("status", "unknown")
+        status_text = "здоров" if status == "healthy" else "нездоров"
 
-        self.stdout.write(f"  Статус: {health_status.get('status', 'N/A')}")
-        self.stdout.write(f"  Redis подключен: {health_status.get('redis_connected', 'N/A')}")
-        self.stdout.write(f"  Сообщений в очереди: {health_status.get('queue_length', 'N/A')}")
-        self.stdout.write(f"  Сообщений в DLQ: {health_status.get('dlq_length', 'N/A')}")
-        self.stdout.write(f"  Флаг остановки: {health_status.get('should_stop', 'N/A')}")
+        self.stdout.write(f"Статус: {status_text} (status={status})")
+        self.stdout.write("Компонент: обработчик уведомлений (component=run_webhook_worker)")
+        self.stdout.write(
+            "Redis: %s (redis_connected=%s)"
+            % (
+                "доступен" if health_status.get("redis_connected") else "недоступен",
+                health_status.get("redis_connected", "N/A"),
+            )
+        )
+        self.stdout.write(
+            f"Сообщений в очереди: {health_status.get('queue_length', 'N/A')} (queue_length={health_status.get('queue_length', 'N/A')})"
+        )
+        self.stdout.write(
+            f"Сообщений в DLQ: {health_status.get('dlq_length', 'N/A')} (dlq_length={health_status.get('dlq_length', 'N/A')})"
+        )
+        self.stdout.write(
+            f"Флаг остановки: {health_status.get('should_stop', 'N/A')} (should_stop={health_status.get('should_stop', 'N/A')})"
+        )
 
-        # Выводим метрики, если они есть
-        if 'metrics' in health_status:
-            metrics = health_status['metrics']
-            self.stdout.write("  Метрики:")
-            self.stdout.write(f"    Обработано сообщений: {metrics.get('messages_processed', 0)}")
-            self.stdout.write(f"    Ошибок: {metrics.get('messages_failed', 0)}")
-            self.stdout.write(f"    В DLQ: {metrics.get('messages_dlq', 0)}")
-            self.stdout.write(f"    Время работы: {metrics.get('uptime_seconds', 0):.1f} сек.")
+        if "metrics" in health_status:
+            metrics = health_status["metrics"]
+            self.stdout.write(
+                f"Обработано сообщений: {metrics.get('messages_processed', 0)} (messages_processed={metrics.get('messages_processed', 0)})"
+            )
+            self.stdout.write(
+                f"Ошибок: {metrics.get('messages_failed', 0)} (messages_failed={metrics.get('messages_failed', 0)})"
+            )
+            self.stdout.write(
+                f"В DLQ: {metrics.get('messages_dlq', 0)} (messages_dlq={metrics.get('messages_dlq', 0)})"
+            )
+            self.stdout.write(
+                f"Время работы: {metrics.get('uptime_seconds', 0):.1f} сек (uptime_seconds={metrics.get('uptime_seconds', 0):.1f})"
+            )
 
-            # Безопасное получение last_message_seconds_ago
-            last_message_ago = metrics.get('last_message_seconds_ago')
+            last_message_ago = metrics.get("last_message_seconds_ago")
             if last_message_ago is not None:
-                self.stdout.write(f"    С последнего сообщения: {last_message_ago} сек.")
+                self.stdout.write(
+                    f"С последнего сообщения: {last_message_ago} сек (last_message_seconds_ago={last_message_ago})"
+                )
             else:
-                self.stdout.write("    С последнего сообщения: еще не было")
+                self.stdout.write("С последнего сообщения: еще не было (last_message_seconds_ago=None)")
 
-        if 'error' in health_status:
-            self.stdout.write(self.style.ERROR(f"  Ошибка: {health_status['error']}"))
+        if "error" in health_status:
+            self.stdout.write(self.style.ERROR(f"Ошибка: {health_status['error']} (error={health_status['error']})"))
 
-        if 'timestamp_human' in health_status:
-            self.stdout.write(f"  Время проверки: {health_status['timestamp_human']}")
+        if "timestamp_human" in health_status:
+            self.stdout.write(
+                f"Время проверки: {health_status['timestamp_human']} (timestamp_human={health_status['timestamp_human']})"
+            )
 
     def _run_worker(self, verbose: bool = False) -> NoReturn:
         """

@@ -1640,7 +1640,7 @@ class RunWebhookWorkerCommandExtendedTests(SimpleTestCase):
             with self.assertRaises(SystemExit) as exc:
                 command._run_health_check(verbose=False)
         self.assertEqual(exc.exception.code, command.EXIT_FAILURE)
-        mocked_details.assert_called_once()
+        mocked_details.assert_not_called()
 
     def test_run_health_check_unknown_status_exits_failure(self):
         """

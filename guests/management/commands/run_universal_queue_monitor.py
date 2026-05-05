@@ -150,7 +150,11 @@ class Command(BaseCommand):
 
             self.stdout.write(self.style.SUCCESS("[health] status=healthy component=run_universal_queue_monitor"))
             if verbose:
-                self.stdout.write(f"[health] lanes={lane_lengths}")
+                self.stdout.write("Статус: здоров (status=healthy)")
+                self.stdout.write("Компонент: монитор универсальной очереди (component=run_universal_queue_monitor)")
+                self.stdout.write("База данных: доступна (db=ok)")
+                self.stdout.write("Redis: доступен (redis=ok)")
+                self.stdout.write(f"Очереди провайдера: {lane_lengths} (lane_lengths={lane_lengths})")
             raise SystemExit(self.exit_success)
         except SystemExit:
             raise
@@ -160,6 +164,10 @@ class Command(BaseCommand):
                     f"[health] status=unhealthy component=run_universal_queue_monitor error={err}"
                 )
             )
+            if verbose:
+                self.stdout.write("Статус: нездоров (status=unhealthy)")
+                self.stdout.write("Компонент: монитор универсальной очереди (component=run_universal_queue_monitor)")
+                self.stdout.write(f"Ошибка: {err} (error={err})")
             raise SystemExit(self.exit_failure)
         finally:
             if queue is not None:

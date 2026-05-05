@@ -146,7 +146,16 @@ class Command(BaseCommand):
                 )
             )
             if verbose:
-                self.stdout.write(f"[health] lanes={lane_lengths}")
+                self.stdout.write("Статус: здоров (status=healthy)")
+                self.stdout.write("Компонент: воркер провайдера (component=run_provider_worker)")
+                self.stdout.write("База данных: доступна (db=ok)")
+                self.stdout.write("Redis: доступен (redis=ok)")
+                self.stdout.write(
+                    f"Провайдер: {provider_type} (provider={provider_type})"
+                )
+                self.stdout.write(
+                    f"Очереди провайдера: {lane_lengths} (lane_lengths={lane_lengths})"
+                )
             raise SystemExit(self.EXIT_SUCCESS)
         except SystemExit:
             raise
@@ -156,6 +165,13 @@ class Command(BaseCommand):
                     f"[health] status=unhealthy component=run_provider_worker provider={provider_type} error={err}"
                 )
             )
+            if verbose:
+                self.stdout.write("Статус: нездоров (status=unhealthy)")
+                self.stdout.write("Компонент: воркер провайдера (component=run_provider_worker)")
+                self.stdout.write(
+                    f"Провайдер: {provider_type} (provider={provider_type})"
+                )
+                self.stdout.write(f"Ошибка: {err} (error={err})")
             raise SystemExit(self.EXIT_FAILURE)
         finally:
             if lane_queue is not None:

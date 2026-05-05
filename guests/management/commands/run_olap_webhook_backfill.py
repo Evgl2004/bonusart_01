@@ -260,15 +260,44 @@ class Command(BaseCommand):
                         "[health] status=unhealthy component=run_olap_webhook_backfill reason=missing_sagur_api_credentials"
                     )
                 )
+                if verbose:
+                    self.stdout.write("Статус: нездоров (status=unhealthy)")
+                    self.stdout.write("Компонент: backfill webhook (component=run_olap_webhook_backfill)")
+                    self.stdout.write("База данных: доступна (db=ok)")
+                    self.stdout.write("Конфигурация API: неполная (api_credentials=missing)")
+                    self.stdout.write(
+                        "SAGUR URL задан: %s (base_url_set=%s)"
+                        % ("да" if bool(base_url) else "нет", bool(base_url))
+                    )
+                    self.stdout.write(
+                        "Логин задан: %s (username_set=%s)"
+                        % ("да" if bool(username) else "нет", bool(username))
+                    )
+                    self.stdout.write(
+                        "Пароль задан: %s (password_set=%s)"
+                        % ("да" if bool(password) else "нет", bool(password))
+                    )
                 raise SystemExit(self.exit_failure)
 
             self.stdout.write(
                 self.style.SUCCESS("[health] status=healthy component=run_olap_webhook_backfill")
             )
             if verbose:
+                self.stdout.write("Статус: здоров (status=healthy)")
+                self.stdout.write("Компонент: backfill webhook (component=run_olap_webhook_backfill)")
+                self.stdout.write("База данных: доступна (db=ok)")
+                self.stdout.write("Конфигурация API: заполнена (api_credentials=ok)")
                 self.stdout.write(
-                    "[health] base_url_set=%s username_set=%s password_set=%s"
-                    % (bool(base_url), bool(username), bool(password))
+                    "SAGUR URL задан: %s (base_url_set=%s)"
+                    % ("да" if bool(base_url) else "нет", bool(base_url))
+                )
+                self.stdout.write(
+                    "Логин задан: %s (username_set=%s)"
+                    % ("да" if bool(username) else "нет", bool(username))
+                )
+                self.stdout.write(
+                    "Пароль задан: %s (password_set=%s)"
+                    % ("да" if bool(password) else "нет", bool(password))
                 )
             raise SystemExit(self.exit_success)
         except SystemExit:
@@ -279,6 +308,10 @@ class Command(BaseCommand):
                     f"[health] status=unhealthy component=run_olap_webhook_backfill error={err}"
                 )
             )
+            if verbose:
+                self.stdout.write("Статус: нездоров (status=unhealthy)")
+                self.stdout.write("Компонент: backfill webhook (component=run_olap_webhook_backfill)")
+                self.stdout.write(f"Ошибка: {err} (error={err})")
             raise SystemExit(self.exit_failure)
 
     def handle(self, *args, **options):

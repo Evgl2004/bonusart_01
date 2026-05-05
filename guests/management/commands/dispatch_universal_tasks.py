@@ -169,10 +169,19 @@ class Command(BaseCommand):
                 self.style.SUCCESS("[health] status=healthy component=dispatch_universal_tasks")
             )
             if verbose:
+                self.stdout.write("Статус: здоров (status=healthy)")
+                self.stdout.write("Компонент: диспетчер очереди (component=dispatch_universal_tasks)")
+                self.stdout.write("База данных: доступна (db=ok)")
+                self.stdout.write("Redis: доступен (redis=ok)")
                 self.stdout.write(
-                    "[health] pending_exists=%s queued_exists=%s lanes=%s"
-                    % (pending_exists, queued_exists, lane_lengths)
+                    "Ожидающие задачи: %s (pending_exists=%s)"
+                    % ("да" if pending_exists else "нет", pending_exists)
                 )
+                self.stdout.write(
+                    "Задачи в очереди: %s (queued_exists=%s)"
+                    % ("да" if queued_exists else "нет", queued_exists)
+                )
+                self.stdout.write(f"Очереди провайдера: {lane_lengths} (lane_lengths={lane_lengths})")
             raise SystemExit(self.exit_success)
         except SystemExit:
             raise
@@ -182,6 +191,10 @@ class Command(BaseCommand):
                     f"[health] status=unhealthy component=dispatch_universal_tasks error={err}"
                 )
             )
+            if verbose:
+                self.stdout.write("Статус: нездоров (status=unhealthy)")
+                self.stdout.write("Компонент: диспетчер очереди (component=dispatch_universal_tasks)")
+                self.stdout.write(f"Ошибка: {err} (error={err})")
             raise SystemExit(self.exit_failure)
         finally:
             if queue is not None:

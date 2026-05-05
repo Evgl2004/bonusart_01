@@ -95,9 +95,24 @@ class Command(BaseCommand):
 
             self.stdout.write(self.style.SUCCESS("[health] status=healthy component=mailing_worker"))
             if verbose:
+                self.stdout.write("Статус: здоров (status=healthy)")
+                self.stdout.write("Компонент: воркер рассылок (component=mailing_worker)")
+                self.stdout.write("База данных: доступна (db=ok)")
                 self.stdout.write(
-                    "[health] active_mailings=%s planned_exists=%s in_progress_exists=%s error_exists=%s"
-                    % (active_mailings, planned_exists, in_progress_exists, error_exists)
+                    "Активные рассылки: %s (active_mailings=%s)"
+                    % ("да" if active_mailings else "нет", active_mailings)
+                )
+                self.stdout.write(
+                    "Плановые строки: %s (planned_exists=%s)"
+                    % ("да" if planned_exists else "нет", planned_exists)
+                )
+                self.stdout.write(
+                    "Строки в обработке: %s (in_progress_exists=%s)"
+                    % ("да" if in_progress_exists else "нет", in_progress_exists)
+                )
+                self.stdout.write(
+                    "Ошибочные строки: %s (error_exists=%s)"
+                    % ("да" if error_exists else "нет", error_exists)
                 )
             raise SystemExit(self.EXIT_SUCCESS)
         except SystemExit:
@@ -106,6 +121,10 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.ERROR(f"[health] status=unhealthy component=mailing_worker error={err}")
             )
+            if verbose:
+                self.stdout.write("Статус: нездоров (status=unhealthy)")
+                self.stdout.write("Компонент: воркер рассылок (component=mailing_worker)")
+                self.stdout.write(f"Ошибка: {err} (error={err})")
             raise SystemExit(self.EXIT_FAILURE)
 
 
