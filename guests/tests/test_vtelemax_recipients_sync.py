@@ -1,4 +1,5 @@
 import uuid
+from datetime import date
 
 from django.test import TestCase
 from django.utils import timezone
@@ -160,3 +161,37 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         self.assertEqual(Guest.objects.filter(phone="+79993334455").count(), 1)
         created_guest = Guest.objects.get(phone="+79993334455")
         self.assertEqual(GuestBotBinding.objects.filter(guest=created_guest).count(), 3)
+
+    def test_apply_items_fills_guest_birthdate_if_empty(self):
+        service = VtelemaxRecipientsApplyService(bot_code_telegram="tg-main")
+
+        stats = service.apply_items(
+            items=[self._build_item(birthdate="1991-05-17")],
+            dry_run=False,
+        )
+
+        self.assertEqual(stats.rows_total, 1)
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.birthdate, date(1991, 5, 17))
+
+    def test_create_missing_guest_uses_birthdate_from_profile_payload(self):
+        service = VtelemaxRecipientsApplyService(
+            bot_code_telegram="tg-main",
+            create_missing_guests=True,
+        )
+
+        stats = service.apply_items(
+            items=[
+                self._build_item(
+                    person_id=str(uuid.uuid4()),
+                    phone_e164="+79990000011",
+                    external_id="tg-new-birth",
+                    profile={"birthdate": "03.09.1988"},
+                )
+            ],
+            dry_run=False,
+        )
+
+        self.assertEqual(stats.rows_total, 1)
+        guest = Guest.objects.get(phone="+79990000011")
+        self.assertEqual(guest.birthdate, date(1988, 9, 3))

@@ -4,10 +4,11 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from django.db import transaction
+from django.utils import timezone as dj_timezone
 
 from guests.models import (
     BotProfile,
@@ -53,6 +54,36 @@ def _parse_rfc3339_utc(raw_value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
+
+
+def _parse_birthdate(raw_value: Any) -> date | None:
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+
+    normalized = text.replace("/", ".")
+    for parser in (
+        lambda s: date.fromisoformat(s),
+        lambda s: datetime.fromisoformat(s.replace("Z", "+00:00")).date(),
+        lambda s: datetime.strptime(s, "%d.%m.%Y").date(),
+        lambda s: datetime.strptime(s, "%Y.%m.%d").date(),
+    ):
+        try:
+            return parser(normalized)
+        except (ValueError, TypeError):
+            continue
+    return None
+
+
+def _pick_first_str(source: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = source.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
 
 
 def _normalize_phone11(raw_value: Any) -> str | None:
@@ -148,6 +179,31 @@ class VtelemaxRecipientsApplyService:
 
         phone_e164 = str(item.get("phone_e164") or "").strip() or None
         external_id = str(item.get("external_id") or "").strip() or None
+        profile = item.get("profile") if isinstance(item.get("profile"), dict) else {}
+        first_name = _pick_first_str(item, "first_name", "firstName", "name") or _pick_first_str(
+            profile,
+            "first_name",
+            "firstName",
+            "name",
+        )
+        last_name = _pick_first_str(item, "last_name", "lastName", "surname") or _pick_first_str(
+            profile,
+            "last_name",
+            "lastName",
+            "surname",
+        )
+        email = _pick_first_str(item, "email") or _pick_first_str(profile, "email")
+        gender = _pick_first_str(item, "gender", "sex") or _pick_first_str(profile, "gender", "sex")
+        birthdate = _parse_birthdate(
+            item.get("birthdate")
+            or item.get("birthday")
+            or item.get("date_of_birth")
+            or item.get("dateOfBirth")
+            or profile.get("birthdate")
+            or profile.get("birthday")
+            or profile.get("date_of_birth")
+            or profile.get("dateOfBirth")
+        )
         rules_accepted = _parse_bool(item.get("rules_accepted"), default=False)
         notifications_allowed = _parse_bool(item.get("notifications_allowed"), default=False)
         is_registered = _parse_bool(item.get("is_registered"), default=False)
@@ -160,7 +216,15 @@ class VtelemaxRecipientsApplyService:
                 default=None,
             )
 
-        guest = self._resolve_guest_by_phone(phone_e164=phone_e164, dry_run=dry_run)
+        guest = self._resolve_guest_by_phone(
+            phone_e164=phone_e164,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            gender=gender,
+            birthdate=birthdate,
+            dry_run=dry_run,
+        )
         if guest is None:
             stats.rows_guest_unresolved = 1
 
@@ -324,7 +388,17 @@ class VtelemaxRecipientsApplyService:
         self._bot_cache[platform] = bot_profile
         return bot_profile
 
-    def _resolve_guest_by_phone(self, *, phone_e164: str | None, dry_run: bool) -> Guest | None:
+    def _resolve_guest_by_phone(
+        self,
+        *,
+        phone_e164: str | None,
+        first_name: str | None,
+        last_name: str | None,
+        email: str | None,
+        gender: str | None,
+        birthdate: date | None,
+        dry_run: bool,
+    ) -> Guest | None:
         phone10 = _phone10_from_phone(phone_e164)
         if not phone10:
             return None
@@ -332,10 +406,24 @@ class VtelemaxRecipientsApplyService:
         self._ensure_guest_map()
         guest = self._guest_by_phone10.get(phone10)
         if guest is not None:
+            if not dry_run:
+                self._fill_guest_profile_if_empty(
+                    guest=guest,
+                    first_name=first_name,
+                    last_name=last_name,
+                    email=email,
+                    gender=gender,
+                    birthdate=birthdate,
+                )
             return guest
 
         resolved_existing = resolve_or_create_guest(
             phone=phone_e164,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            gender=gender,
+            birthdate=birthdate,
             allow_create=False,
             source="vtelemax.sync",
         )
@@ -348,6 +436,11 @@ class VtelemaxRecipientsApplyService:
 
         resolved_created = resolve_or_create_guest(
             phone=phone_e164 or phone10,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            gender=gender,
+            birthdate=birthdate,
             allow_create=True,
             source="vtelemax.sync",
         )
@@ -372,3 +465,34 @@ class VtelemaxRecipientsApplyService:
 
         self._guest_by_phone10 = mapping
         self._guest_map_built = True
+
+    @staticmethod
+    def _fill_guest_profile_if_empty(
+        *,
+        guest: Guest,
+        first_name: str | None,
+        last_name: str | None,
+        email: str | None,
+        gender: str | None,
+        birthdate: date | None,
+    ) -> None:
+        updated_fields: list[str] = []
+        candidates = (
+            ("first_name", first_name),
+            ("last_name", last_name),
+            ("email", email),
+            ("gender", gender),
+            ("birthdate", birthdate),
+        )
+        for field_name, value in candidates:
+            if value in (None, ""):
+                continue
+            if getattr(guest, field_name) in (None, ""):
+                setattr(guest, field_name, value)
+                updated_fields.append(field_name)
+
+        if not updated_fields:
+            return
+
+        guest.updated_at = dj_timezone.now()
+        guest.save(update_fields=updated_fields + ["updated_at"])
