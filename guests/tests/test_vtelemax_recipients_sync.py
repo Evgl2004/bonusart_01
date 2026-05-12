@@ -225,6 +225,7 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         )
 
         self.assertEqual(stats.rows_total, 2)
+        self.assertEqual(stats.rows_not_eligible_for_guest_create, 2)
         self.assertEqual(stats.rows_guest_unresolved, 0)
         self.assertEqual(Guest.objects.filter(phone="+79990000022").count(), 0)
         self.assertEqual(Guest.objects.filter(phone="+79990000033").count(), 0)

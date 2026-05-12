@@ -146,6 +146,7 @@ class Command(BaseCommand):
                 totals.rows_created += page_stats.rows_created
                 totals.rows_updated += page_stats.rows_updated
                 totals.rows_skipped_invalid += page_stats.rows_skipped_invalid
+                totals.rows_not_eligible_for_guest_create += page_stats.rows_not_eligible_for_guest_create
                 totals.rows_guest_unresolved += page_stats.rows_guest_unresolved
                 totals.rows_binding_created += page_stats.rows_binding_created
                 totals.rows_binding_updated += page_stats.rows_binding_updated
@@ -209,7 +210,9 @@ class Command(BaseCommand):
             (
                 f"mode={mode} dry_run={dry_run} pages={pages} rows_total={totals.rows_total} "
                 f"created={totals.rows_created} updated={totals.rows_updated} "
-                f"invalid={totals.rows_skipped_invalid} guest_unresolved={totals.rows_guest_unresolved} "
+                f"invalid={totals.rows_skipped_invalid} "
+                f"not_eligible_for_guest_create={totals.rows_not_eligible_for_guest_create} "
+                f"guest_unresolved={totals.rows_guest_unresolved} "
                 f"binding_created={totals.rows_binding_created} "
                 f"binding_updated={totals.rows_binding_updated} "
                 f"binding_disabled={totals.rows_binding_disabled}"

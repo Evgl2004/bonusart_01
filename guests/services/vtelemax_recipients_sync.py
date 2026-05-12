@@ -136,6 +136,7 @@ class VtelemaxApplyStats:
     rows_created: int = 0
     rows_updated: int = 0
     rows_skipped_invalid: int = 0
+    rows_not_eligible_for_guest_create: int = 0
     rows_guest_unresolved: int = 0
     rows_binding_created: int = 0
     rows_binding_updated: int = 0
@@ -178,6 +179,7 @@ class VtelemaxRecipientsApplyService:
             stats.rows_created += row_result.rows_created
             stats.rows_updated += row_result.rows_updated
             stats.rows_skipped_invalid += row_result.rows_skipped_invalid
+            stats.rows_not_eligible_for_guest_create += row_result.rows_not_eligible_for_guest_create
             stats.rows_guest_unresolved += row_result.rows_guest_unresolved
             stats.rows_binding_created += row_result.rows_binding_created
             stats.rows_binding_updated += row_result.rows_binding_updated
@@ -237,6 +239,8 @@ class VtelemaxRecipientsApplyService:
             notifications_allowed=notifications_allowed,
             is_registered=is_registered,
         )
+        if not allow_guest_create_by_channel:
+            stats.rows_not_eligible_for_guest_create = 1
         registered_at = _parse_rfc3339_utc(item.get("registered_at"))
         state_updated_at = _parse_rfc3339_utc(item.get("state_updated_at"))
         account_created_at = _parse_rfc3339_utc(item.get("account_created_at"))
