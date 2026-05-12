@@ -506,6 +506,12 @@ class VtelemaxRecipientChannel(models.Model):
     rules_accepted = models.BooleanField(default=False)
     notifications_allowed = models.BooleanField(default=False, db_index=True)
     is_registered = models.BooleanField(default=False)
+    registered_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Дата/время завершения регистрации канала на стороне vtelemax.",
+    )
 
     state_updated_at = models.DateTimeField(blank=True, null=True)
     account_created_at = models.DateTimeField(blank=True, null=True)

@@ -207,12 +207,13 @@ class VtelemaxRecipientsApplyService:
         rules_accepted = _parse_bool(item.get("rules_accepted"), default=False)
         notifications_allowed = _parse_bool(item.get("notifications_allowed"), default=False)
         is_registered = _parse_bool(item.get("is_registered"), default=False)
+        registered_at = _parse_rfc3339_utc(item.get("registered_at"))
         state_updated_at = _parse_rfc3339_utc(item.get("state_updated_at"))
         account_created_at = _parse_rfc3339_utc(item.get("account_created_at"))
         effective_updated_at = _parse_rfc3339_utc(item.get("effective_updated_at"))
         if effective_updated_at is None:
             effective_updated_at = max(
-                [x for x in (state_updated_at, account_created_at) if x is not None],
+                [x for x in (registered_at, state_updated_at, account_created_at) if x is not None],
                 default=None,
             )
 
@@ -240,6 +241,7 @@ class VtelemaxRecipientsApplyService:
                 "rules_accepted": rules_accepted,
                 "notifications_allowed": notifications_allowed,
                 "is_registered": is_registered,
+                "registered_at": registered_at,
                 "state_updated_at": state_updated_at,
                 "account_created_at": account_created_at,
                 "effective_updated_at": effective_updated_at,
@@ -267,6 +269,7 @@ class VtelemaxRecipientsApplyService:
                             "rules_accepted",
                             "notifications_allowed",
                             "is_registered",
+                            "registered_at",
                             "state_updated_at",
                             "account_created_at",
                             "effective_updated_at",

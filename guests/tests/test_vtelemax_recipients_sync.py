@@ -44,6 +44,7 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
             "rules_accepted": True,
             "notifications_allowed": True,
             "is_registered": True,
+            "registered_at": "2026-05-05T10:05:00Z",
             "state_updated_at": "2026-05-05T10:10:00Z",
             "account_created_at": "2026-05-05T10:00:00Z",
             "effective_updated_at": "2026-05-05T10:10:00Z",
@@ -65,6 +66,7 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         self.assertEqual(channel.platform, "telegram")
         self.assertEqual(channel.guest_id, self.guest.id)
         self.assertTrue(channel.notifications_allowed)
+        self.assertIsNotNone(channel.registered_at)
         self.assertIsNotNone(channel.guest_binding_id)
 
         binding = GuestBotBinding.objects.get()

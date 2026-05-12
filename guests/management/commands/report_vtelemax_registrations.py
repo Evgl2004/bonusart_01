@@ -4,7 +4,7 @@ from datetime import date, datetime, timedelta
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Count
-from django.db.models.functions import TruncDate
+from django.db.models.functions import Coalesce, TruncDate
 from django.utils import timezone
 
 from guests.models import VtelemaxRecipientChannel
@@ -68,16 +68,19 @@ class Command(BaseCommand):
         channels = (
             VtelemaxRecipientChannel.objects.filter(
                 is_registered=True,
-                account_created_at__isnull=False,
-                account_created_at__date__gte=date_from,
-                account_created_at__date__lte=date_to,
+            )
+            .annotate(registration_at=Coalesce("registered_at", "account_created_at"))
+            .filter(
+                registration_at__isnull=False,
+                registration_at__date__gte=date_from,
+                registration_at__date__lte=date_to,
             )
         )
         if platform:
             channels = channels.filter(platform=platform)
 
         rows = list(
-            channels.annotate(day=TruncDate("account_created_at"))
+            channels.annotate(day=TruncDate("registration_at"))
             .values("day", "platform")
             .annotate(total=Count("id"), persons=Count("person_id", distinct=True))
             .order_by("-day", "platform")
