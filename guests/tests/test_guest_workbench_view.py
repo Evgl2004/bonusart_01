@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date
 from decimal import Decimal
 
@@ -22,6 +23,7 @@ from guests.models import (
     MessageTemplate,
     OlapCategoryDict,
     OrderFact,
+    VtelemaxRecipientChannel,
 )
 
 
@@ -759,6 +761,65 @@ class GuestsWorkbenchViewTests(TestCase):
         preset.refresh_from_db()
         self.assertTrue(preset.is_active)
         self.assertIn("show_all_presets=1", response.url)
+
+    def test_bot_active_no_visits_180d_segment_leaves_after_first_visit(self):
+        """
+        Гость из валидного bot-канала попадает в сегмент без визитов 180д,
+        и автоматически выходит из него после первого зафиксированного визита.
+        """
+        bot_guest = Guest.objects.create(phone="+79990006666", first_name="Бот")
+        VtelemaxRecipientChannel.objects.create(
+            person_id=uuid.uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164="+79990006666",
+            external_id="tg-bot-segment",
+            notifications_allowed=True,
+            is_registered=True,
+            guest=bot_guest,
+        )
+
+        response_before = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "bot_active_no_visits_180d",
+            },
+            secure=True,
+        )
+        self.assertEqual(response_before.status_code, 200)
+        payload_before = response_before.context["payload"]
+        self.assertEqual(payload_before["segments"]["bot_active_no_visits_180d"], 1)
+        self.assertEqual(payload_before["selected_guests"]["total"], 1)
+        self.assertEqual(payload_before["selected_guests"]["rows"][0]["phone"], bot_guest.phone)
+        self.assertEqual(payload_before["selected_guests"]["rows"][0]["orders_count"], 0)
+
+        OrderFact.objects.create(
+            guest=bot_guest,
+            business_date=date(2026, 3, 22),
+            department_id=self.department_id,
+            department_name="Сами Сусами",
+            order_number=777001,
+            uniq_order_id="uniq-777001",
+            net_sum=Decimal("850.00"),
+            gross_sum=Decimal("850.00"),
+        )
+
+        response_after = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "bot_active_no_visits_180d",
+            },
+            secure=True,
+        )
+        self.assertEqual(response_after.status_code, 200)
+        payload_after = response_after.context["payload"]
+        self.assertEqual(payload_after["segments"]["bot_active_no_visits_180d"], 0)
+        self.assertEqual(payload_after["selected_guests"]["total"], 0)
 
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """

@@ -13,27 +13,32 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Max
+from django.db.models import Exists, Max, OuterRef
 
 from guests.models import (
     FocusCategory,
+    Guest,
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantWindowCategoryMetrics,
     GuestWorkbenchFilterPreset,
     GuestRestaurantWindowMetrics,
     OrderFact,
+    VtelemaxRecipientChannel,
 )
 
 WINDOW_OPTIONS = (7, 14, 30, 60, 180)
 DEFAULT_WINDOW_DAYS = 30
+BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE = "bot_active_no_visits_180d"
 SEGMENT_DEFINITIONS = (
     ("active_30d", "Активные 30д (2+ визита)"),
     ("single_visit_30d", "1 визит за 30д"),
     ("cooling_30_60d", "Остывшие 30-60д"),
     ("lost_60d_plus", "Потерянные 60+д"),
+    (BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE, "Активен в боте, без визитов 180д"),
 )
 SEGMENT_NAMES_MAP = dict(SEGMENT_DEFINITIONS)
 SELECTED_GUESTS_LIMIT = 200
@@ -209,6 +214,8 @@ def _build_preferred_windows(selected_window_days: int, segment_code: str) -> li
         preferred_windows = [60, 30]
     elif segment_code == "lost_60d_plus":
         preferred_windows = [180, 60, 30]
+    elif segment_code == BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE:
+        preferred_windows = [180, 60, 30]
     else:
         preferred_windows = [selected_window_days]
 
@@ -364,7 +371,10 @@ def build_guest_workbench_payload(
         base_scope = base_scope.filter(department_id=selected_department_id)
 
     base_segmentation, base_segment_by_key = _build_segmentation_state(
-        base_scope, allowed_guest_keys=None
+        base_scope,
+        as_of_date=target_as_of,
+        selected_department_id=selected_department_id,
+        allowed_guest_keys=None,
     )
     base_segment_focus_matrix, base_focus_guest_keys_by_code = _build_segment_focus_matrix(
         as_of_date=target_as_of,
@@ -425,7 +435,10 @@ def build_guest_workbench_payload(
         focus_guest_keys_by_code = base_focus_guest_keys_by_code
     else:
         segmentation, segment_by_key = _build_segmentation_state(
-            active_metrics_scope, allowed_guest_keys=allowed_guest_keys
+            active_metrics_scope,
+            as_of_date=target_as_of,
+            selected_department_id=selected_department_id,
+            allowed_guest_keys=allowed_guest_keys,
         )
         segment_focus_matrix, focus_guest_keys_by_code = _build_segment_focus_matrix(
             as_of_date=target_as_of,
@@ -648,6 +661,7 @@ def _build_empty_payload(
             "single_visit_30d": 0,
             "cooling_30_60d": 0,
             "lost_60d_plus": 0,
+            BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE: 0,
         },
         "segment_focus_matrix": {
             "rows": [
@@ -775,9 +789,63 @@ def _load_department_names() -> dict[str, str]:
     return result
 
 
+def _collect_bot_active_no_visits_guest_keys(
+    *,
+    as_of_date: date,
+    selected_department_id: str,
+    allowed_guest_keys: set[tuple[int, str]] | None = None,
+) -> set[tuple[int, str]]:
+    """
+    Возвращает гостевые ключи для сегмента:
+    `активен в боте, но без визитов за 180 дней`.
+
+    Условия канала:
+    1. is_registered=true;
+    2. notifications_allowed=true;
+    3. external_id заполнен;
+    4. есть связанный guest.
+    """
+    candidate_scope = (
+        VtelemaxRecipientChannel.objects.filter(
+            guest__isnull=False,
+            is_registered=True,
+            notifications_allowed=True,
+        )
+        .exclude(external_id__isnull=True)
+        .exclude(external_id="")
+        .exclude(phone_e164__isnull=True)
+        .exclude(phone_e164="")
+    )
+    if allowed_guest_keys is not None:
+        allowed_guest_ids = {guest_id for guest_id, _ in allowed_guest_keys}
+        if not allowed_guest_ids:
+            return set()
+        candidate_scope = candidate_scope.filter(guest_id__in=allowed_guest_ids)
+
+    range_start = as_of_date - timedelta(days=179)
+    recent_visits_scope = OrderFact.objects.filter(
+        guest_id=OuterRef("guest_id"),
+        business_date__gte=range_start,
+        business_date__lte=as_of_date,
+    )
+    if selected_department_id:
+        recent_visits_scope = recent_visits_scope.filter(department_id=selected_department_id)
+
+    idle_guest_ids = (
+        candidate_scope.annotate(has_recent_visit=Exists(recent_visits_scope))
+        .filter(has_recent_visit=False)
+        .values_list("guest_id", flat=True)
+        .distinct()
+    )
+    department_key = selected_department_id or ""
+    return {(int(guest_id), department_key) for guest_id in idle_guest_ids}
+
+
 def _build_segmentation_state(
     scope_qs,
     *,
+    as_of_date: date,
+    selected_department_id: str,
     allowed_guest_keys: set[tuple[int, str]] | None = None,
 ) -> tuple[dict[str, int], dict[tuple[int, str], str]]:
     """
@@ -829,6 +897,17 @@ def _build_segmentation_state(
         if visits_60 == 0 and visits_180 > 0:
             segment_by_key[key] = "lost_60d_plus"
             segment_totals["lost_60d_plus"] += 1
+
+    bot_segment_keys = _collect_bot_active_no_visits_guest_keys(
+        as_of_date=as_of_date,
+        selected_department_id=selected_department_id,
+        allowed_guest_keys=allowed_guest_keys,
+    )
+    for key in sorted(bot_segment_keys):
+        if key in segment_by_key:
+            continue
+        segment_by_key[key] = BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE
+        segment_totals[BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE] += 1
 
     return segment_totals, segment_by_key
 
@@ -1015,6 +1094,7 @@ def _collect_selected_guest_rows(
     )
 
     selected: list[tuple[Any, str]] = []
+    selected_keys: set[tuple[int, str]] = set()
     for row in representative_rows:
         key = (int(row.guest_id), _normalize_department_id(row.department_id))
         row_segment_code = segment_by_key.get(key, "")
@@ -1027,6 +1107,45 @@ def _collect_selected_guest_rows(
             continue
 
         selected.append((row, row_segment_code))
+        selected_keys.add(key)
+
+    if segment_code == BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE:
+        synthetic_keys = [
+            key
+            for key, row_segment_code in segment_by_key.items()
+            if row_segment_code == BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE and key not in selected_keys
+        ]
+        if focus_keys is not None:
+            synthetic_keys = [key for key in synthetic_keys if key in focus_keys]
+        if synthetic_keys:
+            guest_map = {
+                int(guest.id): guest
+                for guest in Guest.objects.filter(id__in=[guest_id for guest_id, _ in synthetic_keys]).only(
+                    "id",
+                    "phone",
+                    "first_name",
+                    "last_name",
+                )
+            }
+            for guest_id, department_id in synthetic_keys:
+                guest = guest_map.get(int(guest_id))
+                if guest is None:
+                    continue
+                synthetic_row = SimpleNamespace(
+                    guest_id=int(guest_id),
+                    guest=guest,
+                    department_id=department_id,
+                    window_days=selected_window_days,
+                    orders_count=0,
+                    visits_count=0,
+                    sum_net=Decimal("0"),
+                    avg_check_net=Decimal("0"),
+                    bonus_in_sum=Decimal("0"),
+                    bonus_out_sum=Decimal("0"),
+                    rating_score=Decimal("0"),
+                    last_visit_at=None,
+                )
+                selected.append((synthetic_row, BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE))
 
     selected.sort(
         key=lambda item: (

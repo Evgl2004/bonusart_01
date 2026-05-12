@@ -197,3 +197,42 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         self.assertEqual(stats.rows_total, 1)
         guest = Guest.objects.get(phone="+79990000011")
         self.assertEqual(guest.birthdate, date(1988, 9, 3))
+
+    def test_create_missing_guest_requires_valid_channel_flags(self):
+        service = VtelemaxRecipientsApplyService(
+            bot_code_telegram="tg-main",
+            create_missing_guests=True,
+        )
+
+        stats = service.apply_items(
+            items=[
+                self._build_item(
+                    person_id=str(uuid.uuid4()),
+                    phone_e164="+79990000022",
+                    external_id="",
+                    notifications_allowed=True,
+                    is_registered=True,
+                ),
+                self._build_item(
+                    person_id=str(uuid.uuid4()),
+                    phone_e164="+79990000033",
+                    external_id="tg-no-optin",
+                    notifications_allowed=False,
+                    is_registered=True,
+                ),
+            ],
+            dry_run=False,
+        )
+
+        self.assertEqual(stats.rows_total, 2)
+        self.assertEqual(stats.rows_guest_unresolved, 0)
+        self.assertEqual(Guest.objects.filter(phone="+79990000022").count(), 0)
+        self.assertEqual(Guest.objects.filter(phone="+79990000033").count(), 0)
+        self.assertEqual(
+            VtelemaxRecipientChannel.objects.filter(person_id__isnull=False).count(),
+            2,
+        )
+        self.assertEqual(
+            VtelemaxRecipientChannel.objects.filter(guest__isnull=False).count(),
+            0,
+        )

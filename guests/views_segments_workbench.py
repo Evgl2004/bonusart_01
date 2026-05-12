@@ -27,12 +27,14 @@ SEGMENT_CHART_LABELS = {
     "single_visit_30d": "1 визит за 30д",
     "cooling_30_60d": "Остывшие 30-60д",
     "lost_60d_plus": "Потерянные 60+д",
+    "bot_active_no_visits_180d": "Активен в боте, без визитов 180д",
 }
 SEGMENT_CHART_COLORS = {
     "active_30d": "#0e9f6e",
     "single_visit_30d": "#2563eb",
     "cooling_30_60d": "#f59e0b",
     "lost_60d_plus": "#ef4444",
+    "bot_active_no_visits_180d": "#7c3aed",
 }
 
 

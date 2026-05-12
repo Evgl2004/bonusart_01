@@ -106,6 +106,30 @@ def _phone10_from_phone(raw_value: Any) -> str | None:
     return phone11[-10:]
 
 
+def _is_valid_channel_for_guest_creation(
+    *,
+    phone_e164: str | None,
+    external_id: str | None,
+    notifications_allowed: bool,
+    is_registered: bool,
+) -> bool:
+    """
+    Строгий контракт автосоздания гостя из vtelemax.
+
+    Создание разрешается только для валидного канала:
+    1. канал зарегистрирован;
+    2. есть согласие на уведомления;
+    3. задан внешний идентификатор канала;
+    4. телефон нормализуется до RU-11 формата.
+    """
+    return bool(
+        is_registered
+        and notifications_allowed
+        and external_id
+        and _normalize_phone11(phone_e164)
+    )
+
+
 @dataclass(slots=True)
 class VtelemaxApplyStats:
     rows_total: int = 0
@@ -207,6 +231,12 @@ class VtelemaxRecipientsApplyService:
         rules_accepted = _parse_bool(item.get("rules_accepted"), default=False)
         notifications_allowed = _parse_bool(item.get("notifications_allowed"), default=False)
         is_registered = _parse_bool(item.get("is_registered"), default=False)
+        allow_guest_create_by_channel = _is_valid_channel_for_guest_creation(
+            phone_e164=phone_e164,
+            external_id=external_id,
+            notifications_allowed=notifications_allowed,
+            is_registered=is_registered,
+        )
         registered_at = _parse_rfc3339_utc(item.get("registered_at"))
         state_updated_at = _parse_rfc3339_utc(item.get("state_updated_at"))
         account_created_at = _parse_rfc3339_utc(item.get("account_created_at"))
@@ -224,9 +254,10 @@ class VtelemaxRecipientsApplyService:
             email=email,
             gender=gender,
             birthdate=birthdate,
+            allow_guest_create_by_channel=allow_guest_create_by_channel,
             dry_run=dry_run,
         )
-        if guest is None:
+        if guest is None and allow_guest_create_by_channel:
             stats.rows_guest_unresolved = 1
 
         bot_profile = self._resolve_bot_for_platform(platform=platform)
@@ -400,6 +431,7 @@ class VtelemaxRecipientsApplyService:
         email: str | None,
         gender: str | None,
         birthdate: date | None,
+        allow_guest_create_by_channel: bool,
         dry_run: bool,
     ) -> Guest | None:
         phone10 = _phone10_from_phone(phone_e164)
@@ -434,7 +466,7 @@ class VtelemaxRecipientsApplyService:
             self._guest_by_phone10[phone10] = resolved_existing.guest
             return resolved_existing.guest
 
-        if not self.create_missing_guests or dry_run:
+        if not self.create_missing_guests or dry_run or not allow_guest_create_by_channel:
             return None
 
         resolved_created = resolve_or_create_guest(
