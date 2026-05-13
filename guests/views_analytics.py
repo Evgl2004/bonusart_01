@@ -31,10 +31,14 @@ class AnalyticsDashboardView(TemplateView):
         raw_period_days = self.request.GET.get("period_days")
         selected_period_days = normalize_period_days(raw_period_days)
         selected_department_id = (self.request.GET.get("department_id") or "").strip()
+        # Для пользовательского дашборда показываем закрытый день (вчера),
+        # чтобы не выводить временные нули за текущие незавершённые сутки.
+        as_of_date = timezone.localdate() - timedelta(days=1)
 
         payload = build_analytics_dashboard_payload(
             period_days=selected_period_days,
             department_id=selected_department_id,
+            as_of_date=as_of_date,
         )
         context["dashboard_payload"] = payload
         context["selected_period_days"] = payload["filters"]["period_days"]

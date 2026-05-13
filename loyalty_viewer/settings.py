@@ -636,6 +636,9 @@ OLAP_SYNC_SCHEDULE_MINUTES = _env_int(
     30,
     min_value=1,
 )
+OLAP_SYNC_SCHEDULE_CRON = str(
+    os.getenv("OLAP_SYNC_SCHEDULE_CRON", "5 11-23,0 * * *") or "5 11-23,0 * * *"
+).strip()
 OLAP_SYNC_WINDOW_START_LOCAL = str(
     os.getenv("OLAP_SYNC_WINDOW_START_LOCAL", "12:00") or "12:00"
 ).strip()
@@ -700,6 +703,9 @@ OLAP_ORDER_FACT_SCHEDULE_MINUTES = _env_int(
     30,
     min_value=1,
 )
+OLAP_ORDER_FACT_SCHEDULE_CRON = str(
+    os.getenv("OLAP_ORDER_FACT_SCHEDULE_CRON", "15 11-23,0 * * *") or "15 11-23,0 * * *"
+).strip()
 OLAP_ORDER_FACT_SCHEDULE_TAIL_DAYS = _env_int(
     "OLAP_ORDER_FACT_SCHEDULE_TAIL_DAYS",
     3,
@@ -746,6 +752,9 @@ OLAP_DAILY_ORDER_FACT_SCHEDULE_MINUTES = _env_int(
     60,
     min_value=1,
 )
+OLAP_DAILY_ORDER_FACT_SCHEDULE_CRON = str(
+    os.getenv("OLAP_DAILY_ORDER_FACT_SCHEDULE_CRON", "25 11-23,0 * * *") or "25 11-23,0 * * *"
+).strip()
 OLAP_DAILY_ORDER_FACT_SCHEDULE_TAIL_DAYS = _env_int(
     "OLAP_DAILY_ORDER_FACT_SCHEDULE_TAIL_DAYS",
     3,
@@ -801,6 +810,9 @@ OLAP_WINDOW_METRICS_SCHEDULE_MINUTES = _env_int(
     60,
     min_value=1,
 )
+OLAP_WINDOW_METRICS_SCHEDULE_CRON = str(
+    os.getenv("OLAP_WINDOW_METRICS_SCHEDULE_CRON", "35 11-23,0 * * *") or "35 11-23,0 * * *"
+).strip()
 OLAP_WINDOW_METRICS_SCHEDULE_AS_OF_LAG_DAYS = _env_int(
     "OLAP_WINDOW_METRICS_SCHEDULE_AS_OF_LAG_DAYS",
     0,
@@ -879,19 +891,26 @@ OLAP_CONTROL_PULL_PHONE_DENYLIST = _env_text_set(
     "",
 )
 
+# Единый режим расписания OLAP-витрин: почасовые волны cron (последовательные шаги).
+# По умолчанию включён, чтобы избежать дрейфа интервалов 30/31/57/60 минут.
+OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES = _env_bool(
+    "OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES",
+    True,
+)
+
 
 def _register_olap_schedule_tasks() -> None:
     """
     Регистрирует OLAP-задачи в Django Q по env-флагам.
 
     Это позволяет включать/выключать OLAP-контур без правки кода:
-    1. sync-задача раз в N минут в рабочее окно;
+    1. sync-задача раз в N минут (legacy) или по cron-волнам;
     2. rebuild-задача по cron-расписанию;
-    3. order_fact tail-задача по минутному расписанию;
+    3. order_fact tail-задача по минутному расписанию (legacy) или по cron-волнам;
     4. daily_fact tail-задача по минутному расписанию;
-    5. daily_order_fact tail-задача по минутному расписанию;
+    5. daily_order_fact tail-задача по минутному расписанию (legacy) или по cron-волнам;
     6. order_focus_fact tail-задача по минутному расписанию;
-    7. window_metrics-задача по минутному расписанию;
+    7. window_metrics-задача по минутному расписанию (legacy) или по cron-волнам;
     8. control_pull-задача по cron (контрольная постановка пропущенных задач в journal).
     9. delta-синк каналов из vtelemax.
     """
@@ -906,10 +925,17 @@ def _register_olap_schedule_tasks() -> None:
         schedule_map.pop("run_vtelemax_recipients_delta", None)
 
     if OLAP_SYNC_SCHEDULE_ENABLED:
-        schedule_map["run_olap_sync_windowed"] = {
-            "func": "guests.tasks.run_olap_sync_scheduled_task",
-            "minutes": OLAP_SYNC_SCHEDULE_MINUTES,
-        }
+        if OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES:
+            schedule_map["run_olap_sync_windowed"] = {
+                "func": "guests.tasks.run_olap_sync_scheduled_task",
+                "schedule_type": "C",
+                "cron": OLAP_SYNC_SCHEDULE_CRON,
+            }
+        else:
+            schedule_map["run_olap_sync_windowed"] = {
+                "func": "guests.tasks.run_olap_sync_scheduled_task",
+                "minutes": OLAP_SYNC_SCHEDULE_MINUTES,
+            }
     else:
         schedule_map.pop("run_olap_sync_windowed", None)
 
@@ -923,10 +949,17 @@ def _register_olap_schedule_tasks() -> None:
         schedule_map.pop("run_olap_rebuild_nightly", None)
 
     if OLAP_ORDER_FACT_SCHEDULE_ENABLED:
-        schedule_map["run_order_fact_tail"] = {
-            "func": "guests.tasks.run_order_fact_scheduled_task",
-            "minutes": OLAP_ORDER_FACT_SCHEDULE_MINUTES,
-        }
+        if OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES:
+            schedule_map["run_order_fact_tail"] = {
+                "func": "guests.tasks.run_order_fact_scheduled_task",
+                "schedule_type": "C",
+                "cron": OLAP_ORDER_FACT_SCHEDULE_CRON,
+            }
+        else:
+            schedule_map["run_order_fact_tail"] = {
+                "func": "guests.tasks.run_order_fact_scheduled_task",
+                "minutes": OLAP_ORDER_FACT_SCHEDULE_MINUTES,
+            }
     else:
         schedule_map.pop("run_order_fact_tail", None)
 
@@ -939,10 +972,17 @@ def _register_olap_schedule_tasks() -> None:
         schedule_map.pop("run_daily_fact_tail", None)
 
     if OLAP_DAILY_ORDER_FACT_SCHEDULE_ENABLED:
-        schedule_map["run_daily_order_fact_tail"] = {
-            "func": "guests.tasks.run_daily_order_fact_scheduled_task",
-            "minutes": OLAP_DAILY_ORDER_FACT_SCHEDULE_MINUTES,
-        }
+        if OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES:
+            schedule_map["run_daily_order_fact_tail"] = {
+                "func": "guests.tasks.run_daily_order_fact_scheduled_task",
+                "schedule_type": "C",
+                "cron": OLAP_DAILY_ORDER_FACT_SCHEDULE_CRON,
+            }
+        else:
+            schedule_map["run_daily_order_fact_tail"] = {
+                "func": "guests.tasks.run_daily_order_fact_scheduled_task",
+                "minutes": OLAP_DAILY_ORDER_FACT_SCHEDULE_MINUTES,
+            }
     else:
         schedule_map.pop("run_daily_order_fact_tail", None)
 
@@ -955,10 +995,17 @@ def _register_olap_schedule_tasks() -> None:
         schedule_map.pop("run_order_focus_fact_tail", None)
 
     if OLAP_WINDOW_METRICS_SCHEDULE_ENABLED:
-        schedule_map["run_window_metrics_hourly"] = {
-            "func": "guests.tasks.run_window_metrics_scheduled_task",
-            "minutes": OLAP_WINDOW_METRICS_SCHEDULE_MINUTES,
-        }
+        if OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES:
+            schedule_map["run_window_metrics_hourly"] = {
+                "func": "guests.tasks.run_window_metrics_scheduled_task",
+                "schedule_type": "C",
+                "cron": OLAP_WINDOW_METRICS_SCHEDULE_CRON,
+            }
+        else:
+            schedule_map["run_window_metrics_hourly"] = {
+                "func": "guests.tasks.run_window_metrics_scheduled_task",
+                "minutes": OLAP_WINDOW_METRICS_SCHEDULE_MINUTES,
+            }
     else:
         schedule_map.pop("run_window_metrics_hourly", None)
 
