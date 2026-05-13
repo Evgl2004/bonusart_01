@@ -171,7 +171,13 @@ def build_bots_dashboard_payload(
         )
 
     kpis = _build_kpis(rows)
-    quick_growth = _build_quick_growth(date_to=date_to, periods=(7, 14, 30))
+    header_totals = _build_snapshot_totals(as_of=date_to)
+    quick_growth = _build_quick_growth(
+        date_to=date_to,
+        periods=(7, 14, 30),
+        snapshot_now=header_totals,
+    )
+    yesterday_growth = _build_yesterday_growth(date_to=date_to)
     normalized_period_days = normalize_bots_period_days(period_days)
     return {
         "filters": {
@@ -182,6 +188,8 @@ def build_bots_dashboard_payload(
             "period_options": list(ALLOWED_PERIOD_DAYS),
         },
         "kpis": kpis,
+        "header_totals": header_totals,
+        "yesterday_growth": yesterday_growth,
         "quick_growth": quick_growth,
         "rows": rows,
     }
@@ -217,25 +225,74 @@ def _daterange(date_from: date, date_to: date) -> list[date]:
     return result
 
 
-def _build_quick_growth(*, date_to: date, periods: tuple[int, ...]) -> list[dict[str, int]]:
-    snapshot_now = _build_snapshot_totals(as_of=date_to)
-    result: list[dict[str, int]] = []
+def _build_quick_growth(
+    *,
+    date_to: date,
+    periods: tuple[int, ...],
+    snapshot_now: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    snapshot_current = snapshot_now or _build_snapshot_totals(as_of=date_to)
+    result: list[dict[str, Any]] = []
     for period_days in periods:
         prev_date = date_to - timedelta(days=period_days)
         snapshot_prev = _build_snapshot_totals(as_of=prev_date)
+        delta_channels_total = snapshot_current["channels_total"] - snapshot_prev["channels_total"]
+        delta_channels_optin = (
+            snapshot_current["channels_registered_optin"] - snapshot_prev["channels_registered_optin"]
+        )
+        delta_unique_total = snapshot_current["unique_persons_total"] - snapshot_prev["unique_persons_total"]
+        delta_unique_optin = (
+            snapshot_current["unique_persons_registered_optin"]
+            - snapshot_prev["unique_persons_registered_optin"]
+        )
         result.append(
             {
                 "days": int(period_days),
-                "channels_total_delta": snapshot_now["channels_total"] - snapshot_prev["channels_total"],
-                "channels_registered_optin_delta": snapshot_now["channels_registered_optin"]
-                - snapshot_prev["channels_registered_optin"],
-                "unique_persons_total_delta": snapshot_now["unique_persons_total"]
-                - snapshot_prev["unique_persons_total"],
-                "unique_persons_registered_optin_delta": snapshot_now["unique_persons_registered_optin"]
-                - snapshot_prev["unique_persons_registered_optin"],
+                "channels_total_delta": delta_channels_total,
+                "channels_total_delta_display": _format_signed(delta_channels_total),
+                "channels_registered_optin_delta": delta_channels_optin,
+                "channels_registered_optin_delta_display": _format_signed(delta_channels_optin),
+                "unique_persons_total_delta": delta_unique_total,
+                "unique_persons_total_delta_display": _format_signed(delta_unique_total),
+                "unique_persons_registered_optin_delta": delta_unique_optin,
+                "unique_persons_registered_optin_delta_display": _format_signed(delta_unique_optin),
             }
         )
     return result
+
+
+def _build_yesterday_growth(*, date_to: date) -> dict[str, Any]:
+    yesterday = date_to - timedelta(days=1)
+    day_before_yesterday = date_to - timedelta(days=2)
+    snapshot_yesterday = _build_snapshot_totals(as_of=yesterday)
+    snapshot_day_before = _build_snapshot_totals(as_of=day_before_yesterday)
+    delta_channels_total = snapshot_yesterday["channels_total"] - snapshot_day_before["channels_total"]
+    delta_channels_optin = (
+        snapshot_yesterday["channels_registered_optin"] - snapshot_day_before["channels_registered_optin"]
+    )
+    delta_unique_total = snapshot_yesterday["unique_persons_total"] - snapshot_day_before["unique_persons_total"]
+    delta_unique_optin = (
+        snapshot_yesterday["unique_persons_registered_optin"]
+        - snapshot_day_before["unique_persons_registered_optin"]
+    )
+    return {
+        "date": yesterday.isoformat(),
+        "date_label": yesterday.strftime("%d.%m"),
+        "channels_total_delta": delta_channels_total,
+        "channels_total_delta_display": _format_signed(delta_channels_total),
+        "channels_registered_optin_delta": delta_channels_optin,
+        "channels_registered_optin_delta_display": _format_signed(delta_channels_optin),
+        "unique_persons_total_delta": delta_unique_total,
+        "unique_persons_total_delta_display": _format_signed(delta_unique_total),
+        "unique_persons_registered_optin_delta": delta_unique_optin,
+        "unique_persons_registered_optin_delta_display": _format_signed(delta_unique_optin),
+    }
+
+
+def _format_signed(value: int) -> str:
+    if value > 0:
+        return f"+{value}"
+    return str(value)
 
 
 def _build_snapshot_totals(*, as_of: date) -> dict[str, int]:

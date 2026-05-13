@@ -26,7 +26,7 @@
 
   .bots-header-layout {
     display: grid;
-    grid-template-columns: 1.2fr 1fr;
+    grid-template-columns: 0.8fr 1.2fr;
     gap: 12px;
     align-items: start;
   }
@@ -37,7 +37,7 @@
 
   .header-quick-metrics {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: 8px;
   }
 
@@ -95,7 +95,7 @@
   }
 
   .kpi-row {
-    display: grid;
+    display: none;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 12px;
     margin-bottom: 16px;
@@ -291,13 +291,27 @@
       </div>
     </div>
     <div class="header-quick-metrics">
+      <div class="header-metric-chip">
+        <div class="header-metric-title">Итоги за весь период</div>
+        <div class="header-metric-line">Каналы: {{ bots_dashboard_payload.header_totals.channels_total }}</div>
+        <div class="header-metric-line">С согласием: {{ bots_dashboard_payload.header_totals.channels_registered_optin }}</div>
+        <div class="header-metric-line">Гости: {{ bots_dashboard_payload.header_totals.unique_persons_total }}</div>
+        <div class="header-metric-line">Гости с согласием: {{ bots_dashboard_payload.header_totals.unique_persons_registered_optin }}</div>
+      </div>
+      <div class="header-metric-chip">
+        <div class="header-metric-title">Прирост за вчера ({{ bots_dashboard_payload.yesterday_growth.date_label }})</div>
+        <div class="header-metric-line">Каналы: {{ bots_dashboard_payload.yesterday_growth.channels_total_delta_display }}</div>
+        <div class="header-metric-line">С согласием: {{ bots_dashboard_payload.yesterday_growth.channels_registered_optin_delta_display }}</div>
+        <div class="header-metric-line">Гости: {{ bots_dashboard_payload.yesterday_growth.unique_persons_total_delta_display }}</div>
+        <div class="header-metric-line">Гости с согласием: {{ bots_dashboard_payload.yesterday_growth.unique_persons_registered_optin_delta_display }}</div>
+      </div>
       {% for metric in bots_dashboard_payload.quick_growth %}
         <div class="header-metric-chip">
           <div class="header-metric-title">Прирост за {{ metric.days }} дней</div>
-          <div class="header-metric-line">Каналы: {{ metric.channels_total_delta }}</div>
-          <div class="header-metric-line">С согласием: {{ metric.channels_registered_optin_delta }}</div>
-          <div class="header-metric-line">Гости: {{ metric.unique_persons_total_delta }}</div>
-          <div class="header-metric-line">Гости с согласием: {{ metric.unique_persons_registered_optin_delta }}</div>
+          <div class="header-metric-line">Каналы: {{ metric.channels_total_delta_display }}</div>
+          <div class="header-metric-line">С согласием: {{ metric.channels_registered_optin_delta_display }}</div>
+          <div class="header-metric-line">Гости: {{ metric.unique_persons_total_delta_display }}</div>
+          <div class="header-metric-line">Гости с согласием: {{ metric.unique_persons_registered_optin_delta_display }}</div>
         </div>
       {% endfor %}
     </div>
