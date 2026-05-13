@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
@@ -61,6 +62,21 @@ class BotsDashboardViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["selected_period_days"], 7)
-        self.assertEqual(response.context["selected_date_to"], "2026-05-13")
-        self.assertEqual(response.context["selected_date_from"], "2026-05-07")
+        self.assertEqual(response.context["selected_date_to"], "2026-05-12")
+        self.assertEqual(response.context["selected_date_from"], "2026-05-06")
         self.assertContains(response, "period-switch-btn is-active")
+
+    @patch("guests.views_analytics.timezone.localdate", return_value=timezone.datetime(2026, 5, 13).date())
+    def test_default_and_today_date_to_are_clamped_to_yesterday(self, _localdate_mock):
+        response_default = self.client.get(reverse("dashboard_bots"), secure=True)
+        self.assertEqual(response_default.status_code, 200)
+        self.assertEqual(response_default.context["selected_date_to"], "2026-05-12")
+
+        response_today = self.client.get(
+            reverse("dashboard_bots"),
+            {"date_to": "2026-05-13", "period_days": "7"},
+            secure=True,
+        )
+        self.assertEqual(response_today.status_code, 200)
+        self.assertEqual(response_today.context["selected_date_to"], "2026-05-12")
+        self.assertEqual(response_today.context["selected_date_from"], "2026-05-06")

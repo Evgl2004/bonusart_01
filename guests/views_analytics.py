@@ -60,7 +60,15 @@ class BotsDashboardView(TemplateView):
         context = super().get_context_data(**kwargs)
         raw_period_days = self.request.GET.get("period_days")
         selected_period_days = normalize_bots_period_days(raw_period_days)
-        selected_date_to = _parse_iso_date(self.request.GET.get("date_to")) or timezone.localdate()
+        today_local = timezone.localdate()
+        closed_day = today_local - timedelta(days=1)
+        requested_date_to = _parse_iso_date(self.request.GET.get("date_to"))
+        if requested_date_to is None:
+            selected_date_to = closed_day
+        elif requested_date_to >= today_local:
+            selected_date_to = closed_day
+        else:
+            selected_date_to = requested_date_to
         if raw_period_days:
             selected_date_from = selected_date_to - timedelta(days=selected_period_days - 1)
         else:
