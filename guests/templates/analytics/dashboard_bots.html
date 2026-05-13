@@ -16,11 +16,19 @@
   }
 
   .bots-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    padding: 0.9rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .bots-header-layout {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 12px;
+    align-items: start;
   }
 
   .bots-header-main {
@@ -31,7 +39,6 @@
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-    width: min(760px, 100%);
   }
 
   .header-metric-chip {
@@ -58,19 +65,11 @@
     text-overflow: ellipsis;
   }
 
-  .period-switch-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 10px;
-  }
-
   .period-switch {
     display: inline-flex;
     flex-wrap: wrap;
     gap: 6px;
+    margin-top: 8px;
   }
 
   .period-switch-btn {
@@ -256,6 +255,9 @@
   }
 
   @media (max-width: 1200px) {
+    .bots-header-layout {
+      grid-template-columns: 1fr;
+    }
     .header-quick-metrics {
       grid-template-columns: 1fr;
     }
@@ -271,38 +273,34 @@
 
 {% block content %}
 <div class="bots-header">
-  <div class="bots-header-main">
-    <h1 class="h3 mb-1">Дашборд: боты и регистрация гостей</h1>
-    <div class="bots-muted">
-      Период: {{ bots_dashboard_payload.filters.date_from }} - {{ bots_dashboard_payload.filters.date_to }}
-    </div>
-  </div>
-  <div class="header-quick-metrics">
-    {% for metric in bots_dashboard_payload.quick_growth %}
-      <div class="header-metric-chip">
-        <div class="header-metric-title">Прирост за {{ metric.days }} дней</div>
-        <div class="header-metric-line">Каналы: {{ metric.channels_total_delta }}</div>
-        <div class="header-metric-line">С согласием: {{ metric.channels_registered_optin_delta }}</div>
-        <div class="header-metric-line">Гости: {{ metric.unique_persons_total_delta }}</div>
-        <div class="header-metric-line">Гости с согласием: {{ metric.unique_persons_registered_optin_delta }}</div>
+  <div class="bots-header-layout">
+    <div class="bots-header-main">
+      <h1 class="h3 mb-1">Дашборд: боты и регистрация гостей</h1>
+      <div class="bots-muted">
+        Период: {{ bots_dashboard_payload.filters.date_from }} - {{ bots_dashboard_payload.filters.date_to }} ({{ bots_dashboard_payload.filters.days }} дней)
       </div>
-    {% endfor %}
-  </div>
-</div>
-
-<div class="period-switch-row">
-  <div class="period-switch">
-    {% for days in period_options %}
-      <a
-        class="period-switch-btn {% if selected_period_days == days %}is-active{% endif %}"
-        href="?period_days={{ days }}&date_to={{ selected_date_to }}"
-      >
-        {{ days }} дней
-      </a>
-    {% endfor %}
-  </div>
-  <div class="bots-muted">
-    Быстрый выбор глубины графиков. Якорная дата: <strong>{{ selected_date_to }}</strong>.
+      <div class="period-switch">
+        {% for days in period_options %}
+          <a
+            class="period-switch-btn {% if selected_period_days == days %}is-active{% endif %}"
+            href="?period_days={{ days }}&date_to={{ selected_date_to }}"
+          >
+            {{ days }} дней
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+    <div class="header-quick-metrics">
+      {% for metric in bots_dashboard_payload.quick_growth %}
+        <div class="header-metric-chip">
+          <div class="header-metric-title">Прирост за {{ metric.days }} дней</div>
+          <div class="header-metric-line">Каналы: {{ metric.channels_total_delta }}</div>
+          <div class="header-metric-line">С согласием: {{ metric.channels_registered_optin_delta }}</div>
+          <div class="header-metric-line">Гости: {{ metric.unique_persons_total_delta }}</div>
+          <div class="header-metric-line">Гости с согласием: {{ metric.unique_persons_registered_optin_delta }}</div>
+        </div>
+      {% endfor %}
+    </div>
   </div>
 </div>
 
