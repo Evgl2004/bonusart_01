@@ -45,24 +45,25 @@
     border: 1px solid #dbe1ea;
     border-radius: 10px;
     background: #ffffff;
-    padding: 8px 10px;
+    padding: 7px 9px;
     box-shadow: 0 6px 14px rgba(17, 24, 39, 0.04);
   }
 
   .header-metric-title {
-    font-size: 0.8rem;
-    font-weight: 700;
+    font-size: 0.74rem;
+    font-weight: 650;
     color: #0f172a;
-    margin-bottom: 3px;
+    margin-bottom: 2px;
+    line-height: 1.2;
   }
 
   .header-metric-line {
-    font-size: 0.76rem;
+    font-size: 0.7rem;
     color: #475569;
-    line-height: 1.25;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    line-height: 1.18;
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
   }
 
   .period-switch {
@@ -317,20 +318,6 @@
     </div>
   </div>
 </div>
-
-<form method="get" class="row g-2 align-items-end mb-3">
-  <div class="col-12 col-md-3">
-    <label class="form-label">Дата с</label>
-    <input type="date" class="form-control" name="date_from" value="{{ selected_date_from }}">
-  </div>
-  <div class="col-12 col-md-3">
-    <label class="form-label">Дата по</label>
-    <input type="date" class="form-control" name="date_to" value="{{ selected_date_to }}">
-  </div>
-  <div class="col-12 col-md-2">
-    <button type="submit" class="btn btn-primary w-100">Применить</button>
-  </div>
-</form>
 
 <div class="kpi-row">
   <div class="kpi-card">
