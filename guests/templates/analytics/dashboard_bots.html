@@ -1,0 +1,709 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд: боты{% endblock %}
+
+{% block extra_css %}
+<style>
+  :root {
+    --tg-total: #2aabee;
+    --tg-optin: #229ed9;
+    --vk-total: #2787f5;
+    --vk-optin: #1668d8;
+    --max-total: #7c3aed;
+    --max-optin: #5b21b6;
+    --persons-total: #9ca3af;
+    --persons-optin: #4b5563;
+  }
+
+  .bots-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .bots-muted {
+    color: #6b7280;
+    font-size: 0.92rem;
+  }
+
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .kpi-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #ffffff;
+    padding: 1rem 1.1rem;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+  }
+
+  .kpi-title {
+    color: #374151;
+    font-size: 0.88rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .kpi-value {
+    color: #111827;
+    font-size: 1.65rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .panel-grid {
+    display: grid;
+    gap: 14px;
+    grid-template-columns: 2fr 1fr;
+  }
+
+  .panel-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #ffffff;
+    padding: 0.9rem;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    height: 100%;
+  }
+
+  .panel-title {
+    color: #111827;
+    font-size: 1.05rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem 0;
+  }
+
+  .panel-subtitle {
+    color: #6b7280;
+    font-size: 0.86rem;
+    margin: 0 0 0.55rem 0;
+  }
+
+  .controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .switches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid #d1d5db;
+    border-radius: 999px;
+    background: #f9fafb;
+    padding: 4px 10px;
+    font-size: 0.9rem;
+    color: #374151;
+    user-select: none;
+  }
+
+  .switch input {
+    margin: 0;
+  }
+
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    display: inline-block;
+  }
+
+  .action-btn {
+    border: 1px solid #c7ced9;
+    background: #fff;
+    color: #374151;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    padding: 4px 9px;
+  }
+
+  .mode-box {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 3px 8px;
+    background: #fff;
+    font-size: 0.82rem;
+    color: #374151;
+  }
+
+  .chart-wrap {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: #fff;
+    padding: 6px 6px 2px;
+  }
+
+  .chart-box {
+    width: 100%;
+    height: 350px;
+  }
+
+  .chart-box-small {
+    width: 100%;
+    height: 300px;
+  }
+
+  .panel-note {
+    margin: 8px 0 10px;
+    color: #6b7280;
+    font-size: 0.8rem;
+  }
+
+  .table-card {
+    margin-top: 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    padding: 0.9rem;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.7rem;
+  }
+
+  .table-sm {
+    margin: 0;
+    font-size: 0.82rem;
+  }
+
+  @media (max-width: 1200px) {
+    .kpi-row {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .panel-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bots-header">
+  <div>
+    <h1 class="h3 mb-1">Дашборд: боты и регистрация гостей</h1>
+    <div class="bots-muted">
+      Период: {{ bots_dashboard_payload.filters.date_from }} - {{ bots_dashboard_payload.filters.date_to }}
+    </div>
+  </div>
+</div>
+
+<form method="get" class="row g-2 align-items-end mb-3">
+  <div class="col-12 col-md-3">
+    <label class="form-label">Дата с</label>
+    <input type="date" class="form-control" name="date_from" value="{{ selected_date_from }}">
+  </div>
+  <div class="col-12 col-md-3">
+    <label class="form-label">Дата по</label>
+    <input type="date" class="form-control" name="date_to" value="{{ selected_date_to }}">
+  </div>
+  <div class="col-12 col-md-2">
+    <button type="submit" class="btn btn-primary w-100">Применить</button>
+  </div>
+</form>
+
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-title">Каналы всего (все боты)</div>
+    <div class="kpi-value" id="kpiChannelsTotal">0</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-title">Каналы с согласием</div>
+    <div class="kpi-value" id="kpiChannelsOptin">0</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-title">Уникальные гости всего</div>
+    <div class="kpi-value" id="kpiUniqueTotal">0</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-title">Уникальные гости с согласием</div>
+    <div class="kpi-value" id="kpiUniqueOptin">0</div>
+  </div>
+</div>
+
+<div class="panel-grid">
+  <article class="panel-card">
+    <h2 class="panel-title">Каналы по ботам: всего и с согласием</h2>
+    <p class="panel-subtitle">6 рядов: Telegram, VK, MAX в двух состояниях.</p>
+
+    <div class="controls-row">
+      <button class="action-btn" id="channelsAllOn" type="button">Показать все</button>
+      <button class="action-btn" id="channelsAllOff" type="button">Скрыть все</button>
+      <label class="mode-box">
+        <input type="checkbox" id="normalizeChannels">
+        Нормализовать (% к первому дню)
+      </label>
+    </div>
+
+    <div class="switches" id="channelsSwitches"></div>
+
+    <div class="chart-wrap">
+      <div id="channelsCumulativeChart" class="chart-box"></div>
+    </div>
+    <div class="panel-note">Накопительный режим: значение на конец дня.</div>
+
+    <div class="chart-wrap">
+      <div id="channelsDeltaChart" class="chart-box-small"></div>
+    </div>
+    <div class="panel-note">Прирост за день: столбцы по суточному изменению.</div>
+  </article>
+
+  <article class="panel-card">
+    <h2 class="panel-title">Уникальные гости</h2>
+    <p class="panel-subtitle">Всего и с согласием на сообщения.</p>
+
+    <div class="controls-row">
+      <button class="action-btn" id="personsAllOn" type="button">Показать все</button>
+      <button class="action-btn" id="personsAllOff" type="button">Скрыть все</button>
+    </div>
+
+    <div class="switches" id="personsSwitches"></div>
+
+    <div class="chart-wrap">
+      <div id="personsChart" class="chart-box"></div>
+    </div>
+    <div class="panel-note">Накопительный режим: значение на конец дня.</div>
+
+    <div class="chart-wrap">
+      <div id="personsDeltaChart" class="chart-box-small"></div>
+    </div>
+    <div class="panel-note">Прирост за день: столбцы по суточному изменению.</div>
+  </article>
+</div>
+
+<section class="table-card">
+  <h2 class="panel-title">Табличная проверка по дням</h2>
+  <p class="panel-subtitle">Можно сверить значения графика в числах.</p>
+  <div class="table-wrap">
+    <table class="table table-sm table-striped mb-0">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Telegram: всего</th>
+          <th>Telegram: с согласием</th>
+          <th>VK: всего</th>
+          <th>VK: с согласием</th>
+          <th>MAX: всего</th>
+          <th>MAX: с согласием</th>
+          <th>Уникальные: всего</th>
+          <th>Уникальные: с согласием</th>
+        </tr>
+      </thead>
+      <tbody id="rowsTableBody"></tbody>
+    </table>
+  </div>
+</section>
+
+{{ bots_dashboard_payload|json_script:"bots-dashboard-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+  (function() {
+    const payloadNode = document.getElementById("bots-dashboard-data");
+    if (!payloadNode) {
+      return;
+    }
+    const payload = JSON.parse(payloadNode.textContent || "{}");
+    const rows = payload.rows || [];
+    const dayLabels = rows.map((row) => formatDay(row.day));
+
+    const channelDefs = [
+      { key: "channels_total_telegram", name: "Telegram: всего", color: css("--tg-total") },
+      { key: "channels_registered_optin_telegram", name: "Telegram: с согласием", color: css("--tg-optin") },
+      { key: "channels_total_vk", name: "VK: всего", color: css("--vk-total") },
+      { key: "channels_registered_optin_vk", name: "VK: с согласием", color: css("--vk-optin") },
+      { key: "channels_total_max", name: "MAX: всего", color: css("--max-total") },
+      { key: "channels_registered_optin_max", name: "MAX: с согласием", color: css("--max-optin") }
+    ];
+
+    const personsDefs = [
+      { key: "unique_persons_total", name: "Уникальные гости: всего", color: css("--persons-total") },
+      { key: "unique_persons_registered_optin", name: "Уникальные гости: с согласием", color: css("--persons-optin") }
+    ];
+
+    const state = {
+      normalizeChannels: false,
+      visibleChannels: Object.fromEntries(channelDefs.map((def) => [def.key, true])),
+      visiblePersons: Object.fromEntries(personsDefs.map((def) => [def.key, true])),
+    };
+
+    const channelsCumulativeChart = echarts.init(document.getElementById("channelsCumulativeChart"));
+    const channelsDeltaChart = echarts.init(document.getElementById("channelsDeltaChart"));
+    const personsChart = echarts.init(document.getElementById("personsChart"));
+    const personsDeltaChart = echarts.init(document.getElementById("personsDeltaChart"));
+
+    initControls();
+    renderAll();
+    renderTable();
+    renderKpis();
+
+    window.addEventListener("resize", () => {
+      channelsCumulativeChart.resize();
+      channelsDeltaChart.resize();
+      personsChart.resize();
+      personsDeltaChart.resize();
+    });
+
+    function initControls() {
+      renderSwitches("channelsSwitches", channelDefs, state.visibleChannels, renderChannelCharts);
+      renderSwitches("personsSwitches", personsDefs, state.visiblePersons, renderPersonsCharts);
+
+      document.getElementById("channelsAllOn").addEventListener("click", () => {
+        channelDefs.forEach((def) => { state.visibleChannels[def.key] = true; });
+        renderSwitches("channelsSwitches", channelDefs, state.visibleChannels, renderChannelCharts);
+        renderChannelCharts();
+      });
+      document.getElementById("channelsAllOff").addEventListener("click", () => {
+        channelDefs.forEach((def) => { state.visibleChannels[def.key] = false; });
+        renderSwitches("channelsSwitches", channelDefs, state.visibleChannels, renderChannelCharts);
+        renderChannelCharts();
+      });
+      document.getElementById("personsAllOn").addEventListener("click", () => {
+        personsDefs.forEach((def) => { state.visiblePersons[def.key] = true; });
+        renderSwitches("personsSwitches", personsDefs, state.visiblePersons, renderPersonsCharts);
+        renderPersonsCharts();
+      });
+      document.getElementById("personsAllOff").addEventListener("click", () => {
+        personsDefs.forEach((def) => { state.visiblePersons[def.key] = false; });
+        renderSwitches("personsSwitches", personsDefs, state.visiblePersons, renderPersonsCharts);
+        renderPersonsCharts();
+      });
+      document.getElementById("normalizeChannels").addEventListener("change", (event) => {
+        state.normalizeChannels = !!event.target.checked;
+        renderChannelCharts();
+      });
+    }
+
+    function renderAll() {
+      renderChannelCharts();
+      renderPersonsCharts();
+    }
+
+    function renderChannelCharts() {
+      const selected = channelDefs.filter((def) => state.visibleChannels[def.key]);
+      const normalized = state.normalizeChannels;
+      const cumulativeSeries = selected.map((def) => {
+        const rawValues = getValues(def.key);
+        if (normalized) {
+          const normalizedValues = normalizeToStart(rawValues);
+          return {
+            name: def.name,
+            type: "line",
+            smooth: false,
+            symbolSize: 6,
+            lineStyle: { width: 2.4, color: def.color },
+            itemStyle: { color: def.color },
+            data: normalizedValues.map((value, idx) => ({ value, raw: rawValues[idx] })),
+          };
+        }
+        return {
+          name: def.name,
+          type: "line",
+          smooth: false,
+          symbolSize: 6,
+          lineStyle: { width: 2.4, color: def.color },
+          itemStyle: { color: def.color },
+          data: rawValues,
+        };
+      });
+
+      channelsCumulativeChart.setOption({
+        animation: false,
+        legend: { show: false },
+        grid: { left: 58, right: 18, top: 20, bottom: 44 },
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          axisPointer: { type: "line" },
+          formatter: (params) => {
+            if (!params || !params.length) {
+              return "";
+            }
+            const lines = [`<strong>${params[0].axisValue}</strong>`];
+            params.forEach((item) => {
+              if (normalized) {
+                const raw = item.data && typeof item.data === "object" ? Number(item.data.raw || 0) : Number(item.value || 0);
+                lines.push(`${item.marker}${item.seriesName}: ${formatPercent(item.value)} (${formatInt(raw)})`);
+              } else {
+                lines.push(`${item.marker}${item.seriesName}: ${formatInt(item.value)}`);
+              }
+            });
+            return lines.join("<br/>");
+          },
+        },
+        xAxis: {
+          type: "category",
+          data: dayLabels,
+          axisTick: { alignWithLabel: true },
+        },
+        yAxis: {
+          type: "value",
+          axisLabel: {
+            formatter: (value) => normalized ? `${value}%` : formatInt(value),
+          },
+        },
+        series: cumulativeSeries,
+      }, true);
+
+      const deltaSeries = selected.map((def) => ({
+        name: def.name,
+        type: "bar",
+        barMaxWidth: 20,
+        itemStyle: { color: def.color, opacity: 0.86 },
+        data: dailyDelta(getValues(def.key)),
+      }));
+
+      channelsDeltaChart.setOption({
+        animation: false,
+        legend: { show: false },
+        grid: { left: 58, right: 18, top: 20, bottom: 44 },
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          axisPointer: { type: "shadow" },
+          formatter: (params) => {
+            if (!params || !params.length) {
+              return "";
+            }
+            const lines = [`<strong>${params[0].axisValue}</strong>`];
+            params.forEach((item) => {
+              lines.push(`${item.marker}${item.seriesName}: ${formatSigned(item.value)}`);
+            });
+            return lines.join("<br/>");
+          },
+        },
+        xAxis: {
+          type: "category",
+          data: dayLabels,
+          axisTick: { alignWithLabel: true },
+        },
+        yAxis: {
+          type: "value",
+          axisLabel: { formatter: (value) => formatInt(value) },
+        },
+        series: deltaSeries,
+      }, true);
+    }
+
+    function renderPersonsCharts() {
+      const selected = personsDefs.filter((def) => state.visiblePersons[def.key]);
+      const cumulativeSeries = selected.map((def) => ({
+        name: def.name,
+        type: "line",
+        smooth: false,
+        symbolSize: 6,
+        lineStyle: { width: 2.4, color: def.color },
+        itemStyle: { color: def.color },
+        data: getValues(def.key),
+      }));
+
+      personsChart.setOption({
+        animation: false,
+        legend: { show: false },
+        grid: { left: 58, right: 18, top: 20, bottom: 44 },
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          axisPointer: { type: "line" },
+          formatter: (params) => {
+            if (!params || !params.length) {
+              return "";
+            }
+            const lines = [`<strong>${params[0].axisValue}</strong>`];
+            params.forEach((item) => {
+              lines.push(`${item.marker}${item.seriesName}: ${formatInt(item.value)}`);
+            });
+            return lines.join("<br/>");
+          },
+        },
+        xAxis: {
+          type: "category",
+          data: dayLabels,
+          axisTick: { alignWithLabel: true },
+        },
+        yAxis: {
+          type: "value",
+          axisLabel: { formatter: (value) => formatInt(value) },
+        },
+        series: cumulativeSeries,
+      }, true);
+
+      const deltaSeries = selected.map((def) => ({
+        name: def.name,
+        type: "bar",
+        barMaxWidth: 24,
+        itemStyle: { color: def.color, opacity: 0.86 },
+        data: dailyDelta(getValues(def.key)),
+      }));
+
+      personsDeltaChart.setOption({
+        animation: false,
+        legend: { show: false },
+        grid: { left: 58, right: 18, top: 20, bottom: 44 },
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          axisPointer: { type: "shadow" },
+          formatter: (params) => {
+            if (!params || !params.length) {
+              return "";
+            }
+            const lines = [`<strong>${params[0].axisValue}</strong>`];
+            params.forEach((item) => {
+              lines.push(`${item.marker}${item.seriesName}: ${formatSigned(item.value)}`);
+            });
+            return lines.join("<br/>");
+          },
+        },
+        xAxis: {
+          type: "category",
+          data: dayLabels,
+          axisTick: { alignWithLabel: true },
+        },
+        yAxis: {
+          type: "value",
+          axisLabel: { formatter: (value) => formatInt(value) },
+        },
+        series: deltaSeries,
+      }, true);
+    }
+
+    function renderKpis() {
+      const kpis = payload.kpis || {};
+      setText("kpiChannelsTotal", formatInt(kpis.channels_total || 0));
+      setText("kpiChannelsOptin", formatInt(kpis.channels_registered_optin || 0));
+      setText("kpiUniqueTotal", formatInt(kpis.unique_persons_total || 0));
+      setText("kpiUniqueOptin", formatInt(kpis.unique_persons_registered_optin || 0));
+    }
+
+    function renderTable() {
+      const body = document.getElementById("rowsTableBody");
+      body.innerHTML = rows.map((row) => `
+        <tr>
+          <td>${formatDay(row.day)}</td>
+          <td>${formatInt(row.channels_total_telegram)}</td>
+          <td>${formatInt(row.channels_registered_optin_telegram)}</td>
+          <td>${formatInt(row.channels_total_vk)}</td>
+          <td>${formatInt(row.channels_registered_optin_vk)}</td>
+          <td>${formatInt(row.channels_total_max)}</td>
+          <td>${formatInt(row.channels_registered_optin_max)}</td>
+          <td>${formatInt(row.unique_persons_total)}</td>
+          <td>${formatInt(row.unique_persons_registered_optin)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function renderSwitches(containerId, defs, stateMap, onChange) {
+      const node = document.getElementById(containerId);
+      node.innerHTML = defs.map((def) => `
+        <label class="switch">
+          <input type="checkbox" data-key="${def.key}" ${stateMap[def.key] ? "checked" : ""}>
+          <span class="dot" style="background:${def.color}"></span>
+          <span>${def.name}</span>
+        </label>
+      `).join("");
+
+      node.querySelectorAll("input[type='checkbox']").forEach((checkbox) => {
+        checkbox.addEventListener("change", (event) => {
+          const key = event.target.getAttribute("data-key");
+          stateMap[key] = event.target.checked;
+          onChange();
+        });
+      });
+    }
+
+    function getValues(key) {
+      return rows.map((row) => Number(row[key] || 0));
+    }
+
+    function dailyDelta(values) {
+      if (!values.length) {
+        return [];
+      }
+      return values.map((value, idx) => {
+        if (idx === 0) {
+          return 0;
+        }
+        return Number(value) - Number(values[idx - 1] || 0);
+      });
+    }
+
+    function normalizeToStart(values) {
+      if (!values.length) {
+        return [];
+      }
+      const start = Number(values[0] || 0);
+      if (!start) {
+        return values.map(() => 0);
+      }
+      return values.map((value) => {
+        const change = ((Number(value) - start) / start) * 100;
+        return Math.round(change * 100) / 100;
+      });
+    }
+
+    function css(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+
+    function formatDay(isoDate) {
+      const parts = String(isoDate || "").split("-");
+      if (parts.length !== 3) {
+        return String(isoDate || "");
+      }
+      return `${parts[2]}.${parts[1]}`;
+    }
+
+    function setText(id, value) {
+      const node = document.getElementById(id);
+      if (node) {
+        node.textContent = String(value);
+      }
+    }
+
+    function formatInt(value) {
+      return new Intl.NumberFormat("ru-RU").format(Number(value || 0));
+    }
+
+    function formatSigned(value) {
+      const numeric = Number(value || 0);
+      if (numeric > 0) {
+        return `+${formatInt(numeric)}`;
+      }
+      if (numeric < 0) {
+        return `-${formatInt(Math.abs(numeric))}`;
+      }
+      return "0";
+    }
+
+    function formatPercent(value) {
+      const numeric = Number(value || 0);
+      const sign = numeric > 0 ? "+" : "";
+      return `${sign}${numeric.toFixed(2)}%`;
+    }
+  })();
+</script>
+{% endblock %}

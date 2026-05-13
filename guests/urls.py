@@ -15,7 +15,7 @@ from .views import (
     MessageTemplateUpdateView,
     TemplatesListView,
 )
-from .views_analytics import AnalyticsDashboardView
+from .views_analytics import AnalyticsDashboardView, BotsDashboardView
 from .views_mailings_import import MailingImportPhonesView, MailingImportTemplateDownloadView
 from .views_mailings_logs import MailingLogsDownloadTxtView, MailingLogsView
 from .views_guest_workbench import GuestsWorkbenchView
@@ -53,6 +53,7 @@ urlpatterns = [
 
     # Новая навигация (пошаговое внедрение интерфейса).
     path("dashboard/", AnalyticsDashboardView.as_view(), name="dashboard"),
+    path("dashboard/bots/", BotsDashboardView.as_view(), name="dashboard_bots"),
     path("segments/", SegmentsWorkbenchView.as_view(), name="segments"),
     path("focus-categories/", FocusCategoriesWorkbenchView.as_view(), name="focus_categories"),
     path("virtual-categories/", VirtualCategoriesWorkbenchView.as_view(), name="virtual_categories"),

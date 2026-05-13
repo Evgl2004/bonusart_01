@@ -4,12 +4,16 @@
 
 from __future__ import annotations
 
+from datetime import date, timedelta
+
 from django.views.generic import TemplateView
+from django.utils import timezone
 
 from guests.services.analytics_dashboard import (
     build_analytics_dashboard_payload,
     normalize_period_days,
 )
+from guests.services.bots_dashboard import build_bots_dashboard_payload
 
 
 class AnalyticsDashboardView(TemplateView):
@@ -35,3 +39,40 @@ class AnalyticsDashboardView(TemplateView):
         context["period_options"] = payload["filters"]["period_options"]
         context["department_options"] = payload["filters"]["departments"]
         return context
+
+
+class BotsDashboardView(TemplateView):
+    """
+    Отдельная страница аналитики регистраций в ботах.
+    """
+
+    template_name = "analytics/dashboard_bots.html"
+    default_days = 15
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        selected_date_to = _parse_iso_date(self.request.GET.get("date_to")) or timezone.localdate()
+        selected_date_from = _parse_iso_date(self.request.GET.get("date_from"))
+        if selected_date_from is None:
+            selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
+        if selected_date_from > selected_date_to:
+            selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
+
+        payload = build_bots_dashboard_payload(
+            date_from=selected_date_from,
+            date_to=selected_date_to,
+        )
+        context["bots_dashboard_payload"] = payload
+        context["selected_date_from"] = selected_date_from.isoformat()
+        context["selected_date_to"] = selected_date_to.isoformat()
+        return context
+
+
+def _parse_iso_date(raw_value: str | None):
+    text = str(raw_value or "").strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
