@@ -167,20 +167,19 @@ def build_bots_dashboard_payload(
                 "channels_registered_optin_max": running_optin["max"],
                 "unique_persons_total": running_unique_total,
                 "unique_persons_registered_optin": running_unique_optin,
+                # Готовый суточный прирост: источник для "нижних" графиков дельты.
+                "channels_total_telegram_delta": created_daily[(day, "telegram")],
+                "channels_registered_optin_telegram_delta": optin_daily[(day, "telegram")],
+                "channels_total_vk_delta": created_daily[(day, "vk")],
+                "channels_registered_optin_vk_delta": optin_daily[(day, "vk")],
+                "channels_total_max_delta": created_daily[(day, "max")],
+                "channels_registered_optin_max_delta": optin_daily[(day, "max")],
+                "unique_persons_total_delta": unique_total_daily_add[day],
+                "unique_persons_registered_optin_delta": unique_optin_daily_add[day],
             }
         )
 
     kpis = _build_kpis(rows)
-    delta_baseline = {
-        "channels_total_telegram": int(base_total_by_platform["telegram"]),
-        "channels_registered_optin_telegram": int(base_optin_by_platform["telegram"]),
-        "channels_total_vk": int(base_total_by_platform["vk"]),
-        "channels_registered_optin_vk": int(base_optin_by_platform["vk"]),
-        "channels_total_max": int(base_total_by_platform["max"]),
-        "channels_registered_optin_max": int(base_optin_by_platform["max"]),
-        "unique_persons_total": int(base_unique_total),
-        "unique_persons_registered_optin": int(base_unique_optin),
-    }
     header_totals = _build_snapshot_totals(as_of=date_to)
     quick_growth = _build_quick_growth(
         date_to=date_to,
@@ -198,7 +197,6 @@ def build_bots_dashboard_payload(
             "period_options": list(ALLOWED_PERIOD_DAYS),
         },
         "kpis": kpis,
-        "delta_baseline": delta_baseline,
         "header_totals": header_totals,
         "yesterday_growth": yesterday_growth,
         "quick_growth": quick_growth,

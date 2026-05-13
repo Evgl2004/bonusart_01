@@ -425,20 +425,19 @@
     const payload = JSON.parse(payloadNode.textContent || "{}");
     const rows = payload.rows || [];
     const dayLabels = rows.map((row) => formatDay(row.day));
-    const deltaBaseline = payload.delta_baseline || {};
 
     const channelDefs = [
-      { key: "channels_total_telegram", name: "Telegram: всего", color: css("--tg-total") },
-      { key: "channels_registered_optin_telegram", name: "Telegram: с согласием", color: css("--tg-optin") },
-      { key: "channels_total_vk", name: "VK: всего", color: css("--vk-total") },
-      { key: "channels_registered_optin_vk", name: "VK: с согласием", color: css("--vk-optin") },
-      { key: "channels_total_max", name: "MAX: всего", color: css("--max-total") },
-      { key: "channels_registered_optin_max", name: "MAX: с согласием", color: css("--max-optin") }
+      { key: "channels_total_telegram", deltaKey: "channels_total_telegram_delta", name: "Telegram: всего", color: css("--tg-total") },
+      { key: "channels_registered_optin_telegram", deltaKey: "channels_registered_optin_telegram_delta", name: "Telegram: с согласием", color: css("--tg-optin") },
+      { key: "channels_total_vk", deltaKey: "channels_total_vk_delta", name: "VK: всего", color: css("--vk-total") },
+      { key: "channels_registered_optin_vk", deltaKey: "channels_registered_optin_vk_delta", name: "VK: с согласием", color: css("--vk-optin") },
+      { key: "channels_total_max", deltaKey: "channels_total_max_delta", name: "MAX: всего", color: css("--max-total") },
+      { key: "channels_registered_optin_max", deltaKey: "channels_registered_optin_max_delta", name: "MAX: с согласием", color: css("--max-optin") }
     ];
 
     const personsDefs = [
-      { key: "unique_persons_total", name: "Уникальные гости: всего", color: css("--persons-total") },
-      { key: "unique_persons_registered_optin", name: "Уникальные гости: с согласием", color: css("--persons-optin") }
+      { key: "unique_persons_total", deltaKey: "unique_persons_total_delta", name: "Уникальные гости: всего", color: css("--persons-total") },
+      { key: "unique_persons_registered_optin", deltaKey: "unique_persons_registered_optin_delta", name: "Уникальные гости: с согласием", color: css("--persons-optin") }
     ];
 
     const state = {
@@ -570,7 +569,7 @@
         type: "bar",
         barMaxWidth: 20,
         itemStyle: { color: def.color, opacity: 0.86 },
-        data: dailyDelta(getValues(def.key), deltaBaseline[def.key]),
+        data: getValues(def.deltaKey),
       }));
 
       channelsDeltaChart.setOption({
@@ -653,7 +652,7 @@
         type: "bar",
         barMaxWidth: 24,
         itemStyle: { color: def.color, opacity: 0.86 },
-        data: dailyDelta(getValues(def.key), deltaBaseline[def.key]),
+        data: getValues(def.deltaKey),
       }));
 
       personsDeltaChart.setOption({
@@ -734,19 +733,6 @@
 
     function getValues(key) {
       return rows.map((row) => Number(row[key] || 0));
-    }
-
-    function dailyDelta(values, baseline) {
-      if (!values.length) {
-        return [];
-      }
-      const baselineValue = Number(baseline || 0);
-      return values.map((value, idx) => {
-        if (idx === 0) {
-          return Number(value) - baselineValue;
-        }
-        return Number(value) - Number(values[idx - 1] || 0);
-      });
     }
 
     function normalizeToStart(values) {
