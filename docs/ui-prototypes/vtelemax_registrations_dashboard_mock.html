@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Прототип: дашборд ботов</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    :root {
+      --tg-total: #2aabee;
+      --tg-optin: #229ed9;
+      --vk-total: #2787f5;
+      --vk-optin: #1668d8;
+      --max-total: #7c3aed;
+      --max-optin: #5b21b6;
+      --persons-total: #9ca3af;
+      --persons-optin: #4b5563;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: #f7f8fb;
+      color: #111827;
+    }
+
+    .container {
+      max-width: 1480px;
+      margin: 0 auto;
+    }
+
+    .panel {
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      background: #fff;
+      box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    .header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .header h1 {
+      margin: 0 0 6px;
+      font-size: 32px;
+    }
+
+    .muted {
+      color: #6b7280;
+      font-size: 14px;
+      margin: 0;
+    }
+
+    .quick-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      width: min(760px, 100%);
+    }
+
+    .quick-chip {
+      border: 1px solid #dbe1ea;
+      border-radius: 10px;
+      background: #fff;
+      padding: 8px 10px;
+    }
+
+    .quick-title {
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 3px;
+      color: #0f172a;
+    }
+
+    .quick-line {
+      font-size: 12px;
+      color: #475569;
+      line-height: 1.35;
+    }
+
+    .period-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .period-switch {
+      display: inline-flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .period-btn {
+      border: 1px solid #c7ced9;
+      border-radius: 8px;
+      background: #fff;
+      color: #334155;
+      padding: 4px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .period-btn.active {
+      border-color: #2563eb;
+      background: #2563eb;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .kpi {
+      border: 1px solid #e5e7eb;
+      border-radius: 14px;
+      background: #fff;
+      padding: 14px;
+      box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    }
+
+    .kpi-label {
+      color: #4b5563;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+
+    .kpi-value {
+      font-size: 50px;
+      line-height: 1;
+      font-weight: 700;
+      margin-bottom: 6px;
+      letter-spacing: 0.02em;
+    }
+
+    .kpi-meta {
+      color: #4b5563;
+      font-size: 15px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 14px;
+    }
+
+    .title {
+      margin: 0 0 4px;
+      font-size: 40px;
+      line-height: 1.1;
+    }
+
+    .subtitle {
+      margin: 0 0 10px;
+      color: #6b7280;
+      font-size: 14px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+      align-items: center;
+    }
+
+    .btn {
+      border: 1px solid #c7ced9;
+      border-radius: 8px;
+      background: #fff;
+      color: #374151;
+      padding: 4px 10px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid #d1d5db;
+      border-radius: 999px;
+      background: #f9fafb;
+      padding: 4px 10px;
+      font-size: 13px;
+      color: #374151;
+      user-select: none;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    .switches {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    .chart-wrap {
+      border: 1px solid #e5e7eb;
+      border-radius: 12px;
+      background: #fff;
+      padding: 8px 8px 2px;
+      margin-bottom: 8px;
+    }
+
+    .chart {
+      width: 100%;
+      height: 420px;
+    }
+
+    .chart.small {
+      height: 360px;
+    }
+
+    .note {
+      margin: 0 0 6px;
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    @media (max-width: 1200px) {
+      .quick-metrics {
+        grid-template-columns: 1fr;
+      }
+      .kpi-row {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .grid {
+        grid-template-columns: 1fr;
+      }
+      .title {
+        font-size: 30px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="panel header">
+      <div>
+        <h1>Дашборд: боты и регистрация гостей</h1>
+        <p class="muted" id="periodText"></p>
+      </div>
+      <div class="quick-metrics" id="quickMetrics"></div>
+    </section>
+
+    <section class="panel period-row">
+      <div class="period-switch" id="periodSwitch"></div>
+      <p class="muted">Быстрый выбор глубины графика относительно конечной даты.</p>
+    </section>
+
+    <section class="kpi-row">
+      <article class="kpi">
+        <div class="kpi-label">Каналы всего (все боты)</div>
+        <div class="kpi-value" id="kpiChannelsTotal">0</div>
+        <div class="kpi-meta">На конец выбранного периода</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Каналы с согласием (зарегистрированы)</div>
+        <div class="kpi-value" id="kpiChannelsOptin">0</div>
+        <div class="kpi-meta">На конец выбранного периода</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Уникальные гости всего</div>
+        <div class="kpi-value" id="kpiUniqueTotal">0</div>
+        <div class="kpi-meta">На конец выбранного периода</div>
+      </article>
+      <article class="kpi">
+        <div class="kpi-label">Уникальные гости с согласием</div>
+        <div class="kpi-value" id="kpiUniqueOptin">0</div>
+        <div class="kpi-meta">На конец выбранного периода</div>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <h2 class="title">Каналы по ботам: всего и с согласием</h2>
+        <p class="subtitle">6 рядов: Telegram/VK/MAX в двух состояниях. Можно отключать каждый ряд.</p>
+
+        <div class="controls">
+          <button class="btn" id="channelsOn" type="button">Показать все</button>
+          <button class="btn" id="channelsOff" type="button">Скрыть все</button>
+          <label class="chip">
+            <input type="checkbox" id="channelsNormalize">
+            Нормализовать (% к первому дню)
+          </label>
+        </div>
+        <div class="switches" id="channelsSwitches"></div>
+
+        <div class="chart-wrap"><div class="chart" id="channelsCumulative"></div></div>
+        <p class="note">Накопительный режим: значение на конец дня.</p>
+        <div class="chart-wrap"><div class="chart small" id="channelsDelta"></div></div>
+        <p class="note">Прирост за день: столбцы по суточному изменению.</p>
+      </article>
+
+      <article class="panel">
+        <h2 class="title">Уникальные гости</h2>
+        <p class="subtitle">Всего и с согласием на сообщения.</p>
+
+        <div class="controls">
+          <button class="btn" id="personsOn" type="button">Показать все</button>
+          <button class="btn" id="personsOff" type="button">Скрыть все</button>
+        </div>
+        <div class="switches" id="personsSwitches"></div>
+
+        <div class="chart-wrap"><div class="chart" id="personsCumulative"></div></div>
+        <p class="note">Накопительный режим: значение на конец дня.</p>
+        <div class="chart-wrap"><div class="chart small" id="personsDelta"></div></div>
+        <p class="note">Прирост за день: столбцы по суточному изменению.</p>
+      </article>
+    </section>
+  </div>
+
+  <script>
+    const FULL_ROWS = [
+      {"day":"2026-04-29","channels_total_telegram":860,"channels_registered_optin_telegram":574,"channels_total_vk":91,"channels_registered_optin_vk":66,"channels_total_max":487,"channels_registered_optin_max":362,"unique_persons_total":1380,"unique_persons_registered_optin":965},
+      {"day":"2026-04-30","channels_total_telegram":861,"channels_registered_optin_telegram":581,"channels_total_vk":97,"channels_registered_optin_vk":69,"channels_total_max":503,"channels_registered_optin_max":375,"unique_persons_total":1403,"unique_persons_registered_optin":988},
+      {"day":"2026-05-01","channels_total_telegram":863,"channels_registered_optin_telegram":583,"channels_total_vk":106,"channels_registered_optin_vk":76,"channels_total_max":517,"channels_registered_optin_max":387,"unique_persons_total":1426,"unique_persons_registered_optin":1008},
+      {"day":"2026-05-02","channels_total_telegram":866,"channels_registered_optin_telegram":589,"channels_total_vk":108,"channels_registered_optin_vk":78,"channels_total_max":532,"channels_registered_optin_max":398,"unique_persons_total":1446,"unique_persons_registered_optin":1027},
+      {"day":"2026-05-03","channels_total_telegram":869,"channels_registered_optin_telegram":595,"channels_total_vk":113,"channels_registered_optin_vk":83,"channels_total_max":545,"channels_registered_optin_max":409,"unique_persons_total":1467,"unique_persons_registered_optin":1049},
+      {"day":"2026-05-04","channels_total_telegram":872,"channels_registered_optin_telegram":599,"channels_total_vk":116,"channels_registered_optin_vk":85,"channels_total_max":555,"channels_registered_optin_max":418,"unique_persons_total":1483,"unique_persons_registered_optin":1064},
+      {"day":"2026-05-05","channels_total_telegram":873,"channels_registered_optin_telegram":603,"channels_total_vk":118,"channels_registered_optin_vk":87,"channels_total_max":568,"channels_registered_optin_max":427,"unique_persons_total":1499,"unique_persons_registered_optin":1079},
+      {"day":"2026-05-06","channels_total_telegram":875,"channels_registered_optin_telegram":605,"channels_total_vk":125,"channels_registered_optin_vk":91,"channels_total_max":576,"channels_registered_optin_max":432,"unique_persons_total":1515,"unique_persons_registered_optin":1089},
+      {"day":"2026-05-07","channels_total_telegram":877,"channels_registered_optin_telegram":609,"channels_total_vk":129,"channels_registered_optin_vk":94,"channels_total_max":585,"channels_registered_optin_max":438,"unique_persons_total":1530,"unique_persons_registered_optin":1102},
+      {"day":"2026-05-08","channels_total_telegram":882,"channels_registered_optin_telegram":618,"channels_total_vk":132,"channels_registered_optin_vk":96,"channels_total_max":601,"channels_registered_optin_max":447,"unique_persons_total":1553,"unique_persons_registered_optin":1122},
+      {"day":"2026-05-09","channels_total_telegram":886,"channels_registered_optin_telegram":623,"channels_total_vk":139,"channels_registered_optin_vk":100,"channels_total_max":631,"channels_registered_optin_max":465,"unique_persons_total":1594,"unique_persons_registered_optin":1148},
+      {"day":"2026-05-10","channels_total_telegram":888,"channels_registered_optin_telegram":628,"channels_total_vk":143,"channels_registered_optin_vk":103,"channels_total_max":642,"channels_registered_optin_max":473,"unique_persons_total":1608,"unique_persons_registered_optin":1161},
+      {"day":"2026-05-11","channels_total_telegram":890,"channels_registered_optin_telegram":634,"channels_total_vk":148,"channels_registered_optin_vk":106,"channels_total_max":648,"channels_registered_optin_max":477,"unique_persons_total":1620,"unique_persons_registered_optin":1173},
+      {"day":"2026-05-12","channels_total_telegram":893,"channels_registered_optin_telegram":639,"channels_total_vk":148,"channels_registered_optin_vk":106,"channels_total_max":657,"channels_registered_optin_max":481,"unique_persons_total":1632,"unique_persons_registered_optin":1182},
+      {"day":"2026-05-13","channels_total_telegram":893,"channels_registered_optin_telegram":639,"channels_total_vk":148,"channels_registered_optin_vk":106,"channels_total_max":657,"channels_registered_optin_max":481,"unique_persons_total":1632,"unique_persons_registered_optin":1182}
+    ];
+
+    const periodOptions = [7, 14, 30];
+    const state = {
+      selectedPeriod: 14,
+      normalizeChannels: false,
+      channelsVisible: {
+        channels_total_telegram: true,
+        channels_registered_optin_telegram: true,
+        channels_total_vk: true,
+        channels_registered_optin_vk: true,
+        channels_total_max: true,
+        channels_registered_optin_max: true,
+      },
+      personsVisible: {
+        unique_persons_total: true,
+        unique_persons_registered_optin: true,
+      },
+    };
+
+    const channelsDefs = [
+      { key: "channels_total_telegram", name: "Telegram: всего", color: css("--tg-total") },
+      { key: "channels_registered_optin_telegram", name: "Telegram: с согласием", color: css("--tg-optin") },
+      { key: "channels_total_vk", name: "VK: всего", color: css("--vk-total") },
+      { key: "channels_registered_optin_vk", name: "VK: с согласием", color: css("--vk-optin") },
+      { key: "channels_total_max", name: "MAX: всего", color: css("--max-total") },
+      { key: "channels_registered_optin_max", name: "MAX: с согласием", color: css("--max-optin") },
+    ];
+    const personsDefs = [
+      { key: "unique_persons_total", name: "Уникальные гости: всего", color: css("--persons-total") },
+      { key: "unique_persons_registered_optin", name: "Уникальные гости: с согласием", color: css("--persons-optin") },
+    ];
+
+    const channelsCumulative = echarts.init(document.getElementById("channelsCumulative"));
+    const channelsDelta = echarts.init(document.getElementById("channelsDelta"));
+    const personsCumulative = echarts.init(document.getElementById("personsCumulative"));
+    const personsDelta = echarts.init(document.getElementById("personsDelta"));
+
+    wireControls();
+    renderAll();
+    window.addEventListener("resize", () => {
+      channelsCumulative.resize();
+      channelsDelta.resize();
+      personsCumulative.resize();
+      personsDelta.resize();
+    });
+
+    function wireControls() {
+      renderPeriodButtons();
+      renderSwitches("channelsSwitches", channelsDefs, state.channelsVisible, () => renderChartsOnly());
+      renderSwitches("personsSwitches", personsDefs, state.personsVisible, () => renderChartsOnly());
+
+      document.getElementById("channelsOn").addEventListener("click", () => {
+        channelsDefs.forEach((d) => { state.channelsVisible[d.key] = true; });
+        renderSwitches("channelsSwitches", channelsDefs, state.channelsVisible, () => renderChartsOnly());
+        renderChartsOnly();
+      });
+      document.getElementById("channelsOff").addEventListener("click", () => {
+        channelsDefs.forEach((d) => { state.channelsVisible[d.key] = false; });
+        renderSwitches("channelsSwitches", channelsDefs, state.channelsVisible, () => renderChartsOnly());
+        renderChartsOnly();
+      });
+      document.getElementById("personsOn").addEventListener("click", () => {
+        personsDefs.forEach((d) => { state.personsVisible[d.key] = true; });
+        renderSwitches("personsSwitches", personsDefs, state.personsVisible, () => renderChartsOnly());
+        renderChartsOnly();
+      });
+      document.getElementById("personsOff").addEventListener("click", () => {
+        personsDefs.forEach((d) => { state.personsVisible[d.key] = false; });
+        renderSwitches("personsSwitches", personsDefs, state.personsVisible, () => renderChartsOnly());
+        renderChartsOnly();
+      });
+      document.getElementById("channelsNormalize").addEventListener("change", (e) => {
+        state.normalizeChannels = !!e.target.checked;
+        renderChartsOnly();
+      });
+    }
+
+    function renderPeriodButtons() {
+      const node = document.getElementById("periodSwitch");
+      node.innerHTML = periodOptions.map((days) => (
+        `<button type="button" class="period-btn ${days === state.selectedPeriod ? "active" : ""}" data-days="${days}">${days} дней</button>`
+      )).join("");
+      node.querySelectorAll(".period-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          state.selectedPeriod = Number(btn.getAttribute("data-days"));
+          renderAll();
+        });
+      });
+    }
+
+    function renderAll() {
+      renderPeriodButtons();
+      renderQuickMetrics();
+      renderKpis();
+      renderPeriodText();
+      renderChartsOnly();
+    }
+
+    function renderPeriodText() {
+      const rows = filteredRows();
+      if (!rows.length) return;
+      const from = rows[0].day;
+      const to = rows[rows.length - 1].day;
+      document.getElementById("periodText").textContent = `Период: ${from} - ${to} (${rows.length} дней)`;
+    }
+
+    function renderQuickMetrics() {
+      const now = FULL_ROWS[FULL_ROWS.length - 1];
+      const node = document.getElementById("quickMetrics");
+      node.innerHTML = periodOptions.map((days) => {
+        const prev = snapshotBeforeDays(days);
+        return `
+          <article class="quick-chip">
+            <div class="quick-title">Прирост за ${days} дней</div>
+            <div class="quick-line">Каналы: ${signed(nowTotalChannels(now) - nowTotalChannels(prev))}</div>
+            <div class="quick-line">С согласием: ${signed(nowOptinChannels(now) - nowOptinChannels(prev))}</div>
+            <div class="quick-line">Гости: ${signed(now.unique_persons_total - prev.unique_persons_total)}</div>
+            <div class="quick-line">Гости с согласием: ${signed(now.unique_persons_registered_optin - prev.unique_persons_registered_optin)}</div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderKpis() {
+      const rows = filteredRows();
+      if (!rows.length) return;
+      const last = rows[rows.length - 1];
+      setText("kpiChannelsTotal", formatInt(nowTotalChannels(last)));
+      setText("kpiChannelsOptin", formatInt(nowOptinChannels(last)));
+      setText("kpiUniqueTotal", formatInt(last.unique_persons_total));
+      setText("kpiUniqueOptin", formatInt(last.unique_persons_registered_optin));
+    }
+
+    function renderChartsOnly() {
+      const rows = filteredRows();
+      const labels = rows.map((r) => shortDay(r.day));
+
+      const channelsSelected = channelsDefs.filter((d) => state.channelsVisible[d.key]);
+      const channelsCumulativeSeries = channelsSelected.map((def) => {
+        const raw = values(rows, def.key);
+        if (state.normalizeChannels) {
+          const norm = normalize(raw);
+          return {
+            name: def.name,
+            type: "line",
+            smooth: false,
+            symbolSize: 6,
+            lineStyle: { width: 2.3, color: def.color },
+            itemStyle: { color: def.color },
+            data: norm.map((v, i) => ({ value: v, raw: raw[i] })),
+          };
+        }
+        return {
+          name: def.name,
+          type: "line",
+          smooth: false,
+          symbolSize: 6,
+          lineStyle: { width: 2.3, color: def.color },
+          itemStyle: { color: def.color },
+          data: raw,
+        };
+      });
+      channelsCumulative.setOption(lineOption(labels, channelsCumulativeSeries, state.normalizeChannels), true);
+
+      const channelsDeltaSeries = channelsSelected.map((def) => ({
+        name: def.name,
+        type: "bar",
+        barMaxWidth: 20,
+        itemStyle: { color: def.color, opacity: 0.86 },
+        data: delta(values(rows, def.key)),
+      }));
+      channelsDelta.setOption(barOption(labels, channelsDeltaSeries), true);
+
+      const personsSelected = personsDefs.filter((d) => state.personsVisible[d.key]);
+      const personsCumulativeSeries = personsSelected.map((def) => ({
+        name: def.name,
+        type: "line",
+        smooth: false,
+        symbolSize: 6,
+        lineStyle: { width: 2.3, color: def.color },
+        itemStyle: { color: def.color },
+        data: values(rows, def.key),
+      }));
+      personsCumulative.setOption(lineOption(labels, personsCumulativeSeries, false), true);
+
+      const personsDeltaSeries = personsSelected.map((def) => ({
+        name: def.name,
+        type: "bar",
+        barMaxWidth: 24,
+        itemStyle: { color: def.color, opacity: 0.86 },
+        data: delta(values(rows, def.key)),
+      }));
+      personsDelta.setOption(barOption(labels, personsDeltaSeries), true);
+    }
+
+    function lineOption(labels, series, normalized) {
+      return {
+        animation: false,
+        legend: { show: false },
+        grid: { left: 58, right: 18, top: 20, bottom: 44 },
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          axisPointer: { type: "line" },
+          formatter: (params) => {
+            if (!params || !params.length) return "";
+            const lines = [`<strong>${params[0].axisValue}</strong>`];
+            params.forEach((item) => {
+              if (normalized) {
+                const raw = item.data && typeof item.data === "object" ? Number(item.data.raw || 0) : Number(item.value || 0);
+                lines.push(`${item.marker}${item.seriesName}: ${percent(item.value)} (${formatInt(raw)})`);
+              } else {
+                lines.push(`${item.marker}${item.seriesName}: ${formatInt(item.value)}`);
+              }
+            });
+            return lines.join("<br/>");
+          },
+        },
+        xAxis: { type: "category", data: labels, axisTick: { alignWithLabel: true } },
+        yAxis: {
+          type: "value",
+          axisLabel: { formatter: (v) => normalized ? `${v}%` : formatInt(v) },
+        },
+        series,
+      };
+    }
+
+    function barOption(labels, series) {
+      return {
+        animation: false,
+        legend: { show: false },
+        grid: { left: 58, right: 18, top: 20, bottom: 44 },
+        tooltip: {
+          trigger: "axis",
+          confine: true,
+          axisPointer: { type: "shadow" },
+          formatter: (params) => {
+            if (!params || !params.length) return "";
+            const lines = [`<strong>${params[0].axisValue}</strong>`];
+            params.forEach((item) => lines.push(`${item.marker}${item.seriesName}: ${signed(item.value)}`));
+            return lines.join("<br/>");
+          },
+        },
+        xAxis: { type: "category", data: labels, axisTick: { alignWithLabel: true } },
+        yAxis: { type: "value", axisLabel: { formatter: (v) => formatInt(v) } },
+        series,
+      };
+    }
+
+    function renderSwitches(containerId, defs, map, onChange) {
+      const node = document.getElementById(containerId);
+      node.innerHTML = defs.map((def) => `
+        <label class="chip">
+          <input type="checkbox" data-key="${def.key}" ${map[def.key] ? "checked" : ""}>
+          <span class="dot" style="background:${def.color}"></span>
+          <span>${def.name}</span>
+        </label>
+      `).join("");
+      node.querySelectorAll("input[type='checkbox']").forEach((el) => {
+        el.addEventListener("change", (e) => {
+          map[e.target.getAttribute("data-key")] = e.target.checked;
+          onChange();
+        });
+      });
+    }
+
+    function filteredRows() {
+      const size = state.selectedPeriod;
+      if (!FULL_ROWS.length) return [];
+      if (FULL_ROWS.length <= size) return FULL_ROWS.slice();
+      return FULL_ROWS.slice(FULL_ROWS.length - size);
+    }
+
+    function snapshotBeforeDays(days) {
+      const idx = FULL_ROWS.length - 1 - days;
+      if (idx < 0) {
+        return FULL_ROWS[0];
+      }
+      return FULL_ROWS[idx];
+    }
+
+    function values(rows, key) {
+      return rows.map((r) => Number(r[key] || 0));
+    }
+
+    function delta(arr) {
+      if (!arr.length) return [];
+      return arr.map((v, i) => (i ? Number(v) - Number(arr[i - 1]) : 0));
+    }
+
+    function normalize(arr) {
+      if (!arr.length) return [];
+      const start = Number(arr[0] || 0);
+      if (!start) return arr.map(() => 0);
+      return arr.map((v) => Math.round((((Number(v) - start) / start) * 100) * 100) / 100);
+    }
+
+    function nowTotalChannels(row) {
+      return Number(row.channels_total_telegram || 0) + Number(row.channels_total_vk || 0) + Number(row.channels_total_max || 0);
+    }
+
+    function nowOptinChannels(row) {
+      return Number(row.channels_registered_optin_telegram || 0)
+        + Number(row.channels_registered_optin_vk || 0)
+        + Number(row.channels_registered_optin_max || 0);
+    }
+
+    function shortDay(iso) {
+      const p = String(iso || "").split("-");
+      return p.length === 3 ? `${p[2]}.${p[1]}` : String(iso || "");
+    }
+
+    function setText(id, text) {
+      const node = document.getElementById(id);
+      if (node) node.textContent = String(text);
+    }
+
+    function formatInt(v) {
+      return new Intl.NumberFormat("ru-RU").format(Number(v || 0));
+    }
+
+    function signed(v) {
+      const n = Number(v || 0);
+      if (n > 0) return `+${formatInt(n)}`;
+      if (n < 0) return `-${formatInt(Math.abs(n))}`;
+      return "0";
+    }
+
+    function percent(v) {
+      const n = Number(v || 0);
+      const sign = n > 0 ? "+" : "";
+      return `${sign}${n.toFixed(2)}%`;
+    }
+
+    function css(name) {
+      return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    }
+  </script>
+</body>
+</html>

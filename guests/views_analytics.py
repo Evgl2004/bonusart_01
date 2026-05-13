@@ -13,7 +13,10 @@ from guests.services.analytics_dashboard import (
     build_analytics_dashboard_payload,
     normalize_period_days,
 )
-from guests.services.bots_dashboard import build_bots_dashboard_payload
+from guests.services.bots_dashboard import (
+    build_bots_dashboard_payload,
+    normalize_bots_period_days,
+)
 
 
 class AnalyticsDashboardView(TemplateView):
@@ -47,24 +50,32 @@ class BotsDashboardView(TemplateView):
     """
 
     template_name = "analytics/dashboard_bots.html"
-    default_days = 15
+    default_days = 30
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        raw_period_days = self.request.GET.get("period_days")
+        selected_period_days = normalize_bots_period_days(raw_period_days)
         selected_date_to = _parse_iso_date(self.request.GET.get("date_to")) or timezone.localdate()
-        selected_date_from = _parse_iso_date(self.request.GET.get("date_from"))
-        if selected_date_from is None:
-            selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
-        if selected_date_from > selected_date_to:
-            selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
+        if raw_period_days:
+            selected_date_from = selected_date_to - timedelta(days=selected_period_days - 1)
+        else:
+            selected_date_from = _parse_iso_date(self.request.GET.get("date_from"))
+            if selected_date_from is None:
+                selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
+            if selected_date_from > selected_date_to:
+                selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
 
         payload = build_bots_dashboard_payload(
             date_from=selected_date_from,
             date_to=selected_date_to,
+            period_days=selected_period_days,
         )
         context["bots_dashboard_payload"] = payload
         context["selected_date_from"] = selected_date_from.isoformat()
         context["selected_date_to"] = selected_date_to.isoformat()
+        context["selected_period_days"] = payload["filters"]["period_days"]
+        context["period_options"] = payload["filters"]["period_options"]
         return context
 
 

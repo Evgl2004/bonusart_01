@@ -52,3 +52,15 @@ class BotsDashboardViewTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertLessEqual(response.context["selected_date_from"], response.context["selected_date_to"])
+
+    def test_period_days_switch_applies_window_from_date_to(self):
+        response = self.client.get(
+            reverse("dashboard_bots"),
+            {"period_days": "7", "date_to": "2026-05-13"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_period_days"], 7)
+        self.assertEqual(response.context["selected_date_to"], "2026-05-13")
+        self.assertEqual(response.context["selected_date_from"], "2026-05-07")
+        self.assertContains(response, "period-switch-btn is-active")

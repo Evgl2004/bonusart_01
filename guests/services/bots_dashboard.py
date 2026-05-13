@@ -18,11 +18,28 @@ from django.utils import timezone
 
 from guests.models import VtelemaxRecipientChannel
 
+ALLOWED_PERIOD_DAYS = (7, 14, 30)
+DEFAULT_PERIOD_DAYS = 30
+
+
+def normalize_bots_period_days(raw_value: int | str | None) -> int:
+    """
+    Нормализует размер периода в днях для страницы аналитики ботов.
+    """
+    try:
+        value = int(raw_value or DEFAULT_PERIOD_DAYS)
+    except (TypeError, ValueError):
+        return DEFAULT_PERIOD_DAYS
+    if value not in ALLOWED_PERIOD_DAYS:
+        return DEFAULT_PERIOD_DAYS
+    return value
+
 
 def build_bots_dashboard_payload(
     *,
     date_from: date,
     date_to: date,
+    period_days: int | None = None,
 ) -> dict[str, Any]:
     """
     Готовит payload для страницы "Дашборд -> Боты".
@@ -154,13 +171,18 @@ def build_bots_dashboard_payload(
         )
 
     kpis = _build_kpis(rows)
+    quick_growth = _build_quick_growth(date_to=date_to, periods=(7, 14, 30))
+    normalized_period_days = normalize_bots_period_days(period_days)
     return {
         "filters": {
             "date_from": date_from.isoformat(),
             "date_to": date_to.isoformat(),
             "days": len(days_list),
+            "period_days": normalized_period_days,
+            "period_options": list(ALLOWED_PERIOD_DAYS),
         },
         "kpis": kpis,
+        "quick_growth": quick_growth,
         "rows": rows,
     }
 
@@ -193,3 +215,67 @@ def _daterange(date_from: date, date_to: date) -> list[date]:
         result.append(current)
         current += timedelta(days=1)
     return result
+
+
+def _build_quick_growth(*, date_to: date, periods: tuple[int, ...]) -> list[dict[str, int]]:
+    snapshot_now = _build_snapshot_totals(as_of=date_to)
+    result: list[dict[str, int]] = []
+    for period_days in periods:
+        prev_date = date_to - timedelta(days=period_days)
+        snapshot_prev = _build_snapshot_totals(as_of=prev_date)
+        result.append(
+            {
+                "days": int(period_days),
+                "channels_total_delta": snapshot_now["channels_total"] - snapshot_prev["channels_total"],
+                "channels_registered_optin_delta": snapshot_now["channels_registered_optin"]
+                - snapshot_prev["channels_registered_optin"],
+                "unique_persons_total_delta": snapshot_now["unique_persons_total"]
+                - snapshot_prev["unique_persons_total"],
+                "unique_persons_registered_optin_delta": snapshot_now["unique_persons_registered_optin"]
+                - snapshot_prev["unique_persons_registered_optin"],
+            }
+        )
+    return result
+
+
+def _build_snapshot_totals(*, as_of: date) -> dict[str, int]:
+    channels_total = VtelemaxRecipientChannel.objects.filter(
+        account_created_at__isnull=False,
+        account_created_at__date__lte=as_of,
+    ).count()
+
+    registered_optin_qs = (
+        VtelemaxRecipientChannel.objects.annotate(
+            registration_at=Coalesce("registered_at", "account_created_at")
+        )
+        .filter(
+            is_registered=True,
+            notifications_allowed=True,
+            registration_at__isnull=False,
+            registration_at__date__lte=as_of,
+        )
+        .exclude(external_id__isnull=True)
+        .exclude(external_id="")
+    )
+    channels_registered_optin = registered_optin_qs.count()
+
+    unique_persons_total = (
+        VtelemaxRecipientChannel.objects.filter(account_created_at__isnull=False)
+        .values("person_id")
+        .annotate(first_at=Min("account_created_at"))
+        .filter(first_at__date__lte=as_of)
+        .count()
+    )
+    unique_persons_registered_optin = (
+        registered_optin_qs.values("person_id")
+        .annotate(first_at=Min("registration_at"))
+        .filter(first_at__date__lte=as_of)
+        .count()
+    )
+
+    return {
+        "channels_total": int(channels_total),
+        "channels_registered_optin": int(channels_registered_optin),
+        "unique_persons_total": int(unique_persons_total),
+        "unique_persons_registered_optin": int(unique_persons_registered_optin),
+    }

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+﻿{% extends "base.html" %}
 
 {% block title %}Дашборд: боты{% endblock %}
 
@@ -21,6 +21,73 @@
     justify-content: space-between;
     gap: 1rem;
     margin-bottom: 1rem;
+  }
+
+  .bots-header-main {
+    min-width: 280px;
+  }
+
+  .header-quick-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    width: min(760px, 100%);
+  }
+
+  .header-metric-chip {
+    border: 1px solid #dbe1ea;
+    border-radius: 10px;
+    background: #ffffff;
+    padding: 8px 10px;
+    box-shadow: 0 6px 14px rgba(17, 24, 39, 0.04);
+  }
+
+  .header-metric-title {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 3px;
+  }
+
+  .header-metric-line {
+    font-size: 0.76rem;
+    color: #475569;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .period-switch-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+
+  .period-switch {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .period-switch-btn {
+    border: 1px solid #c7ced9;
+    border-radius: 8px;
+    background: #fff;
+    color: #334155;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    text-decoration: none;
+  }
+
+  .period-switch-btn.is-active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+    font-weight: 600;
   }
 
   .bots-muted {
@@ -189,6 +256,9 @@
   }
 
   @media (max-width: 1200px) {
+    .header-quick-metrics {
+      grid-template-columns: 1fr;
+    }
     .kpi-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -201,11 +271,38 @@
 
 {% block content %}
 <div class="bots-header">
-  <div>
+  <div class="bots-header-main">
     <h1 class="h3 mb-1">Дашборд: боты и регистрация гостей</h1>
     <div class="bots-muted">
       Период: {{ bots_dashboard_payload.filters.date_from }} - {{ bots_dashboard_payload.filters.date_to }}
     </div>
+  </div>
+  <div class="header-quick-metrics">
+    {% for metric in bots_dashboard_payload.quick_growth %}
+      <div class="header-metric-chip">
+        <div class="header-metric-title">Прирост за {{ metric.days }} дней</div>
+        <div class="header-metric-line">Каналы: {{ metric.channels_total_delta }}</div>
+        <div class="header-metric-line">С согласием: {{ metric.channels_registered_optin_delta }}</div>
+        <div class="header-metric-line">Гости: {{ metric.unique_persons_total_delta }}</div>
+        <div class="header-metric-line">Гости с согласием: {{ metric.unique_persons_registered_optin_delta }}</div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="period-switch-row">
+  <div class="period-switch">
+    {% for days in period_options %}
+      <a
+        class="period-switch-btn {% if selected_period_days == days %}is-active{% endif %}"
+        href="?period_days={{ days }}&date_to={{ selected_date_to }}"
+      >
+        {{ days }} дней
+      </a>
+    {% endfor %}
+  </div>
+  <div class="bots-muted">
+    Быстрый выбор глубины графиков. Якорная дата: <strong>{{ selected_date_to }}</strong>.
   </div>
 </div>
 
@@ -707,3 +804,4 @@
   })();
 </script>
 {% endblock %}
+
