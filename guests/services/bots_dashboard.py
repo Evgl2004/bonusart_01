@@ -171,6 +171,16 @@ def build_bots_dashboard_payload(
         )
 
     kpis = _build_kpis(rows)
+    delta_baseline = {
+        "channels_total_telegram": int(base_total_by_platform["telegram"]),
+        "channels_registered_optin_telegram": int(base_optin_by_platform["telegram"]),
+        "channels_total_vk": int(base_total_by_platform["vk"]),
+        "channels_registered_optin_vk": int(base_optin_by_platform["vk"]),
+        "channels_total_max": int(base_total_by_platform["max"]),
+        "channels_registered_optin_max": int(base_optin_by_platform["max"]),
+        "unique_persons_total": int(base_unique_total),
+        "unique_persons_registered_optin": int(base_unique_optin),
+    }
     header_totals = _build_snapshot_totals(as_of=date_to)
     quick_growth = _build_quick_growth(
         date_to=date_to,
@@ -188,6 +198,7 @@ def build_bots_dashboard_payload(
             "period_options": list(ALLOWED_PERIOD_DAYS),
         },
         "kpis": kpis,
+        "delta_baseline": delta_baseline,
         "header_totals": header_totals,
         "yesterday_growth": yesterday_growth,
         "quick_growth": quick_growth,

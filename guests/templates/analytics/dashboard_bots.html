@@ -425,6 +425,7 @@
     const payload = JSON.parse(payloadNode.textContent || "{}");
     const rows = payload.rows || [];
     const dayLabels = rows.map((row) => formatDay(row.day));
+    const deltaBaseline = payload.delta_baseline || {};
 
     const channelDefs = [
       { key: "channels_total_telegram", name: "Telegram: всего", color: css("--tg-total") },
@@ -569,7 +570,7 @@
         type: "bar",
         barMaxWidth: 20,
         itemStyle: { color: def.color, opacity: 0.86 },
-        data: dailyDelta(getValues(def.key)).slice(1),
+        data: dailyDelta(getValues(def.key), deltaBaseline[def.key]),
       }));
 
       channelsDeltaChart.setOption({
@@ -593,7 +594,7 @@
         },
         xAxis: {
           type: "category",
-          data: dayLabels.slice(1),
+          data: dayLabels,
           axisTick: { alignWithLabel: true },
         },
         yAxis: {
@@ -652,7 +653,7 @@
         type: "bar",
         barMaxWidth: 24,
         itemStyle: { color: def.color, opacity: 0.86 },
-        data: dailyDelta(getValues(def.key)).slice(1),
+        data: dailyDelta(getValues(def.key), deltaBaseline[def.key]),
       }));
 
       personsDeltaChart.setOption({
@@ -676,7 +677,7 @@
         },
         xAxis: {
           type: "category",
-          data: dayLabels.slice(1),
+          data: dayLabels,
           axisTick: { alignWithLabel: true },
         },
         yAxis: {
@@ -735,13 +736,14 @@
       return rows.map((row) => Number(row[key] || 0));
     }
 
-    function dailyDelta(values) {
+    function dailyDelta(values, baseline) {
       if (!values.length) {
         return [];
       }
+      const baselineValue = Number(baseline || 0);
       return values.map((value, idx) => {
         if (idx === 0) {
-          return 0;
+          return Number(value) - baselineValue;
         }
         return Number(value) - Number(values[idx - 1] || 0);
       });
