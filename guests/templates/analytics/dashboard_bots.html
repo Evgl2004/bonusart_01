@@ -297,14 +297,14 @@
         <div class="header-metric-line">Каналы: {{ bots_dashboard_payload.header_totals.channels_total }}</div>
         <div class="header-metric-line">С согласием: {{ bots_dashboard_payload.header_totals.channels_registered_optin }}</div>
         <div class="header-metric-line">Гости: {{ bots_dashboard_payload.header_totals.unique_persons_total }}</div>
-        <div class="header-metric-line">Гости с согласием: {{ bots_dashboard_payload.header_totals.unique_persons_registered_optin }}</div>
+        <div class="header-metric-line">Гости с согл.: {{ bots_dashboard_payload.header_totals.unique_persons_registered_optin }}</div>
       </div>
       <div class="header-metric-chip">
         <div class="header-metric-title">Прирост за вчера ({{ bots_dashboard_payload.yesterday_growth.date_label }})</div>
         <div class="header-metric-line">Каналы: {{ bots_dashboard_payload.yesterday_growth.channels_total_delta_display }}</div>
         <div class="header-metric-line">С согласием: {{ bots_dashboard_payload.yesterday_growth.channels_registered_optin_delta_display }}</div>
         <div class="header-metric-line">Гости: {{ bots_dashboard_payload.yesterday_growth.unique_persons_total_delta_display }}</div>
-        <div class="header-metric-line">Гости с согласием: {{ bots_dashboard_payload.yesterday_growth.unique_persons_registered_optin_delta_display }}</div>
+        <div class="header-metric-line">Гости с согл.: {{ bots_dashboard_payload.yesterday_growth.unique_persons_registered_optin_delta_display }}</div>
       </div>
       {% for metric in bots_dashboard_payload.quick_growth %}
         <div class="header-metric-chip">
@@ -312,7 +312,7 @@
           <div class="header-metric-line">Каналы: {{ metric.channels_total_delta_display }}</div>
           <div class="header-metric-line">С согласием: {{ metric.channels_registered_optin_delta_display }}</div>
           <div class="header-metric-line">Гости: {{ metric.unique_persons_total_delta_display }}</div>
-          <div class="header-metric-line">Гости с согласием: {{ metric.unique_persons_registered_optin_delta_display }}</div>
+          <div class="header-metric-line">Гости с согл.: {{ metric.unique_persons_registered_optin_delta_display }}</div>
         </div>
       {% endfor %}
     </div>
