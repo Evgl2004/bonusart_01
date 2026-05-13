@@ -569,7 +569,7 @@
         type: "bar",
         barMaxWidth: 20,
         itemStyle: { color: def.color, opacity: 0.86 },
-        data: dailyDelta(getValues(def.key)),
+        data: dailyDelta(getValues(def.key)).slice(1),
       }));
 
       channelsDeltaChart.setOption({
@@ -593,7 +593,7 @@
         },
         xAxis: {
           type: "category",
-          data: dayLabels,
+          data: dayLabels.slice(1),
           axisTick: { alignWithLabel: true },
         },
         yAxis: {
@@ -652,7 +652,7 @@
         type: "bar",
         barMaxWidth: 24,
         itemStyle: { color: def.color, opacity: 0.86 },
-        data: dailyDelta(getValues(def.key)),
+        data: dailyDelta(getValues(def.key)).slice(1),
       }));
 
       personsDeltaChart.setOption({
@@ -676,7 +676,7 @@
         },
         xAxis: {
           type: "category",
-          data: dayLabels,
+          data: dayLabels.slice(1),
           axisTick: { alignWithLabel: true },
         },
         yAxis: {
