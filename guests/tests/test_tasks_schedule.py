@@ -157,6 +157,7 @@ class OlapDerivedScheduleTasksTests(SimpleTestCase):
         OLAP_ORDER_FACT_SCHEDULE_TAIL_DAYS=3,
         OLAP_ORDER_FACT_SCHEDULE_END_LAG_DAYS=1,
         OLAP_ORDER_FACT_SCHEDULE_BATCH_SIZE=1500,
+        COUPON_REDEMPTION_SYNC_ENABLED=False,
     )
     @patch("guests.tasks.timezone.localdate")
     @patch("guests.tasks.call_command")
@@ -172,6 +173,41 @@ class OlapDerivedScheduleTasksTests(SimpleTestCase):
             business_date_from="2026-03-20",
             business_date_to="2026-03-22",
             batch_size=1500,
+        )
+
+    @override_settings(
+        OLAP_ORDER_FACT_SCHEDULE_ENABLED=True,
+        OLAP_ORDER_FACT_SCHEDULE_TAIL_DAYS=3,
+        OLAP_ORDER_FACT_SCHEDULE_END_LAG_DAYS=1,
+        OLAP_ORDER_FACT_SCHEDULE_BATCH_SIZE=1500,
+        COUPON_REDEMPTION_SYNC_ENABLED=True,
+        COUPON_REDEMPTION_SYNC_LIMIT=250,
+    )
+    @patch("guests.tasks.timezone.localdate")
+    @patch("guests.tasks.call_command")
+    def test_order_fact_task_runs_coupon_redemption_sync_after_order_fact(
+        self,
+        mocked_call_command,
+        mocked_localdate,
+    ):
+        mocked_localdate.return_value = date(2026, 3, 23)
+
+        result = tasks.run_order_fact_scheduled_task()
+
+        self.assertEqual(result, 1)
+        self.assertEqual(mocked_call_command.call_count, 2)
+        mocked_call_command.assert_any_call(
+            "sync_order_fact",
+            once=True,
+            business_date_from="2026-03-20",
+            business_date_to="2026-03-22",
+            batch_size=1500,
+        )
+        mocked_call_command.assert_any_call(
+            "sync_coupon_redemptions",
+            business_date_from="2026-03-20",
+            business_date_to="2026-03-22",
+            limit=250,
         )
 
     @override_settings(OLAP_DAILY_FACT_SCHEDULE_ENABLED=False)

@@ -519,6 +519,12 @@ VTELEMAX_SYNC_BOT_CODE_VK = str(os.getenv("VTELEMAX_SYNC_BOT_CODE_VK", "") or ""
 VTELEMAX_SYNC_SCHEDULE_ENABLED = _env_bool("VTELEMAX_SYNC_SCHEDULE_ENABLED", False)
 VTELEMAX_SYNC_SCHEDULE_MINUTES = _env_int("VTELEMAX_SYNC_SCHEDULE_MINUTES", 5, min_value=1)
 
+# Автосинхронизация статусов купонов после обновления `order_fact`.
+# Если включено, плановая задача `run_order_fact_scheduled_task` сразу после пересчёта
+# запускает `sync_coupon_redemptions` на том же date-range.
+COUPON_REDEMPTION_SYNC_ENABLED = _env_bool("COUPON_REDEMPTION_SYNC_ENABLED", True)
+COUPON_REDEMPTION_SYNC_LIMIT = _env_int("COUPON_REDEMPTION_SYNC_LIMIT", 0, min_value=0)
+
 
 # Управление отправкой balance-уведомлений в ботов из webhook-контура.
 # Позволяет включать/выключать создание DispatchTask без изменений кода.

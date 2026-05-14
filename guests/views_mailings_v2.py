@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 from urllib.parse import urlencode
 
@@ -42,8 +43,10 @@ from guests.services.notification_handler_registry import (
     get_registered_schedule_scenario_codes,
     run_registered_schedule_scenarios,
 )
+from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
+logger = logging.getLogger(__name__)
 
 
 class MailingsV2CampaignsHubView(TemplateView):
@@ -322,6 +325,25 @@ class MailingsV2CampaignStatusView(TemplateView):
         context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
         context["mailing_ops_dry_run_report"] = self.request.session.pop("mailing_ops_dry_run_report", None)
         context["mailing_ops_run_now_report"] = self.request.session.pop("mailing_ops_run_now_report", None)
+
+        coupon_campaign_report = None
+        coupon_campaign_report_error = ""
+        if str(getattr(mailing, "coupon_series", "") or "").strip():
+            try:
+                coupon_campaign_report = build_coupon_campaign_performance_snapshot(
+                    mailing=mailing
+                ).to_dict()
+            except Exception as err:  # noqa: BLE001
+                logger.exception(
+                    "Coupon campaign report build failed: campaign_id=%s error=%s",
+                    mailing.id,
+                    err,
+                )
+                coupon_campaign_report_error = (
+                    "Не удалось построить купонный отчёт. Проверьте логи сервиса."
+                )
+        context["coupon_campaign_report"] = coupon_campaign_report
+        context["coupon_campaign_report_error"] = coupon_campaign_report_error
         return context
 
 

@@ -110,6 +110,21 @@
           <div class="mail-status-row"><span>В очереди</span><b>{{ dispatch_stats.queued }}</b></div>
           <div class="mail-status-row"><span>В обработке</span><b>{{ dispatch_stats.in_progress }}</b></div>
           <div class="mail-status-row"><span>Завершились с ошибкой</span><b>{{ dispatch_stats.failed }}</b></div>
+
+          {% if coupon_campaign_report %}
+            <div class="mail-section-title mt-3">Купонный отчёт (оперативный)</div>
+            <div class="mail-status-row"><span>Серия купонов</span><b>{{ coupon_campaign_report.coupon_series|default:"-" }}</b></div>
+            <div class="mail-status-row"><span>Отправлено купонов</span><b>{{ coupon_campaign_report.coupons_sent_total }}</b></div>
+            <div class="mail-status-row"><span>Использовано купонов</span><b>{{ coupon_campaign_report.assignments_used }}</b></div>
+            <div class="mail-status-row"><span>Конверсия купонов</span><b>{{ coupon_campaign_report.usage_rate_percent }}%</b></div>
+            <div class="mail-status-row"><span>Вернувшиеся гости</span><b>{{ coupon_campaign_report.returned_guest_coupon }}</b></div>
+            <div class="mail-status-row"><span>Доля вернувшихся</span><b>{{ coupon_campaign_report.returned_guests_rate_percent }}%</b></div>
+            <div class="mail-status-row"><span>Выручка по купонам</span><b>{{ coupon_campaign_report.revenue_net_used }}</b></div>
+            <div class="mail-status-row"><span>Средний чек по купонам</span><b>{{ coupon_campaign_report.coupon_orders_avg_check }}</b></div>
+            <div class="mail-status-row"><span>Поздние применения</span><b>{{ coupon_campaign_report.used_late_total }}</b></div>
+          {% elif coupon_campaign_report_error %}
+            <div class="alert alert-warning small mt-3 mb-0">{{ coupon_campaign_report_error }}</div>
+          {% endif %}
         </div>
       </div>
     </div>

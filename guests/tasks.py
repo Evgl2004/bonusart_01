@@ -294,6 +294,24 @@ def run_order_fact_scheduled_task() -> int:
             business_date_to=date_to.isoformat(),
             batch_size=batch_size,
         )
+        if bool(getattr(settings, "COUPON_REDEMPTION_SYNC_ENABLED", True)):
+            coupon_sync_limit = max(
+                0,
+                int(getattr(settings, "COUPON_REDEMPTION_SYNC_LIMIT", 0)),
+            )
+            coupon_call_options = {
+                "business_date_from": date_from.isoformat(),
+                "business_date_to": date_to.isoformat(),
+            }
+            if coupon_sync_limit > 0:
+                coupon_call_options["limit"] = coupon_sync_limit
+            call_command("sync_coupon_redemptions", **coupon_call_options)
+            logger.info(
+                "Coupon redemption sync (schedule): completed for range %s..%s (limit=%s).",
+                date_from.isoformat(),
+                date_to.isoformat(),
+                coupon_sync_limit or "no-limit",
+            )
         logger.info(
             "Order fact (schedule): completed for range %s..%s (tail_days=%s, end_lag_days=%s).",
             date_from.isoformat(),
