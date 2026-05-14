@@ -13,6 +13,8 @@ from django.utils import timezone
 
 from guests.models import (
     BotProfile,
+    CouponCampaignAssignment,
+    CouponRegistryEntry,
     DispatchTask,
     Guest,
     GuestBotBinding,
@@ -317,3 +319,49 @@ class MailingProducerTests(TestCase):
         self.assertEqual(summary.tasks_duplicates, 1)
         self.assertEqual(summary.rows_queued, 1)
         self.assertEqual(row.status, MailingGuest.Status.DONE)
+
+    def test_enqueue_rows_marks_coupon_assignment_sent_and_sets_payload(self):
+        """
+        Для купонной кампании при постановке строки:
+        1. назначение купона переходит в status=sent;
+        2. код и серия купона попадают в payload DispatchTask.
+        """
+        self.mailing.coupon_series = "TEST"
+        self.mailing.save(update_fields=["coupon_series", "updated_at"])
+
+        row = self._create_row()
+        GuestBotBinding.objects.create(
+            guest=self.guest,
+            bot=self.bot_tg,
+            external_chat_id="tg-coupon",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-PL-001",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=self.guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-PL-001",
+            status=CouponCampaignAssignment.Status.RESERVED,
+        )
+
+        summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row], now=timezone.now())
+        self.assertEqual(summary.rows_queued, 1)
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.SENT)
+        self.assertIsNotNone(assignment.sent_at)
+
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertEqual(task.payload.get("coupon_series"), "TEST")
+        self.assertEqual(task.payload.get("coupon_code"), "TST-PL-001")

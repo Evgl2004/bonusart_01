@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import time, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import uuid4
 
 from django.test import TestCase
 from django.urls import reverse
@@ -19,6 +20,7 @@ from django.utils import timezone
 
 from guests.models import (
     BotProfile,
+    CouponRegistryEntry,
     DispatchTask,
     Guest,
     GuestBotBinding,
@@ -27,6 +29,7 @@ from guests.models import (
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
+    VtelemaxRecipientChannel,
 )
 
 
@@ -616,6 +619,70 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(report.get("mailing_id"), mailing.id)
         self.assertEqual(report.get("processed_rows_total"), 1)
         self.assertEqual(report.get("processed_batches"), 1)
+
+    def test_campaign_ops_run_now_coupon_mode_blocks_when_pool_is_empty(self):
+        """
+        В купонном режиме run-now должен блокироваться, если в серии нет доступных купонов.
+        """
+        mailing = self._create_mailing()
+        mailing.coupon_series = "TEST"
+        mailing.send_window_begin = time(0, 0)
+        mailing.send_window_end = time(23, 59)
+        mailing.save(update_fields=["coupon_series", "send_window_begin", "send_window_end", "updated_at"])
+
+        guest = Guest.objects.create(
+            phone="+79990000883",
+            first_name="Олег",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now - timedelta(minutes=1),
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=self.bot,
+            external_chat_id="tg-run-now-coupon-empty",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        VtelemaxRecipientChannel.objects.create(
+            person_id=uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164="+79990000883",
+            external_id="chat-883",
+            rules_accepted=True,
+            notifications_allowed=True,
+            is_registered=True,
+            registered_at=self.now,
+            effective_updated_at=self.now,
+            guest=guest,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "run_now_campaign"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        row.refresh_from_db()
+        self.assertEqual(row.status, MailingGuest.Status.ERROR)
+        self.assertEqual(row.delivery_status, "coupon_sync_gate_blocked")
+        self.assertEqual(DispatchTask.objects.filter(mailing_guest=row).count(), 0)
+        self.assertEqual(
+            CouponRegistryEntry.objects.filter(series="TEST", pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED).count(),
+            0,
+        )
 
     def test_campaign_runs_page_filters_rows_and_tasks(self):
         """

@@ -13,7 +13,13 @@ from typing import Any, Dict, Iterable, List, Set
 from django.db import IntegrityError
 from django.utils import timezone
 
-from guests.models import DispatchTask, GuestBotBinding, Mailing, MailingGuest
+from guests.models import (
+    CouponCampaignAssignment,
+    DispatchTask,
+    GuestBotBinding,
+    Mailing,
+    MailingGuest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +129,29 @@ def _targets_from_bindings(bindings: List[GuestBotBinding], target_mode: str) ->
     return targets
 
 
+def _build_coupon_assignments_map(mailing: Mailing, guest_ids: Iterable[int]) -> Dict[int, CouponCampaignAssignment]:
+    """
+    Возвращает назначенные купоны кампании в виде `guest_id -> assignment`.
+    """
+    mapping: Dict[int, CouponCampaignAssignment] = {}
+    if not getattr(mailing, "coupon_series", None):
+        return mapping
+
+    assignments = (
+        CouponCampaignAssignment.objects.filter(
+            campaign=mailing,
+            guest_id__in=list(guest_ids),
+        )
+        .select_related("coupon")
+        .order_by("id")
+    )
+    for assignment in assignments:
+        if not assignment.guest_id:
+            continue
+        mapping[int(assignment.guest_id)] = assignment
+    return mapping
+
+
 def enqueue_mailing_rows_as_dispatch_tasks(
     mailing: Mailing,
     rows: List[MailingGuest],
@@ -155,8 +184,10 @@ def enqueue_mailing_rows_as_dispatch_tasks(
 
     guest_ids = [row.guest_id for row in rows]
     bindings_map = _build_bindings_map(guest_ids, selected_bot_ids=selected_bot_ids)
+    coupon_assignments_map = _build_coupon_assignments_map(mailing, guest_ids)
 
     for row in rows:
+        assignment = coupon_assignments_map.get(int(row.guest_id)) if row.guest_id else None
         row_targets = _targets_from_bindings(bindings_map.get(row.guest_id, []), target_mode=target_mode)
 
         if not row_targets:
@@ -193,6 +224,8 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                         "mailing_id": mailing.id,
                         "mailing_guest_id": row.id,
                         "channel_mode": "bindings",
+                        "coupon_series": assignment.coupon_series if assignment else None,
+                        "coupon_code": assignment.coupon_code if assignment else None,
                     },
                     scheduled_at=row.scheduled_datetime,
                     available_at=available_at,
@@ -217,6 +250,10 @@ def enqueue_mailing_rows_as_dispatch_tasks(
             row.delivery_status = "queued_to_dispatch"
             row.error_description = None
             row.save(update_fields=["status", "delivery_status", "error_description"])
+            if assignment and assignment.status == CouponCampaignAssignment.Status.RESERVED:
+                assignment.status = CouponCampaignAssignment.Status.SENT
+                assignment.sent_at = now
+                assignment.save(update_fields=["status", "sent_at", "updated_at"])
             summary.rows_queued += 1
         else:
             row.status = MailingGuest.Status.ERROR

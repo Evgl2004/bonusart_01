@@ -206,6 +206,16 @@ class Mailing(models.Model):
         related_name="mailings",
         help_text="Список конкретных ботов, через которые должна идти рассылка.",
     )
+    coupon_series = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text=(
+            "Опциональная серия купонов iikoCard для кампании. "
+            "Если заполнено, перед отправкой включается купонный sync-gate."
+        ),
+    )
 
     class Meta:
         db_table = "mailings"

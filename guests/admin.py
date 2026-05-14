@@ -383,6 +383,7 @@ class MailingAdmin(admin.ModelAdmin):
         "id",
         "name",
         "template",
+        "coupon_series",
         "is_active",
         "target_mode",
         "queue_priority",
@@ -390,8 +391,8 @@ class MailingAdmin(admin.ModelAdmin):
         "scheduled_time_begin",
         "scheduled_time_end",
     )
-    list_filter = ("is_active", "target_mode", "queue_priority", "scheduled_date")
-    search_fields = ("name", "template__name")
+    list_filter = ("is_active", "target_mode", "queue_priority", "scheduled_date", "coupon_series")
+    search_fields = ("name", "template__name", "coupon_series")
     raw_id_fields = ("template",)
     inlines = (MailingBotProfileLinkInline,)
     list_per_page = 50

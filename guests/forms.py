@@ -59,6 +59,7 @@ class MailingForm(forms.ModelForm):
             "send_window_end",
             "target_mode",
             "queue_priority",
+            "coupon_series",
             "bot_profiles",
             # "is_active",
         ]
@@ -87,6 +88,12 @@ class MailingForm(forms.ModelForm):
             ),
             "target_mode": forms.Select(attrs={"class": "form-select"}),
             "queue_priority": forms.Select(attrs={"class": "form-select"}),
+            "coupon_series": forms.TextInput(
+                attrs={
+                    "class": "form-control",
+                    "placeholder": "Например: BDAY_2026",
+                }
+            ),
             "bot_profiles": forms.SelectMultiple(
                 attrs={
                     "class": "form-select",
@@ -105,6 +112,7 @@ class MailingForm(forms.ModelForm):
             "send_window_end": "Конец окна отправки",
             "target_mode": "Режим получателей",
             "queue_priority": "Приоритет в очереди",
+            "coupon_series": "Серия купонов",
             "bot_profiles": "Боты для рассылки",
             # "is_active": "Активна",
         }

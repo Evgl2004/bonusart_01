@@ -20,6 +20,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from guests.models import Mailing, MailingGuest
+from guests.services.coupon_campaign import CouponCampaignGateService
 from guests.services.universal_queue import enqueue_mailing_rows_as_dispatch_tasks
 
 logger = logging.getLogger(__name__)
@@ -203,6 +204,11 @@ def process_one_mailing(mailing: Mailing, now) -> int:
         print(f"[mailing:{mailing.id}] NO BOT PROFILES -> marked ERROR rows: {updated}")
         return 0
 
+    rows: list[MailingGuest] = []
+    rows_for_enqueue: list[MailingGuest] = []
+    coupon_gate_report: dict[str, object] | None = None
+    coupon_gate_service = CouponCampaignGateService()
+
     with transaction.atomic():
         rows = list(
             MailingGuest.objects.select_for_update()
@@ -218,14 +224,55 @@ def process_one_mailing(mailing: Mailing, now) -> int:
         if not rows:
             return 0
 
-        ids = [row.id for row in rows]
+        rows_for_enqueue, gate_report = coupon_gate_service.prepare_rows_for_dispatch(
+            mailing=mailing,
+            rows=rows,
+            now=now,
+            dry_run=False,
+        )
+        coupon_gate_report = gate_report.to_dict()
+
+        ready_row_ids = {int(row.id) for row in rows_for_enqueue}
+        blocked_rows = [row for row in rows if int(row.id) not in ready_row_ids]
+        if blocked_rows:
+            issue_messages_by_row_id: dict[int, list[str]] = {}
+            for issue in gate_report.issues:
+                issue_messages_by_row_id.setdefault(int(issue.row_id), []).append(issue.message)
+            global_blockers = list(gate_report.global_blockers)
+
+            for row in blocked_rows:
+                issue_messages = issue_messages_by_row_id.get(int(row.id), [])
+                reason_parts = issue_messages if issue_messages else ["Строка заблокирована на этапе sync-gate."]
+                if global_blockers:
+                    reason_parts.extend(global_blockers)
+                row.status = MailingGuest.Status.ERROR
+                row.delivery_status = "coupon_sync_gate_blocked"
+                row.error_description = " | ".join(reason_parts)[:1800]
+
+            MailingGuest.objects.bulk_update(
+                blocked_rows,
+                fields=["status", "delivery_status", "error_description"],
+                batch_size=500,
+            )
+            print(
+                f"[mailing:{mailing.id}] coupon gate blocked rows: {len(blocked_rows)} "
+                f"(ready={len(rows_for_enqueue)})"
+            )
+
+        if not rows_for_enqueue:
+            print(f"[mailing:{mailing.id}] no rows passed coupon sync-gate")
+            return len(rows)
+
+        ids = [row.id for row in rows_for_enqueue]
         MailingGuest.objects.filter(id__in=ids).update(status=MailingGuest.Status.IN_PROGRESS)
+        for row in rows_for_enqueue:
+            row.status = MailingGuest.Status.IN_PROGRESS
         print(f"[mailing:{mailing.id}] moved to IN_PROGRESS ids={ids}")
 
     try:
         summary = enqueue_mailing_rows_as_dispatch_tasks(
             mailing=mailing,
-            rows=rows,
+            rows=rows_for_enqueue,
             now=now,
         )
         logger.info(
@@ -237,14 +284,25 @@ def process_one_mailing(mailing: Mailing, now) -> int:
             summary.tasks_created,
             summary.tasks_duplicates,
         )
+        if coupon_gate_report:
+            logger.info(
+                "mailing coupon gate: mailing_id=%s coupon_mode=%s series=%s ready=%s blocked=%s sync_ok=%s sync_error=%s",
+                mailing.id,
+                coupon_gate_report.get("coupon_mode"),
+                coupon_gate_report.get("coupon_series"),
+                coupon_gate_report.get("rows_ready"),
+                coupon_gate_report.get("rows_blocked"),
+                coupon_gate_report.get("sync_ok"),
+                coupon_gate_report.get("sync_error"),
+            )
         print(
             f"[mailing:{mailing.id}] queued_to_dispatch="
             f"{summary.rows_queued}/{summary.rows_total} failed={summary.rows_failed}"
         )
-        return summary.rows_total
+        return int(summary.rows_total) + int(len(rows) - len(rows_for_enqueue))
     except Exception as enqueue_error:
         error_text = f"dispatch_enqueue_exception: {str(enqueue_error)[:1800]}"
-        for row in rows:
+        for row in rows_for_enqueue:
             row.status = MailingGuest.Status.ERROR
             row.delivery_status = "dispatch_enqueue_exception"
             row.error_description = error_text
@@ -256,4 +314,4 @@ def process_one_mailing(mailing: Mailing, now) -> int:
             enqueue_error,
         )
         print(f"[mailing:{mailing.id}] enqueue failed -> rows marked ERROR")
-        return len(rows)
+        return len(rows_for_enqueue)

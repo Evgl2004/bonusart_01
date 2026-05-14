@@ -215,6 +215,26 @@
 
         <div class="mb-3">
           <div class="mail-label-row">
+            {{ form.coupon_series.label_tag }}
+            <button
+              type="button"
+              class="btn btn-outline-secondary mail-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Опционально: серия купонов iikoCard. Если заполнено, перед отправкой запускается купонный sync-gate (резервирование + проверка каналов vtelemax)."
+            >?</button>
+          </div>
+          {{ form.coupon_series }}
+          <small class="text-muted">
+            Оставьте пустым для обычной рассылки без купонов.
+          </small>
+          {% if form.coupon_series.errors %}
+            <div class="text-danger small mt-1">{{ form.coupon_series.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <div class="mail-label-row">
             {{ form.bot_profiles.label_tag }}
             <button
               type="button"

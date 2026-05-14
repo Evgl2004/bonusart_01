@@ -504,6 +504,7 @@ class MailingsV2CampaignOpsView(View):
                     send_window_end=mailing.send_window_end,
                     target_mode=mailing.target_mode,
                     queue_priority=mailing.queue_priority,
+                    coupon_series=mailing.coupon_series,
                 )
                 duplicate.bot_profiles.set(mailing.bot_profiles.all())
                 source_rows = mailing.guests_rows.values(
@@ -1876,6 +1877,13 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
             reached_batch_limit = True
 
     report_after = _build_mailing_dry_run_report(mailing=mailing, now=timezone.now())
+    coupon_gate_blocked_rows = int(
+        MailingGuest.objects.filter(
+            mailing=mailing,
+            status=MailingGuest.Status.ERROR,
+            delivery_status="coupon_sync_gate_blocked",
+        ).count()
+    )
     return {
         "generated_at": timezone.now().isoformat(),
         "mailing_id": int(mailing.id),
@@ -1888,6 +1896,9 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
         "batch_size": int(mailing_worker_cmd.BATCH_SIZE),
         "max_batches": int(max_batches),
         "reached_batch_limit": bool(reached_batch_limit),
+        "coupon_mode": bool(getattr(mailing, "coupon_series", None)),
+        "coupon_series": str(getattr(mailing, "coupon_series", "") or "").strip(),
+        "coupon_gate_blocked_rows": coupon_gate_blocked_rows,
     }
 
 

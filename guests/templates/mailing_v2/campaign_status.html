@@ -199,7 +199,10 @@
               батчей: <b>{{ mailing_ops_run_now_report.processed_batches }}</b> (max={{ mailing_ops_run_now_report.max_batches }})<br>
               Готово до запуска: <b>{{ mailing_ops_run_now_report.ready_rows_before }}</b>,
               готово после запуска: <b>{{ mailing_ops_run_now_report.ready_rows_after }}</b>,
-              достигнут лимит батчей: <b>{{ mailing_ops_run_now_report.reached_batch_limit }}</b>
+              достигнут лимит батчей: <b>{{ mailing_ops_run_now_report.reached_batch_limit }}</b><br>
+              Купонный режим: <b>{{ mailing_ops_run_now_report.coupon_mode }}</b>,
+              серия: <b>{{ mailing_ops_run_now_report.coupon_series|default:"—" }}</b>,
+              блокировок sync-gate: <b>{{ mailing_ops_run_now_report.coupon_gate_blocked_rows }}</b>
             </div>
           {% endif %}
         </div>
