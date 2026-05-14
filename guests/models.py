@@ -216,6 +216,30 @@ class Mailing(models.Model):
             "Если заполнено, перед отправкой включается купонный sync-gate."
         ),
     )
+    coupon_venue_code = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text=(
+            "Код заведения для купонной кампании. "
+            "Используется для проверки соответствия серии купонов и кампании."
+        ),
+    )
+    coupon_venue_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Человекочитаемое название заведения купонной кампании.",
+    )
+    coupon_promo_text = models.TextField(
+        blank=True,
+        null=True,
+        help_text=(
+            "Текст акции купона для показа гостю в карточке купона "
+            "и для передачи в vtelemax."
+        ),
+    )
 
     class Meta:
         db_table = "mailings"
@@ -2199,6 +2223,19 @@ class CouponPoolBatch(models.Model):
         help_text="Уникальный технический код партии (например, TEST_20260514_001).",
     )
     series = models.CharField(max_length=120, db_index=True, help_text="Серия купонов в iikoCard.")
+    venue_code = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Код заведения, для которого сформирован пул купонов.",
+    )
+    venue_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Название заведения, для которого сформирован пул купонов.",
+    )
     prefix = models.CharField(
         max_length=32,
         blank=True,
@@ -2248,6 +2285,7 @@ class CouponPoolBatch(models.Model):
         verbose_name_plural = "Партии купонов"
         indexes = [
             models.Index(fields=["series", "verification_status"], name="cpbatch_series_ver_idx"),
+            models.Index(fields=["venue_code", "verification_status"], name="cpbatch_venue_ver_idx"),
             models.Index(fields=["generated_at"], name="cpbatch_generated_idx"),
         ]
 
@@ -2283,6 +2321,19 @@ class CouponRegistryEntry(models.Model):
 
     series = models.CharField(max_length=120, db_index=True)
     code = models.CharField(max_length=120, db_index=True)
+    venue_code = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Код заведения, к которому относится купон.",
+    )
+    venue_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Название заведения, к которому относится купон.",
+    )
     source = models.CharField(
         max_length=20,
         choices=SourceType.choices,
@@ -2331,6 +2382,7 @@ class CouponRegistryEntry(models.Model):
         ]
         indexes = [
             models.Index(fields=["series", "pool_status"], name="cpreg_series_status_idx"),
+            models.Index(fields=["venue_code", "pool_status"], name="cpreg_venue_status_idx"),
             models.Index(fields=["batch", "pool_status"], name="cpreg_batch_status_idx"),
             models.Index(fields=["iiko_check_status", "iiko_checked_at"], name="cpreg_iiko_status_idx"),
         ]
@@ -2378,6 +2430,24 @@ class CouponCampaignAssignment(models.Model):
     phone_e164 = models.CharField(max_length=32, blank=True, null=True, db_index=True)
     coupon_series = models.CharField(max_length=120)
     coupon_code = models.CharField(max_length=120)
+    venue_code = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Код заведения, в рамках которого выпущен и назначен купон.",
+    )
+    venue_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Название заведения для назначенного купона.",
+    )
+    promo_text = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Текст акции, который передаётся гостю вместе с купоном.",
+    )
     assigned_at = models.DateTimeField(default=timezone.now, db_index=True)
     sent_at = models.DateTimeField(blank=True, null=True)
     lifetime_expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
@@ -2421,6 +2491,7 @@ class CouponCampaignAssignment(models.Model):
         ]
         indexes = [
             models.Index(fields=["campaign", "status"], name="cpass_campaign_status_idx"),
+            models.Index(fields=["campaign", "venue_code", "status"], name="cpass_camp_venue_st_idx"),
             models.Index(fields=["status", "vtelemax_sync_status"], name="cpass_sync_status_idx"),
         ]
 

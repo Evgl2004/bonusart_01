@@ -202,6 +202,7 @@
               достигнут лимит батчей: <b>{{ mailing_ops_run_now_report.reached_batch_limit }}</b><br>
               Купонный режим: <b>{{ mailing_ops_run_now_report.coupon_mode }}</b>,
               серия: <b>{{ mailing_ops_run_now_report.coupon_series|default:"—" }}</b>,
+              заведение: <b>{{ mailing_ops_run_now_report.coupon_venue_name|default:mailing_ops_run_now_report.coupon_venue_code|default:"—" }}</b>,
               блокировок sync-gate: <b>{{ mailing_ops_run_now_report.coupon_gate_blocked_rows }}</b>
             </div>
           {% endif %}

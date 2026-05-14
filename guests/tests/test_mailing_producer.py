@@ -327,7 +327,18 @@ class MailingProducerTests(TestCase):
         2. код и серия купона попадают в payload DispatchTask.
         """
         self.mailing.coupon_series = "TEST"
-        self.mailing.save(update_fields=["coupon_series", "updated_at"])
+        self.mailing.coupon_venue_code = "DEP_1"
+        self.mailing.coupon_venue_name = "Тестовый ресторан"
+        self.mailing.coupon_promo_text = "Скидка 20% на сет по купону."
+        self.mailing.save(
+            update_fields=[
+                "coupon_series",
+                "coupon_venue_code",
+                "coupon_venue_name",
+                "coupon_promo_text",
+                "updated_at",
+            ]
+        )
 
         row = self._create_row()
         GuestBotBinding.objects.create(
@@ -342,6 +353,8 @@ class MailingProducerTests(TestCase):
         coupon = CouponRegistryEntry.objects.create(
             series="TEST",
             code="TST-PL-001",
+            venue_code="DEP_1",
+            venue_name="Тестовый ресторан",
             source=CouponRegistryEntry.SourceType.GENERATED,
             is_active=False,
             pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
@@ -352,6 +365,9 @@ class MailingProducerTests(TestCase):
             coupon=coupon,
             coupon_series="TEST",
             coupon_code="TST-PL-001",
+            venue_code="DEP_1",
+            venue_name="Тестовый ресторан",
+            promo_text="Скидка 20% на сет по купону.",
             status=CouponCampaignAssignment.Status.RESERVED,
         )
 
@@ -365,3 +381,6 @@ class MailingProducerTests(TestCase):
         task = DispatchTask.objects.get(mailing_guest=row)
         self.assertEqual(task.payload.get("coupon_series"), "TEST")
         self.assertEqual(task.payload.get("coupon_code"), "TST-PL-001")
+        self.assertEqual(task.payload.get("coupon_venue_code"), "DEP_1")
+        self.assertEqual(task.payload.get("coupon_venue_name"), "Тестовый ресторан")
+        self.assertEqual(task.payload.get("coupon_promo_text"), "Скидка 20% на сет по купону.")

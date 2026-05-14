@@ -66,6 +66,8 @@ class CouponPoolService:
         *,
         series: str,
         prefix: str,
+        venue_code: str | None = None,
+        venue_name: str | None = None,
         count: int,
         random_length: int,
         alphabet_mode: str,
@@ -83,6 +85,8 @@ class CouponPoolService:
         """
         normalized_series = str(series or "").strip()
         normalized_prefix = str(prefix or "").strip().upper()
+        normalized_venue_code = str(venue_code or "").strip() or None
+        normalized_venue_name = str(venue_name or "").strip() or None
         normalized_generated_by = str(generated_by or "").strip() or None
         safe_count = int(count)
         safe_random_length = int(random_length)
@@ -108,6 +112,8 @@ class CouponPoolService:
             batch = CouponPoolBatch.objects.create(
                 batch_code=resolved_batch_code,
                 series=normalized_series,
+                venue_code=normalized_venue_code,
+                venue_name=normalized_venue_name,
                 prefix=normalized_prefix or None,
                 alphabet_mode=normalized_alphabet_mode,
                 random_length=safe_random_length,
@@ -146,6 +152,8 @@ class CouponPoolService:
                     CouponRegistryEntry(
                         series=normalized_series,
                         code=candidate,
+                        venue_code=normalized_venue_code,
+                        venue_name=normalized_venue_name,
                         source=source,
                         is_active=True,
                         batch=batch,

@@ -505,6 +505,9 @@ class MailingsV2CampaignOpsView(View):
                     target_mode=mailing.target_mode,
                     queue_priority=mailing.queue_priority,
                     coupon_series=mailing.coupon_series,
+                    coupon_venue_code=mailing.coupon_venue_code,
+                    coupon_venue_name=mailing.coupon_venue_name,
+                    coupon_promo_text=mailing.coupon_promo_text,
                 )
                 duplicate.bot_profiles.set(mailing.bot_profiles.all())
                 source_rows = mailing.guests_rows.values(
@@ -1898,6 +1901,8 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
         "reached_batch_limit": bool(reached_batch_limit),
         "coupon_mode": bool(getattr(mailing, "coupon_series", None)),
         "coupon_series": str(getattr(mailing, "coupon_series", "") or "").strip(),
+        "coupon_venue_code": str(getattr(mailing, "coupon_venue_code", "") or "").strip(),
+        "coupon_venue_name": str(getattr(mailing, "coupon_venue_name", "") or "").strip(),
         "coupon_gate_blocked_rows": coupon_gate_blocked_rows,
     }
 

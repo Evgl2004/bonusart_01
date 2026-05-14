@@ -17,6 +17,8 @@ class GenerateCouponPoolCommandTests(TestCase):
             call_command(
                 "generate_coupon_pool",
                 series="TEST",
+                venue_code="DEP_1",
+                venue_name="Тестовый ресторан",
                 prefix="TST-",
                 count=3,
                 random_length=10,
@@ -32,6 +34,7 @@ class GenerateCouponPoolCommandTests(TestCase):
 
         self.assertEqual(CouponPoolBatch.objects.count(), 1)
         self.assertEqual(CouponRegistryEntry.objects.count(), 3)
+        self.assertEqual(CouponPoolBatch.objects.get().venue_code, "DEP_1")
 
 
 class VerifyCouponPoolIikoCommandTests(TestCase):
@@ -39,6 +42,8 @@ class VerifyCouponPoolIikoCommandTests(TestCase):
         self.batch = CouponPoolBatch.objects.create(
             batch_code="TEST_BATCH",
             series="TEST",
+            venue_code="DEP_1",
+            venue_name="Тестовый ресторан",
             prefix="TST-",
             alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
             random_length=10,

@@ -61,6 +61,27 @@ def _resolve_campaign_coupon_series(mailing: Mailing) -> str:
     return str(getattr(mailing, "coupon_series", "") or "").strip()
 
 
+def _resolve_campaign_coupon_venue_code(mailing: Mailing) -> str:
+    """
+    Возвращает код заведения купонной кампании в нормализованном виде.
+    """
+    return str(getattr(mailing, "coupon_venue_code", "") or "").strip()
+
+
+def _resolve_campaign_coupon_venue_name(mailing: Mailing) -> str:
+    """
+    Возвращает имя заведения купонной кампании в нормализованном виде.
+    """
+    return str(getattr(mailing, "coupon_venue_name", "") or "").strip()
+
+
+def _resolve_campaign_coupon_promo_text(mailing: Mailing) -> str:
+    """
+    Возвращает текст акции купонной кампании в нормализованном виде.
+    """
+    return str(getattr(mailing, "coupon_promo_text", "") or "").strip()
+
+
 @dataclass(slots=True)
 class CouponGateIssue:
     """
@@ -81,6 +102,8 @@ class CouponGateReport:
 
     coupon_mode: bool = False
     coupon_series: str = ""
+    coupon_venue_code: str = ""
+    coupon_venue_name: str = ""
     rows_total: int = 0
     rows_ready: int = 0
     rows_blocked: int = 0
@@ -101,6 +124,8 @@ class CouponGateReport:
         return {
             "coupon_mode": self.coupon_mode,
             "coupon_series": self.coupon_series,
+            "coupon_venue_code": self.coupon_venue_code,
+            "coupon_venue_name": self.coupon_venue_name,
             "rows_total": self.rows_total,
             "rows_ready": self.rows_ready,
             "rows_blocked": self.rows_blocked,
@@ -168,9 +193,27 @@ class CouponCampaignGateService:
             report.rows_ready = len(rows)
             return rows, report
 
+        coupon_venue_code = _resolve_campaign_coupon_venue_code(mailing)
+        coupon_venue_name = _resolve_campaign_coupon_venue_name(mailing)
+        coupon_promo_text = _resolve_campaign_coupon_promo_text(mailing)
+
         report.coupon_mode = True
         report.coupon_series = coupon_series
+        report.coupon_venue_code = coupon_venue_code
+        report.coupon_venue_name = coupon_venue_name
         now = now or timezone.now()
+
+        if not coupon_venue_code:
+            report.global_blockers.append(
+                "Для купонной кампании не задано заведение. Укажите заведение в параметрах кампании."
+            )
+            return self._finalize_ready_rows(rows=rows, ready_guest_ids=set(), report=report)
+
+        if not coupon_promo_text:
+            report.global_blockers.append(
+                "Для купонной кампании не задан текст акции. Заполните поле текста акции перед запуском."
+            )
+            return self._finalize_ready_rows(rows=rows, ready_guest_ids=set(), report=report)
 
         guest_ids = [int(row.guest_id) for row in rows if row.guest_id]
         row_by_guest_id = {int(row.guest_id): row for row in rows if row.guest_id}
@@ -196,6 +239,7 @@ class CouponCampaignGateService:
         if missing_guest_ids:
             available_qs = CouponRegistryEntry.objects.filter(
                 series=coupon_series,
+                venue_code=coupon_venue_code,
                 is_active=True,
                 pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
             ).order_by("id")
@@ -204,7 +248,8 @@ class CouponCampaignGateService:
             reserve_rows = list(available_qs.select_for_update()[: len(missing_guest_ids)])
             if len(reserve_rows) < len(missing_guest_ids):
                 blocker = (
-                    f"Недостаточно купонов серии `{coupon_series}`: нужно={len(missing_guest_ids)}, "
+                    f"Недостаточно купонов серии `{coupon_series}` для заведения `{coupon_venue_code}`: "
+                    f"нужно={len(missing_guest_ids)}, "
                     f"доступно={len(reserve_rows)}."
                 )
                 report.global_blockers.append(blocker)
@@ -244,6 +289,9 @@ class CouponCampaignGateService:
                     phone_e164=phone_e164 or None,
                     coupon_series=coupon.series,
                     coupon_code=coupon.code,
+                    venue_code=str(coupon.venue_code or coupon_venue_code or "").strip() or None,
+                    venue_name=str(coupon.venue_name or coupon_venue_name or "").strip() or None,
+                    promo_text=coupon_promo_text or None,
                     assigned_at=now,
                     lifetime_expires_at=getattr(mailing, "scheduled_time_end", None),
                     status=CouponCampaignAssignment.Status.RESERVED,
@@ -271,6 +319,7 @@ class CouponCampaignGateService:
             report.available_coupons_before = int(
                 CouponRegistryEntry.objects.filter(
                     series=coupon_series,
+                    venue_code=coupon_venue_code,
                     is_active=True,
                     pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
                 ).count()
@@ -324,6 +373,45 @@ class CouponCampaignGateService:
                 )
                 continue
 
+            assignment_venue_code = str(assignment.venue_code or "").strip()
+            if not assignment_venue_code and not dry_run:
+                assignment.venue_code = coupon_venue_code
+                assignment.venue_name = assignment.venue_name or coupon_venue_name or None
+                assignment.promo_text = assignment.promo_text or coupon_promo_text or None
+                assignment.save(update_fields=["venue_code", "venue_name", "promo_text", "updated_at"])
+                assignment_venue_code = coupon_venue_code
+            if assignment_venue_code and assignment_venue_code != coupon_venue_code:
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_venue_mismatch",
+                        message=(
+                            "Назначенный купон относится к другому заведению: "
+                            f"`{assignment_venue_code}` вместо `{coupon_venue_code}`."
+                        ),
+                    )
+                )
+                if not dry_run:
+                    assignment.status = CouponCampaignAssignment.Status.ERROR
+                    assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.ERROR
+                    assignment.vtelemax_sync_error = "Несовпадение заведения купона и кампании."
+                    assignment.save(
+                        update_fields=[
+                            "status",
+                            "vtelemax_sync_status",
+                            "vtelemax_sync_error",
+                            "updated_at",
+                        ]
+                    )
+                    queue_events_created += self._upsert_sync_queue_event(
+                        assignment=assignment,
+                        now=now,
+                        status=CouponVtelemaxSyncQueue.Status.ERROR,
+                        last_error="Несовпадение заведения купона и кампании.",
+                    )
+                continue
+
             valid_channel = self._pick_sendable_channel(channels_by_guest_id.get(guest_id, []))
             if valid_channel is None:
                 report.sync_error += 1
@@ -364,6 +452,9 @@ class CouponCampaignGateService:
             if not dry_run:
                 assignment.person_id = valid_channel.person_id
                 assignment.phone_e164 = str(valid_channel.phone_e164 or "").strip() or assignment.phone_e164
+                assignment.venue_code = assignment.venue_code or coupon_venue_code
+                assignment.venue_name = assignment.venue_name or coupon_venue_name or None
+                assignment.promo_text = assignment.promo_text or coupon_promo_text or None
                 assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.OK
                 assignment.vtelemax_sync_error = None
                 assignment.vtelemax_synced_at = now
@@ -371,6 +462,9 @@ class CouponCampaignGateService:
                     update_fields=[
                         "person_id",
                         "phone_e164",
+                        "venue_code",
+                        "venue_name",
+                        "promo_text",
                         "vtelemax_sync_status",
                         "vtelemax_sync_error",
                         "vtelemax_synced_at",
@@ -391,6 +485,9 @@ class CouponCampaignGateService:
                     extra_context={
                         "coupon_code": assignment.coupon_code,
                         "coupon_series": assignment.coupon_series,
+                        "coupon_venue_code": assignment.venue_code or coupon_venue_code,
+                        "coupon_venue_name": assignment.venue_name or coupon_venue_name,
+                        "coupon_promo_text": assignment.promo_text or coupon_promo_text,
                         "coupon_expires_at": (
                             assignment.lifetime_expires_at.strftime("%d.%m.%Y")
                             if assignment.lifetime_expires_at
@@ -459,6 +556,9 @@ class CouponCampaignGateService:
             "phone_e164": assignment.phone_e164,
             "coupon_series": assignment.coupon_series,
             "coupon_code": assignment.coupon_code,
+            "venue_code": assignment.venue_code,
+            "venue_name": assignment.venue_name,
+            "promo_text": assignment.promo_text,
             "status": assignment.status,
             "vtelemax_sync_status": assignment.vtelemax_sync_status,
         }

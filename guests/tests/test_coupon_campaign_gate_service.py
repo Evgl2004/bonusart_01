@@ -50,6 +50,9 @@ class CouponCampaignGateServiceTests(TestCase):
             target_mode=Mailing.TargetMode.PRIMARY_ONLY,
             queue_priority=Mailing.QueuePriority.NORMAL,
             coupon_series="TEST",
+            coupon_venue_code="DEP_1",
+            coupon_venue_name="Тестовое заведение",
+            coupon_promo_text="Скидка 20% на сет по купону.",
         )
         self.bot = BotProfile.objects.create(
             code="tg_coupon_gate",
@@ -103,6 +106,8 @@ class CouponCampaignGateServiceTests(TestCase):
         coupon = CouponRegistryEntry.objects.create(
             series="TEST",
             code="TST-AAA111",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
             source=CouponRegistryEntry.SourceType.GENERATED,
             is_active=True,
             pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
@@ -126,6 +131,8 @@ class CouponCampaignGateServiceTests(TestCase):
         self.assertEqual(assignment.coupon_id, coupon.id)
         self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
         self.assertEqual(assignment.status, CouponCampaignAssignment.Status.RESERVED)
+        self.assertEqual(assignment.venue_code, "DEP_1")
+        self.assertEqual(assignment.promo_text, "Скидка 20% на сет по купону.")
 
         queue_event = CouponVtelemaxSyncQueue.objects.filter(assignment=assignment).order_by("-id").first()
         self.assertIsNotNone(queue_event)
@@ -146,6 +153,8 @@ class CouponCampaignGateServiceTests(TestCase):
         CouponRegistryEntry.objects.create(
             series="TEST",
             code="TST-ONLY1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
             source=CouponRegistryEntry.SourceType.GENERATED,
             is_active=True,
             pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
@@ -178,6 +187,8 @@ class CouponCampaignGateServiceTests(TestCase):
         CouponRegistryEntry.objects.create(
             series="TEST",
             code="TST-STALE1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
             source=CouponRegistryEntry.SourceType.GENERATED,
             is_active=True,
             pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
@@ -199,3 +210,42 @@ class CouponCampaignGateServiceTests(TestCase):
         self.assertEqual(len(ready_rows), 0)
         self.assertTrue(report.global_blockers)
         self.assertIn("устарел", report.global_blockers[0])
+
+    def test_prepare_rows_blocks_when_assignment_venue_mismatch(self):
+        """
+        Если у уже назначенного купона venue не совпадает с кампанией, строка блокируется.
+        """
+        row = self._create_row("4444")
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900004444")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-MISMATCH-1",
+            venue_code="DEP_X",
+            venue_name="Чужое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=row.guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-MISMATCH-1",
+            venue_code="DEP_X",
+            venue_name="Чужое заведение",
+            status=CouponCampaignAssignment.Status.RESERVED,
+        )
+
+        service = CouponCampaignGateService()
+        ready_rows, report = service.prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 0)
+        self.assertTrue(any(issue.code == "coupon_venue_mismatch" for issue in report.issues))
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.ERROR)

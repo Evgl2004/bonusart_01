@@ -233,6 +233,41 @@
           {% endif %}
         </div>
 
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.coupon_venue_code.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Для купонной кампании выберите заведение, к которому привязана серия купонов."
+              >?</button>
+            </div>
+            {{ form.coupon_venue_code }}
+            {% if form.coupon_venue_code.errors %}
+              <div class="text-danger small mt-1">{{ form.coupon_venue_code.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+          <div class="col-md-6 mb-3">
+            <div class="mail-label-row">
+              {{ form.coupon_promo_text.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Этот текст будет передан в vtelemax и показан гостю в карточке купона."
+              >?</button>
+            </div>
+            {{ form.coupon_promo_text }}
+            {% if form.coupon_promo_text.errors %}
+              <div class="text-danger small mt-1">{{ form.coupon_promo_text.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+        </div>
+
         <div class="mb-3">
           <div class="mail-label-row">
             {{ form.bot_profiles.label_tag }}

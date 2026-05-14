@@ -17,6 +17,8 @@ class CouponPoolServiceTests(TestCase):
         result = self.service.generate_pool(
             series="TEST",
             prefix="TST-",
+            venue_code="DEP_1",
+            venue_name="Тестовый ресторан",
             count=5,
             random_length=8,
             alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
@@ -31,11 +33,17 @@ class CouponPoolServiceTests(TestCase):
         self.assertEqual(batch.series, "TEST")
         self.assertEqual(batch.prefix, "TST-")
         self.assertEqual(batch.count_generated, 5)
+        self.assertEqual(batch.venue_code, "DEP_1")
+        self.assertEqual(batch.venue_name, "Тестовый ресторан")
 
         codes = list(CouponRegistryEntry.objects.values_list("code", flat=True))
         self.assertEqual(len(codes), len(set(codes)))
         for code in codes:
             self.assertTrue(code.startswith("TST-"))
+        self.assertEqual(
+            CouponRegistryEntry.objects.filter(venue_code="DEP_1", venue_name="Тестовый ресторан").count(),
+            5,
+        )
 
     def test_generate_pool_avoids_collisions_with_existing_series(self):
         existing_batch = CouponPoolBatch.objects.create(
@@ -57,6 +65,8 @@ class CouponPoolServiceTests(TestCase):
         result = self.service.generate_pool(
             series="TEST",
             prefix="TST-",
+            venue_code="DEP_1",
+            venue_name="Тестовый ресторан",
             count=5,
             random_length=8,
             alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
@@ -71,6 +81,8 @@ class CouponPoolServiceTests(TestCase):
         result = self.service.generate_pool(
             series="TEST",
             prefix="TST-",
+            venue_code="DEP_1",
+            venue_name="Тестовый ресторан",
             count=2,
             random_length=6,
             alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
@@ -92,6 +104,8 @@ class CouponPoolServiceTests(TestCase):
         result = self.service.generate_pool(
             series="TEST",
             prefix="TST-",
+            venue_code="DEP_1",
+            venue_name="Тестовый ресторан",
             count=2,
             random_length=6,
             alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,

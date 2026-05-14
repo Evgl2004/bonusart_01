@@ -21,6 +21,16 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument("--series", required=True, help="Серия купонов в iikoCard (например, TEST).")
+        parser.add_argument(
+            "--venue-code",
+            required=True,
+            help="Код заведения (department_id), для которого генерируется пул купонов.",
+        )
+        parser.add_argument(
+            "--venue-name",
+            default="",
+            help="Человекочитаемое имя заведения (опционально, для удобства в реестре).",
+        )
         parser.add_argument("--prefix", default="", help="Префикс купона (например, TST-).")
         parser.add_argument("--count", type=int, required=True, help="Количество купонов в партии.")
         parser.add_argument(
@@ -59,6 +69,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         series = str(options["series"] or "").strip()
+        venue_code = str(options["venue_code"] or "").strip()
+        venue_name = str(options.get("venue_name") or "").strip() or None
         prefix = str(options["prefix"] or "")
         count = int(options["count"])
         random_length = int(options["random_length"])
@@ -75,6 +87,8 @@ class Command(BaseCommand):
             result = service.generate_pool(
                 series=series,
                 prefix=prefix,
+                venue_code=venue_code,
+                venue_name=venue_name,
                 count=count,
                 random_length=random_length,
                 alphabet_mode=alphabet_mode,
@@ -106,6 +120,8 @@ class Command(BaseCommand):
         self.stdout.write("=== Результат генерации купонного пула ===")
         self.stdout.write(f"batch_code={result.batch.batch_code}")
         self.stdout.write(f"series={result.batch.series}")
+        self.stdout.write(f"venue_code={result.batch.venue_code or ''}")
+        self.stdout.write(f"venue_name={result.batch.venue_name or ''}")
         self.stdout.write(f"prefix={result.batch.prefix or ''}")
         self.stdout.write(f"count_requested={result.batch.count_requested}")
         self.stdout.write(f"count_generated={result.created_count}")
