@@ -24,7 +24,7 @@ from .views_focus_categories_workbench import FocusCategoriesWorkbenchView
 from .views_focus_categories_actions import FocusCategoriesActionsView
 from .views_segments_workbench import SegmentsWorkbenchView
 from .views_virtual_categories_workbench import VirtualCategoriesWorkbenchView
-from .views_reports import CouponCampaignReportsView, CouponRegistryView, ReportsWorkbenchView
+from .views_reports import CouponCampaignReportsView, CouponRegistryOpsView, CouponRegistryView, ReportsWorkbenchView
 from .views_mailings_v2 import (
     MailingsV2CampaignAudienceView,
     MailingsV2CampaignCreateView,
@@ -63,6 +63,7 @@ urlpatterns = [
         name="reports_coupon_campaigns",
     ),
     path("reports/coupon-registry/", CouponRegistryView.as_view(), name="coupon_registry"),
+    path("reports/coupon-registry/ops/", CouponRegistryOpsView.as_view(), name="coupon_registry_ops"),
     path("mailings-v2/campaigns/", MailingsV2CampaignsHubView.as_view(), name="mailings_v2_campaigns"),
     path("mailings-v2/campaigns/new/", MailingsV2CampaignCreateView.as_view(), name="mailings_v2_campaigns_new"),
     path("mailings-v2/campaigns/<int:pk>/", MailingsV2CampaignUpdateView.as_view(), name="mailings_v2_campaigns_edit"),

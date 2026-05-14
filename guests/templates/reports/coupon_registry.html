@@ -105,10 +105,125 @@
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">
-      <h2 class="h6 mb-2">Операционные команды</h2>
-      <p class="mb-1 small">Генерация пула:</p>
+      <h2 class="h6 mb-3">Операции реестра</h2>
+      <div class="row g-3">
+        <div class="col-12 col-xxl-6">
+          <div class="border rounded p-3 h-100">
+            <h3 class="h6 mb-2">1) Сгенерировать пул + CSV</h3>
+            <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="generate_pool">
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">Серия</label>
+                <input type="text" name="series" class="form-control form-control-sm" placeholder="TEST" required>
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">Код заведения</label>
+                <input type="text" name="venue_code" class="form-control form-control-sm" placeholder="DEP_1 или {{ coupon_global_venue_code }}" required>
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">Название заведения</label>
+                <input type="text" name="venue_name" class="form-control form-control-sm" placeholder="{{ coupon_global_venue_name }}">
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label small mb-1">Префикс</label>
+                <input type="text" name="prefix" class="form-control form-control-sm" value="TST-">
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label small mb-1">Количество</label>
+                <input type="number" name="count" class="form-control form-control-sm" value="100" min="1" step="1" required>
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label small mb-1">Длина случайной части</label>
+                <input type="number" name="random_length" class="form-control form-control-sm" value="12" min="1" step="1" required>
+              </div>
+              <div class="col-12 col-md-3">
+                <label class="form-label small mb-1">Алфавит</label>
+                <select name="alphabet_mode" class="form-select form-select-sm">
+                  {% for value, label in alphabet_mode_choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small mb-1">Batch-код (опционально)</label>
+                <input type="text" name="batch_code" class="form-control form-control-sm" placeholder="Если пусто — сгенерируется автоматически">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small mb-1">Оператор (опционально)</label>
+                <input type="text" name="generated_by" class="form-control form-control-sm" placeholder="По умолчанию логин пользователя">
+              </div>
+              <div class="col-12">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" value="1" id="include_optional_fields" name="include_optional_fields">
+                  <label class="form-check-label small" for="include_optional_fields">
+                    Добавить опциональные поля CSV (activated, activation_date, multi_use, deleted)
+                  </label>
+                </div>
+              </div>
+              <div class="col-12">
+                <button type="submit" class="btn btn-primary btn-sm">Сгенерировать и сохранить CSV</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <div class="col-12 col-xxl-6">
+          <div class="border rounded p-3 h-100 mb-3">
+            <h3 class="h6 mb-2">2) Проверить загрузку в iikoCard</h3>
+            <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="verify_pool">
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <div class="col-12 col-md-6">
+                <label class="form-label small mb-1">Batch-код</label>
+                <input type="text" name="batch_code" class="form-control form-control-sm" placeholder="TEST_20260514_001">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label small mb-1">Серия (если без batch)</label>
+                <input type="text" name="series" class="form-control form-control-sm" placeholder="TEST">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">sample_info_check_limit</label>
+                <input type="number" name="sample_info_check_limit" class="form-control form-control-sm" value="2" min="1" step="1">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">page_size</label>
+                <input type="number" name="page_size" class="form-control form-control-sm" value="500" min="1" step="1">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1">max_pages</label>
+                <input type="number" name="max_pages" class="form-control form-control-sm" value="200" min="1" step="1">
+              </div>
+              <div class="col-12">
+                <button type="submit" class="btn btn-outline-primary btn-sm">Запустить проверку</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="border rounded p-3 h-100">
+            <h3 class="h6 mb-2">3) Скачать CSV по batch</h3>
+            <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="download_csv">
+              <input type="hidden" name="next" value="{{ request.get_full_path }}">
+              <div class="col-12 col-md-8">
+                <label class="form-label small mb-1">Batch-код</label>
+                <input type="text" name="batch_code" class="form-control form-control-sm" placeholder="TEST_20260514_001" required>
+              </div>
+              <div class="col-12 col-md-4 d-flex align-items-end">
+                <button type="submit" class="btn btn-outline-secondary btn-sm w-100">Скачать CSV</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <hr class="my-3">
+      <p class="mb-1 small">CLI-подсказка (генерация):</p>
       <code class="d-block mb-2">{{ generate_command_hint }}</code>
-      <p class="mb-1 small">Проверка загрузки в iikoCard:</p>
+      <p class="mb-1 small">CLI-подсказка (проверка):</p>
       <code class="d-block">{{ verify_command_hint }}</code>
     </div>
   </div>

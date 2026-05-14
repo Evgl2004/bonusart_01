@@ -9,16 +9,25 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from urllib.parse import urlencode
 
+from django.contrib import messages
+from django.core.management import CommandError, call_command
 from django.core.paginator import Paginator
 from django.db.models import Prefetch, Q
+from django.http import FileResponse, HttpResponseRedirect
+from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.dateparse import parse_date
+from django.utils.http import url_has_allowed_host_and_scheme
+from django.views import View
 from django.views.generic import TemplateView
 
 from guests.models import CouponCampaignAssignment, CouponPoolBatch, CouponRegistryEntry, Mailing
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
+from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
+from guests.services.coupon_pool import CouponPoolGenerationError, CouponPoolService
 
 
 def _parse_positive_int(value: str | None) -> int | None:
@@ -34,6 +43,14 @@ def _parse_positive_int(value: str | None) -> int | None:
         return None
     parsed = int(raw)
     return parsed if parsed > 0 else None
+
+
+def _safe_token(value: str) -> str:
+    """
+    Нормализует строку для безопасного включения в имя файла.
+    """
+    token = "".join(ch if ch.isalnum() else "_" for ch in str(value or "").strip())
+    return token or "NA"
 
 
 class ReportsWorkbenchView(TemplateView):
@@ -177,6 +194,10 @@ class CouponRegistryView(TemplateView):
         context["pool_status_choices"] = CouponRegistryEntry.PoolStatus.choices
         context["iiko_check_status_choices"] = CouponRegistryEntry.IikoCheckStatus.choices
         context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
+        context["coupon_ops_url"] = reverse("coupon_registry_ops")
+        context["alphabet_mode_choices"] = CouponPoolBatch.AlphabetMode.choices
+        context["coupon_global_venue_code"] = COUPON_VENUE_GLOBAL_CODE
+        context["coupon_global_venue_name"] = COUPON_VENUE_GLOBAL_NAME
         context["generate_command_hint"] = (
             "python manage.py generate_coupon_pool --series <SERIES> --prefix TST- --count 1000 --random-length 12"
         )
@@ -184,6 +205,210 @@ class CouponRegistryView(TemplateView):
             "python manage.py verify_coupon_pool_iiko --series <SERIES> --sample-size 50"
         )
         return context
+
+
+class CouponRegistryOpsView(View):
+    """
+    POST-операции для экрана реестра купонов.
+
+    Доступные действия:
+    1. `generate_pool` — создать пул и экспортировать CSV;
+    2. `verify_pool` — запустить проверку загрузки купонов в iikoCard;
+    3. `download_csv` — скачать уже сформированный CSV по batch.
+    """
+
+    http_method_names = ["post"]
+
+    @staticmethod
+    def _resolve_next_url(request) -> str:
+        """
+        Возвращает безопасный URL возврата после POST-операции.
+        """
+        default_url = reverse("coupon_registry")
+        next_url = str(request.POST.get("next") or "").strip()
+        if next_url and url_has_allowed_host_and_scheme(
+            url=next_url,
+            allowed_hosts={request.get_host()},
+            require_https=request.is_secure(),
+        ):
+            return next_url
+        return default_url
+
+    @staticmethod
+    def _redirect_with_query(base_url: str, query: dict[str, str | int]) -> HttpResponseRedirect:
+        normalized = {k: str(v) for k, v in query.items() if str(v or "").strip()}
+        if normalized:
+            return redirect(f"{base_url}?{urlencode(normalized)}")
+        return redirect(base_url)
+
+    def post(self, request, *args, **kwargs):
+        action = str(request.POST.get("action") or "").strip()
+        if action == "generate_pool":
+            return self._handle_generate_pool(request)
+        if action == "verify_pool":
+            return self._handle_verify_pool(request)
+        if action == "download_csv":
+            return self._handle_download_csv(request)
+
+        messages.error(request, "Неизвестная операция реестра купонов.")
+        return redirect(self._resolve_next_url(request))
+
+    def _handle_generate_pool(self, request):
+        series = str(request.POST.get("series") or "").strip()
+        venue_code = str(request.POST.get("venue_code") or "").strip()
+        venue_name = str(request.POST.get("venue_name") or "").strip()
+        prefix = str(request.POST.get("prefix") or "").strip().upper()
+        batch_code = str(request.POST.get("batch_code") or "").strip()
+        generated_by = str(request.POST.get("generated_by") or "").strip()
+        export_path_override = str(request.POST.get("export_path") or "").strip()
+        alphabet_mode = str(request.POST.get("alphabet_mode") or "").strip()
+        include_optional_fields = str(request.POST.get("include_optional_fields") or "").strip() in {"1", "on", "true"}
+
+        count = _parse_positive_int(request.POST.get("count"))
+        random_length = _parse_positive_int(request.POST.get("random_length"))
+
+        if not series:
+            messages.error(request, "Серия купонов обязательна для генерации.")
+            return redirect(self._resolve_next_url(request))
+        if not venue_code:
+            messages.error(request, "Код заведения обязателен для генерации пула.")
+            return redirect(self._resolve_next_url(request))
+        if count is None:
+            messages.error(request, "Количество купонов должно быть положительным числом.")
+            return redirect(self._resolve_next_url(request))
+        if random_length is None:
+            messages.error(request, "Длина случайной части должна быть положительным числом.")
+            return redirect(self._resolve_next_url(request))
+        if alphabet_mode not in {choice[0] for choice in CouponPoolBatch.AlphabetMode.choices}:
+            messages.error(request, "Некорректный режим алфавита генерации.")
+            return redirect(self._resolve_next_url(request))
+
+        if not generated_by:
+            user = getattr(request, "user", None)
+            generated_by = str(getattr(user, "username", "") or "").strip() or "ui_operator"
+
+        service = CouponPoolService()
+        try:
+            result = service.generate_pool(
+                series=series,
+                prefix=prefix,
+                venue_code=venue_code,
+                venue_name=venue_name or None,
+                count=count,
+                random_length=random_length,
+                alphabet_mode=alphabet_mode,
+                generated_by=generated_by,
+                batch_code=batch_code or None,
+            )
+            if export_path_override:
+                export_path = Path(export_path_override)
+            else:
+                suffix = "series_number_optional" if include_optional_fields else "series_number"
+                export_name = (
+                    f"iikocard_coupon_import_{_safe_token(series)}_{_safe_token(prefix)}_"
+                    f"{count}_{suffix}.csv"
+                )
+                export_path = Path("tools") / export_name
+            csv_path = service.export_batch_csv(
+                batch=result.batch,
+                output_path=str(export_path),
+                include_optional_fields=include_optional_fields,
+            )
+        except CouponPoolGenerationError as exc:
+            messages.error(request, f"Ошибка генерации пула купонов: {exc}")
+            return redirect(self._resolve_next_url(request))
+
+        messages.success(
+            request,
+            (
+                f"Пул создан: batch={result.batch.batch_code} (series={result.batch.series}, "
+                f"count={result.created_count}, collisions={result.collisions_count}). "
+                f"CSV: {csv_path}"
+            ),
+        )
+        return self._redirect_with_query(
+            reverse("coupon_registry"),
+            {"batch_code": result.batch.batch_code},
+        )
+
+    def _handle_verify_pool(self, request):
+        series = str(request.POST.get("series") or "").strip()
+        batch_code = str(request.POST.get("batch_code") or "").strip()
+        sample_info_check_limit = _parse_positive_int(request.POST.get("sample_info_check_limit")) or 2
+        page_size = _parse_positive_int(request.POST.get("page_size")) or 500
+        max_pages = _parse_positive_int(request.POST.get("max_pages")) or 200
+
+        if not series and not batch_code:
+            messages.error(request, "Для проверки укажите серию или batch-код.")
+            return redirect(self._resolve_next_url(request))
+
+        try:
+            call_command(
+                "verify_coupon_pool_iiko",
+                series=series,
+                batch_code=batch_code,
+                sample_info_check_limit=sample_info_check_limit,
+                page_size=page_size,
+                max_pages=max_pages,
+                dry_run=False,
+            )
+        except CommandError as exc:
+            messages.error(request, f"Проверка в iikoCard завершилась с ошибкой: {exc}")
+            return redirect(self._resolve_next_url(request))
+
+        if batch_code:
+            batch = CouponPoolBatch.objects.filter(batch_code=batch_code).first()
+            if batch:
+                messages.success(
+                    request,
+                    (
+                        f"Проверка завершена: batch={batch.batch_code}, "
+                        f"verification_status={batch.verification_status}, "
+                        f"found={batch.verified_found_count}, not_found={batch.verified_not_found_count}."
+                    ),
+                )
+                return self._redirect_with_query(reverse("coupon_registry"), {"batch_code": batch.batch_code})
+
+        messages.success(
+            request,
+            "Проверка загрузки купонов в iikoCard успешно завершена.",
+        )
+        return self._redirect_with_query(
+            reverse("coupon_registry"),
+            {"series": series},
+        )
+
+    def _handle_download_csv(self, request):
+        batch_code = str(request.POST.get("batch_code") or "").strip()
+        if not batch_code:
+            messages.error(request, "Укажите batch-код для скачивания CSV.")
+            return redirect(self._resolve_next_url(request))
+
+        batch = CouponPoolBatch.objects.filter(batch_code=batch_code).first()
+        if batch is None:
+            messages.error(request, f"Партия `{batch_code}` не найдена.")
+            return redirect(self._resolve_next_url(request))
+        if not batch.export_file_path:
+            messages.error(
+                request,
+                (
+                    f"У партии `{batch.batch_code}` отсутствует путь к CSV. "
+                    "Сначала сформируйте экспорт через генерацию пула."
+                ),
+            )
+            return self._redirect_with_query(reverse("coupon_registry"), {"batch_code": batch.batch_code})
+
+        csv_path = Path(batch.export_file_path).expanduser()
+        if not csv_path.is_file():
+            messages.error(request, f"CSV-файл не найден по пути: {csv_path}")
+            return self._redirect_with_query(reverse("coupon_registry"), {"batch_code": batch.batch_code})
+
+        return FileResponse(
+            csv_path.open("rb"),
+            as_attachment=True,
+            filename=csv_path.name,
+            content_type="text/csv",
+        )
 
 
 class CouponCampaignReportsView(TemplateView):
