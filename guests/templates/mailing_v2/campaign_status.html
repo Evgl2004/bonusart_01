@@ -71,6 +71,9 @@
       <p class="text-muted mb-0">{{ mailing.name }}</p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+      {% if mailing.coupon_series %}
+        <a class="btn btn-outline-primary btn-sm" href="{{ coupon_report_url }}">Отчёт по купонам</a>
+      {% endif %}
       <a class="btn btn-outline-secondary btn-sm" href="{{ legacy_logs_url }}">Старые логи</a>
       <a class="btn btn-outline-secondary btn-sm" href="{{ legacy_logs_txt_url }}">Скачать лог txt</a>
       <a class="btn btn-outline-secondary" href="{{ v2_list_url }}">К списку рассылок</a>
@@ -122,6 +125,9 @@
             <div class="mail-status-row"><span>Выручка по купонам</span><b>{{ coupon_campaign_report.revenue_net_used }}</b></div>
             <div class="mail-status-row"><span>Средний чек по купонам</span><b>{{ coupon_campaign_report.coupon_orders_avg_check }}</b></div>
             <div class="mail-status-row"><span>Поздние применения</span><b>{{ coupon_campaign_report.used_late_total }}</b></div>
+            <div class="mt-2">
+              <a class="btn btn-outline-primary btn-sm" href="{{ coupon_report_url }}">Открыть полный отчёт по кампании</a>
+            </div>
           {% elif coupon_campaign_report_error %}
             <div class="alert alert-warning small mt-3 mb-0">{{ coupon_campaign_report_error }}</div>
           {% endif %}

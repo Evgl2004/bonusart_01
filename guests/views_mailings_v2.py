@@ -320,6 +320,9 @@ class MailingsV2CampaignStatusView(TemplateView):
         context["ops_url"] = reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.pk})
         context["legacy_logs_url"] = reverse("mailing_logs", kwargs={"pk": mailing.pk})
         context["legacy_logs_txt_url"] = reverse("mailing_logs_txt", kwargs={"pk": mailing.pk})
+        context["coupon_report_url"] = (
+            f"{reverse('reports_coupon_campaigns')}?{urlencode({'campaign_id': mailing.id})}"
+        )
         context["guests_count"] = mailing.guests_rows.count()
         context["mailing_row_stats"] = _build_mailing_row_stats(mailing)
         context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)

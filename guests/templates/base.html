@@ -118,6 +118,27 @@
         </a>
 
         <a
+          href="{% url 'reports' %}"
+          class="{% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'coupon_registry' %}active{% endif %}"
+        >
+          Отчёты
+        </a>
+        {% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'coupon_registry' %}
+          <a
+            href="{% url 'reports_coupon_campaigns' %}"
+            class="submenu-link {% if current == 'reports_coupon_campaigns' %}active{% endif %}"
+          >
+            Купонные кампании
+          </a>
+          <a
+            href="{% url 'coupon_registry' %}"
+            class="submenu-link {% if current == 'coupon_registry' %}active{% endif %}"
+          >
+            Реестр купонов
+          </a>
+        {% endif %}
+
+        <a
           href="{% url 'guests_workbench' %}"
           class="{% if current == 'guests_workbench' or current == 'home' or current == 'guests' or current == 'guest_detail' %}active{% endif %}"
         >

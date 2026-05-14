@@ -69,6 +69,8 @@ class CouponCampaignStatusViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["coupon_campaign_report"]["coupon_series"], "TEST")
         self.assertEqual(response.context["coupon_campaign_report_error"], "")
+        self.assertIn(f"campaign_id={mailing.id}", response.context["coupon_report_url"])
+        self.assertContains(response, "Отчёт по купонам")
         self.assertContains(response, "Купонный отчёт (оперативный)")
         build_mock.assert_called_once_with(mailing=mailing)
 
@@ -99,4 +101,5 @@ class CouponCampaignStatusViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIsNone(response.context["coupon_campaign_report"])
         self.assertEqual(response.context["coupon_campaign_report_error"], "")
+        self.assertNotContains(response, "Отчёт по купонам")
         build_mock.assert_not_called()

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+
+{% block title %}Отчёты: купонные кампании{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Купонные кампании</h1>
+      <p class="text-muted mb-0">Выбор кампании и просмотр KPI по использованию купонов.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ back_to_reports_url }}">К отчётам</a>
+      <a class="btn btn-outline-primary btn-sm" href="{{ registry_url }}">Реестр купонов</a>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-2">
+        <div class="col-12 col-lg-4">
+          <label class="form-label small mb-1">Поиск кампании</label>
+          <input type="text" name="q" value="{{ filters.q }}" class="form-control form-control-sm" placeholder="ID, название, серия">
+        </div>
+        <div class="col-12 col-lg-6">
+          <label class="form-label small mb-1">Кампания</label>
+          <select name="campaign_id" class="form-select form-select-sm">
+            <option value="">Выберите кампанию</option>
+            {% for campaign in campaigns %}
+              <option value="{{ campaign.id }}" {% if filters.campaign_id|stringformat:"s" == campaign.id|stringformat:"s" %}selected{% endif %}>
+                #{{ campaign.id }} · {{ campaign.name }} · серия {{ campaign.coupon_series }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-lg-2 d-flex align-items-end gap-2">
+          <button type="submit" class="btn btn-primary btn-sm w-100">Показать</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if coupon_campaign_report_error %}
+    <div class="alert alert-warning">{{ coupon_campaign_report_error }}</div>
+  {% endif %}
+
+  {% if selected_campaign and coupon_campaign_report %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+          <div>
+            <h2 class="h6 mb-1">Кампания #{{ selected_campaign.id }}: {{ selected_campaign.name }}</h2>
+            <div class="small text-muted">
+              Серия купонов: <b>{{ coupon_campaign_report.coupon_series }}</b> ·
+              Период: {{ selected_campaign.scheduled_time_begin|date:"d.m.Y H:i" }} - {{ selected_campaign.scheduled_time_end|date:"d.m.Y H:i" }}
+            </div>
+          </div>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-outline-secondary btn-sm" href="{{ campaign_status_url }}">Карточка кампании</a>
+            <a class="btn btn-outline-primary btn-sm" href="{{ registry_for_campaign_url }}">Купоны кампании в реестре</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm h-100"><div class="card-body">
+          <div class="text-muted small">Отправлено купонов</div>
+          <div class="h5 mb-0">{{ coupon_campaign_report.coupons_sent_total }}</div>
+        </div></div>
+      </div>
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm h-100"><div class="card-body">
+          <div class="text-muted small">Использовано купонов</div>
+          <div class="h5 mb-0">{{ coupon_campaign_report.assignments_used }}</div>
+        </div></div>
+      </div>
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm h-100"><div class="card-body">
+          <div class="text-muted small">Конверсия</div>
+          <div class="h5 mb-0">{{ coupon_campaign_report.usage_rate_percent }}%</div>
+        </div></div>
+      </div>
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm h-100"><div class="card-body">
+          <div class="text-muted small">Возвращаемость</div>
+          <div class="h5 mb-0">{{ coupon_campaign_report.returned_guests_rate_percent }}%</div>
+        </div></div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-xl-6">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-body">
+            <h3 class="h6 mb-3">Основные метрики</h3>
+            <div class="small mb-1">Аудитория: <b>{{ coupon_campaign_report.recipients_total }}</b></div>
+            <div class="small mb-1">Назначено купонов: <b>{{ coupon_campaign_report.assignments_total }}</b></div>
+            <div class="small mb-1">Зарезервировано: <b>{{ coupon_campaign_report.assignments_reserved }}</b></div>
+            <div class="small mb-1">Ошибок назначения/синхронизации: <b>{{ coupon_campaign_report.assignments_error }}</b></div>
+            <div class="small mb-1">Использовано в окне кампании: <b>{{ coupon_campaign_report.used_within_campaign }}</b></div>
+            <div class="small mb-0">Поздние применения: <b>{{ coupon_campaign_report.used_late_total }}</b></div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-xl-6">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-body">
+            <h3 class="h6 mb-3">Деньги и гости</h3>
+            <div class="small mb-1">Выручка по купонам: <b>{{ coupon_campaign_report.revenue_net_used }}</b></div>
+            <div class="small mb-1">Средний чек по купонам: <b>{{ coupon_campaign_report.coupon_orders_avg_check }}</b></div>
+            <div class="small mb-1">Уникальных гостей с применением: <b>{{ coupon_campaign_report.unique_used_guests }}</b></div>
+            <div class="small mb-1">
+              Вернувшиеся гости (окно {{ coupon_campaign_report.returned_window_days }} дн.): <b>{{ coupon_campaign_report.returned_guest_coupon }}</b>
+            </div>
+            <div class="small mb-0">Доля вернувшихся: <b>{{ coupon_campaign_report.returned_guests_rate_percent }}%</b></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm">
+      <div class="card-header bg-white">
+        <h3 class="h6 mb-0">Поздние применения купонов</h3>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>assignment_id</th>
+              <th>guest_id</th>
+              <th>Код купона</th>
+              <th>Дата/время применения</th>
+              <th>Бизнес-дата</th>
+              <th>Номер заказа</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in coupon_campaign_report.late_usage_rows %}
+              <tr>
+                <td>{{ row.assignment_id }}</td>
+                <td>{{ row.guest_id|default:"—" }}</td>
+                <td><code>{{ row.coupon_code }}</code></td>
+                <td>{{ row.used_at|default:"—" }}</td>
+                <td>{{ row.business_date|default:"—" }}</td>
+                <td>{{ row.order_number|default:"—" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="6" class="text-center text-muted py-3">Поздних применений не найдено.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% elif selected_campaign %}
+    <div class="alert alert-info">Для выбранной кампании нет данных отчёта.</div>
+  {% else %}
+    <div class="alert alert-info">Выберите кампанию в списке, чтобы построить отчёт.</div>
+  {% endif %}
+</div>
+{% endblock %}

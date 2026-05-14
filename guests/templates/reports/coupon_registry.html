@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+
+{% block title %}Реестр купонов{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Реестр купонов</h1>
+      <p class="text-muted mb-0">Текущие статусы купонов, проверка iikoCard и связи с кампаниями.</p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary btn-sm" href="{% url 'reports' %}">К отчётам</a>
+      <a class="btn btn-outline-primary btn-sm" href="{{ coupon_campaign_reports_url }}">Отчёты по кампаниям</a>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-2">
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">Серия</label>
+          <input type="text" name="series" value="{{ filters.series }}" class="form-control form-control-sm" placeholder="Например, TEST">
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">Batch</label>
+          <input type="text" name="batch_code" value="{{ filters.batch_code }}" class="form-control form-control-sm" placeholder="TEST_20260514_001">
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">Заведение (код)</label>
+          <input type="text" name="venue_code" value="{{ filters.venue_code }}" class="form-control form-control-sm" placeholder="DEP_1">
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">Статус купона</label>
+          <select name="pool_status" class="form-select form-select-sm">
+            <option value="">Все</option>
+            {% for value, label in pool_status_choices %}
+              <option value="{{ value }}" {% if filters.pool_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">Проверка iikoCard</label>
+          <select name="iiko_check_status" class="form-select form-select-sm">
+            <option value="">Все</option>
+            {% for value, label in iiko_check_status_choices %}
+              <option value="{{ value }}" {% if filters.iiko_check_status == value %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">ID кампании</label>
+          <input type="text" name="campaign_id" value="{{ filters.campaign_id }}" class="form-control form-control-sm" placeholder="123">
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">Проверено с</label>
+          <input type="date" name="verified_from" value="{{ filters.verified_from }}" class="form-control form-control-sm">
+        </div>
+        <div class="col-12 col-md-4 col-xl-2">
+          <label class="form-label small mb-1">Проверено по</label>
+          <input type="date" name="verified_to" value="{{ filters.verified_to }}" class="form-control form-control-sm">
+        </div>
+        <div class="col-12 col-md-4 col-xl-4 d-flex align-items-end gap-2">
+          <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+          <a href="{% url 'coupon_registry' %}" class="btn btn-outline-secondary btn-sm">Сбросить</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Отфильтровано</div>
+          <div class="h5 mb-0">{{ registry_stats.total_filtered }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Доступно к назначению</div>
+          <div class="h5 mb-0">{{ registry_stats.available_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Назначено</div>
+          <div class="h5 mb-0">{{ registry_stats.assigned_total }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-md-6 col-xl-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-muted small">Использовано / ошибки проверки</div>
+          <div class="h6 mb-0">{{ registry_stats.used_total }} / {{ registry_stats.check_error_total }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <h2 class="h6 mb-2">Операционные команды</h2>
+      <p class="mb-1 small">Генерация пула:</p>
+      <code class="d-block mb-2">{{ generate_command_hint }}</code>
+      <p class="mb-1 small">Проверка загрузки в iikoCard:</p>
+      <code class="d-block">{{ verify_command_hint }}</code>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>ID</th>
+            <th>Серия</th>
+            <th>Код</th>
+            <th>Batch</th>
+            <th>Статус купона</th>
+            <th>Проверка iiko</th>
+            <th>Проверен</th>
+            <th>Заведение</th>
+            <th>Кампания</th>
+            <th>Гость/телефон</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in coupons_rows %}
+            <tr>
+              <td>{{ row.id }}</td>
+              <td>{{ row.series }}</td>
+              <td><code>{{ row.code }}</code></td>
+              <td>{% if row.batch %}{{ row.batch.batch_code }}{% else %}—{% endif %}</td>
+              <td>{{ row.get_pool_status_display }}</td>
+              <td>{{ row.get_iiko_check_status_display }}</td>
+              <td>{% if row.iiko_checked_at %}{{ row.iiko_checked_at|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
+              <td>{{ row.venue_name|default:row.venue_code|default:"—" }}</td>
+              <td>
+                {% if row.latest_assignment and row.latest_assignment.campaign %}
+                  <a href="{% url 'mailings_v2_campaigns_status' row.latest_assignment.campaign.id %}">#{{ row.latest_assignment.campaign.id }}</a>
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% if row.latest_assignment %}
+                  {% if row.latest_assignment.guest %}
+                    #{{ row.latest_assignment.guest.id }}
+                  {% endif %}
+                  {% if row.latest_assignment.phone_e164 %}
+                    <div class="small text-muted">{{ row.latest_assignment.phone_e164 }}</div>
+                  {% endif %}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="10" class="text-center text-muted py-4">По заданным фильтрам записи не найдены.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if coupons_page.paginator.num_pages > 1 %}
+      <div class="card-footer bg-white">
+        <nav>
+          <ul class="pagination pagination-sm mb-0">
+            {% if coupons_page.has_previous %}
+              <li class="page-item">
+                <a class="page-link" href="?page={{ coupons_page.previous_page_number }}{{ pagination_query }}">Назад</a>
+              </li>
+            {% endif %}
+            <li class="page-item disabled">
+              <span class="page-link">Стр. {{ coupons_page.number }} из {{ coupons_page.paginator.num_pages }}</span>
+            </li>
+            {% if coupons_page.has_next %}
+              <li class="page-item">
+                <a class="page-link" href="?page={{ coupons_page.next_page_number }}{{ pagination_query }}">Вперёд</a>
+              </li>
+            {% endif %}
+          </ul>
+        </nav>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
