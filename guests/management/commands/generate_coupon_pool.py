@@ -24,7 +24,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--venue-code",
             required=True,
-            help="Код заведения (department_id), для которого генерируется пул купонов.",
+            help=(
+                "Код заведения (department_id), для которого генерируется пул купонов. "
+                "Для общего купона используйте __global__."
+            ),
         )
         parser.add_argument(
             "--venue-name",

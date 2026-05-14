@@ -6,6 +6,7 @@ from tempfile import TemporaryDirectory
 from django.test import TestCase
 
 from guests.models import CouponPoolBatch, CouponRegistryEntry
+from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
 from guests.services.coupon_pool import CouponPoolService
 
 
@@ -126,3 +127,18 @@ class CouponPoolServiceTests(TestCase):
         )
         # 2 купона + заголовок
         self.assertEqual(len(rows), 3)
+
+    def test_generate_pool_sets_default_name_for_global_venue(self):
+        result = self.service.generate_pool(
+            series="GLOBAL_SERIES",
+            prefix="GLB-",
+            venue_code=COUPON_VENUE_GLOBAL_CODE,
+            venue_name=None,
+            count=2,
+            random_length=6,
+            alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
+        )
+
+        batch = result.batch
+        self.assertEqual(batch.venue_code, COUPON_VENUE_GLOBAL_CODE)
+        self.assertEqual(batch.venue_name, COUPON_VENUE_GLOBAL_NAME)

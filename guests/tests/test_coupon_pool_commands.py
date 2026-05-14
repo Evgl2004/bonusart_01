@@ -8,6 +8,7 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from guests.models import CouponPoolBatch, CouponRegistryEntry
+from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
 
 
 class GenerateCouponPoolCommandTests(TestCase):
@@ -35,6 +36,24 @@ class GenerateCouponPoolCommandTests(TestCase):
         self.assertEqual(CouponPoolBatch.objects.count(), 1)
         self.assertEqual(CouponRegistryEntry.objects.count(), 3)
         self.assertEqual(CouponPoolBatch.objects.get().venue_code, "DEP_1")
+
+    def test_generate_command_sets_default_global_venue_name(self):
+        with TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "generated_global.csv"
+            call_command(
+                "generate_coupon_pool",
+                series="GLOBAL_TEST",
+                venue_code=COUPON_VENUE_GLOBAL_CODE,
+                prefix="GLB-",
+                count=1,
+                random_length=8,
+                alphabet_mode="digits_latin_upper",
+                export_path=str(csv_path),
+            )
+
+        batch = CouponPoolBatch.objects.get(series="GLOBAL_TEST")
+        self.assertEqual(batch.venue_code, COUPON_VENUE_GLOBAL_CODE)
+        self.assertEqual(batch.venue_name, COUPON_VENUE_GLOBAL_NAME)
 
 
 class VerifyCouponPoolIikoCommandTests(TestCase):

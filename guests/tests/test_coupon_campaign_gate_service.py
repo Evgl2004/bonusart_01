@@ -18,6 +18,7 @@ from guests.models import (
     VtelemaxRecipientChannel,
     VtelemaxSyncState,
 )
+from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
 from guests.services.coupon_campaign import CouponCampaignGateService
 
 
@@ -249,3 +250,42 @@ class CouponCampaignGateServiceTests(TestCase):
         self.assertTrue(any(issue.code == "coupon_venue_mismatch" for issue in report.issues))
         assignment.refresh_from_db()
         self.assertEqual(assignment.status, CouponCampaignAssignment.Status.ERROR)
+
+    def test_prepare_rows_global_campaign_uses_global_coupon(self):
+        """
+        Для общей кампании (__global__) сервис принимает общий купон.
+        """
+        self.mailing.coupon_venue_code = COUPON_VENUE_GLOBAL_CODE
+        self.mailing.coupon_venue_name = COUPON_VENUE_GLOBAL_NAME
+        self.mailing.coupon_promo_text = "Общий купон для всех заведений"
+        self.mailing.save(
+            update_fields=["coupon_venue_code", "coupon_venue_name", "coupon_promo_text", "updated_at"]
+        )
+
+        row = self._create_row("5555")
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900005555")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="GLB-AAA111",
+            venue_code=COUPON_VENUE_GLOBAL_CODE,
+            venue_name=COUPON_VENUE_GLOBAL_NAME,
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+        )
+
+        service = CouponCampaignGateService()
+        ready_rows, report = service.prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 1)
+        self.assertEqual(report.coupon_venue_code, COUPON_VENUE_GLOBAL_CODE)
+        self.assertEqual(report.coupon_venue_name, COUPON_VENUE_GLOBAL_NAME)
+
+        assignment = CouponCampaignAssignment.objects.get(campaign=self.mailing, guest=row.guest)
+        self.assertEqual(assignment.coupon_id, coupon.id)
+        self.assertEqual(assignment.venue_code, COUPON_VENUE_GLOBAL_CODE)

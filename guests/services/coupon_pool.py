@@ -11,6 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from guests.models import CouponPoolBatch, CouponRegistryEntry
+from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
 
 
 class CouponPoolGenerationError(Exception):
@@ -87,6 +88,8 @@ class CouponPoolService:
         normalized_prefix = str(prefix or "").strip().upper()
         normalized_venue_code = str(venue_code or "").strip() or None
         normalized_venue_name = str(venue_name or "").strip() or None
+        if is_coupon_global_venue(normalized_venue_code):
+            normalized_venue_name = normalized_venue_name or COUPON_VENUE_GLOBAL_NAME
         normalized_generated_by = str(generated_by or "").strip() or None
         safe_count = int(count)
         safe_random_length = int(random_length)

@@ -3,6 +3,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from .models import BotProfile, Category, Mailing, MessageTemplate, TerminalDepartmentMap
+from .services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
 
 
 class CategoryForm(forms.ModelForm):
@@ -188,7 +189,10 @@ class MailingForm(forms.ModelForm):
             .order_by("department_name", "department_id")
         )
         choices: list[tuple[str, str]] = [("", "— Выберите заведение —")]
-        venue_map: dict[str, str] = {}
+        venue_map: dict[str, str] = {
+            COUPON_VENUE_GLOBAL_CODE: COUPON_VENUE_GLOBAL_NAME,
+        }
+        choices.append((COUPON_VENUE_GLOBAL_CODE, f"{COUPON_VENUE_GLOBAL_NAME} (для всех заведений)"))
         for row in rows:
             dep_id = str(row.get("department_id") or "").strip()
             if not dep_id:
@@ -224,7 +228,10 @@ class MailingForm(forms.ModelForm):
         cleaned_data["coupon_series"] = series
         cleaned_data["coupon_venue_code"] = venue_code or None
         cleaned_data["coupon_promo_text"] = promo_text or None
-        self._resolved_coupon_venue_name = self._coupon_venue_map.get(venue_code, "") or None
+        if is_coupon_global_venue(venue_code):
+            self._resolved_coupon_venue_name = COUPON_VENUE_GLOBAL_NAME
+        else:
+            self._resolved_coupon_venue_name = self._coupon_venue_map.get(venue_code, "") or None
         return cleaned_data
 
     def save(self, commit=True):

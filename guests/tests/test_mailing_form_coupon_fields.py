@@ -7,6 +7,7 @@ from django.utils import timezone
 
 from guests.forms import MailingForm
 from guests.models import BotProfile, Mailing, MessageTemplate, TerminalDepartmentMap
+from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
 
 
 class MailingFormCouponFieldsTests(TestCase):
@@ -105,3 +106,21 @@ class MailingFormCouponFieldsTests(TestCase):
         self.assertEqual(instance.coupon_venue_code, "DEP_1")
         self.assertEqual(instance.coupon_venue_name, "Ассорти Франсуа")
         self.assertEqual(instance.coupon_promo_text, "Скидка 20% на сет")
+
+    def test_allows_global_venue_for_coupon_mode(self):
+        data = self._base_form_data()
+        data.update(
+            {
+                "coupon_series": "GLOBAL_SERIES",
+                "coupon_venue_code": COUPON_VENUE_GLOBAL_CODE,
+                "coupon_promo_text": "Общий купон на подарок",
+            }
+        )
+
+        form = MailingForm(data=data)
+
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+        instance = form.save(commit=False)
+        self.assertEqual(instance.coupon_series, "GLOBAL_SERIES")
+        self.assertEqual(instance.coupon_venue_code, COUPON_VENUE_GLOBAL_CODE)
+        self.assertEqual(instance.coupon_venue_name, COUPON_VENUE_GLOBAL_NAME)

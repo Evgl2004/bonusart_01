@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 from guests.models import (
@@ -14,6 +15,11 @@ from guests.models import (
     MailingGuest,
     VtelemaxRecipientChannel,
     VtelemaxSyncState,
+)
+from guests.services.coupon_constants import (
+    COUPON_VENUE_GLOBAL_CODE,
+    COUPON_VENUE_GLOBAL_NAME,
+    is_coupon_global_venue,
 )
 from guests.services.template_render import render_message_for_guest
 
@@ -196,6 +202,9 @@ class CouponCampaignGateService:
         coupon_venue_code = _resolve_campaign_coupon_venue_code(mailing)
         coupon_venue_name = _resolve_campaign_coupon_venue_name(mailing)
         coupon_promo_text = _resolve_campaign_coupon_promo_text(mailing)
+        coupon_venue_is_global = is_coupon_global_venue(coupon_venue_code)
+        if coupon_venue_is_global and not coupon_venue_name:
+            coupon_venue_name = COUPON_VENUE_GLOBAL_NAME
 
         report.coupon_mode = True
         report.coupon_series = coupon_series
@@ -239,10 +248,16 @@ class CouponCampaignGateService:
         if missing_guest_ids:
             available_qs = CouponRegistryEntry.objects.filter(
                 series=coupon_series,
-                venue_code=coupon_venue_code,
                 is_active=True,
                 pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
-            ).order_by("id")
+            )
+            if coupon_venue_is_global:
+                available_qs = available_qs.filter(
+                    Q(venue_code=COUPON_VENUE_GLOBAL_CODE) | Q(venue_code__isnull=True) | Q(venue_code="")
+                )
+            else:
+                available_qs = available_qs.filter(venue_code=coupon_venue_code)
+            available_qs = available_qs.order_by("id")
             report.available_coupons_before = int(available_qs.count())
 
             reserve_rows = list(available_qs.select_for_update()[: len(missing_guest_ids)])
@@ -316,14 +331,18 @@ class CouponCampaignGateService:
             report.queue_events_created += created_events
 
         if report.available_coupons_before == 0:
-            report.available_coupons_before = int(
-                CouponRegistryEntry.objects.filter(
-                    series=coupon_series,
-                    venue_code=coupon_venue_code,
-                    is_active=True,
-                    pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
-                ).count()
+            fallback_qs = CouponRegistryEntry.objects.filter(
+                series=coupon_series,
+                is_active=True,
+                pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
             )
+            if coupon_venue_is_global:
+                fallback_qs = fallback_qs.filter(
+                    Q(venue_code=COUPON_VENUE_GLOBAL_CODE) | Q(venue_code__isnull=True) | Q(venue_code="")
+                )
+            else:
+                fallback_qs = fallback_qs.filter(venue_code=coupon_venue_code)
+            report.available_coupons_before = int(fallback_qs.count())
 
         # Проверка свежести синка получателей vtelemax.
         if self.require_fresh_vtelemax_sync and bool(getattr(settings, "VTELEMAX_SYNC_ENABLED", False)):
@@ -380,7 +399,15 @@ class CouponCampaignGateService:
                 assignment.promo_text = assignment.promo_text or coupon_promo_text or None
                 assignment.save(update_fields=["venue_code", "venue_name", "promo_text", "updated_at"])
                 assignment_venue_code = coupon_venue_code
-            if assignment_venue_code and assignment_venue_code != coupon_venue_code:
+            assignment_venue_mismatch = False
+            if coupon_venue_is_global:
+                assignment_venue_mismatch = bool(
+                    assignment_venue_code and not is_coupon_global_venue(assignment_venue_code)
+                )
+            elif assignment_venue_code and assignment_venue_code != coupon_venue_code:
+                assignment_venue_mismatch = True
+
+            if assignment_venue_mismatch:
                 report.issues.append(
                     CouponGateIssue(
                         row_id=int(row.id),
