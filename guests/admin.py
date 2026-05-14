@@ -9,6 +9,10 @@ from django.utils import timezone
 from .models import (
     BotProfile,
     Category,
+    CouponCampaignAssignment,
+    CouponPoolBatch,
+    CouponRegistryEntry,
+    CouponVtelemaxSyncQueue,
     DispatchTask,
     FocusCategory,
     FocusCategoryNomenclatureResolved,
@@ -260,6 +264,101 @@ class VtelemaxSyncStateAdmin(admin.ModelAdmin):
     search_fields = ("key", "last_error")
     readonly_fields = ("created_at", "updated_at")
     list_per_page = 50
+
+
+@admin.register(CouponPoolBatch)
+class CouponPoolBatchAdmin(admin.ModelAdmin):
+    """
+    Админ-панель партий генерации купонов.
+    """
+
+    list_display = (
+        "id",
+        "batch_code",
+        "series",
+        "count_requested",
+        "count_generated",
+        "verification_status",
+        "last_verified_at",
+        "generated_at",
+    )
+    list_filter = ("verification_status", "series", "alphabet_mode")
+    search_fields = ("batch_code", "series", "prefix", "generated_by")
+    readonly_fields = ("generated_at", "updated_at")
+    list_per_page = 100
+
+
+@admin.register(CouponRegistryEntry)
+class CouponRegistryEntryAdmin(admin.ModelAdmin):
+    """
+    Админ-панель реестра купонов.
+    """
+
+    list_display = (
+        "id",
+        "series",
+        "code",
+        "pool_status",
+        "iiko_check_status",
+        "is_active",
+        "batch_id",
+        "assigned_at",
+        "iiko_checked_at",
+    )
+    list_filter = ("series", "pool_status", "iiko_check_status", "is_active", "source")
+    search_fields = ("series", "code", "iiko_check_error")
+    raw_id_fields = ("batch",)
+    readonly_fields = ("created_at", "updated_at")
+    list_per_page = 100
+
+
+@admin.register(CouponCampaignAssignment)
+class CouponCampaignAssignmentAdmin(admin.ModelAdmin):
+    """
+    Админ-панель назначений купонов в кампаниях.
+    """
+
+    list_display = (
+        "id",
+        "campaign_id",
+        "guest_id",
+        "person_id",
+        "coupon_series",
+        "coupon_code",
+        "status",
+        "vtelemax_sync_status",
+        "assigned_at",
+        "sent_at",
+        "used_at",
+    )
+    list_filter = ("status", "vtelemax_sync_status", "campaign")
+    search_fields = ("coupon_series", "coupon_code", "phone_e164", "vtelemax_sync_error")
+    raw_id_fields = ("campaign", "guest", "coupon")
+    readonly_fields = ("created_at", "updated_at")
+    list_per_page = 100
+
+
+@admin.register(CouponVtelemaxSyncQueue)
+class CouponVtelemaxSyncQueueAdmin(admin.ModelAdmin):
+    """
+    Админ-панель очереди синхронизации купонов в vtelemax.
+    """
+
+    list_display = (
+        "id",
+        "event_id",
+        "direction",
+        "status",
+        "attempts",
+        "next_retry_at",
+        "sent_at",
+        "ack_at",
+    )
+    list_filter = ("direction", "status")
+    search_fields = ("event_id", "last_error")
+    raw_id_fields = ("assignment",)
+    readonly_fields = ("created_at", "updated_at")
+    list_per_page = 100
 
 
 class MailingBotProfileLinkInline(admin.TabularInline):

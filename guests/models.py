@@ -2161,5 +2161,314 @@ class DispatchTask(models.Model):
         return f"task={self.id} provider={self.provider_type} priority={self.priority} status={self.status}"
 
 
+class CouponPoolBatch(models.Model):
+    """
+    Партия генерации купонов для последующей загрузки в iikoCard.
+
+    Назначение:
+    1. фиксировать параметры генерации пула;
+    2. хранить ссылку на экспортный CSV;
+    3. хранить итог проверки фактической загрузки в iikoCard.
+    """
+
+    class AlphabetMode(models.TextChoices):
+        DIGITS = "digits", "Только цифры"
+        LATIN_UPPER = "latin_upper", "Только латинские буквы (верхний регистр)"
+        DIGITS_LATIN_UPPER = "digits_latin_upper", "Цифры и латинские буквы (верхний регистр)"
+
+    class VerificationStatus(models.TextChoices):
+        NOT_CHECKED = "not_checked", "Не проверено"
+        PARTIALLY_LOADED = "partially_loaded", "Частично загружено"
+        LOADED = "loaded", "Загружено"
+        FAILED = "failed", "Проверка завершилась ошибкой"
+
+    batch_code = models.CharField(
+        max_length=80,
+        unique=True,
+        db_index=True,
+        help_text="Уникальный технический код партии (например, TEST_20260514_001).",
+    )
+    series = models.CharField(max_length=120, db_index=True, help_text="Серия купонов в iikoCard.")
+    prefix = models.CharField(
+        max_length=32,
+        blank=True,
+        null=True,
+        help_text="Префикс перед случайной частью кода купона (например, TST-).",
+    )
+    alphabet_mode = models.CharField(
+        max_length=32,
+        choices=AlphabetMode.choices,
+        default=AlphabetMode.DIGITS_LATIN_UPPER,
+        help_text="Режим алфавита при генерации случайной части купона.",
+    )
+    random_length = models.PositiveSmallIntegerField(
+        default=12,
+        help_text="Длина случайной части кода купона.",
+    )
+    count_requested = models.PositiveIntegerField(default=0)
+    count_generated = models.PositiveIntegerField(default=0)
+    generated_by = models.CharField(
+        max_length=150,
+        blank=True,
+        null=True,
+        help_text="Пользователь/оператор, запустивший генерацию.",
+    )
+    export_file_path = models.CharField(
+        max_length=500,
+        blank=True,
+        null=True,
+        help_text="Абсолютный или относительный путь к CSV, выгруженному для iikoCard.",
+    )
+    verification_status = models.CharField(
+        max_length=24,
+        choices=VerificationStatus.choices,
+        default=VerificationStatus.NOT_CHECKED,
+        db_index=True,
+    )
+    last_verified_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    verified_found_count = models.PositiveIntegerField(default=0)
+    verified_not_found_count = models.PositiveIntegerField(default=0)
+    verification_note = models.TextField(blank=True, null=True)
+    generated_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_pool_batches"
+        verbose_name = "Партия купонов"
+        verbose_name_plural = "Партии купонов"
+        indexes = [
+            models.Index(fields=["series", "verification_status"], name="cpbatch_series_ver_idx"),
+            models.Index(fields=["generated_at"], name="cpbatch_generated_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.batch_code} ({self.series})"
+
+
+class CouponRegistryEntry(models.Model):
+    """
+    Локальный реестр купонов для управления назначением и жизненным циклом.
+    """
+
+    class SourceType(models.TextChoices):
+        GENERATED = "generated", "Сгенерировано в SAGUR"
+        IMPORT_CSV = "import_csv", "Импортировано из CSV"
+        MANUAL = "manual", "Создано вручную"
+
+    class PoolStatus(models.TextChoices):
+        GENERATED = "generated", "Сгенерирован"
+        UPLOADED_PENDING_CHECK = "uploaded_pending_check", "Загружен в iikoCard, ждёт проверки"
+        VERIFIED_LOADED = "verified_loaded", "Подтверждён в iikoCard"
+        VERIFY_FAILED = "verify_failed", "Проверка в iikoCard не пройдена"
+        ASSIGNED = "assigned", "Назначен гостю"
+        USED = "used", "Использован"
+        EXPIRED = "expired", "Срок действия истёк"
+        CANCELED = "canceled", "Отменён"
+
+    class IikoCheckStatus(models.TextChoices):
+        NOT_CHECKED = "not_checked", "Не проверен"
+        FOUND = "found", "Найден в iikoCard"
+        NOT_FOUND = "not_found", "Не найден в iikoCard"
+        CHECK_ERROR = "check_error", "Ошибка проверки iikoCard"
+
+    series = models.CharField(max_length=120, db_index=True)
+    code = models.CharField(max_length=120, db_index=True)
+    source = models.CharField(
+        max_length=20,
+        choices=SourceType.choices,
+        default=SourceType.GENERATED,
+        db_index=True,
+    )
+    is_active = models.BooleanField(
+        default=True,
+        db_index=True,
+        help_text="Технический флаг доступности купона для назначения в новых кампаниях.",
+    )
+    batch = models.ForeignKey(
+        "CouponPoolBatch",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="coupons",
+    )
+    pool_status = models.CharField(
+        max_length=32,
+        choices=PoolStatus.choices,
+        default=PoolStatus.GENERATED,
+        db_index=True,
+    )
+    iiko_check_status = models.CharField(
+        max_length=20,
+        choices=IikoCheckStatus.choices,
+        default=IikoCheckStatus.NOT_CHECKED,
+        db_index=True,
+    )
+    iiko_checked_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    iiko_check_error = models.TextField(blank=True, null=True)
+    assigned_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_registry_entries"
+        verbose_name = "Купон в реестре"
+        verbose_name_plural = "Реестр купонов"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["series", "code"],
+                name="coupon_registry_series_code_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["series", "pool_status"], name="cpreg_series_status_idx"),
+            models.Index(fields=["batch", "pool_status"], name="cpreg_batch_status_idx"),
+            models.Index(fields=["iiko_check_status", "iiko_checked_at"], name="cpreg_iiko_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"{self.series}:{self.code} [{self.pool_status}]"
+
+
+class CouponCampaignAssignment(models.Model):
+    """
+    Назначение купона конкретному гостю в рамках кампании.
+    """
+
+    class Status(models.TextChoices):
+        RESERVED = "reserved", "Зарезервирован"
+        SENT = "sent", "Отправлен"
+        USED = "used", "Использован"
+        EXPIRED = "expired", "Истёк"
+        CANCELED = "canceled", "Отменён"
+        ERROR = "error", "Ошибка"
+
+    class VtelemaxSyncStatus(models.TextChoices):
+        PENDING = "pending", "Ожидает синхронизации"
+        OK = "ok", "Синхронизирован"
+        ERROR = "error", "Ошибка синхронизации"
+
+    campaign = models.ForeignKey(
+        "Mailing",
+        on_delete=models.CASCADE,
+        related_name="coupon_assignments",
+    )
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="coupon_assignments",
+    )
+    coupon = models.ForeignKey(
+        "CouponRegistryEntry",
+        on_delete=models.PROTECT,
+        related_name="campaign_assignments",
+    )
+    person_id = models.UUIDField(blank=True, null=True, db_index=True)
+    phone_e164 = models.CharField(max_length=32, blank=True, null=True, db_index=True)
+    coupon_series = models.CharField(max_length=120)
+    coupon_code = models.CharField(max_length=120)
+    assigned_at = models.DateTimeField(default=timezone.now, db_index=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
+    lifetime_expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.RESERVED,
+        db_index=True,
+    )
+    used_at = models.DateTimeField(blank=True, null=True)
+    used_order_id = models.BigIntegerField(blank=True, null=True, db_index=True)
+    vtelemax_sync_status = models.CharField(
+        max_length=16,
+        choices=VtelemaxSyncStatus.choices,
+        default=VtelemaxSyncStatus.PENDING,
+        db_index=True,
+    )
+    vtelemax_synced_at = models.DateTimeField(blank=True, null=True)
+    vtelemax_sync_error = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_campaign_assignments"
+        verbose_name = "Назначение купона кампании"
+        verbose_name_plural = "Назначения купонов кампаний"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["campaign", "guest"],
+                name="cpass_campaign_guest_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["campaign", "coupon_series", "coupon_code"],
+                name="cpass_campaign_coupon_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["campaign", "person_id"],
+                condition=models.Q(person_id__isnull=False),
+                name="cpass_campaign_person_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["campaign", "status"], name="cpass_campaign_status_idx"),
+            models.Index(fields=["status", "vtelemax_sync_status"], name="cpass_sync_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"campaign={self.campaign_id} coupon={self.coupon_series}:{self.coupon_code} status={self.status}"
+
+
+class CouponVtelemaxSyncQueue(models.Model):
+    """
+    Очередь отправки событий по купонам из SAGUR в vtelemax.
+    """
+
+    class Direction(models.TextChoices):
+        ASSIGNMENTS = "assignments", "Назначение купонов"
+        STATUS_UPDATE = "status_update", "Обновление статуса купона"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает отправки"
+        SENT = "sent", "Отправлено"
+        ACKED = "acked", "Подтверждено"
+        ERROR = "error", "Ошибка"
+
+    event_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    direction = models.CharField(max_length=20, choices=Direction.choices, db_index=True)
+    assignment = models.ForeignKey(
+        "CouponCampaignAssignment",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="vtelemax_queue_events",
+    )
+    payload_json = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    next_retry_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_error = models.TextField(blank=True, null=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
+    ack_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_vtelemax_sync_queue"
+        verbose_name = "Очередь синхронизации купонов в vtelemax"
+        verbose_name_plural = "Очередь синхронизации купонов в vtelemax"
+        indexes = [
+            models.Index(fields=["status", "next_retry_at"], name="cpvq_status_retry_idx"),
+            models.Index(fields=["direction", "status"], name="cpvq_dir_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"event={self.event_id} direction={self.direction} status={self.status}"
+
+
 
 

@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from django.core.management import call_command
+from django.test import TestCase
+
+from guests.models import CouponPoolBatch, CouponRegistryEntry
+
+
+class GenerateCouponPoolCommandTests(TestCase):
+    def test_generate_command_creates_batch_and_csv(self):
+        with TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "generated.csv"
+            call_command(
+                "generate_coupon_pool",
+                series="TEST",
+                prefix="TST-",
+                count=3,
+                random_length=10,
+                alphabet_mode="digits_latin_upper",
+                generated_by="qa",
+                export_path=str(csv_path),
+            )
+
+            self.assertTrue(csv_path.exists())
+            rows = [line.strip() for line in csv_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(rows[0], "series;number")
+            self.assertEqual(len(rows), 4)
+
+        self.assertEqual(CouponPoolBatch.objects.count(), 1)
+        self.assertEqual(CouponRegistryEntry.objects.count(), 3)
+
+
+class VerifyCouponPoolIikoCommandTests(TestCase):
+    def setUp(self):
+        self.batch = CouponPoolBatch.objects.create(
+            batch_code="TEST_BATCH",
+            series="TEST",
+            prefix="TST-",
+            alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
+            random_length=10,
+            count_requested=3,
+            count_generated=3,
+        )
+        self.coupon_1 = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-AAA111",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            batch=self.batch,
+            pool_status=CouponRegistryEntry.PoolStatus.UPLOADED_PENDING_CHECK,
+        )
+        self.coupon_2 = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-BBB222",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            batch=self.batch,
+            pool_status=CouponRegistryEntry.PoolStatus.UPLOADED_PENDING_CHECK,
+        )
+        self.coupon_3 = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-CCC333",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            batch=self.batch,
+            pool_status=CouponRegistryEntry.PoolStatus.UPLOADED_PENDING_CHECK,
+        )
+
+    @patch("guests.management.commands.verify_coupon_pool_iiko.IikoCouponClient")
+    def test_verify_command_updates_found_and_not_found_statuses(self, client_cls):
+        client = client_cls.return_value
+        client.api_key = "key"
+        client.base_url = "https://example.com/api/1"
+        client.organization_id = "org"
+        client.get_coupon_series_with_non_activated.return_value = [{"number": "TEST"}]
+        client.fetch_all_non_activated_numbers.return_value = {"TST-AAA111", "TST-BBB222"}
+        client.get_coupon_info.return_value = [{"number": "TST-AAA111"}]
+
+        call_command(
+            "verify_coupon_pool_iiko",
+            batch_code="TEST_BATCH",
+            sample_info_check_limit=1,
+        )
+
+        self.coupon_1.refresh_from_db()
+        self.coupon_2.refresh_from_db()
+        self.coupon_3.refresh_from_db()
+        self.batch.refresh_from_db()
+
+        self.assertEqual(self.coupon_1.iiko_check_status, CouponRegistryEntry.IikoCheckStatus.FOUND)
+        self.assertEqual(self.coupon_2.iiko_check_status, CouponRegistryEntry.IikoCheckStatus.FOUND)
+        self.assertEqual(self.coupon_3.iiko_check_status, CouponRegistryEntry.IikoCheckStatus.NOT_FOUND)
+        self.assertEqual(self.batch.verification_status, CouponPoolBatch.VerificationStatus.PARTIALLY_LOADED)
+        self.assertEqual(self.batch.verified_found_count, 2)
+        self.assertEqual(self.batch.verified_not_found_count, 1)
+
+    @patch("guests.management.commands.verify_coupon_pool_iiko.IikoCouponClient")
+    def test_verify_command_dry_run_does_not_persist_changes(self, client_cls):
+        client = client_cls.return_value
+        client.api_key = "key"
+        client.base_url = "https://example.com/api/1"
+        client.organization_id = "org"
+        client.get_coupon_series_with_non_activated.return_value = [{"number": "TEST"}]
+        client.fetch_all_non_activated_numbers.return_value = {"TST-AAA111", "TST-BBB222"}
+        client.get_coupon_info.return_value = [{"number": "TST-AAA111"}]
+
+        call_command(
+            "verify_coupon_pool_iiko",
+            batch_code="TEST_BATCH",
+            sample_info_check_limit=1,
+            dry_run=True,
+        )
+
+        self.coupon_1.refresh_from_db()
+        self.coupon_2.refresh_from_db()
+        self.coupon_3.refresh_from_db()
+        self.batch.refresh_from_db()
+
+        self.assertEqual(self.coupon_1.iiko_check_status, CouponRegistryEntry.IikoCheckStatus.NOT_CHECKED)
+        self.assertEqual(self.coupon_2.iiko_check_status, CouponRegistryEntry.IikoCheckStatus.NOT_CHECKED)
+        self.assertEqual(self.coupon_3.iiko_check_status, CouponRegistryEntry.IikoCheckStatus.NOT_CHECKED)
+        self.assertEqual(self.batch.verification_status, CouponPoolBatch.VerificationStatus.NOT_CHECKED)
