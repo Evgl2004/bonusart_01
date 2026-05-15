@@ -91,6 +91,20 @@ python manage.py run_coupon_vtelemax_sync_worker --health-check
 - [ ] `status=healthy`;
 - [ ] endpoint и HMAC-конфигурация валидны.
 
+Read-only preflight купонного контура:
+
+```bash
+python manage.py audit_coupon_release_readiness
+```
+
+Ожидаемо:
+
+- [ ] итог `status=ready` или только согласованные `warning`;
+- [ ] нет `blocked` по конфигурации vtelemax;
+- [ ] нет событий очереди, исчерпавших retry;
+- [ ] нет release-событий с ACK без фактического возврата купона в пул;
+- [ ] синк получателей vtelemax свежий для sync-gate.
+
 ## 6. Сценарий 1: генерация и проверка пула
 
 На стороне SAGUR:
