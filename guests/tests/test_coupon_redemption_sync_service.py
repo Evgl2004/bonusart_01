@@ -67,10 +67,12 @@ class CouponRedemptionSyncServiceTests(TestCase):
         coupon_series: str,
         coupon_number: str,
         uniq_suffix: str,
+        business_date=None,
+        first_seen_at=None,
     ) -> OrderFact:
         return OrderFact.objects.create(
             guest=guest,
-            business_date=self.now.date(),
+            business_date=business_date or self.now.date(),
             department_id="DEP_1",
             department_name="Тестовое заведение",
             order_number=order_number,
@@ -84,7 +86,7 @@ class CouponRedemptionSyncServiceTests(TestCase):
             coupon_used=True,
             coupon_series=coupon_series,
             coupon_number=coupon_number,
-            first_seen_at=self.now,
+            first_seen_at=first_seen_at or self.now,
         )
 
     def _create_assignment(self, *, guest: Guest, code: str) -> CouponCampaignAssignment:
@@ -148,8 +150,69 @@ class CouponRedemptionSyncServiceTests(TestCase):
 
         self.assertEqual(stats.assignments_matched, 1)
         self.assertEqual(stats.assignments_marked_used, 1)
+        self.assertEqual(stats.assignments_marked_used_after_campaign, 0)
         self.assertEqual(stats.queue_events_created, 1)
         self.assertEqual(stats.registry_marked_used, 1)
+
+    def test_marks_expired_assignment_as_used_after_campaign(self):
+        self.mailing.scheduled_time_begin = self.now - timedelta(days=2)
+        self.mailing.scheduled_time_end = self.now - timedelta(days=1)
+        self.mailing.save(update_fields=["scheduled_time_begin", "scheduled_time_end", "updated_at"])
+        guest = self._create_guest("1212")
+        assignment = self._create_assignment(guest=guest, code="TST-USED-AFTER-1")
+        assignment.status = CouponCampaignAssignment.Status.EXPIRED
+        assignment.save(update_fields=["status", "updated_at"])
+        assignment.coupon.pool_status = CouponRegistryEntry.PoolStatus.EXPIRED
+        assignment.coupon.is_active = False
+        assignment.coupon.save(update_fields=["pool_status", "is_active", "updated_at"])
+        self._create_order_fact(
+            guest=guest,
+            order_number=121,
+            coupon_series="TEST",
+            coupon_number="TST-USED-AFTER-1",
+            uniq_suffix="used-after-1",
+        )
+
+        stats = CouponRedemptionSyncService().sync_from_order_facts()
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN)
+        self.assertEqual(assignment.used_order_id, 121)
+        assignment.coupon.refresh_from_db()
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.USED_AFTER_CAMPAIGN)
+        self.assertFalse(assignment.coupon.is_active)
+
+        event = CouponVtelemaxSyncQueue.objects.get(
+            assignment=assignment,
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+        )
+        self.assertEqual(event.payload_json.get("status"), CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN)
+        self.assertEqual(event.payload_json.get("meta", {}).get("used_after_campaign"), True)
+        self.assertEqual(event.payload_json.get("meta", {}).get("release_to_pool"), False)
+
+        self.assertEqual(stats.assignments_marked_used, 1)
+        self.assertEqual(stats.assignments_marked_used_after_campaign, 1)
+
+    def test_marks_same_business_date_usage_after_campaign_end_time_as_late(self):
+        self.mailing.scheduled_time_end = self.now - timedelta(minutes=5)
+        self.mailing.save(update_fields=["scheduled_time_end", "updated_at"])
+        guest = self._create_guest("1313")
+        assignment = self._create_assignment(guest=guest, code="TST-USED-AFTER-2")
+        self._create_order_fact(
+            guest=guest,
+            order_number=131,
+            coupon_series="TEST",
+            coupon_number="TST-USED-AFTER-2",
+            uniq_suffix="used-after-2",
+            business_date=self.now.date(),
+            first_seen_at=self.now,
+        )
+
+        stats = CouponRedemptionSyncService().sync_from_order_facts()
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN)
+        self.assertEqual(stats.assignments_marked_used_after_campaign, 1)
 
     def test_is_idempotent_for_already_used_assignment(self):
         guest = self._create_guest("2222")

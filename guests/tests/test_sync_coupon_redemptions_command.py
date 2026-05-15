@@ -15,6 +15,7 @@ class SyncCouponRedemptionsCommandTests(TestCase):
         self.assertIn("=== Синхронизация статусов купонов из OLAP ===", text)
         self.assertIn("dry_run=True", text)
         self.assertIn("order_facts_total=", text)
+        self.assertIn("assignments_marked_used_after_campaign=", text)
 
     def test_validates_date_range(self):
         with self.assertRaises(CommandError):

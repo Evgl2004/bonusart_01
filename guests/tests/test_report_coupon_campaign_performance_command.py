@@ -134,6 +134,7 @@ class ReportCouponCampaignPerformanceCommandTests(TestCase):
         self.assertEqual(payload["campaign_id"], self.mailing.id)
         self.assertEqual(payload["coupon_series"], "TEST")
         self.assertEqual(payload["assignments_used"], 1)
+        self.assertEqual(payload["assignments_used_after_campaign"], 0)
         self.assertEqual(payload["coupons_sent_total"], 1)
         self.assertEqual(payload["revenue_net_used"], "800.00")
         self.assertIn("coupon_orders_avg_check", payload)
@@ -151,4 +152,5 @@ class ReportCouponCampaignPerformanceCommandTests(TestCase):
         self.assertIn("=== Отчёт по купонной кампании ===", text)
         self.assertIn("campaign_id=", text)
         self.assertIn("coupon_usage_rate=", text)
+        self.assertIn("coupons_used_after_campaign_total=", text)
         self.assertIn("coupon_orders_avg_check=", text)

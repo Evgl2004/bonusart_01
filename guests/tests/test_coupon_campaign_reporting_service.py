@@ -67,6 +67,11 @@ class CouponCampaignReportingServiceTests(TestCase):
         status: str,
         used_at=None,
     ) -> CouponCampaignAssignment:
+        sent_statuses = {
+            CouponCampaignAssignment.Status.SENT,
+            CouponCampaignAssignment.Status.USED,
+            CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+        }
         coupon = CouponRegistryEntry.objects.create(
             series="TEST",
             code=code,
@@ -90,7 +95,7 @@ class CouponCampaignReportingServiceTests(TestCase):
             assigned_at=self.now,
             lifetime_expires_at=mailing.scheduled_time_end,
             status=status,
-            sent_at=self.now if status in {CouponCampaignAssignment.Status.SENT, CouponCampaignAssignment.Status.USED} else None,
+            sent_at=self.now if status in sent_statuses else None,
             used_at=used_at,
             vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
             vtelemax_synced_at=self.now,
@@ -156,7 +161,7 @@ class CouponCampaignReportingServiceTests(TestCase):
             mailing=mailing,
             guest=guest_used_late,
             code="TST-USED-LATE",
-            status=CouponCampaignAssignment.Status.USED,
+            status=CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
             used_at=mailing.scheduled_time_end + timedelta(days=1),
         )
         self._create_assignment(
@@ -203,6 +208,7 @@ class CouponCampaignReportingServiceTests(TestCase):
         self.assertEqual(payload["assignments_reserved"], 1)
         self.assertEqual(payload["assignments_sent"], 1)
         self.assertEqual(payload["assignments_used"], 2)
+        self.assertEqual(payload["assignments_used_after_campaign"], 1)
         self.assertEqual(payload["coupons_sent_total"], 3)
         self.assertEqual(payload["used_within_campaign"], 1)
         self.assertEqual(payload["used_late_total"], 1)
@@ -238,6 +244,7 @@ class CouponCampaignReportingServiceTests(TestCase):
         self.assertEqual(payload["assignments_total"], 0)
         self.assertEqual(payload["coupons_sent_total"], 0)
         self.assertEqual(payload["assignments_used"], 0)
+        self.assertEqual(payload["assignments_used_after_campaign"], 0)
         self.assertEqual(payload["usage_rate_percent"], 0.0)
         self.assertEqual(payload["returned_guest_coupon"], 0)
         self.assertEqual(payload["returned_guests_rate_percent"], 0.0)

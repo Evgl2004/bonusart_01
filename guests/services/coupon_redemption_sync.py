@@ -5,7 +5,6 @@ from datetime import date
 from typing import Any
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 
 from guests.models import CouponCampaignAssignment, CouponRegistryEntry, CouponVtelemaxSyncQueue, OrderFact
@@ -21,6 +20,7 @@ class CouponRedemptionSyncStats:
     order_facts_with_coupon: int = 0
     assignments_matched: int = 0
     assignments_marked_used: int = 0
+    assignments_marked_used_after_campaign: int = 0
     assignments_already_used: int = 0
     assignments_guest_mismatch: int = 0
     assignments_missing: int = 0
@@ -34,6 +34,7 @@ class CouponRedemptionSyncStats:
             "order_facts_with_coupon": int(self.order_facts_with_coupon),
             "assignments_matched": int(self.assignments_matched),
             "assignments_marked_used": int(self.assignments_marked_used),
+            "assignments_marked_used_after_campaign": int(self.assignments_marked_used_after_campaign),
             "assignments_already_used": int(self.assignments_already_used),
             "assignments_guest_mismatch": int(self.assignments_guest_mismatch),
             "assignments_missing": int(self.assignments_missing),
@@ -50,7 +51,7 @@ class CouponRedemptionSyncService:
     Назначение:
     1. найти в `order_fact` чеки с применённым купоном (`coupon_series` + `coupon_number`);
     2. сопоставить купон с назначением кампании (`CouponCampaignAssignment`);
-    3. перевести назначение и запись реестра в состояние `used`;
+    3. перевести назначение и запись реестра в состояние `used` или `used_after_campaign`;
     4. поставить тех-событие в очередь `CouponVtelemaxSyncQueue` для последующего скрытия купона в vtelemax.
     """
 
@@ -121,7 +122,7 @@ class CouponRedemptionSyncService:
                 coupon_series__in=series_values,
                 coupon_code__in=code_values,
             )
-            .select_related("coupon")
+            .select_related("coupon", "campaign")
             .order_by("id")
         )
 
@@ -159,12 +160,22 @@ class CouponRedemptionSyncService:
 
                 fact_order_number = fact.get("order_number")
                 used_at = fact.get("first_seen_at") or now
+                used_business_date = fact.get("business_date")
+                target_status = self._resolve_used_status(
+                    assignment=assignment,
+                    used_at=used_at,
+                    used_business_date=used_business_date,
+                )
                 assignment_changed = False
 
-                if assignment.status == CouponCampaignAssignment.Status.USED and assignment.used_order_id:
+                if (
+                    assignment.status == target_status
+                    and assignment.used_order_id
+                    and assignment.used_at
+                ):
                     stats.assignments_already_used += 1
                 else:
-                    assignment.status = CouponCampaignAssignment.Status.USED
+                    assignment.status = target_status
                     assignment.used_at = used_at
                     assignment.used_order_id = int(fact_order_number) if fact_order_number is not None else None
                     assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.PENDING
@@ -172,12 +183,15 @@ class CouponRedemptionSyncService:
                     assignment.vtelemax_synced_at = None
                     assignment_changed = True
                     stats.assignments_marked_used += 1
+                    if target_status == CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN:
+                        stats.assignments_marked_used_after_campaign += 1
 
                 registry_entry = assignment.coupon
+                target_pool_status = self._resolve_registry_used_status(status=target_status)
                 if registry_entry and (
-                    registry_entry.pool_status != CouponRegistryEntry.PoolStatus.USED or registry_entry.is_active
+                    registry_entry.pool_status != target_pool_status or registry_entry.is_active
                 ):
-                    registry_entry.pool_status = CouponRegistryEntry.PoolStatus.USED
+                    registry_entry.pool_status = target_pool_status
                     registry_entry.is_active = False
                     if not dry_run:
                         registry_entry.save(update_fields=["pool_status", "is_active", "updated_at"])
@@ -198,8 +212,9 @@ class CouponRedemptionSyncService:
 
                 queue_created = self._upsert_status_update_event(
                     assignment=assignment,
+                    status=target_status,
                     used_order_id=int(fact_order_number) if fact_order_number is not None else None,
-                    used_business_date=fact.get("business_date"),
+                    used_business_date=used_business_date,
                     now=now,
                     dry_run=dry_run,
                 )
@@ -211,9 +226,49 @@ class CouponRedemptionSyncService:
         return stats
 
     @staticmethod
+    def _resolve_used_status(
+        *,
+        assignment: CouponCampaignAssignment,
+        used_at,
+        used_business_date: date | None,
+    ) -> str:
+        """
+        Возвращает статус применения купона с учётом окна кампании.
+
+        Если купон уже был закрыт как истёкший/поздний или бизнес-дата заказа позже
+        окончания кампании, фиксируем отдельный статус позднего использования.
+        """
+        if assignment.status in {
+            CouponCampaignAssignment.Status.EXPIRED,
+            CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+        }:
+            return CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN
+
+        campaign_end = getattr(getattr(assignment, "campaign", None), "scheduled_time_end", None)
+        if campaign_end is None:
+            return CouponCampaignAssignment.Status.USED
+
+        if used_business_date is not None:
+            if used_business_date > campaign_end.date():
+                return CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN
+            if used_business_date < campaign_end.date():
+                return CouponCampaignAssignment.Status.USED
+
+        if used_at is not None and used_at > campaign_end:
+            return CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN
+        return CouponCampaignAssignment.Status.USED
+
+    @staticmethod
+    def _resolve_registry_used_status(*, status: str) -> str:
+        if status == CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN:
+            return CouponRegistryEntry.PoolStatus.USED_AFTER_CAMPAIGN
+        return CouponRegistryEntry.PoolStatus.USED
+
+    @staticmethod
     def _upsert_status_update_event(
         *,
         assignment: CouponCampaignAssignment,
+        status: str,
         used_order_id: int | None,
         used_business_date: date | None,
         now,
@@ -237,12 +292,13 @@ class CouponRedemptionSyncService:
             "venue_code": assignment.venue_code,
             "venue_name": assignment.venue_name,
             "promo_text": assignment.promo_text,
-            "status": CouponCampaignAssignment.Status.USED,
+            "status": status,
             "used_order_id": used_order_id,
             "used_business_date": used_business_date.isoformat() if used_business_date else None,
             "meta": {
                 "remove_from_guest": True,
                 "release_to_pool": False,
+                "used_after_campaign": status == CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
             },
         }
 

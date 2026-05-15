@@ -103,6 +103,8 @@ class Command(BaseCommand):
                     f"order_facts_with_coupon={metrics['order_facts_with_coupon']}",
                     f"assignments_matched={metrics['assignments_matched']}",
                     f"assignments_marked_used={metrics['assignments_marked_used']}",
+                    "assignments_marked_used_after_campaign="
+                    f"{metrics['assignments_marked_used_after_campaign']}",
                     f"assignments_already_used={metrics['assignments_already_used']}",
                     f"assignments_guest_mismatch={metrics['assignments_guest_mismatch']}",
                     f"assignments_missing={metrics['assignments_missing']}",

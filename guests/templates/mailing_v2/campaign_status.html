@@ -126,6 +126,7 @@
             <div class="mail-status-row"><span>Доля вернувшихся</span><b>{{ coupon_campaign_report.returned_guests_rate_percent }}%</b></div>
             <div class="mail-status-row"><span>Выручка по купонам</span><b>{{ coupon_campaign_report.revenue_net_used }}</b></div>
             <div class="mail-status-row"><span>Средний чек по купонам</span><b>{{ coupon_campaign_report.coupon_orders_avg_check }}</b></div>
+            <div class="mail-status-row"><span>Использовано после завершения акции</span><b>{{ coupon_campaign_report.assignments_used_after_campaign }}</b></div>
             <div class="mail-status-row"><span>Поздние применения</span><b>{{ coupon_campaign_report.used_late_total }}</b></div>
             <div class="mt-2">
               <a class="btn btn-outline-primary btn-sm" href="{{ coupon_report_url }}">Открыть полный отчёт по кампании</a>

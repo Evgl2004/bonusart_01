@@ -2,7 +2,7 @@
 
 Дата подготовки: 2026-05-15.
 
-Цель проверки: подтвердить полный купонный сценарий от генерации/проверки пула в SAGUR до отображения купонов в vtelemax, обработки `used/expired/canceled` и контрольного кейса `canceled -> release -> reassign`.
+Цель проверки: подтвердить полный купонный сценарий от генерации/проверки пула в SAGUR до отображения купонов в vtelemax, обработки `used/used_after_campaign/expired/canceled` и контрольного кейса `canceled -> release -> reassign`.
 
 Связанный контракт: `docs/operations/VTELEMAX_COUPON_BATCH_CONTRACT_MESSAGE_2026-05-15.md`.
 
@@ -252,6 +252,27 @@ python manage.py run_coupon_vtelemax_sync_worker --once --batch-size 100 --force
 - [ ] SAGUR не возвращает купон B в доступный пул;
 - [ ] повторное назначение этого `series+code` запрещено.
 
+### 11.1. Проверка позднего использования после `expired`
+
+После сценария `expired` имитировать в iiko/OLAP факт применения этого же купона уже после завершения окна кампании.
+
+На стороне SAGUR:
+
+```bash
+python manage.py sync_coupon_redemptions --limit 100
+python manage.py run_coupon_vtelemax_sync_worker --once --batch-size 100 --force-run
+```
+
+Ожидаемо:
+
+- [ ] assignment B переходит из `expired` в `used_after_campaign`;
+- [ ] registry entry B переходит в `used_after_campaign`;
+- [ ] создан `status_update` со `status=used_after_campaign`;
+- [ ] `meta.release_to_pool=false`;
+- [ ] vtelemax хранит/показывает статус `used_after_campaign` в том же смысле, что SAGUR;
+- [ ] купон B не возвращается в пул и не доступен для повторной выдачи;
+- [ ] отчёт кампании учитывает купон в общем `assignments_used` и отдельно в `assignments_used_after_campaign`.
+
 ## 12. Сценарий 7: `canceled -> release -> reassign`
 
 Это главный контрольный сценарий.
@@ -361,9 +382,9 @@ python manage.py report_coupon_campaign_performance --campaign-id <CAMPAIGN_ID> 
 Ожидаемо:
 
 - [ ] нет зависших release после ACK;
-- [ ] нет активных купонов у старых гостей после `used/expired/canceled`;
+- [ ] нет активных купонов у старых гостей после `used/used_after_campaign/expired/canceled`;
 - [ ] нет повторно выданных купонов без предварительного ACK `canceled`;
-- [ ] отчет кампании показывает корректные назначения, used/expired/canceled.
+- [ ] отчет кампании показывает корректные назначения, used/used_after_campaign/expired/canceled.
 
 На стороне vtelemax:
 
@@ -380,6 +401,7 @@ E2E считается пройденным, если:
 - [ ] `assignments` batch принят и подтвержден item-level `results[]`;
 - [ ] sync-gate в SAGUR работает строго по ACK;
 - [ ] `used` скрывает купон и не освобождает его;
+- [ ] `used_after_campaign` скрывает купон, не освобождает его и совпадает по статусу в SAGUR/vtelemax;
 - [ ] `expired` скрывает купон и не освобождает его;
 - [ ] `canceled` скрывает купон и освобождает его только после ACK;
 - [ ] тот же `coupon_series + coupon_code` успешно переназначен другому гостю после release;
@@ -397,6 +419,7 @@ E2E считается пройденным, если:
 | sync-gate | | |
 | dispatch после ACK | | |
 | `used` | | |
+| `used_after_campaign` | | |
 | `expired` | | |
 | `canceled -> release` | | |
 | `reassign` | | |

@@ -145,6 +145,7 @@ class CouponReportsViewsTests(TestCase):
             "assignments_reserved": 10,
             "assignments_sent": 90,
             "assignments_used": 40,
+            "assignments_used_after_campaign": 5,
             "assignments_error": 2,
             "coupons_sent_total": 130,
             "used_within_campaign": 35,

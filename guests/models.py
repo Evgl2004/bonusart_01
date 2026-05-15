@@ -2310,6 +2310,7 @@ class CouponRegistryEntry(models.Model):
         VERIFY_FAILED = "verify_failed", "Проверка в iikoCard не пройдена"
         ASSIGNED = "assigned", "Назначен гостю"
         USED = "used", "Использован"
+        USED_AFTER_CAMPAIGN = "used_after_campaign", "Использован после завершения акции"
         EXPIRED = "expired", "Срок действия истёк"
         CANCELED = "canceled", "Отменён"
 
@@ -2400,6 +2401,7 @@ class CouponCampaignAssignment(models.Model):
         RESERVED = "reserved", "Зарезервирован"
         SENT = "sent", "Отправлен"
         USED = "used", "Использован"
+        USED_AFTER_CAMPAIGN = "used_after_campaign", "Использован после завершения акции"
         EXPIRED = "expired", "Истёк"
         CANCELED = "canceled", "Отменён"
         ERROR = "error", "Ошибка"
@@ -2452,7 +2454,7 @@ class CouponCampaignAssignment(models.Model):
     sent_at = models.DateTimeField(blank=True, null=True)
     lifetime_expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
     status = models.CharField(
-        max_length=16,
+        max_length=32,
         choices=Status.choices,
         default=Status.RESERVED,
         db_index=True,

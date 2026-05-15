@@ -83,6 +83,11 @@ class Command(BaseCommand):
             f"Использовано купонов: {payload['assignments_used']} (coupons_used_total={payload['assignments_used']})"
         )
         self.stdout.write(
+            "Использовано после завершения акции: "
+            f"{payload['assignments_used_after_campaign']} "
+            f"(coupons_used_after_campaign_total={payload['assignments_used_after_campaign']})"
+        )
+        self.stdout.write(
             f"Конверсия купонов: {payload['usage_rate_percent']}% (coupon_usage_rate={payload['usage_rate_percent']})"
         )
         self.stdout.write(

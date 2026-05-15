@@ -22,6 +22,7 @@ class CouponCampaignPerformanceSnapshot:
     assignments_reserved: int = 0
     assignments_sent: int = 0
     assignments_used: int = 0
+    assignments_used_after_campaign: int = 0
     assignments_expired: int = 0
     assignments_canceled: int = 0
     assignments_error: int = 0
@@ -85,6 +86,7 @@ class CouponCampaignPerformanceSnapshot:
             "assignments_reserved": int(self.assignments_reserved),
             "assignments_sent": int(self.assignments_sent),
             "assignments_used": int(self.assignments_used),
+            "assignments_used_after_campaign": int(self.assignments_used_after_campaign),
             "assignments_expired": int(self.assignments_expired),
             "assignments_canceled": int(self.assignments_canceled),
             "assignments_error": int(self.assignments_error),
@@ -140,6 +142,10 @@ def build_coupon_campaign_performance_snapshot(
         reserved=Count("id", filter=Q(status=CouponCampaignAssignment.Status.RESERVED)),
         sent=Count("id", filter=Q(status=CouponCampaignAssignment.Status.SENT)),
         used=Count("id", filter=Q(status=CouponCampaignAssignment.Status.USED)),
+        used_after_campaign=Count(
+            "id",
+            filter=Q(status=CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN),
+        ),
         expired=Count("id", filter=Q(status=CouponCampaignAssignment.Status.EXPIRED)),
         canceled=Count("id", filter=Q(status=CouponCampaignAssignment.Status.CANCELED)),
         error=Count("id", filter=Q(status=CouponCampaignAssignment.Status.ERROR)),
@@ -147,7 +153,10 @@ def build_coupon_campaign_performance_snapshot(
     snapshot.assignments_total = int(status_counts.get("total") or 0)
     snapshot.assignments_reserved = int(status_counts.get("reserved") or 0)
     snapshot.assignments_sent = int(status_counts.get("sent") or 0)
-    snapshot.assignments_used = int(status_counts.get("used") or 0)
+    used_regular = int(status_counts.get("used") or 0)
+    used_after_campaign = int(status_counts.get("used_after_campaign") or 0)
+    snapshot.assignments_used = int(used_regular + used_after_campaign)
+    snapshot.assignments_used_after_campaign = used_after_campaign
     snapshot.assignments_expired = int(status_counts.get("expired") or 0)
     snapshot.assignments_canceled = int(status_counts.get("canceled") or 0)
     snapshot.assignments_error = int(status_counts.get("error") or 0)
@@ -216,9 +225,14 @@ def build_coupon_campaign_performance_snapshot(
     unique_used_guest_ids: set[int] = set()
     late_rows: list[dict[str, object]] = []
     revenue_total = Decimal("0")
+    used_statuses = {
+        CouponCampaignAssignment.Status.USED,
+        CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+    }
 
     for assignment in assignments:
-        if assignment.get("status") != CouponCampaignAssignment.Status.USED:
+        status = assignment.get("status")
+        if status not in used_statuses:
             continue
 
         key = (
@@ -233,15 +247,23 @@ def build_coupon_campaign_performance_snapshot(
             unique_used_guest_ids.add(int(guest_id))
 
         fact_business_date = fact_row.get("business_date") if fact_row else None
+        forced_late = status == CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN
         in_campaign = False
         is_late = False
 
-        if used_at is not None:
-            in_campaign = campaign_start <= used_at <= campaign_end
-            is_late = used_at > campaign_end
-        elif fact_business_date is not None:
+        if fact_business_date is not None:
             in_campaign = campaign_start_date <= fact_business_date <= campaign_end_date
             is_late = fact_business_date > campaign_end_date
+            if fact_business_date == campaign_end_date and used_at is not None:
+                in_campaign = campaign_start <= used_at <= campaign_end
+                is_late = used_at > campaign_end
+        elif used_at is not None:
+            in_campaign = campaign_start <= used_at <= campaign_end
+            is_late = used_at > campaign_end
+
+        if forced_late:
+            in_campaign = False
+            is_late = True
 
         if in_campaign and guest_id:
             used_within_guest_ids.add(int(guest_id))

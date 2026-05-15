@@ -49,6 +49,7 @@ class CouponCampaignStatusViewTests(TestCase):
             "coupon_series": "TEST",
             "coupons_sent_total": 10,
             "assignments_used": 4,
+            "assignments_used_after_campaign": 1,
             "usage_rate_percent": 40.0,
             "returned_guest_coupon": 2,
             "returned_guests_rate_percent": 50.0,
