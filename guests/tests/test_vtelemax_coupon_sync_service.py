@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 from unittest.mock import Mock, patch
 
@@ -25,6 +26,7 @@ class VtelemaxCouponSyncServiceTests(TestCase):
     def setUp(self):
         super().setUp()
         self.now = timezone.now()
+        self._digits_counter = 0
         self.template = MessageTemplate.objects.create(
             name="Coupon sync template",
             description="",
@@ -141,12 +143,27 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         )
         return assignment, event
 
-    @staticmethod
-    def _random_digits(length: int) -> str:
+    def _random_digits(self, length: int) -> str:
         """
         Возвращает детерминированный набор цифр фиксированной длины для тестовых ключей.
         """
-        return ("1234567890" * ((length // 10) + 1))[:length]
+        self._digits_counter += 1
+        return str(self._digits_counter).zfill(length)[-length:]
+
+    @staticmethod
+    def _mock_vtelemax_response(mocked_client_cls, *, results: list[dict], status_code: int = 200, text: str = ""):
+        mocked_response = Mock()
+        mocked_response.status_code = status_code
+        mocked_response.text = text
+        mocked_response.json.return_value = {"ok": status_code < 400, "results": results}
+        mocked_client = Mock()
+        mocked_client.post.return_value = mocked_response
+        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+        return mocked_client
+
+    @staticmethod
+    def _acked_result(event: CouponVtelemaxSyncQueue) -> dict:
+        return {"event_id": str(event.event_id), "status": "acked"}
 
     def _build_service(self) -> VtelemaxCouponSyncService:
         return VtelemaxCouponSyncService(
@@ -161,32 +178,79 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         )
 
     @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
-    def test_process_batch_marks_event_acked_and_assignment_ok(self, mocked_client_cls):
+    def test_process_batch_sends_assignments_as_single_batch_and_marks_items_acked(self, mocked_client_cls):
         assignment, event = self._create_assignment_with_event()
-        mocked_response = Mock()
-        mocked_response.status_code = 200
-        mocked_response.text = ""
-        mocked_response.json.return_value = {"ok": True}
-        mocked_client = Mock()
-        mocked_client.post.return_value = mocked_response
-        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+        second_assignment, second_event = self._create_assignment_with_event()
+        mocked_client = self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[self._acked_result(event), self._acked_result(second_event)],
+        )
 
         stats = self._build_service().process_batch(limit=10, now=self.now)
 
-        self.assertEqual(stats.processed, 1)
-        self.assertEqual(stats.acked, 1)
+        self.assertEqual(stats.processed, 2)
+        self.assertEqual(stats.acked, 2)
         self.assertEqual(stats.failed, 0)
-        self.assertEqual(stats.assignments_acked, 1)
+        self.assertEqual(stats.assignments_acked, 2)
+        self.assertEqual(mocked_client.post.call_count, 1)
+        request_body = json.loads(mocked_client.post.call_args.kwargs["content"].decode("utf-8"))
+        self.assertIn("request_id", request_body)
+        self.assertEqual(request_body["direction"], CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS)
+        self.assertEqual(len(request_body["items"]), 2)
+        self.assertEqual(
+            {item["event_id"] for item in request_body["items"]},
+            {str(event.event_id), str(second_event.event_id)},
+        )
+        self.assertNotIn("payload", request_body)
 
         event.refresh_from_db()
         assignment.refresh_from_db()
+        second_event.refresh_from_db()
+        second_assignment.refresh_from_db()
         self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(second_event.status, CouponVtelemaxSyncQueue.Status.ACKED)
         self.assertEqual(event.attempts, 1)
+        self.assertEqual(second_event.attempts, 1)
         self.assertIsNotNone(event.sent_at)
         self.assertIsNotNone(event.ack_at)
         self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
+        self.assertEqual(second_assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
         self.assertIsNotNone(assignment.vtelemax_synced_at)
         self.assertIsNone(assignment.vtelemax_sync_error)
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_process_batch_handles_item_level_partial_ack(self, mocked_client_cls):
+        first_assignment, first_event = self._create_assignment_with_event()
+        second_assignment, second_event = self._create_assignment_with_event()
+        self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[
+                self._acked_result(first_event),
+                {
+                    "event_id": str(second_event.event_id),
+                    "status": "rejected",
+                    "code": "recipient_not_found",
+                    "message": "Получатель не найден",
+                },
+            ],
+        )
+
+        stats = self._build_service().process_batch(limit=10, now=self.now)
+
+        self.assertEqual(stats.processed, 2)
+        self.assertEqual(stats.acked, 1)
+        self.assertEqual(stats.failed, 1)
+
+        first_event.refresh_from_db()
+        first_assignment.refresh_from_db()
+        second_event.refresh_from_db()
+        second_assignment.refresh_from_db()
+        self.assertEqual(first_event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(first_assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
+        self.assertEqual(second_event.status, CouponVtelemaxSyncQueue.Status.ERROR)
+        self.assertIn("recipient_not_found", str(second_event.last_error))
+        self.assertEqual(second_assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.ERROR)
+        self.assertIn("Получатель не найден", str(second_assignment.vtelemax_sync_error))
 
     @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
     def test_process_batch_marks_event_error_and_assignment_error(self, mocked_client_cls):
@@ -238,13 +302,10 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         self.assertFalse(assignment.coupon.is_active)
         self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
 
-        mocked_response = Mock()
-        mocked_response.status_code = 200
-        mocked_response.text = ""
-        mocked_response.json.return_value = {"ok": True}
-        mocked_client = Mock()
-        mocked_client.post.return_value = mocked_response
-        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+        self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[self._acked_result(event)],
+        )
 
         stats = self._build_service().process_batch(limit=10, now=self.now)
         self.assertEqual(stats.acked, 1)
@@ -271,13 +332,10 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         self.assertFalse(assignment.coupon.is_active)
         self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
 
-        mocked_response = Mock()
-        mocked_response.status_code = 200
-        mocked_response.text = ""
-        mocked_response.json.return_value = {"ok": True}
-        mocked_client = Mock()
-        mocked_client.post.return_value = mocked_response
-        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+        self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[self._acked_result(event)],
+        )
 
         stats = self._build_service().process_batch(limit=10, now=self.now)
         self.assertEqual(stats.acked, 1)
@@ -297,13 +355,10 @@ class VtelemaxCouponSyncServiceTests(TestCase):
             status_value=CouponCampaignAssignment.Status.CANCELED,
             release_to_pool=True,
         )
-        mocked_response = Mock()
-        mocked_response.status_code = 200
-        mocked_response.text = ""
-        mocked_response.json.return_value = {"ok": True}
-        mocked_client = Mock()
-        mocked_client.post.return_value = mocked_response
-        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+        mocked_client = self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[self._acked_result(first_event)],
+        )
 
         service = self._build_service()
         first_stats = service.process_batch(limit=10, now=self.now)
@@ -334,6 +389,11 @@ class VtelemaxCouponSyncServiceTests(TestCase):
             next_retry_at=self.now - timedelta(seconds=1),
         )
 
+        mocked_client.post.return_value.json.return_value = {
+            "ok": True,
+            "results": [self._acked_result(second_event)],
+        }
+
         second_stats = service.process_batch(limit=10, now=self.now)
         self.assertEqual(second_stats.acked, 1)
         self.assertEqual(second_stats.status_updates_acked, 1)
@@ -355,13 +415,10 @@ class VtelemaxCouponSyncServiceTests(TestCase):
             status_value=CouponCampaignAssignment.Status.USED,
             release_to_pool=True,
         )
-        mocked_response = Mock()
-        mocked_response.status_code = 200
-        mocked_response.text = ""
-        mocked_response.json.return_value = {"ok": True}
-        mocked_client = Mock()
-        mocked_client.post.return_value = mocked_response
-        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+        self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[self._acked_result(event)],
+        )
 
         stats = self._build_service().process_batch(limit=10, now=self.now)
         self.assertEqual(stats.acked, 1)

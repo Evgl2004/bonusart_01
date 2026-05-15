@@ -9,6 +9,7 @@ from django.test import TestCase
 
 from guests.models import CouponPoolBatch, CouponRegistryEntry
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
+from guests.services.iiko_coupon_client import IikoCouponClient
 
 
 class GenerateCouponPoolCommandTests(TestCase):
@@ -54,6 +55,28 @@ class GenerateCouponPoolCommandTests(TestCase):
         batch = CouponPoolBatch.objects.get(series="GLOBAL_TEST")
         self.assertEqual(batch.venue_code, COUPON_VENUE_GLOBAL_CODE)
         self.assertEqual(batch.venue_name, COUPON_VENUE_GLOBAL_NAME)
+
+
+class IikoCouponClientUrlTests(TestCase):
+    def test_normalizes_root_base_url_to_api_v1(self):
+        client = IikoCouponClient(
+            api_key="key",
+            base_url="https://api-ru.iiko.services/",
+            organization_id="org",
+        )
+
+        self.assertEqual(client.base_url, "https://api-ru.iiko.services/api/1")
+        client.close()
+
+    def test_keeps_existing_api_v1_base_url(self):
+        client = IikoCouponClient(
+            api_key="key",
+            base_url="https://api-ru.iiko.services/api/1/",
+            organization_id="org",
+        )
+
+        self.assertEqual(client.base_url, "https://api-ru.iiko.services/api/1")
+        client.close()
 
 
 class VerifyCouponPoolIikoCommandTests(TestCase):

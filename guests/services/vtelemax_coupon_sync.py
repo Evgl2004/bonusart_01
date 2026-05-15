@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import uuid4
 
 import httpx
 from django.conf import settings
@@ -168,73 +169,132 @@ class VtelemaxCouponSyncService:
         )
         stats.scanned = len(events) + stats.skipped_max_attempts
 
+        grouped_events: dict[str, list[CouponVtelemaxSyncQueue]] = {}
         for event in events:
-            stats.processed += 1
-            if self._process_event(event=event):
-                stats.acked += 1
-                if event.direction == CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS:
-                    stats.assignments_acked += 1
-                elif event.direction == CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE:
-                    stats.status_updates_acked += 1
-            else:
-                stats.failed += 1
+            grouped_events.setdefault(str(event.direction), []).append(event)
+
+        for direction, direction_events in grouped_events.items():
+            batch_result = self._process_event_batch(
+                direction=direction,
+                events=direction_events,
+                now=now_value,
+            )
+            stats.processed += int(batch_result["processed"])
+            stats.acked += int(batch_result["acked"])
+            stats.failed += int(batch_result["failed"])
+            stats.assignments_acked += int(batch_result["assignments_acked"])
+            stats.status_updates_acked += int(batch_result["status_updates_acked"])
 
         return stats
 
-    def _process_event(self, *, event: CouponVtelemaxSyncQueue) -> bool:
+    def _process_event_batch(
+        self,
+        *,
+        direction: str,
+        events: list[CouponVtelemaxSyncQueue],
+        now,
+    ) -> dict[str, int]:
         """
-        Отправляет единичное событие и фиксирует итог в очереди/назначении.
+        Отправляет пачку событий одного направления и фиксирует итог по каждому item.
         """
 
-        attempt_time = django_timezone.now()
-        attempt_no = int(event.attempts or 0) + 1
+        result = {
+            "processed": 0,
+            "acked": 0,
+            "failed": 0,
+            "assignments_acked": 0,
+            "status_updates_acked": 0,
+        }
+        if not events:
+            return result
+
+        attempt_time = now or django_timezone.now()
+        event_ids = [int(event.id) for event in events if event.id]
         with transaction.atomic():
-            # Берем строку под lock, чтобы конкурирующие воркеры не отправляли один event дважды.
-            locked = (
+            # Берем строки под lock, чтобы конкурирующие воркеры не отправляли один item дважды.
+            locked_events = list(
                 CouponVtelemaxSyncQueue.objects.select_for_update()
                 .select_related("assignment")
-                .filter(id=event.id)
-                .first()
+                .filter(id__in=event_ids, direction=direction)
+                .order_by("id")
             )
-            if locked is None:
-                return False
-            if int(locked.attempts or 0) >= self.max_attempts:
-                return False
-            locked.attempts = attempt_no
-            locked.status = CouponVtelemaxSyncQueue.Status.SENT
-            locked.sent_at = attempt_time
-            locked.last_error = None
-            locked.save(
-                update_fields=[
-                    "attempts",
-                    "status",
-                    "sent_at",
-                    "last_error",
-                    "updated_at",
-                ]
-            )
-            event = locked
+            send_events: list[CouponVtelemaxSyncQueue] = []
+            for locked in locked_events:
+                if int(locked.attempts or 0) >= self.max_attempts:
+                    continue
+                locked.attempts = int(locked.attempts or 0) + 1
+                locked.status = CouponVtelemaxSyncQueue.Status.SENT
+                locked.sent_at = attempt_time
+                locked.last_error = None
+                locked.save(
+                    update_fields=[
+                        "attempts",
+                        "status",
+                        "sent_at",
+                        "last_error",
+                        "updated_at",
+                    ]
+                )
+                send_events.append(locked)
+
+        result["processed"] = len(send_events)
+        if not send_events:
+            return result
 
         try:
-            self._send_event(event=event, sent_at=attempt_time)
+            item_errors = self._send_events_batch(
+                direction=direction,
+                events=send_events,
+                sent_at=attempt_time,
+            )
         except Exception as exc:
             error_text = self._truncate_error(str(exc))
-            retry_seconds = self._calculate_retry_seconds(attempt_no=attempt_no)
-            next_retry_at = attempt_time + timedelta(seconds=retry_seconds)
+            self._mark_events_error(events=send_events, error_text=error_text, failed_at=attempt_time)
+            result["failed"] = len(send_events)
+            return result
 
-            with transaction.atomic():
-                failed = (
-                    CouponVtelemaxSyncQueue.objects.select_for_update()
-                    .select_related("assignment")
-                    .filter(id=event.id)
-                    .first()
+        with transaction.atomic():
+            events_for_update = list(
+                CouponVtelemaxSyncQueue.objects.select_for_update()
+                .select_related("assignment")
+                .filter(id__in=[int(event.id) for event in send_events])
+                .order_by("id")
+            )
+            for event_for_update in events_for_update:
+                item_event_id = str(event_for_update.event_id)
+                item_error = item_errors.get(
+                    item_event_id,
+                    "vtelemax API response has no result for event_id.",
                 )
-                if failed is None:
-                    return False
-                failed.status = CouponVtelemaxSyncQueue.Status.ERROR
-                failed.last_error = error_text
-                failed.next_retry_at = next_retry_at
-                failed.save(
+                if item_error is None:
+                    event_for_update.status = CouponVtelemaxSyncQueue.Status.ACKED
+                    event_for_update.ack_at = attempt_time
+                    event_for_update.last_error = None
+                    event_for_update.next_retry_at = attempt_time
+                    event_for_update.save(
+                        update_fields=[
+                            "status",
+                            "ack_at",
+                            "last_error",
+                            "next_retry_at",
+                            "updated_at",
+                        ]
+                    )
+                    self._mark_assignment_ok(assignment=event_for_update.assignment, synced_at=attempt_time)
+                    self._apply_post_ack_effects(event=event_for_update)
+                    result["acked"] += 1
+                    if event_for_update.direction == CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS:
+                        result["assignments_acked"] += 1
+                    elif event_for_update.direction == CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE:
+                        result["status_updates_acked"] += 1
+                    continue
+
+                error_text = self._truncate_error(item_error)
+                retry_seconds = self._calculate_retry_seconds(attempt_no=int(event_for_update.attempts or 1))
+                event_for_update.status = CouponVtelemaxSyncQueue.Status.ERROR
+                event_for_update.last_error = error_text
+                event_for_update.next_retry_at = attempt_time + timedelta(seconds=retry_seconds)
+                event_for_update.save(
                     update_fields=[
                         "status",
                         "last_error",
@@ -243,48 +303,32 @@ class VtelemaxCouponSyncService:
                     ]
                 )
                 self._mark_assignment_error(
-                    assignment=failed.assignment,
+                    assignment=event_for_update.assignment,
                     error_text=error_text,
                     failed_at=attempt_time,
                 )
-            return False
+                result["failed"] += 1
+        return result
 
-        with transaction.atomic():
-            succeeded = (
-                CouponVtelemaxSyncQueue.objects.select_for_update()
-                .select_related("assignment")
-                .filter(id=event.id)
-                .first()
-            )
-            if succeeded is None:
-                return False
-            succeeded.status = CouponVtelemaxSyncQueue.Status.ACKED
-            succeeded.ack_at = attempt_time
-            succeeded.last_error = None
-            succeeded.next_retry_at = attempt_time
-            succeeded.save(
-                update_fields=[
-                    "status",
-                    "ack_at",
-                    "last_error",
-                    "next_retry_at",
-                    "updated_at",
-                ]
-            )
-            self._mark_assignment_ok(assignment=succeeded.assignment, synced_at=attempt_time)
-            self._apply_post_ack_effects(event=succeeded)
-        return True
-
-    def _send_event(self, *, event: CouponVtelemaxSyncQueue, sent_at) -> None:
+    def _send_events_batch(
+        self,
+        *,
+        direction: str,
+        events: list[CouponVtelemaxSyncQueue],
+        sent_at,
+    ) -> dict[str, str | None]:
         """
-        Выполняет HTTP POST события в vtelemax endpoint.
+        Выполняет HTTP POST пачки событий в vtelemax endpoint.
+
+        Возвращает словарь `event_id -> error_text`. Значение `None` означает ACK.
         """
 
+        request_id = str(uuid4())
         payload = {
-            "event_id": str(event.event_id),
-            "direction": str(event.direction),
+            "request_id": request_id,
+            "direction": str(direction),
             "sent_at": sent_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "payload": dict(event.payload_json or {}),
+            "items": [self._build_batch_item(event=event) for event in events],
         }
         body_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         timestamp = str(int(datetime.now(tz=timezone.utc).timestamp()))
@@ -298,7 +342,7 @@ class VtelemaxCouponSyncService:
             "Content-Type": "application/json",
             "X-Sagur-Timestamp": timestamp,
             "X-Sagur-Signature": signature,
-            "X-Sagur-Event-Id": str(event.event_id),
+            "X-Sagur-Request-Id": request_id,
         }
         url = f"{self.base_url}{self.endpoint_path}"
 
@@ -317,6 +361,92 @@ class VtelemaxCouponSyncService:
         if response_payload.get("ok") is False:
             error_message = str(response_payload.get("message") or "ok=false").strip()
             raise VtelemaxCouponSyncError(f"vtelemax API negative ack: {error_message[:500]}")
+        return self._parse_item_results(
+            response_payload=response_payload,
+            expected_event_ids=[str(event.event_id) for event in events],
+        )
+
+    @staticmethod
+    def _build_batch_item(*, event: CouponVtelemaxSyncQueue) -> dict[str, Any]:
+        item = dict(event.payload_json or {})
+        item["event_id"] = str(event.event_id)
+        if event.assignment_id and not item.get("assignment_id"):
+            item["assignment_id"] = int(event.assignment_id)
+        return item
+
+    @staticmethod
+    def _parse_item_results(
+        *,
+        response_payload: dict[str, Any],
+        expected_event_ids: list[str],
+    ) -> dict[str, str | None]:
+        results = response_payload.get("results")
+        if not isinstance(results, list):
+            raise VtelemaxCouponSyncError("vtelemax API response does not contain item-level results[].")
+
+        parsed_by_event_id: dict[str, dict[str, Any]] = {}
+        for raw_result in results:
+            if not isinstance(raw_result, dict):
+                continue
+            event_id = str(raw_result.get("event_id") or "").strip()
+            if event_id:
+                parsed_by_event_id[event_id] = raw_result
+
+        item_errors: dict[str, str | None] = {}
+        ok_statuses = {"ack", "acked", "ok", "success", "accepted"}
+        for event_id in expected_event_ids:
+            raw_result = parsed_by_event_id.get(event_id)
+            if raw_result is None:
+                item_errors[event_id] = "vtelemax API response has no result for event_id."
+                continue
+
+            status_value = str(raw_result.get("status") or raw_result.get("result") or "").strip().lower()
+            ok_value = raw_result.get("ok")
+            if status_value in ok_statuses or ok_value is True:
+                item_errors[event_id] = None
+                continue
+
+            code = str(raw_result.get("code") or raw_result.get("error_code") or "").strip()
+            message = str(raw_result.get("message") or raw_result.get("error") or status_value or "item rejected").strip()
+            if code:
+                item_errors[event_id] = f"{code}: {message}"
+            else:
+                item_errors[event_id] = message
+        return item_errors
+
+    def _mark_events_error(
+        self,
+        *,
+        events: list[CouponVtelemaxSyncQueue],
+        error_text: str,
+        failed_at,
+    ) -> None:
+        if not events:
+            return
+        with transaction.atomic():
+            failed_events = list(
+                CouponVtelemaxSyncQueue.objects.select_for_update()
+                .select_related("assignment")
+                .filter(id__in=[int(event.id) for event in events])
+            )
+            for failed in failed_events:
+                retry_seconds = self._calculate_retry_seconds(attempt_no=int(failed.attempts or 1))
+                failed.status = CouponVtelemaxSyncQueue.Status.ERROR
+                failed.last_error = error_text
+                failed.next_retry_at = failed_at + timedelta(seconds=retry_seconds)
+                failed.save(
+                    update_fields=[
+                        "status",
+                        "last_error",
+                        "next_retry_at",
+                        "updated_at",
+                    ]
+                )
+                self._mark_assignment_error(
+                    assignment=failed.assignment,
+                    error_text=error_text,
+                    failed_at=failed_at,
+                )
 
     def _build_signature(self, *, method: str, path: str, timestamp: str, body_text: str) -> str:
         """

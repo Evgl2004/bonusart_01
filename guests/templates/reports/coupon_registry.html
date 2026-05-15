@@ -237,12 +237,16 @@
             <th>Серия</th>
             <th>Код</th>
             <th>Batch</th>
+            <th>Статус назначения</th>
             <th>Статус купона</th>
             <th>Проверка iiko</th>
             <th>Проверен</th>
             <th>Заведение</th>
             <th>Кампания</th>
             <th>Гость/телефон</th>
+            <th>Использован</th>
+            <th>Order ID</th>
+            <th>vtelemax sync</th>
           </tr>
         </thead>
         <tbody>
@@ -252,6 +256,7 @@
               <td>{{ row.series }}</td>
               <td><code>{{ row.code }}</code></td>
               <td>{% if row.batch %}{{ row.batch.batch_code }}{% else %}—{% endif %}</td>
+              <td>{% if row.latest_assignment %}{{ row.latest_assignment.get_status_display }}{% else %}—{% endif %}</td>
               <td>{{ row.get_pool_status_display }}</td>
               <td>{{ row.get_iiko_check_status_display }}</td>
               <td>{% if row.iiko_checked_at %}{{ row.iiko_checked_at|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
@@ -275,10 +280,34 @@
                   —
                 {% endif %}
               </td>
+              <td>
+                {% if row.latest_assignment and row.latest_assignment.used_at %}
+                  {{ row.latest_assignment.used_at|date:"d.m.Y H:i" }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% if row.latest_assignment and row.latest_assignment.used_order_id %}
+                  {{ row.latest_assignment.used_order_id }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% if row.latest_assignment %}
+                  {{ row.latest_assignment.get_vtelemax_sync_status_display }}
+                  {% if row.latest_assignment.vtelemax_synced_at %}
+                    <div class="small text-muted">{{ row.latest_assignment.vtelemax_synced_at|date:"d.m.Y H:i" }}</div>
+                  {% endif %}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
             </tr>
           {% empty %}
             <tr>
-              <td colspan="10" class="text-center text-muted py-4">По заданным фильтрам записи не найдены.</td>
+              <td colspan="14" class="text-center text-muted py-4">По заданным фильтрам записи не найдены.</td>
             </tr>
           {% endfor %}
         </tbody>

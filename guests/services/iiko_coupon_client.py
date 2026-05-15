@@ -24,6 +24,8 @@ class IikoCouponClient:
     4. `/api/1/loyalty/iiko/coupons/info`.
     """
 
+    API_V1_PREFIX = "/api/1"
+
     def __init__(
         self,
         *,
@@ -33,13 +35,29 @@ class IikoCouponClient:
         timeout_seconds: float = 15.0,
     ) -> None:
         self.api_key = str(api_key or "").strip()
-        self.base_url = str(base_url or "").strip().rstrip("/")
+        self.base_url = self._normalize_base_url(base_url)
         self.organization_id = str(organization_id or "").strip()
         self.timeout_seconds = float(timeout_seconds)
 
         self._session = requests.Session()
         self._token: str | None = None
         self._token_expires_at: datetime | None = None
+
+    @classmethod
+    def _normalize_base_url(cls, base_url: str) -> str:
+        """
+        Приводит URL iiko к версии API v1.
+
+        В настройках удобнее хранить официальный корневой адрес iiko, но
+        endpoints купонов живут под `/api/1`. Если оператор уже указал URL с
+        `/api/1`, повторно суффикс не добавляем.
+        """
+        normalized = str(base_url or "").strip().rstrip("/")
+        if not normalized:
+            return ""
+        if normalized.endswith(cls.API_V1_PREFIX):
+            return normalized
+        return f"{normalized}{cls.API_V1_PREFIX}"
 
     def close(self) -> None:
         self._session.close()

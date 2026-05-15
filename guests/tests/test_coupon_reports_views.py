@@ -113,8 +113,11 @@ class CouponReportsViewsTests(TestCase):
             venue_name="Тестовое заведение",
             promo_text="Скидка 20%",
             assigned_at=self.now,
-            status=CouponCampaignAssignment.Status.RESERVED,
+            status=CouponCampaignAssignment.Status.USED,
+            used_at=self.now,
+            used_order_id=123456789,
             vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
         )
 
         response = self.client.get(
@@ -127,6 +130,11 @@ class CouponReportsViewsTests(TestCase):
         self.assertNotContains(response, "OTH-BBBB2222")
         self.assertContains(response, str(self.mailing.id))
         self.assertContains(response, guest.phone)
+        self.assertContains(response, "Использован")
+        self.assertContains(response, "123456789")
+        self.assertContains(response, "Синхронизирован")
+        self.assertContains(response, "--venue-code")
+        self.assertContains(response, "--sample-info-check-limit")
 
     def test_coupon_campaign_reports_builds_selected_campaign_report(self):
         snapshot_mock = Mock()

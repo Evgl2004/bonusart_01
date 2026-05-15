@@ -199,10 +199,11 @@ class CouponRegistryView(TemplateView):
         context["coupon_global_venue_code"] = COUPON_VENUE_GLOBAL_CODE
         context["coupon_global_venue_name"] = COUPON_VENUE_GLOBAL_NAME
         context["generate_command_hint"] = (
-            "python manage.py generate_coupon_pool --series <SERIES> --prefix TST- --count 1000 --random-length 12"
+            "python manage.py generate_coupon_pool --series <SERIES> --venue-code <VENUE_CODE> "
+            "--prefix TST- --count 1000 --random-length 12"
         )
         context["verify_command_hint"] = (
-            "python manage.py verify_coupon_pool_iiko --series <SERIES> --sample-size 50"
+            "python manage.py verify_coupon_pool_iiko --series <SERIES> --sample-info-check-limit 50"
         )
         return context
 
