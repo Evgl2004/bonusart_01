@@ -99,7 +99,7 @@ class CouponCampaignGateServiceTests(TestCase):
         """
         При корректных данных сервис должен:
         1. назначить купон;
-        2. проставить sync=ok;
+        2. поставить событие синка в статус pending;
         3. персонализировать текст строки.
         """
         row = self._create_row("1234")
@@ -130,14 +130,18 @@ class CouponCampaignGateServiceTests(TestCase):
 
         assignment = CouponCampaignAssignment.objects.get(campaign=self.mailing, guest=row.guest)
         self.assertEqual(assignment.coupon_id, coupon.id)
-        self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
+        self.assertEqual(
+            assignment.vtelemax_sync_status,
+            CouponCampaignAssignment.VtelemaxSyncStatus.PENDING,
+        )
+        self.assertIsNone(assignment.vtelemax_synced_at)
         self.assertEqual(assignment.status, CouponCampaignAssignment.Status.RESERVED)
         self.assertEqual(assignment.venue_code, "DEP_1")
         self.assertEqual(assignment.promo_text, "Скидка 20% на сет по купону.")
 
         queue_event = CouponVtelemaxSyncQueue.objects.filter(assignment=assignment).order_by("-id").first()
         self.assertIsNotNone(queue_event)
-        self.assertEqual(queue_event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(queue_event.status, CouponVtelemaxSyncQueue.Status.PENDING)
 
         row.refresh_from_db()
         self.assertIn("TST-AAA111", row.text_mailing_list)

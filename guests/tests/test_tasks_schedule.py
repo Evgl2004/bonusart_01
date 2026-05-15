@@ -140,6 +140,71 @@ class OlapScheduleTasksTests(SimpleTestCase):
         )
 
 
+class VtelemaxCouponSyncScheduleTaskTests(SimpleTestCase):
+    """
+    Проверяет плановую задачу доставки купонов SAGUR -> vtelemax.
+    """
+
+    @override_settings(
+        VTELEMAX_COUPON_SYNC_ENABLED=False,
+        VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.VtelemaxCouponSyncService")
+    def test_coupon_sync_task_returns_zero_when_globally_disabled(self, mocked_service_cls):
+        result = tasks.run_vtelemax_coupon_sync_queue_task()
+        self.assertEqual(result, 0)
+        mocked_service_cls.from_settings.assert_not_called()
+
+    @override_settings(
+        VTELEMAX_COUPON_SYNC_ENABLED=True,
+        VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED=False,
+    )
+    @patch("guests.tasks.VtelemaxCouponSyncService")
+    def test_coupon_sync_task_returns_zero_when_schedule_disabled(self, mocked_service_cls):
+        result = tasks.run_vtelemax_coupon_sync_queue_task()
+        self.assertEqual(result, 0)
+        mocked_service_cls.from_settings.assert_not_called()
+
+    @override_settings(
+        VTELEMAX_COUPON_SYNC_ENABLED=True,
+        VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED=True,
+        VTELEMAX_COUPON_SYNC_BATCH_SIZE=77,
+    )
+    @patch("guests.tasks.VtelemaxCouponSyncService")
+    def test_coupon_sync_task_processes_batch(self, mocked_service_cls):
+        mocked_stats = MagicMock()
+        mocked_stats.to_dict.return_value = {
+            "scanned": 5,
+            "processed": 4,
+            "acked": 3,
+            "failed": 1,
+            "skipped_max_attempts": 0,
+            "assignments_acked": 2,
+            "status_updates_acked": 1,
+        }
+        mocked_service = MagicMock()
+        mocked_service.process_batch.return_value = mocked_stats
+        mocked_service_cls.from_settings.return_value = mocked_service
+
+        result = tasks.run_vtelemax_coupon_sync_queue_task()
+
+        self.assertEqual(result, 4)
+        mocked_service_cls.from_settings.assert_called_once_with()
+        mocked_service.process_batch.assert_called_once_with(limit=77)
+
+    @override_settings(
+        VTELEMAX_COUPON_SYNC_ENABLED=True,
+        VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.VtelemaxCouponSyncService")
+    def test_coupon_sync_task_returns_zero_on_error(self, mocked_service_cls):
+        mocked_service_cls.from_settings.side_effect = RuntimeError("sync failed")
+
+        result = tasks.run_vtelemax_coupon_sync_queue_task()
+
+        self.assertEqual(result, 0)
+
+
 class OlapDerivedScheduleTasksTests(SimpleTestCase):
     """
     Проверяет расписание инкрементальных витрин (order/daily/window).

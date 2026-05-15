@@ -13,6 +13,7 @@ from .services.notification_handler_registry import run_registered_schedule_scen
 from .services.iiko_olap_client import build_iiko_olap_client_from_settings
 from .services.olap_check_sync import OlapCheckSyncWorkerService
 from .services.olap_control_pull import OlapControlPullOptions, OlapControlPullService
+from .services.vtelemax_coupon_sync import VtelemaxCouponSyncService
 from .services.webhooks import process_recent_webhooks
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,48 @@ def run_vtelemax_recipients_delta_task() -> int:
         return 1
     except Exception as err:
         logger.exception("Vtelemax sync (schedule): failed: %s", err)
+        return 0
+
+
+def run_vtelemax_coupon_sync_queue_task() -> int:
+    """
+    Плановая обработка очереди отправки купонов SAGUR -> vtelemax.
+
+    Назначение:
+    1. брать из БД пачку pending/error/sent событий;
+    2. доставлять события в vtelemax c HMAC-подписью;
+    3. подтверждать или переводить события в retry.
+    """
+    if not bool(getattr(settings, "VTELEMAX_COUPON_SYNC_ENABLED", False)):
+        logger.info("Vtelemax coupon sync (schedule): disabled by VTELEMAX_COUPON_SYNC_ENABLED.")
+        return 0
+    if not bool(getattr(settings, "VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED", False)):
+        logger.info(
+            "Vtelemax coupon sync (schedule): disabled by VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED."
+        )
+        return 0
+
+    batch_size = max(1, int(getattr(settings, "VTELEMAX_COUPON_SYNC_BATCH_SIZE", 100) or 100))
+    try:
+        service = VtelemaxCouponSyncService.from_settings()
+        stats = service.process_batch(limit=batch_size)
+        payload = stats.to_dict()
+        logger.info(
+            (
+                "Vtelemax coupon sync (schedule): scanned=%s processed=%s acked=%s failed=%s "
+                "skipped_max_attempts=%s assignments_acked=%s status_updates_acked=%s"
+            ),
+            payload["scanned"],
+            payload["processed"],
+            payload["acked"],
+            payload["failed"],
+            payload["skipped_max_attempts"],
+            payload["assignments_acked"],
+            payload["status_updates_acked"],
+        )
+        return int(payload["processed"])
+    except Exception as err:
+        logger.exception("Vtelemax coupon sync (schedule): failed: %s", err)
         return 0
 
 

@@ -482,9 +482,9 @@ class CouponCampaignGateService:
                 assignment.venue_code = assignment.venue_code or coupon_venue_code
                 assignment.venue_name = assignment.venue_name or coupon_venue_name or None
                 assignment.promo_text = assignment.promo_text or coupon_promo_text or None
-                assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.OK
+                assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.PENDING
                 assignment.vtelemax_sync_error = None
-                assignment.vtelemax_synced_at = now
+                assignment.vtelemax_synced_at = None
                 assignment.save(
                     update_fields=[
                         "person_id",
@@ -501,7 +501,7 @@ class CouponCampaignGateService:
                 queue_events_created += self._upsert_sync_queue_event(
                     assignment=assignment,
                     now=now,
-                    status=CouponVtelemaxSyncQueue.Status.ACKED,
+                    status=CouponVtelemaxSyncQueue.Status.PENDING,
                     last_error=None,
                 )
 
@@ -615,10 +615,16 @@ class CouponCampaignGateService:
         existing.payload_json = payload
         existing.status = status
         existing.last_error = last_error
-        existing.sent_at = now if status in (CouponVtelemaxSyncQueue.Status.SENT, CouponVtelemaxSyncQueue.Status.ACKED) else existing.sent_at
-        existing.ack_at = now if status == CouponVtelemaxSyncQueue.Status.ACKED else existing.ack_at
+        existing.sent_at = (
+            now
+            if status in (CouponVtelemaxSyncQueue.Status.SENT, CouponVtelemaxSyncQueue.Status.ACKED)
+            else None
+        )
+        existing.ack_at = now if status == CouponVtelemaxSyncQueue.Status.ACKED else None
         if status in (CouponVtelemaxSyncQueue.Status.SENT, CouponVtelemaxSyncQueue.Status.ACKED):
             existing.attempts = int(existing.attempts or 0) + 1
+        elif status == CouponVtelemaxSyncQueue.Status.PENDING:
+            existing.attempts = 0
         existing.next_retry_at = now
         existing.save(
             update_fields=[

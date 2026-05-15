@@ -519,6 +519,69 @@ VTELEMAX_SYNC_BOT_CODE_VK = str(os.getenv("VTELEMAX_SYNC_BOT_CODE_VK", "") or ""
 VTELEMAX_SYNC_SCHEDULE_ENABLED = _env_bool("VTELEMAX_SYNC_SCHEDULE_ENABLED", False)
 VTELEMAX_SYNC_SCHEDULE_MINUTES = _env_int("VTELEMAX_SYNC_SCHEDULE_MINUTES", 5, min_value=1)
 
+# Очередь доставки купонных событий SAGUR -> vtelemax.
+VTELEMAX_COUPON_SYNC_ENABLED = _env_bool("VTELEMAX_COUPON_SYNC_ENABLED", False)
+VTELEMAX_COUPON_SYNC_BASE_URL = str(
+    os.getenv("VTELEMAX_COUPON_SYNC_BASE_URL", "") or ""
+).strip() or VTELEMAX_SYNC_BASE_URL
+VTELEMAX_COUPON_SYNC_HMAC_SECRET = str(
+    os.getenv("VTELEMAX_COUPON_SYNC_HMAC_SECRET", "") or ""
+).strip() or VTELEMAX_SYNC_HMAC_SECRET
+VTELEMAX_COUPON_SYNC_REQUIRE_HTTPS = _env_bool("VTELEMAX_COUPON_SYNC_REQUIRE_HTTPS", True)
+VTELEMAX_COUPON_SYNC_ENDPOINT = str(
+    os.getenv("VTELEMAX_COUPON_SYNC_ENDPOINT", "/internal/integration/v1/sagur/coupons/events")
+    or "/internal/integration/v1/sagur/coupons/events"
+).strip()
+try:
+    VTELEMAX_COUPON_SYNC_HTTP_TIMEOUT_SECONDS = float(
+        os.getenv("VTELEMAX_COUPON_SYNC_HTTP_TIMEOUT_SECONDS", "20") or "20"
+    )
+except ValueError:
+    VTELEMAX_COUPON_SYNC_HTTP_TIMEOUT_SECONDS = 20.0
+VTELEMAX_COUPON_SYNC_MAX_ATTEMPTS = _env_int("VTELEMAX_COUPON_SYNC_MAX_ATTEMPTS", 8, min_value=1)
+VTELEMAX_COUPON_SYNC_RETRY_BASE_SECONDS = _env_int(
+    "VTELEMAX_COUPON_SYNC_RETRY_BASE_SECONDS",
+    30,
+    min_value=1,
+)
+VTELEMAX_COUPON_SYNC_RETRY_MAX_SECONDS = _env_int(
+    "VTELEMAX_COUPON_SYNC_RETRY_MAX_SECONDS",
+    3600,
+    min_value=1,
+)
+if VTELEMAX_COUPON_SYNC_RETRY_MAX_SECONDS < VTELEMAX_COUPON_SYNC_RETRY_BASE_SECONDS:
+    VTELEMAX_COUPON_SYNC_RETRY_MAX_SECONDS = VTELEMAX_COUPON_SYNC_RETRY_BASE_SECONDS
+
+VTELEMAX_COUPON_SYNC_BATCH_SIZE = _env_int("VTELEMAX_COUPON_SYNC_BATCH_SIZE", 100, min_value=1)
+try:
+    VTELEMAX_COUPON_SYNC_LOOP_SLEEP_SECONDS = float(
+        os.getenv("VTELEMAX_COUPON_SYNC_LOOP_SLEEP_SECONDS", "5") or "5"
+    )
+except ValueError:
+    VTELEMAX_COUPON_SYNC_LOOP_SLEEP_SECONDS = 5.0
+if VTELEMAX_COUPON_SYNC_LOOP_SLEEP_SECONDS < 0.1:
+    VTELEMAX_COUPON_SYNC_LOOP_SLEEP_SECONDS = 0.1
+VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED = _env_bool(
+    "VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED",
+    False,
+)
+VTELEMAX_COUPON_SYNC_SCHEDULE_MINUTES = _env_int(
+    "VTELEMAX_COUPON_SYNC_SCHEDULE_MINUTES",
+    1,
+    min_value=1,
+)
+
+# Pre-send gate для купонных кампаний.
+VTELEMAX_COUPON_SYNC_GATE_REQUIRE_FRESH_STATE = _env_bool(
+    "VTELEMAX_COUPON_SYNC_GATE_REQUIRE_FRESH_STATE",
+    True,
+)
+VTELEMAX_COUPON_SYNC_GATE_MAX_SYNC_AGE_MINUTES = _env_int(
+    "VTELEMAX_COUPON_SYNC_GATE_MAX_SYNC_AGE_MINUTES",
+    120,
+    min_value=1,
+)
+
 # Автосинхронизация статусов купонов после обновления `order_fact`.
 # Если включено, плановая задача `run_order_fact_scheduled_task` сразу после пересчёта
 # запускает `sync_coupon_redemptions` на том же date-range.
@@ -548,6 +611,7 @@ DJANGO_Q_SCHEDULE_MANAGED_NAMES = (
     "sync_webhooks_recent",
     "run_notification_scenarios",
     "run_vtelemax_recipients_delta",
+    "run_vtelemax_coupon_sync_queue",
     "run_olap_sync_windowed",
     "run_olap_rebuild_nightly",
     "run_order_fact_tail",
@@ -929,6 +993,14 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_vtelemax_recipients_delta", None)
+
+    if VTELEMAX_COUPON_SYNC_ENABLED and VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED:
+        schedule_map["run_vtelemax_coupon_sync_queue"] = {
+            "func": "guests.tasks.run_vtelemax_coupon_sync_queue_task",
+            "minutes": VTELEMAX_COUPON_SYNC_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_vtelemax_coupon_sync_queue", None)
 
     if OLAP_SYNC_SCHEDULE_ENABLED:
         if OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES:
