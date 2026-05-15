@@ -290,3 +290,87 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         assignment.coupon.refresh_from_db()
         self.assertFalse(assignment.coupon.is_active)
         self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_status_update_canceled_release_is_idempotent_on_repeated_events(self, mocked_client_cls):
+        assignment, first_event = self._create_status_update_event(
+            status_value=CouponCampaignAssignment.Status.CANCELED,
+            release_to_pool=True,
+        )
+        mocked_response = Mock()
+        mocked_response.status_code = 200
+        mocked_response.text = ""
+        mocked_response.json.return_value = {"ok": True}
+        mocked_client = Mock()
+        mocked_client.post.return_value = mocked_response
+        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+
+        service = self._build_service()
+        first_stats = service.process_batch(limit=10, now=self.now)
+        self.assertEqual(first_stats.acked, 1)
+
+        assignment.refresh_from_db()
+        assignment.coupon.refresh_from_db()
+        self.assertTrue(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.VERIFIED_LOADED)
+        self.assertIsNone(assignment.coupon.assigned_at)
+
+        second_event = CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            assignment=assignment,
+            payload_json={
+                "campaign_id": int(self.mailing.id),
+                "assignment_id": int(assignment.id),
+                "coupon_series": assignment.coupon_series,
+                "coupon_code": assignment.coupon_code,
+                "status": CouponCampaignAssignment.Status.CANCELED,
+                "meta": {
+                    "release_to_pool": True,
+                    "remove_from_guest": True,
+                },
+            },
+            status=CouponVtelemaxSyncQueue.Status.PENDING,
+            attempts=0,
+            next_retry_at=self.now - timedelta(seconds=1),
+        )
+
+        second_stats = service.process_batch(limit=10, now=self.now)
+        self.assertEqual(second_stats.acked, 1)
+        self.assertEqual(second_stats.status_updates_acked, 1)
+
+        first_event.refresh_from_db()
+        second_event.refresh_from_db()
+        self.assertEqual(first_event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(second_event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+
+        assignment.refresh_from_db()
+        assignment.coupon.refresh_from_db()
+        self.assertTrue(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.VERIFIED_LOADED)
+        self.assertIsNone(assignment.coupon.assigned_at)
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_status_update_used_never_releases_coupon_even_with_release_flag(self, mocked_client_cls):
+        assignment, event = self._create_status_update_event(
+            status_value=CouponCampaignAssignment.Status.USED,
+            release_to_pool=True,
+        )
+        mocked_response = Mock()
+        mocked_response.status_code = 200
+        mocked_response.text = ""
+        mocked_response.json.return_value = {"ok": True}
+        mocked_client = Mock()
+        mocked_client.post.return_value = mocked_response
+        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+
+        stats = self._build_service().process_batch(limit=10, now=self.now)
+        self.assertEqual(stats.acked, 1)
+        self.assertEqual(stats.status_updates_acked, 1)
+
+        event.refresh_from_db()
+        self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+
+        assignment.refresh_from_db()
+        assignment.coupon.refresh_from_db()
+        self.assertFalse(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
