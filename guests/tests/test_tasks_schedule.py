@@ -205,6 +205,53 @@ class VtelemaxCouponSyncScheduleTaskTests(SimpleTestCase):
         self.assertEqual(result, 0)
 
 
+class CouponCampaignCloseScheduleTaskTests(SimpleTestCase):
+    """
+    Проверяет плановую задачу post-campaign закрытия купонов.
+    """
+
+    @override_settings(
+        COUPON_CAMPAIGN_CLOSE_ENABLED=False,
+        COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.call_command")
+    def test_coupon_close_task_returns_zero_when_globally_disabled(self, mocked_call_command):
+        result = tasks.run_coupon_campaign_close_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        COUPON_CAMPAIGN_CLOSE_ENABLED=True,
+        COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED=False,
+    )
+    @patch("guests.tasks.call_command")
+    def test_coupon_close_task_returns_zero_when_schedule_disabled(self, mocked_call_command):
+        result = tasks.run_coupon_campaign_close_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        COUPON_CAMPAIGN_CLOSE_ENABLED=True,
+        COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED=True,
+        COUPON_CAMPAIGN_CLOSE_LIMIT=55,
+    )
+    @patch("guests.tasks.call_command")
+    def test_coupon_close_task_calls_management_command(self, mocked_call_command):
+        result = tasks.run_coupon_campaign_close_task()
+        self.assertEqual(result, 1)
+        mocked_call_command.assert_called_once_with("close_coupon_campaigns", limit=55)
+
+    @override_settings(
+        COUPON_CAMPAIGN_CLOSE_ENABLED=True,
+        COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.call_command", side_effect=RuntimeError("close failed"))
+    def test_coupon_close_task_returns_zero_on_error(self, mocked_call_command):
+        result = tasks.run_coupon_campaign_close_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_called_once()
+
+
 class OlapDerivedScheduleTasksTests(SimpleTestCase):
     """
     Проверяет расписание инкрементальных витрин (order/daily/window).

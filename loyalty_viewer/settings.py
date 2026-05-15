@@ -571,6 +571,16 @@ VTELEMAX_COUPON_SYNC_SCHEDULE_MINUTES = _env_int(
     min_value=1,
 )
 
+# Post-campaign lifecycle купонов (закрытие завершённых купонных кампаний).
+COUPON_CAMPAIGN_CLOSE_ENABLED = _env_bool("COUPON_CAMPAIGN_CLOSE_ENABLED", True)
+COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED = _env_bool("COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED", False)
+COUPON_CAMPAIGN_CLOSE_SCHEDULE_MINUTES = _env_int(
+    "COUPON_CAMPAIGN_CLOSE_SCHEDULE_MINUTES",
+    15,
+    min_value=1,
+)
+COUPON_CAMPAIGN_CLOSE_LIMIT = _env_int("COUPON_CAMPAIGN_CLOSE_LIMIT", 100, min_value=1)
+
 # Pre-send gate для купонных кампаний.
 VTELEMAX_COUPON_SYNC_GATE_REQUIRE_FRESH_STATE = _env_bool(
     "VTELEMAX_COUPON_SYNC_GATE_REQUIRE_FRESH_STATE",
@@ -612,6 +622,7 @@ DJANGO_Q_SCHEDULE_MANAGED_NAMES = (
     "run_notification_scenarios",
     "run_vtelemax_recipients_delta",
     "run_vtelemax_coupon_sync_queue",
+    "run_coupon_campaign_close",
     "run_olap_sync_windowed",
     "run_olap_rebuild_nightly",
     "run_order_fact_tail",
@@ -1001,6 +1012,14 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_vtelemax_coupon_sync_queue", None)
+
+    if COUPON_CAMPAIGN_CLOSE_ENABLED and COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED:
+        schedule_map["run_coupon_campaign_close"] = {
+            "func": "guests.tasks.run_coupon_campaign_close_task",
+            "minutes": COUPON_CAMPAIGN_CLOSE_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_coupon_campaign_close", None)
 
     if OLAP_SYNC_SCHEDULE_ENABLED:
         if OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES:

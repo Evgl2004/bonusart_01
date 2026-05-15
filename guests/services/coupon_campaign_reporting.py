@@ -22,6 +22,8 @@ class CouponCampaignPerformanceSnapshot:
     assignments_reserved: int = 0
     assignments_sent: int = 0
     assignments_used: int = 0
+    assignments_expired: int = 0
+    assignments_canceled: int = 0
     assignments_error: int = 0
     used_within_campaign: int = 0
     used_late_total: int = 0
@@ -83,6 +85,8 @@ class CouponCampaignPerformanceSnapshot:
             "assignments_reserved": int(self.assignments_reserved),
             "assignments_sent": int(self.assignments_sent),
             "assignments_used": int(self.assignments_used),
+            "assignments_expired": int(self.assignments_expired),
+            "assignments_canceled": int(self.assignments_canceled),
             "assignments_error": int(self.assignments_error),
             "coupons_sent_total": int(self.coupons_sent_total),
             "used_within_campaign": int(self.used_within_campaign),
@@ -136,12 +140,16 @@ def build_coupon_campaign_performance_snapshot(
         reserved=Count("id", filter=Q(status=CouponCampaignAssignment.Status.RESERVED)),
         sent=Count("id", filter=Q(status=CouponCampaignAssignment.Status.SENT)),
         used=Count("id", filter=Q(status=CouponCampaignAssignment.Status.USED)),
+        expired=Count("id", filter=Q(status=CouponCampaignAssignment.Status.EXPIRED)),
+        canceled=Count("id", filter=Q(status=CouponCampaignAssignment.Status.CANCELED)),
         error=Count("id", filter=Q(status=CouponCampaignAssignment.Status.ERROR)),
     )
     snapshot.assignments_total = int(status_counts.get("total") or 0)
     snapshot.assignments_reserved = int(status_counts.get("reserved") or 0)
     snapshot.assignments_sent = int(status_counts.get("sent") or 0)
     snapshot.assignments_used = int(status_counts.get("used") or 0)
+    snapshot.assignments_expired = int(status_counts.get("expired") or 0)
+    snapshot.assignments_canceled = int(status_counts.get("canceled") or 0)
     snapshot.assignments_error = int(status_counts.get("error") or 0)
 
     if snapshot.assignments_total <= 0:

@@ -120,6 +120,34 @@ def run_vtelemax_coupon_sync_queue_task() -> int:
         return 0
 
 
+def run_coupon_campaign_close_task() -> int:
+    """
+    Плановое post-campaign закрытие купонов.
+
+    Логика:
+    1. Берёт завершённые купонные кампании;
+    2. Переводит `sent -> expired`, `reserved -> canceled`;
+    3. Ставит status_update события в sync-очередь vtelemax.
+    """
+    if not bool(getattr(settings, "COUPON_CAMPAIGN_CLOSE_ENABLED", True)):
+        logger.info("Coupon campaign close (schedule): disabled by COUPON_CAMPAIGN_CLOSE_ENABLED.")
+        return 0
+    if not bool(getattr(settings, "COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED", False)):
+        logger.info(
+            "Coupon campaign close (schedule): disabled by COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED."
+        )
+        return 0
+
+    limit = max(1, int(getattr(settings, "COUPON_CAMPAIGN_CLOSE_LIMIT", 100) or 100))
+    try:
+        call_command("close_coupon_campaigns", limit=limit)
+        logger.info("Coupon campaign close (schedule): completed (limit=%s).", limit)
+        return 1
+    except Exception as err:
+        logger.exception("Coupon campaign close (schedule): failed: %s", err)
+        return 0
+
+
 def _parse_hhmm(value: str, *, default: dt_time) -> dt_time:
     """
     Возвращает время в формате HH:MM.

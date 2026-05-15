@@ -13,7 +13,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone as django_timezone
 
-from guests.models import CouponCampaignAssignment, CouponVtelemaxSyncQueue
+from guests.models import CouponCampaignAssignment, CouponRegistryEntry, CouponVtelemaxSyncQueue
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +272,7 @@ class VtelemaxCouponSyncService:
                 ]
             )
             self._mark_assignment_ok(assignment=succeeded.assignment, synced_at=attempt_time)
+            self._apply_post_ack_effects(event=succeeded)
         return True
 
     def _send_event(self, *, event: CouponVtelemaxSyncQueue, sent_at) -> None:
@@ -348,6 +349,65 @@ class VtelemaxCouponSyncService:
         exponent = max(0, int(attempt_no) - 1)
         candidate = int(self.retry_base_seconds * (2 ** exponent))
         return min(self.retry_max_seconds, max(self.retry_base_seconds, candidate))
+
+    @staticmethod
+    def _bool_from_meta(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        token = str(value).strip().lower()
+        return token in {"1", "true", "yes", "y", "on"}
+
+    def _apply_post_ack_effects(self, *, event: CouponVtelemaxSyncQueue) -> None:
+        """
+        Применяет побочные эффекты после подтверждённой отправки события в vtelemax.
+
+        Важный кейс:
+        1. `status_update` со статусом `canceled` и `meta.release_to_pool=true`;
+        2. купон освобождается обратно в пул ТОЛЬКО после ACK, чтобы исключить
+           повторную выдачу до фактического скрытия купона у предыдущего гостя.
+        """
+        if event.direction != CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE:
+            return
+        assignment = event.assignment
+        if assignment is None:
+            return
+
+        payload = dict(event.payload_json or {})
+        status_value = str(payload.get("status") or "").strip().lower()
+        meta_raw = payload.get("meta")
+        meta = meta_raw if isinstance(meta_raw, dict) else {}
+        release_to_pool = self._bool_from_meta(meta.get("release_to_pool"))
+        if status_value != CouponCampaignAssignment.Status.CANCELED or not release_to_pool:
+            return
+
+        assignment_for_update = (
+            CouponCampaignAssignment.objects.select_for_update()
+            .select_related("coupon")
+            .filter(id=assignment.id)
+            .first()
+        )
+        if assignment_for_update is None or assignment_for_update.coupon_id is None:
+            return
+        if assignment_for_update.status != CouponCampaignAssignment.Status.CANCELED:
+            return
+
+        coupon = assignment_for_update.coupon
+        if coupon is None:
+            return
+        already_released = (
+            bool(coupon.is_active)
+            and coupon.pool_status == CouponRegistryEntry.PoolStatus.VERIFIED_LOADED
+            and coupon.assigned_at is None
+        )
+        if already_released:
+            return
+
+        coupon.is_active = True
+        coupon.pool_status = CouponRegistryEntry.PoolStatus.VERIFIED_LOADED
+        coupon.assigned_at = None
+        coupon.save(update_fields=["is_active", "pool_status", "assigned_at", "updated_at"])
 
     @staticmethod
     def _mark_assignment_ok(*, assignment: CouponCampaignAssignment | None, synced_at) -> None:

@@ -400,6 +400,109 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(archived_response.status_code, 200)
         self.assertContains(archived_response, "Promo to archive")
 
+    def test_campaign_ops_cancel_campaign_releases_reserved_coupons(self):
+        """
+        Safe cancel должен остановить кампанию и освободить reserved-купоны обратно в пул.
+        """
+        mailing = self._create_mailing()
+        mailing.name = "Promo to cancel"
+        mailing.is_active = True
+        mailing.coupon_series = "TEST"
+        mailing.coupon_venue_code = "DEP_1"
+        mailing.coupon_venue_name = "Тестовое заведение"
+        mailing.coupon_promo_text = "Скидка 20%"
+        mailing.save(
+            update_fields=[
+                "name",
+                "is_active",
+                "coupon_series",
+                "coupon_venue_code",
+                "coupon_venue_name",
+                "coupon_promo_text",
+                "updated_at",
+            ]
+        )
+
+        guest = Guest.objects.create(
+            phone="+79990000663",
+            first_name="Анна",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.PENDING,
+            mailing_guest=row,
+            guest=guest,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-CANCEL-VIEW-1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+            assigned_at=self.now,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=mailing,
+            guest=guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-CANCEL-VIEW-1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            promo_text="Скидка 20%",
+            status=CouponCampaignAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "cancel_campaign"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}))
+
+        mailing.refresh_from_db()
+        self.assertFalse(mailing.is_active)
+
+        row.refresh_from_db()
+        self.assertEqual(row.status, MailingGuest.Status.ERROR)
+        self.assertEqual(row.delivery_status, "campaign_canceled")
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertEqual(task.status, DispatchTask.Status.CANCELED)
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.CANCELED)
+        self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.PENDING)
+        assignment.coupon.refresh_from_db()
+        self.assertFalse(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+        self.assertIsNotNone(assignment.coupon.assigned_at)
+
+        self.assertEqual(
+            CouponVtelemaxSyncQueue.objects.filter(
+                assignment=assignment,
+                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            ).count(),
+            1,
+        )
+
     def test_campaign_ops_toggle_and_retry_rows(self):
         """
         Операционные действия v2 должны уметь запускать кампанию

@@ -106,6 +106,41 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         )
         return assignment, event
 
+    def _create_status_update_event(
+        self,
+        *,
+        status_value: str,
+        release_to_pool: bool,
+        event_status: str = CouponVtelemaxSyncQueue.Status.PENDING,
+    ) -> tuple[CouponCampaignAssignment, CouponVtelemaxSyncQueue]:
+        assignment, _ = self._create_assignment_with_event()
+        CouponVtelemaxSyncQueue.objects.filter(assignment=assignment).delete()
+        assignment.status = status_value
+        assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.PENDING
+        assignment.vtelemax_synced_at = None
+        assignment.save(
+            update_fields=["status", "vtelemax_sync_status", "vtelemax_synced_at", "updated_at"]
+        )
+        event = CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            assignment=assignment,
+            payload_json={
+                "campaign_id": int(self.mailing.id),
+                "assignment_id": int(assignment.id),
+                "coupon_series": assignment.coupon_series,
+                "coupon_code": assignment.coupon_code,
+                "status": status_value,
+                "meta": {
+                    "release_to_pool": bool(release_to_pool),
+                    "remove_from_guest": True,
+                },
+            },
+            status=event_status,
+            attempts=0,
+            next_retry_at=self.now - timedelta(seconds=5),
+        )
+        return assignment, event
+
     @staticmethod
     def _random_digits(length: int) -> str:
         """
@@ -192,3 +227,66 @@ class VtelemaxCouponSyncServiceTests(TestCase):
 
         event.refresh_from_db()
         self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.PENDING)
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_status_update_canceled_release_to_pool_happens_only_after_ack(self, mocked_client_cls):
+        assignment, event = self._create_status_update_event(
+            status_value=CouponCampaignAssignment.Status.CANCELED,
+            release_to_pool=True,
+        )
+        assignment.coupon.refresh_from_db()
+        self.assertFalse(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+
+        mocked_response = Mock()
+        mocked_response.status_code = 200
+        mocked_response.text = ""
+        mocked_response.json.return_value = {"ok": True}
+        mocked_client = Mock()
+        mocked_client.post.return_value = mocked_response
+        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+
+        stats = self._build_service().process_batch(limit=10, now=self.now)
+        self.assertEqual(stats.acked, 1)
+        self.assertEqual(stats.status_updates_acked, 1)
+
+        event.refresh_from_db()
+        self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
+
+        assignment.coupon.refresh_from_db()
+        self.assertTrue(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.VERIFIED_LOADED)
+        self.assertIsNone(assignment.coupon.assigned_at)
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_status_update_canceled_without_release_flag_does_not_release_coupon(self, mocked_client_cls):
+        assignment, event = self._create_status_update_event(
+            status_value=CouponCampaignAssignment.Status.CANCELED,
+            release_to_pool=False,
+        )
+        assignment.coupon.refresh_from_db()
+        self.assertFalse(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+
+        mocked_response = Mock()
+        mocked_response.status_code = 200
+        mocked_response.text = ""
+        mocked_response.json.return_value = {"ok": True}
+        mocked_client = Mock()
+        mocked_client.post.return_value = mocked_response
+        mocked_client_cls.return_value.__enter__.return_value = mocked_client
+
+        stats = self._build_service().process_batch(limit=10, now=self.now)
+        self.assertEqual(stats.acked, 1)
+        self.assertEqual(stats.status_updates_acked, 1)
+
+        event.refresh_from_db()
+        self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+
+        assignment.refresh_from_db()
+        assignment.coupon.refresh_from_db()
+        self.assertFalse(assignment.coupon.is_active)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)

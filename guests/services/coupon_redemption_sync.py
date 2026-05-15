@@ -240,6 +240,10 @@ class CouponRedemptionSyncService:
             "status": CouponCampaignAssignment.Status.USED,
             "used_order_id": used_order_id,
             "used_business_date": used_business_date.isoformat() if used_business_date else None,
+            "meta": {
+                "remove_from_guest": True,
+                "release_to_pool": False,
+            },
         }
 
         existing = (

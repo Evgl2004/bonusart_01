@@ -119,6 +119,8 @@
             <div class="mail-status-row"><span>Серия купонов</span><b>{{ coupon_campaign_report.coupon_series|default:"-" }}</b></div>
             <div class="mail-status-row"><span>Отправлено купонов</span><b>{{ coupon_campaign_report.coupons_sent_total }}</b></div>
             <div class="mail-status-row"><span>Использовано купонов</span><b>{{ coupon_campaign_report.assignments_used }}</b></div>
+            <div class="mail-status-row"><span>Истекло купонов</span><b>{{ coupon_campaign_report.assignments_expired }}</b></div>
+            <div class="mail-status-row"><span>Отменено купонов</span><b>{{ coupon_campaign_report.assignments_canceled }}</b></div>
             <div class="mail-status-row"><span>Конверсия купонов</span><b>{{ coupon_campaign_report.usage_rate_percent }}%</b></div>
             <div class="mail-status-row"><span>Вернувшиеся гости</span><b>{{ coupon_campaign_report.returned_guest_coupon }}</b></div>
             <div class="mail-status-row"><span>Доля вернувшихся</span><b>{{ coupon_campaign_report.returned_guests_rate_percent }}%</b></div>
@@ -197,6 +199,15 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="run_now_campaign">
                 <button type="submit" class="btn btn-outline-primary btn-sm">Немедленный запуск (run-now)</button>
+              </form>
+            </div>
+
+            <div class="mail-action-row">
+              <div class="mail-action-desc">Полностью останавливает кампанию, отменяет ожидающие задачи и освобождает неотправленные купоны.</div>
+              <form method="post" action="{{ ops_url }}">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="cancel_campaign">
+                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Остановить кампанию и освободить неотправленные купоны?');">Остановить кампанию (safe cancel)</button>
               </form>
             </div>
           </div>

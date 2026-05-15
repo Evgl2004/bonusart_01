@@ -44,6 +44,7 @@ from guests.services.notification_handler_registry import (
     run_registered_schedule_scenarios,
 )
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
+from guests.services.coupon_campaign_lifecycle import CouponCampaignLifecycleService
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
 logger = logging.getLogger(__name__)
@@ -358,6 +359,7 @@ class MailingsV2CampaignOpsView(View):
     1. безопасный старт/пауза кампании;
     2. возврат error/in_progress строк в planned;
     3. ручной retry задач dispatch со статусом failed.
+    4. безопасную отмену кампании с освобождением неотправленных купонов.
     """
 
     http_method_names = ["post"]
@@ -386,6 +388,7 @@ class MailingsV2CampaignOpsView(View):
             "retry_failed_dispatch",
             "dry_run_campaign",
             "run_now_campaign",
+            "cancel_campaign",
         }:
             messages.error(request, "Архивная кампания недоступна для операционных действий.")
             return redirect(self._resolve_next_url(request, status_url))
@@ -495,6 +498,30 @@ class MailingsV2CampaignOpsView(View):
                         f"ready={report['ready_rows_before']})."
                     ),
                 )
+            return redirect(self._resolve_next_url(request, status_url))
+
+        if action == "cancel_campaign":
+            if mailing.is_archived:
+                messages.info(request, f"Кампания #{mailing.id} уже в архиве.")
+                return redirect(self._resolve_next_url(request, status_url))
+
+            lifecycle_service = CouponCampaignLifecycleService()
+            stats = lifecycle_service.cancel_campaign(
+                mailing=mailing,
+                reason="campaign_canceled_by_operator",
+                now=timezone.now(),
+                dry_run=False,
+            )
+            payload = stats.to_dict()
+            messages.success(
+                request,
+                (
+                    f"Кампания #{mailing.id} остановлена. "
+                    f"Строк отменено={payload['rows_canceled']}, "
+                    f"dispatch отменено={payload['dispatch_tasks_canceled']}, "
+                    f"купонов подготовлено к освобождению={payload.get('assignments_release_pending', 0)}."
+                ),
+            )
             return redirect(self._resolve_next_url(request, status_url))
 
         if action == "archive_campaign":
