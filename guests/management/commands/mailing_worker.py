@@ -31,6 +31,15 @@ SLEEP_SECONDS = 3
 # Сколько строк MailingGuest забираем за одну транзакцию из конкретной рассылки.
 BATCH_SIZE = 10
 
+# Временные причины блокировки sync-gate: строку оставляем в PLANNED,
+# чтобы она автоматически прошла после подтверждения ACK из vtelemax.
+COUPON_GATE_SOFT_BLOCK_CODES = {
+    "coupon_sync_event_pending",
+    "coupon_sync_event_sent_wait_ack",
+    "coupon_sync_status_pending",
+    "coupon_sync_synced_at_missing",
+}
+
 
 class Command(BaseCommand):
     """
@@ -171,7 +180,11 @@ def run_iteration() -> int:
     return total
 
 
-def process_one_mailing(mailing: Mailing, now) -> int:
+def process_one_mailing(
+    mailing: Mailing,
+    now,
+    gate_reports_collector: list[dict[str, object]] | None = None,
+) -> int:
     """
     Обрабатывает одну рассылку и ставит её строки в универсальную очередь.
 
@@ -231,21 +244,29 @@ def process_one_mailing(mailing: Mailing, now) -> int:
             dry_run=False,
         )
         coupon_gate_report = gate_report.to_dict()
+        if gate_reports_collector is not None:
+            gate_reports_collector.append(dict(coupon_gate_report))
 
         ready_row_ids = {int(row.id) for row in rows_for_enqueue}
         blocked_rows = [row for row in rows if int(row.id) not in ready_row_ids]
         if blocked_rows:
             issue_messages_by_row_id: dict[int, list[str]] = {}
+            issue_codes_by_row_id: dict[int, list[str]] = {}
             for issue in gate_report.issues:
                 issue_messages_by_row_id.setdefault(int(issue.row_id), []).append(issue.message)
+                issue_codes_by_row_id.setdefault(int(issue.row_id), []).append(str(issue.code or "unknown"))
             global_blockers = list(gate_report.global_blockers)
 
             for row in blocked_rows:
+                issue_codes = issue_codes_by_row_id.get(int(row.id), [])
                 issue_messages = issue_messages_by_row_id.get(int(row.id), [])
                 reason_parts = issue_messages if issue_messages else ["Строка заблокирована на этапе sync-gate."]
                 if global_blockers:
                     reason_parts.extend(global_blockers)
-                row.status = MailingGuest.Status.ERROR
+                soft_block_only = bool(issue_codes) and all(
+                    str(code) in COUPON_GATE_SOFT_BLOCK_CODES for code in issue_codes
+                )
+                row.status = MailingGuest.Status.PLANNED if soft_block_only else MailingGuest.Status.ERROR
                 row.delivery_status = "coupon_sync_gate_blocked"
                 row.error_description = " | ".join(reason_parts)[:1800]
 
@@ -258,6 +279,13 @@ def process_one_mailing(mailing: Mailing, now) -> int:
                 f"[mailing:{mailing.id}] coupon gate blocked rows: {len(blocked_rows)} "
                 f"(ready={len(rows_for_enqueue)})"
             )
+            if coupon_gate_report:
+                logger.info(
+                    "mailing coupon gate reasons: mailing_id=%s issues_by_code=%s global_blockers=%s",
+                    mailing.id,
+                    coupon_gate_report.get("issues_by_code"),
+                    coupon_gate_report.get("global_blockers"),
+                )
 
         if not rows_for_enqueue:
             print(f"[mailing:{mailing.id}] no rows passed coupon sync-gate")

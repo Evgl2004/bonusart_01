@@ -95,7 +95,7 @@ class CouponCampaignGateServiceTests(TestCase):
             guest=guest,
         )
 
-    def test_prepare_rows_success_creates_assignments_and_updates_text(self):
+    def test_prepare_rows_creates_assignment_but_blocks_until_sync_ack(self):
         """
         При корректных данных сервис должен:
         1. назначить купон;
@@ -122,11 +122,12 @@ class CouponCampaignGateServiceTests(TestCase):
             dry_run=False,
         )
 
-        self.assertEqual(len(ready_rows), 1)
+        self.assertEqual(len(ready_rows), 0)
         self.assertTrue(report.coupon_mode)
-        self.assertEqual(report.rows_blocked, 0)
+        self.assertEqual(report.rows_blocked, 1)
         self.assertEqual(report.created_assignments, 1)
-        self.assertEqual(report.sync_ok, 1)
+        self.assertEqual(report.sync_ok, 0)
+        self.assertEqual(report.issues_by_code().get("coupon_sync_event_pending"), 1)
 
         assignment = CouponCampaignAssignment.objects.get(campaign=self.mailing, guest=row.guest)
         self.assertEqual(assignment.coupon_id, coupon.id)
@@ -144,7 +145,62 @@ class CouponCampaignGateServiceTests(TestCase):
         self.assertEqual(queue_event.status, CouponVtelemaxSyncQueue.Status.PENDING)
 
         row.refresh_from_db()
-        self.assertIn("TST-AAA111", row.text_mailing_list)
+        self.assertEqual(row.text_mailing_list, "placeholder")
+
+    def test_prepare_rows_allows_dispatch_only_after_ack_and_ok_status(self):
+        """
+        Строка может уйти в отправку только при полном подтверждении:
+        1) queue-event в статусе ACKED;
+        2) assignment.vtelemax_sync_status == ok;
+        3) assignment.vtelemax_synced_at заполнен.
+        """
+        row = self._create_row("1235")
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900001235")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-AAA112",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=row.guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-AAA112",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            promo_text="Скидка 20% на сет по купону.",
+            assigned_at=self.now,
+            status=CouponCampaignAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            assignment=assignment,
+            payload_json={"coupon_code": "TST-AAA112"},
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            attempts=1,
+            next_retry_at=self.now,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+
+        service = CouponCampaignGateService()
+        ready_rows, report = service.prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 1)
+        self.assertEqual(report.rows_blocked, 0)
+        self.assertEqual(report.sync_ok, 1)
 
     def test_prepare_rows_blocks_when_coupons_not_enough(self):
         """
@@ -255,6 +311,57 @@ class CouponCampaignGateServiceTests(TestCase):
         assignment.refresh_from_db()
         self.assertEqual(assignment.status, CouponCampaignAssignment.Status.ERROR)
 
+    def test_prepare_rows_blocks_when_sync_event_is_error(self):
+        """
+        Если по назначению последний sync-event завершился ошибкой,
+        строка не должна попасть в отправку.
+        """
+        row = self._create_row("4460")
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900004460")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-ERR-1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=row.guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-ERR-1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            status=CouponCampaignAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.ERROR,
+            vtelemax_sync_error="transport timeout",
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            assignment=assignment,
+            payload_json={"coupon_code": "TST-ERR-1"},
+            status=CouponVtelemaxSyncQueue.Status.ERROR,
+            attempts=3,
+            next_retry_at=self.now,
+            last_error="transport timeout",
+        )
+
+        service = CouponCampaignGateService()
+        ready_rows, report = service.prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 0)
+        self.assertEqual(report.sync_ok, 0)
+        self.assertGreaterEqual(report.sync_error, 1)
+        self.assertEqual(report.issues_by_code().get("coupon_sync_event_error"), 1)
+
     def test_prepare_rows_global_campaign_uses_global_coupon(self):
         """
         Для общей кампании (__global__) сервис принимает общий купон.
@@ -286,9 +393,10 @@ class CouponCampaignGateServiceTests(TestCase):
             dry_run=False,
         )
 
-        self.assertEqual(len(ready_rows), 1)
+        self.assertEqual(len(ready_rows), 0)
         self.assertEqual(report.coupon_venue_code, COUPON_VENUE_GLOBAL_CODE)
         self.assertEqual(report.coupon_venue_name, COUPON_VENUE_GLOBAL_NAME)
+        self.assertEqual(report.issues_by_code().get("coupon_sync_event_pending"), 1)
 
         assignment = CouponCampaignAssignment.objects.get(campaign=self.mailing, guest=row.guest)
         self.assertEqual(assignment.coupon_id, coupon.id)

@@ -225,6 +225,12 @@
               серия: <b>{{ mailing_ops_run_now_report.coupon_series|default:"—" }}</b>,
               заведение: <b>{{ mailing_ops_run_now_report.coupon_venue_name|default:mailing_ops_run_now_report.coupon_venue_code|default:"—" }}</b>,
               блокировок sync-gate: <b>{{ mailing_ops_run_now_report.coupon_gate_blocked_rows }}</b>
+              {% if mailing_ops_run_now_report.coupon_gate_blocked_reasons %}
+                <br>Причины блокировок:
+                {% for reason, count in mailing_ops_run_now_report.coupon_gate_blocked_reasons.items %}
+                  <br>- {{ reason }} ({{ count }})
+                {% endfor %}
+              {% endif %}
             </div>
           {% endif %}
         </div>

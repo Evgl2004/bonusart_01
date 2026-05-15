@@ -20,7 +20,9 @@ from django.utils import timezone
 
 from guests.models import (
     BotProfile,
+    CouponCampaignAssignment,
     CouponRegistryEntry,
+    CouponVtelemaxSyncQueue,
     DispatchTask,
     Guest,
     GuestBotBinding,
@@ -626,9 +628,22 @@ class MailingsV2ViewsTests(TestCase):
         """
         mailing = self._create_mailing()
         mailing.coupon_series = "TEST"
+        mailing.coupon_venue_code = "DEP_1"
+        mailing.coupon_venue_name = "Тестовое заведение"
+        mailing.coupon_promo_text = "Скидка по купону"
         mailing.send_window_begin = time(0, 0)
         mailing.send_window_end = time(23, 59)
-        mailing.save(update_fields=["coupon_series", "send_window_begin", "send_window_end", "updated_at"])
+        mailing.save(
+            update_fields=[
+                "coupon_series",
+                "coupon_venue_code",
+                "coupon_venue_name",
+                "coupon_promo_text",
+                "send_window_begin",
+                "send_window_end",
+                "updated_at",
+            ]
+        )
 
         guest = Guest.objects.create(
             phone="+79990000883",
@@ -683,6 +698,116 @@ class MailingsV2ViewsTests(TestCase):
             CouponRegistryEntry.objects.filter(series="TEST", pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED).count(),
             0,
         )
+
+    def test_campaign_ops_run_now_coupon_mode_soft_block_stays_planned_until_ack(self):
+        """
+        Если купон назначен, но sync-event ещё без ACK, строка не должна уходить в dispatch
+        и остаётся в planned (мягкая блокировка до подтверждения).
+        """
+        mailing = self._create_mailing()
+        mailing.coupon_series = "TEST"
+        mailing.coupon_venue_code = "DEP_1"
+        mailing.coupon_venue_name = "Тестовое заведение"
+        mailing.coupon_promo_text = "Скидка по купону"
+        mailing.send_window_begin = time(0, 0)
+        mailing.send_window_end = time(23, 59)
+        mailing.save(
+            update_fields=[
+                "coupon_series",
+                "coupon_venue_code",
+                "coupon_venue_name",
+                "coupon_promo_text",
+                "send_window_begin",
+                "send_window_end",
+                "updated_at",
+            ]
+        )
+
+        guest = Guest.objects.create(
+            phone="+79990000884",
+            first_name="Иван",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now - timedelta(minutes=1),
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=self.bot,
+            external_chat_id="tg-run-now-coupon-pending",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        VtelemaxRecipientChannel.objects.create(
+            person_id=uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164="+79990000884",
+            external_id="chat-884",
+            rules_accepted=True,
+            notifications_allowed=True,
+            is_registered=True,
+            registered_at=self.now,
+            effective_updated_at=self.now,
+            guest=guest,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-PENDING-1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=mailing,
+            guest=guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-PENDING-1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            promo_text="Скидка по купону",
+            assigned_at=self.now,
+            status=CouponCampaignAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.PENDING,
+            vtelemax_synced_at=None,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            assignment=assignment,
+            payload_json={"coupon_code": "TST-PENDING-1"},
+            status=CouponVtelemaxSyncQueue.Status.PENDING,
+            attempts=0,
+            next_retry_at=self.now,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "run_now_campaign"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        row.refresh_from_db()
+        self.assertEqual(row.status, MailingGuest.Status.PLANNED)
+        self.assertEqual(row.delivery_status, "coupon_sync_gate_blocked")
+        self.assertIn("ожидает обработки очередью", (row.error_description or "").lower())
+        self.assertEqual(DispatchTask.objects.filter(mailing_guest=row).count(), 0)
+        report = self.client.session.get("mailing_ops_run_now_report")
+        self.assertIsInstance(report, dict)
+        self.assertGreaterEqual(int(report.get("coupon_gate_blocked_rows") or 0), 1)
+        self.assertTrue(bool(report.get("coupon_gate_blocked_reasons")))
 
     def test_campaign_runs_page_filters_rows_and_tasks(self):
         """

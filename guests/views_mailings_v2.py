@@ -1893,10 +1893,18 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
     processed_rows_total = 0
     processed_batches = 0
     reached_batch_limit = False
+    gate_reports: list[dict[str, object]] = []
 
     if report_before["send_window_open"] and report_before["ready_rows"] > 0:
         for _ in range(max_batches):
-            processed = int(mailing_worker_cmd.process_one_mailing(mailing=mailing, now=now) or 0)
+            processed = int(
+                mailing_worker_cmd.process_one_mailing(
+                    mailing=mailing,
+                    now=now,
+                    gate_reports_collector=gate_reports,
+                )
+                or 0
+            )
             if processed <= 0:
                 break
             processed_rows_total += processed
@@ -1905,13 +1913,25 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
             reached_batch_limit = True
 
     report_after = _build_mailing_dry_run_report(mailing=mailing, now=timezone.now())
-    coupon_gate_blocked_rows = int(
-        MailingGuest.objects.filter(
-            mailing=mailing,
-            status=MailingGuest.Status.ERROR,
-            delivery_status="coupon_sync_gate_blocked",
-        ).count()
-    )
+    coupon_gate_blocked_reasons: dict[str, int] = {}
+    coupon_gate_blocked_rows = 0
+    for gate_report in gate_reports:
+        coupon_gate_blocked_rows += int(gate_report.get("rows_blocked") or 0)
+        issues = gate_report.get("issues") or []
+        if isinstance(issues, list):
+            for issue in issues:
+                if not isinstance(issue, dict):
+                    continue
+                message = str(issue.get("message") or "").strip()
+                reason = message or "Причина не указана"
+                coupon_gate_blocked_reasons[reason] = int(coupon_gate_blocked_reasons.get(reason, 0) + 1)
+        global_blockers = gate_report.get("global_blockers") or []
+        if isinstance(global_blockers, list):
+            for blocker in global_blockers:
+                reason = str(blocker or "").strip()
+                if not reason:
+                    continue
+                coupon_gate_blocked_reasons[reason] = int(coupon_gate_blocked_reasons.get(reason, 0) + 1)
     return {
         "generated_at": timezone.now().isoformat(),
         "mailing_id": int(mailing.id),
@@ -1929,6 +1949,7 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
         "coupon_venue_code": str(getattr(mailing, "coupon_venue_code", "") or "").strip(),
         "coupon_venue_name": str(getattr(mailing, "coupon_venue_name", "") or "").strip(),
         "coupon_gate_blocked_rows": coupon_gate_blocked_rows,
+        "coupon_gate_blocked_reasons": coupon_gate_blocked_reasons,
     }
 
 

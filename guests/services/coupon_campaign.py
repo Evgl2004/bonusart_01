@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -142,6 +143,7 @@ class CouponGateReport:
             "queue_events_created": self.queue_events_created,
             "sync_ok": self.sync_ok,
             "sync_error": self.sync_error,
+            "issues_by_code": self.issues_by_code(),
             "global_blockers": list(self.global_blockers),
             "issues": [
                 {
@@ -153,6 +155,13 @@ class CouponGateReport:
                 for issue in self.issues
             ],
         }
+
+    def issues_by_code(self) -> dict[str, int]:
+        """
+        Возвращает агрегат проблем по кодам для UI/логов.
+        """
+        counts = Counter(issue.code for issue in self.issues if issue.code)
+        return {str(code): int(count) for code, count in counts.items()}
 
 
 class CouponCampaignGateService:
@@ -363,6 +372,9 @@ class CouponCampaignGateService:
                     )
 
         channels_by_guest_id = self._build_channels_map(guest_ids=guest_ids)
+        sync_events_by_assignment_id = self._build_latest_sync_events_map(
+            assignment_ids=[int(assignment.id) for assignment in assignment_by_guest_id.values() if assignment.id]
+        )
         ready_guest_ids: set[int] = set()
         text_rows_to_update: list[MailingGuest] = []
         queue_events_created = 0
@@ -473,6 +485,122 @@ class CouponCampaignGateService:
                     )
                 continue
 
+            sync_event = sync_events_by_assignment_id.get(int(assignment.id)) if assignment.id else None
+            if sync_event is None:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_event_missing",
+                        message=(
+                            "Для назначения не найдено событие синхронизации купона в очереди vtelemax. "
+                            "Требуется повторная постановка sync-события."
+                        ),
+                    )
+                )
+                if not dry_run:
+                    queue_events_created += self._upsert_sync_queue_event(
+                        assignment=assignment,
+                        now=now,
+                        status=CouponVtelemaxSyncQueue.Status.PENDING,
+                        last_error=None,
+                    )
+                continue
+
+            if sync_event.status == CouponVtelemaxSyncQueue.Status.ERROR:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_event_error",
+                        message=(
+                            "Событие синхронизации купона завершилось ошибкой. "
+                            f"Последняя ошибка: {str(sync_event.last_error or 'неизвестно')[:300]}"
+                        ),
+                    )
+                )
+                continue
+
+            if sync_event.status == CouponVtelemaxSyncQueue.Status.PENDING:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_event_pending",
+                        message=(
+                            "Событие синхронизации купона ещё не подтверждено vtelemax "
+                            "(ожидает обработки очередью)."
+                        ),
+                    )
+                )
+                continue
+
+            if sync_event.status == CouponVtelemaxSyncQueue.Status.SENT:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_event_sent_wait_ack",
+                        message="Событие синхронизации отправлено в vtelemax, но ещё не получен ACK.",
+                    )
+                )
+                continue
+
+            if sync_event.status != CouponVtelemaxSyncQueue.Status.ACKED:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_event_unknown_status",
+                        message=f"Событие синхронизации в неизвестном статусе: `{sync_event.status}`.",
+                    )
+                )
+                continue
+
+            if assignment.vtelemax_sync_status == CouponCampaignAssignment.VtelemaxSyncStatus.ERROR:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_status_error",
+                        message=(
+                            "Назначение купона помечено ошибкой синхронизации. "
+                            f"Ошибка: {str(assignment.vtelemax_sync_error or 'неизвестно')[:300]}"
+                        ),
+                    )
+                )
+                continue
+
+            if assignment.vtelemax_sync_status != CouponCampaignAssignment.VtelemaxSyncStatus.OK:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_status_pending",
+                        message="Назначение купона ещё не переведено в статус `ok` после синхронизации.",
+                    )
+                )
+                continue
+
+            if assignment.vtelemax_synced_at is None:
+                report.sync_error += 1
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_sync_synced_at_missing",
+                        message="Для назначения отсутствует время подтверждённой синхронизации (vtelemax_synced_at).",
+                    )
+                )
+                continue
+
             report.sync_ok += 1
             ready_guest_ids.add(guest_id)
 
@@ -482,9 +610,6 @@ class CouponCampaignGateService:
                 assignment.venue_code = assignment.venue_code or coupon_venue_code
                 assignment.venue_name = assignment.venue_name or coupon_venue_name or None
                 assignment.promo_text = assignment.promo_text or coupon_promo_text or None
-                assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.PENDING
-                assignment.vtelemax_sync_error = None
-                assignment.vtelemax_synced_at = None
                 assignment.save(
                     update_fields=[
                         "person_id",
@@ -492,17 +617,8 @@ class CouponCampaignGateService:
                         "venue_code",
                         "venue_name",
                         "promo_text",
-                        "vtelemax_sync_status",
-                        "vtelemax_sync_error",
-                        "vtelemax_synced_at",
                         "updated_at",
                     ]
-                )
-                queue_events_created += self._upsert_sync_queue_event(
-                    assignment=assignment,
-                    now=now,
-                    status=CouponVtelemaxSyncQueue.Status.PENDING,
-                    last_error=None,
                 )
 
                 # Персонализируем текст строки реальным кодом купона.
@@ -547,6 +663,34 @@ class CouponCampaignGateService:
                 continue
             channels_map.setdefault(int(channel.guest_id), []).append(channel)
         return channels_map
+
+    @staticmethod
+    def _build_latest_sync_events_map(
+        *,
+        assignment_ids: list[int],
+    ) -> dict[int, CouponVtelemaxSyncQueue]:
+        """
+        Возвращает последнее событие sync-очереди для каждого назначения купона.
+        """
+        if not assignment_ids:
+            return {}
+
+        events = (
+            CouponVtelemaxSyncQueue.objects.filter(
+                assignment_id__in=assignment_ids,
+                direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            )
+            .order_by("assignment_id", "-id")
+        )
+        mapping: dict[int, CouponVtelemaxSyncQueue] = {}
+        for event in events:
+            if not event.assignment_id:
+                continue
+            assignment_id = int(event.assignment_id)
+            if assignment_id in mapping:
+                continue
+            mapping[assignment_id] = event
+        return mapping
 
     @staticmethod
     def _pick_sendable_channel(channels: list[VtelemaxRecipientChannel]) -> VtelemaxRecipientChannel | None:
