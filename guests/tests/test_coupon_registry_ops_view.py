@@ -7,7 +7,7 @@ from unittest.mock import patch
 from django.test import TestCase
 from django.urls import reverse
 
-from guests.models import CouponPoolBatch, CouponRegistryEntry
+from guests.models import CouponPoolBatch, CouponRegistryEntry, TerminalDepartmentMap
 
 
 class CouponRegistryOpsViewTests(TestCase):
@@ -19,6 +19,12 @@ class CouponRegistryOpsViewTests(TestCase):
     """
 
     def test_generate_pool_action_creates_batch_and_csv(self):
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-dep-1",
+            department_id="DEP_1",
+            department_name="Тестовое заведение",
+            is_active=True,
+        )
         with TemporaryDirectory() as tmp_dir:
             csv_path = Path(tmp_dir) / "generated.csv"
             response = self.client.post(
@@ -27,7 +33,6 @@ class CouponRegistryOpsViewTests(TestCase):
                     "action": "generate_pool",
                     "series": "TEST_OPS",
                     "venue_code": "DEP_1",
-                    "venue_name": "Тестовое заведение",
                     "prefix": "TST-",
                     "count": "2",
                     "random_length": "8",
@@ -43,6 +48,8 @@ class CouponRegistryOpsViewTests(TestCase):
             self.assertIn("batch_code=", response.url)
             self.assertEqual(batch.count_generated, 2)
             self.assertEqual(batch.generated_by, "tester")
+            self.assertEqual(batch.venue_code, "DEP_1")
+            self.assertEqual(batch.venue_name, "Тестовое заведение")
             self.assertEqual(Path(batch.export_file_path), csv_path)
             self.assertTrue(csv_path.exists())
             self.assertEqual(
@@ -53,6 +60,25 @@ class CouponRegistryOpsViewTests(TestCase):
             lines = csv_path.read_text(encoding="utf-8").strip().splitlines()
             self.assertGreaterEqual(len(lines), 3)
             self.assertEqual(lines[0], "series;number")
+
+    def test_generate_pool_rejects_unknown_venue_code(self):
+        response = self.client.post(
+            reverse("coupon_registry_ops"),
+            {
+                "action": "generate_pool",
+                "series": "TEST_OPS_UNKNOWN",
+                "venue_code": "UNKNOWN_DEP",
+                "prefix": "TST-",
+                "count": "2",
+                "random_length": "8",
+                "alphabet_mode": CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
+                "generated_by": "tester",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(CouponPoolBatch.objects.filter(series="TEST_OPS_UNKNOWN").exists())
 
     @patch("guests.views_reports.call_command")
     def test_verify_pool_action_invokes_command(self, call_command_mock):

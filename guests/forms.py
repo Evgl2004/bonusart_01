@@ -1,9 +1,9 @@
 ﻿from django import forms
-from django.db.models import Max
 from django.utils import timezone
 
-from .models import BotProfile, Category, Mailing, MessageTemplate, TerminalDepartmentMap
-from .services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
+from .models import BotProfile, Category, Mailing, MessageTemplate
+from .services.coupon_constants import COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
+from .services.coupon_venues import build_coupon_venue_choices
 
 
 class CategoryForm(forms.ModelForm):
@@ -176,37 +176,11 @@ class MailingForm(forms.ModelForm):
     def _build_coupon_venue_choices(self) -> tuple[list[tuple[str, str]], dict[str, str]]:
         """
         Формирует список заведений для купонной кампании.
-
-        Источник:
-        1. активные сопоставления `TerminalDepartmentMap`;
-        2. группировка по `department_id`, чтобы убрать дубли по terminalGroupId.
         """
-        rows = (
-            TerminalDepartmentMap.objects.filter(is_active=True)
-            .exclude(department_id="")
-            .values("department_id")
-            .annotate(department_name=Max("department_name"))
-            .order_by("department_name", "department_id")
+        return build_coupon_venue_choices(
+            existing_venue_code=str(getattr(self.instance, "coupon_venue_code", "") or "").strip(),
+            existing_venue_name=str(getattr(self.instance, "coupon_venue_name", "") or "").strip(),
         )
-        choices: list[tuple[str, str]] = [("", "— Выберите заведение —")]
-        venue_map: dict[str, str] = {
-            COUPON_VENUE_GLOBAL_CODE: COUPON_VENUE_GLOBAL_NAME,
-        }
-        choices.append((COUPON_VENUE_GLOBAL_CODE, f"{COUPON_VENUE_GLOBAL_NAME} (для всех заведений)"))
-        for row in rows:
-            dep_id = str(row.get("department_id") or "").strip()
-            if not dep_id:
-                continue
-            dep_name = str(row.get("department_name") or "").strip() or dep_id
-            venue_map[dep_id] = dep_name
-            choices.append((dep_id, f"{dep_name} ({dep_id})"))
-
-        instance_dep_id = str(getattr(self.instance, "coupon_venue_code", "") or "").strip()
-        if instance_dep_id and instance_dep_id not in venue_map:
-            instance_dep_name = str(getattr(self.instance, "coupon_venue_name", "") or "").strip() or instance_dep_id
-            venue_map[instance_dep_id] = instance_dep_name
-            choices.append((instance_dep_id, f"{instance_dep_name} ({instance_dep_id})"))
-        return choices, venue_map
 
     def clean(self):
         cleaned_data = super().clean()
@@ -222,13 +196,17 @@ class MailingForm(forms.ModelForm):
 
         if not venue_code:
             self.add_error("coupon_venue_code", "Для купонной кампании выберите заведение.")
+        elif venue_code not in self._coupon_venue_map:
+            self.add_error("coupon_venue_code", "Выбранное заведение не найдено в справочнике активных заведений.")
         if not promo_text:
             self.add_error("coupon_promo_text", "Для купонной кампании укажите текст акции для гостя.")
 
         cleaned_data["coupon_series"] = series
         cleaned_data["coupon_venue_code"] = venue_code or None
         cleaned_data["coupon_promo_text"] = promo_text or None
-        if is_coupon_global_venue(venue_code):
+        if venue_code not in self._coupon_venue_map:
+            self._resolved_coupon_venue_name = None
+        elif is_coupon_global_venue(venue_code):
             self._resolved_coupon_venue_name = COUPON_VENUE_GLOBAL_NAME
         else:
             self._resolved_coupon_venue_name = self._coupon_venue_map.get(venue_code, "") or None

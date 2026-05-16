@@ -119,12 +119,12 @@
                 <input type="text" name="series" class="form-control form-control-sm" placeholder="TEST" required>
               </div>
               <div class="col-12 col-md-4">
-                <label class="form-label small mb-1">Код заведения</label>
-                <input type="text" name="venue_code" class="form-control form-control-sm" placeholder="DEP_1 или {{ coupon_global_venue_code }}" required>
-              </div>
-              <div class="col-12 col-md-4">
-                <label class="form-label small mb-1">Название заведения</label>
-                <input type="text" name="venue_name" class="form-control form-control-sm" placeholder="{{ coupon_global_venue_name }}">
+                <label class="form-label small mb-1">Заведение</label>
+                <select name="venue_code" class="form-select form-select-sm" required>
+                  {% for value, label in coupon_venue_choices %}
+                    <option value="{{ value }}">{{ label }}</option>
+                  {% endfor %}
+                </select>
               </div>
               <div class="col-12 col-md-3">
                 <label class="form-label small mb-1">Префикс</label>

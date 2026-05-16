@@ -107,6 +107,21 @@ class MailingFormCouponFieldsTests(TestCase):
         self.assertEqual(instance.coupon_venue_name, "Ассорти Франсуа")
         self.assertEqual(instance.coupon_promo_text, "Скидка 20% на сет")
 
+    def test_rejects_unknown_venue_code_for_coupon_mode(self):
+        data = self._base_form_data()
+        data.update(
+            {
+                "coupon_series": "TEST_SERIES",
+                "coupon_venue_code": "UNKNOWN_DEP",
+                "coupon_promo_text": "Скидка 20% на сет",
+            }
+        )
+
+        form = MailingForm(data=data)
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("coupon_venue_code", form.errors)
+
     def test_allows_global_venue_for_coupon_mode(self):
         data = self._base_form_data()
         data.update(

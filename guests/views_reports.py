@@ -26,8 +26,8 @@ from django.views.generic import TemplateView
 
 from guests.models import CouponCampaignAssignment, CouponPoolBatch, CouponRegistryEntry, Mailing
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
-from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
 from guests.services.coupon_pool import CouponPoolGenerationError, CouponPoolService
+from guests.services.coupon_venues import build_coupon_venue_choices
 
 
 def _parse_positive_int(value: str | None) -> int | None:
@@ -196,8 +196,7 @@ class CouponRegistryView(TemplateView):
         context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
         context["coupon_ops_url"] = reverse("coupon_registry_ops")
         context["alphabet_mode_choices"] = CouponPoolBatch.AlphabetMode.choices
-        context["coupon_global_venue_code"] = COUPON_VENUE_GLOBAL_CODE
-        context["coupon_global_venue_name"] = COUPON_VENUE_GLOBAL_NAME
+        context["coupon_venue_choices"], _ = build_coupon_venue_choices()
         context["generate_command_hint"] = (
             "python manage.py generate_coupon_pool --series <SERIES> --venue-code <VENUE_CODE> "
             "--prefix TST- --count 1000 --random-length 12"
@@ -257,7 +256,6 @@ class CouponRegistryOpsView(View):
     def _handle_generate_pool(self, request):
         series = str(request.POST.get("series") or "").strip()
         venue_code = str(request.POST.get("venue_code") or "").strip()
-        venue_name = str(request.POST.get("venue_name") or "").strip()
         prefix = str(request.POST.get("prefix") or "").strip().upper()
         batch_code = str(request.POST.get("batch_code") or "").strip()
         generated_by = str(request.POST.get("generated_by") or "").strip()
@@ -272,8 +270,13 @@ class CouponRegistryOpsView(View):
             messages.error(request, "Серия купонов обязательна для генерации.")
             return redirect(self._resolve_next_url(request))
         if not venue_code:
-            messages.error(request, "Код заведения обязателен для генерации пула.")
+            messages.error(request, "Выберите заведение для генерации пула.")
             return redirect(self._resolve_next_url(request))
+        _, venue_map = build_coupon_venue_choices()
+        if venue_code not in venue_map:
+            messages.error(request, "Выбранное заведение не найдено в справочнике активных заведений.")
+            return redirect(self._resolve_next_url(request))
+        venue_name = venue_map[venue_code]
         if count is None:
             messages.error(request, "Количество купонов должно быть положительным числом.")
             return redirect(self._resolve_next_url(request))

@@ -15,6 +15,7 @@ from guests.models import (
     Guest,
     Mailing,
     MessageTemplate,
+    TerminalDepartmentMap,
 )
 
 
@@ -135,6 +136,21 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Синхронизирован")
         self.assertContains(response, "--venue-code")
         self.assertContains(response, "--sample-info-check-limit")
+
+    def test_coupon_registry_generation_form_uses_venue_catalog(self):
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-gruzinka",
+            department_id="DEP_GRUZINKA",
+            department_name="Грузинка",
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("coupon_registry"), secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Грузинка (DEP_GRUZINKA)")
+        self.assertContains(response, '<select name="venue_code"', html=False)
+        self.assertNotContains(response, 'name="venue_name"', html=False)
 
     def test_coupon_campaign_reports_builds_selected_campaign_report(self):
         snapshot_mock = Mock()
