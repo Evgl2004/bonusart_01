@@ -122,6 +122,7 @@ def _targets_from_bindings(bindings: List[GuestBotBinding], target_mode: str) ->
             {
                 "provider_type": provider,
                 "external_chat_id": str(binding.external_chat_id).strip(),
+                "external_user_id": str(binding.external_user_id or "").strip(),
                 "guest_binding": binding,
                 "bot_profile": binding.bot,
             }
@@ -206,7 +207,20 @@ def enqueue_mailing_rows_as_dispatch_tasks(
         for target in row_targets:
             provider_type = target["provider_type"]
             external_chat_id = target["external_chat_id"]
+            external_user_id = target.get("external_user_id") or ""
             idempotency_key = f"mailing:{mailing.id}:row:{row.id}:provider:{provider_type}:chat:{external_chat_id}"
+            task_payload = {
+                "mailing_id": mailing.id,
+                "mailing_guest_id": row.id,
+                "channel_mode": "bindings",
+                "coupon_series": assignment.coupon_series if assignment else None,
+                "coupon_code": assignment.coupon_code if assignment else None,
+                "coupon_venue_code": assignment.venue_code if assignment else None,
+                "coupon_venue_name": assignment.venue_name if assignment else None,
+                "coupon_promo_text": assignment.promo_text if assignment else None,
+            }
+            if provider_type == "max":
+                task_payload["max_user_id"] = external_user_id or external_chat_id
 
             try:
                 DispatchTask.objects.create(
@@ -220,16 +234,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                     guest_binding=target["guest_binding"],
                     external_chat_id=external_chat_id,
                     message_text=row.text_mailing_list or "",
-                    payload={
-                        "mailing_id": mailing.id,
-                        "mailing_guest_id": row.id,
-                        "channel_mode": "bindings",
-                        "coupon_series": assignment.coupon_series if assignment else None,
-                        "coupon_code": assignment.coupon_code if assignment else None,
-                        "coupon_venue_code": assignment.venue_code if assignment else None,
-                        "coupon_venue_name": assignment.venue_name if assignment else None,
-                        "coupon_promo_text": assignment.promo_text if assignment else None,
-                    },
+                    payload=task_payload,
                     scheduled_at=row.scheduled_datetime,
                     available_at=available_at,
                     idempotency_key=idempotency_key,

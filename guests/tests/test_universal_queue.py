@@ -839,10 +839,10 @@ class ProviderClientHelpersTests(SimpleTestCase):
         with self.assertRaises(ProviderBlockedError):
             async_to_sync(sender.send)(task, "777002", "Тест blocked")
 
-    @override_settings(MAX_API_AUTH_PREFIX="Bearer", MAX_API_BASE_URL="https://platform-api.max.ru")
-    def test_max_sender_send_success_uses_user_id_and_auth_prefix(self):
+    @override_settings(MAX_API_BASE_URL="https://platform-api.max.ru")
+    def test_max_sender_send_success_uses_raw_authorization_and_user_id(self):
         """
-        MAX sender должен использовать user_id из payload и корректно формировать Authorization.
+        MAX sender должен использовать официальный формат MAX Bot API: Authorization без префикса и user_id.
         """
         sender = MaxAsyncSender()
         sender.client = Mock()
@@ -857,9 +857,51 @@ class ProviderClientHelpersTests(SimpleTestCase):
         result = async_to_sync(sender.send)(task, "chat-ignored", "MAX text")
 
         self.assertEqual(result.provider_message_id, "max_msg_1")
+        self.assertEqual(sender.client.post.call_args.args[0], "https://platform-api.max.ru/messages")
         call_kwargs = sender.client.post.call_args.kwargs
         self.assertEqual(call_kwargs["params"], {"user_id": "user-100"})
-        self.assertEqual(call_kwargs["headers"]["Authorization"], "Bearer max_token_1")
+        self.assertEqual(call_kwargs["headers"], {"Authorization": "max_token_1"})
+        self.assertEqual(call_kwargs["json"], {"text": "MAX text"})
+
+    @override_settings(MAX_API_BASE_URL="https://platform-api.max.ru")
+    def test_max_sender_uses_external_chat_id_as_user_id_by_default(self):
+        """
+        Для личных MAX-каналов старые задачи без max_user_id должны идти через user_id.
+        """
+        sender = MaxAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(200, json_data={"id": "max_msg_legacy"})
+        )
+        task = self._TaskStub(bot_profile=self._BotProfileStub("max_token_legacy"), payload={})
+
+        result = async_to_sync(sender.send)(task, "263475680", "MAX legacy text")
+
+        self.assertEqual(result.provider_message_id, "max_msg_legacy")
+        call_kwargs = sender.client.post.call_args.kwargs
+        self.assertEqual(call_kwargs["params"], {"user_id": "263475680"})
+        self.assertEqual(call_kwargs["headers"], {"Authorization": "max_token_legacy"})
+
+    @override_settings(MAX_API_BASE_URL="https://platform-api.max.ru")
+    def test_max_sender_allows_explicit_chat_id_payload(self):
+        """
+        Если когда-нибудь понадобится групповой MAX-чат, его нужно задавать явно через max_chat_id.
+        """
+        sender = MaxAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(200, json_data={"id": "max_msg_chat"})
+        )
+        task = self._TaskStub(
+            bot_profile=self._BotProfileStub("max_token_chat"),
+            payload={"max_chat_id": "70880299"},
+        )
+
+        async_to_sync(sender.send)(task, "user-ignored", "MAX chat text")
+
+        call_kwargs = sender.client.post.call_args.kwargs
+        self.assertEqual(call_kwargs["params"], {"chat_id": "70880299"})
+        self.assertEqual(call_kwargs["headers"], {"Authorization": "max_token_chat"})
 
     def test_max_sender_raises_blocked_for_404(self):
         """

@@ -238,6 +238,37 @@ class MailingProducerTests(TestCase):
         self.assertEqual(len(tasks), 2)
         self.assertEqual({task.provider_type for task in tasks}, {"telegram", "vk"})
 
+    def test_enqueue_rows_for_max_sets_user_id_payload(self):
+        """
+        Для MAX-задачи producer должен передать user_id в payload отправителя.
+        """
+        bot_max = BotProfile.objects.create(
+            code="max_mailing_main",
+            name="MAX mailing",
+            provider_type=BotProfile.ProviderType.MAX,
+            is_active=True,
+        )
+        self.mailing.bot_profiles.add(bot_max)
+        row = self._create_row()
+        GuestBotBinding.objects.create(
+            guest=self.guest,
+            bot=bot_max,
+            external_chat_id="chat-70880299",
+            external_user_id="263475680",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+
+        summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row], now=timezone.now())
+
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertEqual(summary.tasks_created, 1)
+        self.assertEqual(task.provider_type, BotProfile.ProviderType.MAX)
+        self.assertEqual(task.external_chat_id, "chat-70880299")
+        self.assertEqual(task.payload.get("max_user_id"), "263475680")
+
     def test_enqueue_rows_second_run_counts_duplicates(self):
         """
         Повторный запуск по той же строке должен учитывать duplicate без падения в ERROR.

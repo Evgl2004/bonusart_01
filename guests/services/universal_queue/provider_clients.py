@@ -276,24 +276,24 @@ class MaxAsyncSender(BaseAsyncProviderSender):
             raise ProviderPermanentError("Не найден token для MAX-бота.")
 
         payload = _get_payload(task)
-        query_field = "chat_id"
-        if payload.get("max_user_id"):
-            query_field = "user_id"
-            chat_or_user_id = str(payload["max_user_id"]).strip()
+        max_chat_id = str(payload.get("max_chat_id") or "").strip()
+        if max_chat_id:
+            query_field = "chat_id"
+            chat_or_user_id = max_chat_id
         else:
-            chat_or_user_id = chat_id
+            query_field = "user_id"
+            chat_or_user_id = str(payload.get("max_user_id") or chat_id).strip()
 
         request_body = {"text": text}
         request_url = f"{self.base_url}/messages"
-        auth_prefix = str(getattr(settings, "MAX_API_AUTH_PREFIX", "")).strip()
-        # Формируем стандартный формат заголовка: "<prefix> <token>".
-        # Пример: "Bearer <token>".
-        authorization = f"{auth_prefix} {token}" if auth_prefix else token
+        request_params = {
+            query_field: chat_or_user_id,
+        }
 
         response = await self.client.post(
             request_url,
-            params={query_field: chat_or_user_id},
-            headers={"Authorization": authorization},
+            params=request_params,
+            headers={"Authorization": token},
             json=request_body,
         )
         response_data = self._safe_json(response)

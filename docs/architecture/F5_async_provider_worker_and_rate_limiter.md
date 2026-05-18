@@ -67,7 +67,7 @@ Limiter хранит состояние в Redis namespace universal queue:
 9. `UNIVERSAL_PROVIDER_HTTP_TIMEOUT`
 10. `TELEGRAM_API_BASE_URL`
 11. `MAX_API_BASE_URL`
-12. `MAX_API_AUTH_PREFIX`
+12. `MAX_API_AUTH_PREFIX` (legacy; текущий MAX Bot API использует `Authorization` без префикса)
 13. `VK_API_BASE_URL`
 14. `VK_API_VERSION`
 
