@@ -112,10 +112,9 @@ class MailingForm(forms.ModelForm):
                     "placeholder": "Например: Скидка 20% на сет при заказе от 1500 ₽.",
                 }
             ),
-            "bot_profiles": forms.SelectMultiple(
+            "bot_profiles": forms.CheckboxSelectMultiple(
                 attrs={
-                    "class": "form-select",
-                    "size": "6",
+                    "class": "form-check-input",
                 }
             ),
             # "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),

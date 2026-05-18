@@ -24,6 +24,27 @@
     gap: 0.45rem;
     margin-bottom: 0.35rem;
   }
+
+  .mail-bot-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.65rem;
+  }
+
+  .mail-bot-choice-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 0.45rem 0.9rem;
+  }
+
+  .mail-bot-choice-list .form-check {
+    margin: 0;
+    padding: 0.45rem 0.55rem 0.45rem 2rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    background: #f8fafc;
+  }
 </style>
 
 <div class="container-fluid">
@@ -234,7 +255,7 @@
           {% endif %}
         </div>
 
-        <div class="row">
+        <div class="row" id="coupon-details" {% if not form.coupon_series.value %}hidden{% endif %}>
           <div class="col-md-6 mb-3">
             <div class="mail-label-row">
               {{ form.coupon_venue_code.label_tag }}
@@ -281,7 +302,18 @@
             >?</button>
           </div>
           <div class="border rounded p-3">
-            {{ form.bot_profiles }}
+            <div class="mail-bot-actions">
+              <button type="button" class="btn btn-outline-primary btn-sm" id="mail-bot-select-all">Выбрать всё</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="mail-bot-clear-all">Снять всё</button>
+            </div>
+            <div class="mail-bot-choice-list" id="mail-bot-choice-list">
+              {% for checkbox in form.bot_profiles %}
+                <div class="form-check">
+                  {{ checkbox.tag }}
+                  <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+                </div>
+              {% endfor %}
+            </div>
           </div>
           {% if has_active_bot_profiles %}
             <small class="text-muted">
@@ -324,8 +356,9 @@
   const templateDataNode = document.getElementById('mail-template-texts');
   const templateSelect = document.getElementById('id_template');
   const couponSeriesSelect = document.getElementById('id_coupon_series');
+  const couponDetails = document.getElementById('coupon-details');
   const promoTextField = document.getElementById('id_coupon_promo_text');
-  if (!templateDataNode || !templateSelect || !couponSeriesSelect || !promoTextField) return;
+  if (!templateDataNode || !templateSelect || !couponSeriesSelect || !couponDetails || !promoTextField) return;
 
   let templateTexts = {};
   try {
@@ -344,6 +377,10 @@
     return Boolean(String(couponSeriesSelect.value || '').trim());
   }
 
+  function syncCouponDetailsVisibility() {
+    couponDetails.hidden = !couponModeEnabled();
+  }
+
   function shouldAutofill() {
     const currentValue = promoTextField.value || '';
     return !currentValue.trim() || currentValue === lastAutoFilledValue || promoTextField.dataset.autoFilled === '1';
@@ -359,9 +396,34 @@
   }
 
   templateSelect.addEventListener('change', autofillPromoText);
-  couponSeriesSelect.addEventListener('change', autofillPromoText);
+  couponSeriesSelect.addEventListener('change', function () {
+    syncCouponDetailsVisibility();
+    autofillPromoText();
+  });
   promoTextField.addEventListener('input', function () {
     promoTextField.dataset.autoFilled = promoTextField.value === lastAutoFilledValue ? '1' : '0';
+  });
+  syncCouponDetailsVisibility();
+})();
+
+(function () {
+  const botChoiceList = document.getElementById('mail-bot-choice-list');
+  const selectAllButton = document.getElementById('mail-bot-select-all');
+  const clearAllButton = document.getElementById('mail-bot-clear-all');
+  if (!botChoiceList || !selectAllButton || !clearAllButton) return;
+
+  function setBotSelection(checked) {
+    const inputs = botChoiceList.querySelectorAll('input[type="checkbox"][name="bot_profiles"]');
+    inputs.forEach((input) => {
+      input.checked = checked;
+    });
+  }
+
+  selectAllButton.addEventListener('click', function () {
+    setBotSelection(true);
+  });
+  clearAllButton.addEventListener('click', function () {
+    setBotSelection(false);
   });
 })();
 </script>

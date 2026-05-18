@@ -262,6 +262,14 @@ class MailingsV2CampaignCreateView(_MailingsV2CampaignFormMixin, CreateView):
         Поддерживает prefill шаблона при переходе из раздела templates.
         """
         initial = super().get_initial()
+        today = timezone.localdate()
+        period_end = today + timedelta(days=14)
+        initial.setdefault("scheduled_date", today.isoformat())
+        initial.setdefault("scheduled_time_begin", f"{today.isoformat()}T00:00")
+        initial.setdefault("scheduled_time_end", f"{period_end.isoformat()}T23:59")
+        initial.setdefault("send_window_begin", "09:00")
+        initial.setdefault("send_window_end", "21:00")
+
         template_id_raw = str(self.request.GET.get("template_id") or "").strip()
         if template_id_raw.isdigit():
             template = MessageTemplate.objects.filter(pk=int(template_id_raw), is_active=True).first()

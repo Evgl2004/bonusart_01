@@ -125,6 +125,23 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(str(response.context["form"]["template"].value()), str(self.template.id))
         self.assertContains(response, "Новая кампания")
 
+    def test_create_campaign_v2_uses_operator_friendly_defaults(self):
+        """
+        Новая кампания открывается с безопасными рабочими датами и окном отправки.
+        """
+        response = self.client.get(reverse("mailings_v2_campaigns_new"), secure=True)
+
+        today = timezone.localdate()
+        period_end = today + timedelta(days=14)
+        form = response.context["form"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(form.initial["scheduled_date"], today.isoformat())
+        self.assertEqual(form.initial["scheduled_time_begin"], f"{today.isoformat()}T00:00")
+        self.assertEqual(form.initial["scheduled_time_end"], f"{period_end.isoformat()}T23:59")
+        self.assertEqual(form.initial["send_window_begin"], "09:00")
+        self.assertEqual(form.initial["send_window_end"], "21:00")
+
     def test_campaign_form_exposes_template_texts_for_coupon_promo_autofill(self):
         """
         Форма кампании отдаёт тексты шаблонов для автозаполнения текста акции.
@@ -138,6 +155,23 @@ class MailingsV2ViewsTests(TestCase):
         )
         self.assertContains(response, "mail-template-texts")
         self.assertContains(response, "Открыть реестр купонов")
+        self.assertContains(response, "templateSelect.addEventListener('change', autofillPromoText)")
+        self.assertContains(response, "couponSeriesSelect.addEventListener('change', function ()")
+        self.assertContains(response, "couponModeEnabled")
+        self.assertContains(response, "couponDetails.hidden = !couponModeEnabled()")
+
+    def test_campaign_form_renders_bot_profiles_as_checkboxes(self):
+        """
+        Выбор ботов должен быть явным списком чекбоксов с быстрыми действиями.
+        """
+        response = self.client.get(reverse("mailings_v2_campaigns_new"), secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="mail-bot-select-all"', html=False)
+        self.assertContains(response, 'id="mail-bot-clear-all"', html=False)
+        self.assertContains(response, 'type="checkbox" name="bot_profiles"', html=False)
+        self.assertContains(response, self.bot.name)
+        self.assertNotContains(response, '<select name="bot_profiles"', html=False)
 
     def test_campaign_form_renders_coupon_venue_options(self):
         """
