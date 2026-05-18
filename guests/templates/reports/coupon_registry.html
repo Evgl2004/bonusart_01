@@ -2,8 +2,32 @@
 
 {% block title %}Реестр купонов{% endblock %}
 
+{% block extra_css %}
+<style>
+  .coupon-registry-page {
+    min-width: 0;
+  }
+
+  .coupon-registry-page .card,
+  .coupon-registry-page .border {
+    min-width: 0;
+  }
+
+  .coupon-command {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .coupon-registry-page .table code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container-fluid">
+<div class="container-fluid coupon-registry-page">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Реестр купонов</h1>
@@ -107,7 +131,7 @@
     <div class="card-body">
       <h2 class="h6 mb-3">Операции реестра</h2>
       <div class="row g-3">
-        <div class="col-12 col-xxl-6">
+        <div class="col-12">
           <div class="border rounded p-3 h-100">
             <h3 class="h6 mb-2">1) Сгенерировать пул + CSV</h3>
             <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
@@ -169,7 +193,7 @@
           </div>
         </div>
 
-        <div class="col-12 col-xxl-6">
+        <div class="col-12">
           <div class="border rounded p-3 h-100 mb-3">
             <h3 class="h6 mb-2">2) Проверить загрузку в iikoCard</h3>
             <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
@@ -222,9 +246,9 @@
 
       <hr class="my-3">
       <p class="mb-1 small">CLI-подсказка (генерация):</p>
-      <code class="d-block mb-2">{{ generate_command_hint }}</code>
+      <code class="d-block mb-2 coupon-command">{{ generate_command_hint }}</code>
       <p class="mb-1 small">CLI-подсказка (проверка):</p>
-      <code class="d-block">{{ verify_command_hint }}</code>
+      <code class="d-block coupon-command">{{ verify_command_hint }}</code>
     </div>
   </div>
 

@@ -213,6 +213,14 @@ class _MailingsV2CampaignFormMixin:
         context["active_templates_count"] = int(getattr(self, "_active_templates_count", 0))
         context["has_active_bot_profiles"] = bool(getattr(self, "_has_active_bot_profiles", False))
         context["bot_profiles_admin_url"] = "/admin/guests/botprofile/"
+        form = context.get("form")
+        template_queryset = None
+        if form is not None and "template" in form.fields:
+            template_queryset = form.fields["template"].queryset
+        context["template_texts_by_id"] = {
+            str(template_obj.id): str(template_obj.message_text or "")
+            for template_obj in (template_queryset or MessageTemplate.objects.none())
+        }
 
         if mailing and mailing.pk:
             context["guests_count"] = mailing.guests_rows.count()

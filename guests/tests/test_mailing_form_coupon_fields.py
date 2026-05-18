@@ -6,7 +6,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.forms import MailingForm
-from guests.models import BotProfile, Mailing, MessageTemplate, TerminalDepartmentMap
+from guests.models import BotProfile, CouponRegistryEntry, Mailing, MessageTemplate, TerminalDepartmentMap
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
 
 
@@ -38,6 +38,26 @@ class MailingFormCouponFieldsTests(TestCase):
             department_name="Ассорти Франсуа",
             is_active=True,
         )
+        CouponRegistryEntry.objects.create(
+            series="TEST_SERIES",
+            code="TST-FORM-1",
+            venue_code="DEP_1",
+            venue_name="Ассорти Франсуа",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+        CouponRegistryEntry.objects.create(
+            series="GLOBAL_SERIES",
+            code="GLB-FORM-1",
+            venue_code=COUPON_VENUE_GLOBAL_CODE,
+            venue_name=COUPON_VENUE_GLOBAL_NAME,
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
 
     def _base_form_data(self) -> dict[str, object]:
         return {
@@ -68,6 +88,31 @@ class MailingFormCouponFieldsTests(TestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("coupon_venue_code", form.errors)
         self.assertIn("coupon_promo_text", form.errors)
+
+    def test_coupon_series_is_selected_from_available_pool(self):
+        form = MailingForm(data=self._base_form_data())
+
+        series_choices = dict(form.fields["coupon_series"].choices)
+
+        self.assertIn("", series_choices)
+        self.assertIn("TEST_SERIES", series_choices)
+        self.assertIn("GLOBAL_SERIES", series_choices)
+        self.assertIn("доступно 1", series_choices["TEST_SERIES"])
+
+    def test_rejects_unknown_coupon_series_for_new_campaign(self):
+        data = self._base_form_data()
+        data.update(
+            {
+                "coupon_series": "UNKNOWN_SERIES",
+                "coupon_venue_code": "DEP_1",
+                "coupon_promo_text": "Скидка 20% на сет",
+            }
+        )
+
+        form = MailingForm(data=data)
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("coupon_series", form.errors)
 
     def test_clears_coupon_fields_when_series_is_empty(self):
         data = self._base_form_data()

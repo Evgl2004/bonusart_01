@@ -3,6 +3,7 @@ from django.utils import timezone
 
 from .models import BotProfile, Category, Mailing, MessageTemplate
 from .services.coupon_constants import COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
+from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
 
 
@@ -49,6 +50,13 @@ class MessageTemplateForm(forms.ModelForm):
 
 
 class MailingForm(forms.ModelForm):
+    coupon_series = forms.ChoiceField(
+        label="Серия купонов",
+        required=False,
+        choices=[],
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
     class Meta:
         model = Mailing
         fields = [
@@ -92,12 +100,6 @@ class MailingForm(forms.ModelForm):
             ),
             "target_mode": forms.Select(attrs={"class": "form-select"}),
             "queue_priority": forms.Select(attrs={"class": "form-select"}),
-            "coupon_series": forms.TextInput(
-                attrs={
-                    "class": "form-control",
-                    "placeholder": "Например: BDAY_2026",
-                }
-            ),
             "coupon_venue_code": forms.Select(
                 attrs={
                     "class": "form-select",
@@ -172,6 +174,13 @@ class MailingForm(forms.ModelForm):
             self._coupon_venue_map = venue_map
             self.fields["coupon_venue_code"].choices = venue_choices
             self.fields["coupon_venue_code"].required = False
+
+        if "coupon_series" in self.fields:
+            series_choices, _ = build_available_coupon_series_choices(
+                existing_series=str(getattr(self.instance, "coupon_series", "") or "").strip(),
+            )
+            self.fields["coupon_series"].choices = series_choices
+            self.fields["coupon_series"].required = False
 
     def _build_coupon_venue_choices(self) -> tuple[list[tuple[str, str]], dict[str, str]]:
         """

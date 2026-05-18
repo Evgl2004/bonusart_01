@@ -225,8 +225,9 @@
             >?</button>
           </div>
           {{ form.coupon_series }}
-          <small class="text-muted">
-            Оставьте пустым для обычной рассылки без купонов.
+          <small class="text-muted d-block mt-1">
+            Оставьте пустым для обычной рассылки без купонов. Серии доступны после генерации и подтверждения загрузки в iikoCard.
+            <a href="{% url 'coupon_registry' %}">Открыть реестр купонов</a>
           </small>
           {% if form.coupon_series.errors %}
             <div class="text-danger small mt-1">{{ form.coupon_series.errors|join:", " }}</div>
@@ -307,6 +308,7 @@
 {% endblock %}
 
 {% block extra_js %}
+{{ template_texts_by_id|json_script:"mail-template-texts" }}
 <script>
 (function () {
   if (!window.bootstrap || !window.bootstrap.Tooltip) return;
@@ -315,6 +317,51 @@
     if (!window.bootstrap.Tooltip.getInstance(node)) {
       new window.bootstrap.Tooltip(node);
     }
+  });
+})();
+
+(function () {
+  const templateDataNode = document.getElementById('mail-template-texts');
+  const templateSelect = document.getElementById('id_template');
+  const couponSeriesSelect = document.getElementById('id_coupon_series');
+  const promoTextField = document.getElementById('id_coupon_promo_text');
+  if (!templateDataNode || !templateSelect || !couponSeriesSelect || !promoTextField) return;
+
+  let templateTexts = {};
+  try {
+    templateTexts = JSON.parse(templateDataNode.textContent || '{}');
+  } catch (error) {
+    templateTexts = {};
+  }
+
+  let lastAutoFilledValue = promoTextField.value || '';
+
+  function selectedTemplateText() {
+    return templateTexts[String(templateSelect.value || '')] || '';
+  }
+
+  function couponModeEnabled() {
+    return Boolean(String(couponSeriesSelect.value || '').trim());
+  }
+
+  function shouldAutofill() {
+    const currentValue = promoTextField.value || '';
+    return !currentValue.trim() || currentValue === lastAutoFilledValue || promoTextField.dataset.autoFilled === '1';
+  }
+
+  function autofillPromoText() {
+    if (!couponModeEnabled() || !shouldAutofill()) return;
+    const nextValue = selectedTemplateText();
+    if (!nextValue.trim()) return;
+    promoTextField.value = nextValue;
+    lastAutoFilledValue = nextValue;
+    promoTextField.dataset.autoFilled = '1';
+  }
+
+  templateSelect.addEventListener('change', autofillPromoText);
+  couponSeriesSelect.addEventListener('change', autofillPromoText);
+  promoTextField.addEventListener('input', function () {
+    promoTextField.dataset.autoFilled = promoTextField.value === lastAutoFilledValue ? '1' : '0';
   });
 })();
 </script>

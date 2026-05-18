@@ -136,6 +136,7 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Синхронизирован")
         self.assertContains(response, "--venue-code")
         self.assertContains(response, "--sample-info-check-limit")
+        self.assertContains(response, "coupon-command")
 
     def test_coupon_registry_generation_form_uses_venue_catalog(self):
         TerminalDepartmentMap.objects.create(

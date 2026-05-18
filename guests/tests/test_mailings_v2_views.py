@@ -124,6 +124,20 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(str(response.context["form"]["template"].value()), str(self.template.id))
         self.assertContains(response, "Новая кампания")
 
+    def test_campaign_form_exposes_template_texts_for_coupon_promo_autofill(self):
+        """
+        Форма кампании отдаёт тексты шаблонов для автозаполнения текста акции.
+        """
+        response = self.client.get(reverse("mailings_v2_campaigns_new"), secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.context["template_texts_by_id"][str(self.template.id)],
+            self.template.message_text,
+        )
+        self.assertContains(response, "mail-template-texts")
+        self.assertContains(response, "Открыть реестр купонов")
+
     def test_edit_and_audience_pages_v2(self):
         """
         Экран редактирования и экран аудитории должны открываться и показывать данные кампании.

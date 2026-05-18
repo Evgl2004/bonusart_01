@@ -18,7 +18,11 @@ from guests.models import (
     VtelemaxRecipientChannel,
     VtelemaxSyncState,
 )
-from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
+from guests.services.coupon_constants import (
+    COUPON_MESSAGE_FOOTER,
+    COUPON_VENUE_GLOBAL_CODE,
+    COUPON_VENUE_GLOBAL_NAME,
+)
 from guests.services.coupon_campaign import CouponCampaignGateService
 
 
@@ -201,6 +205,72 @@ class CouponCampaignGateServiceTests(TestCase):
         self.assertEqual(len(ready_rows), 1)
         self.assertEqual(report.rows_blocked, 0)
         self.assertEqual(report.sync_ok, 1)
+        row.refresh_from_db()
+        self.assertEqual(
+            row.text_mailing_list,
+            f"Ваш персональный купон: TST-AAA112\n\n{COUPON_MESSAGE_FOOTER}",
+        )
+
+    def test_prepare_rows_renders_coupon_promo_text_with_template_variables(self):
+        """
+        Текст акции в карточке купона использует те же переменные, что и шаблон рассылки.
+        """
+        self.template.message_text = "Акция: {coupon_promo_text}"
+        self.template.save(update_fields=["message_text", "updated_at"])
+        self.mailing.coupon_promo_text = "Здравствуйте, {first_name}. Купон {coupon_code}"
+        self.mailing.save(update_fields=["coupon_promo_text", "updated_at"])
+
+        row = self._create_row("1236")
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900001236")
+        CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-AAA113",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+        )
+
+        service = CouponCampaignGateService()
+        ready_rows, report = service.prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 0)
+        self.assertEqual(report.issues_by_code().get("coupon_sync_event_pending"), 1)
+
+        assignment = CouponCampaignAssignment.objects.get(campaign=self.mailing, guest=row.guest)
+        expected_promo_text = "Здравствуйте, Guest1236. Купон TST-AAA113"
+        self.assertEqual(assignment.promo_text, expected_promo_text)
+
+        queue_event = CouponVtelemaxSyncQueue.objects.get(assignment=assignment)
+        self.assertEqual(queue_event.payload_json.get("promo_text"), expected_promo_text)
+
+        assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = self.now
+        assignment.save(update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"])
+        queue_event.status = CouponVtelemaxSyncQueue.Status.ACKED
+        queue_event.ack_at = self.now
+        queue_event.save(update_fields=["status", "ack_at", "updated_at"])
+
+        ready_rows, report = service.prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 1)
+        self.assertEqual(report.sync_ok, 1)
+        row.refresh_from_db()
+        self.assertEqual(
+            row.text_mailing_list,
+            f"Акция: {expected_promo_text}\n\n{COUPON_MESSAGE_FOOTER}",
+        )
 
     def test_prepare_rows_blocks_when_coupons_not_enough(self):
         """

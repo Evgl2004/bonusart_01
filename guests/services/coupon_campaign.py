@@ -18,6 +18,7 @@ from guests.models import (
     VtelemaxSyncState,
 )
 from guests.services.coupon_constants import (
+    append_coupon_message_footer,
     COUPON_VENUE_GLOBAL_CODE,
     COUPON_VENUE_GLOBAL_NAME,
     is_coupon_global_venue,
@@ -87,6 +88,28 @@ def _resolve_campaign_coupon_promo_text(mailing: Mailing) -> str:
     Возвращает текст акции купонной кампании в нормализованном виде.
     """
     return str(getattr(mailing, "coupon_promo_text", "") or "").strip()
+
+
+def _build_coupon_template_context(
+    *,
+    coupon_code: str,
+    coupon_series: str,
+    coupon_venue_code: str,
+    coupon_venue_name: str,
+    coupon_promo_text: str,
+    coupon_expires_at,
+) -> dict[str, str]:
+    """
+    Формирует единый набор переменных купонной кампании для шаблонов.
+    """
+    return {
+        "coupon_code": str(coupon_code or "").strip(),
+        "coupon_series": str(coupon_series or "").strip(),
+        "coupon_venue_code": str(coupon_venue_code or "").strip(),
+        "coupon_venue_name": str(coupon_venue_name or "").strip(),
+        "coupon_promo_text": str(coupon_promo_text or "").strip(),
+        "coupon_expires_at": coupon_expires_at.strftime("%d.%m.%Y") if coupon_expires_at else "",
+    }
 
 
 @dataclass(slots=True)
@@ -305,6 +328,21 @@ class CouponCampaignGateService:
                     if primary_channel and primary_channel.phone_e164
                     else _normalize_phone_e164_ru(getattr(row.guest, "phone", None))
                 )
+                lifetime_expires_at = getattr(mailing, "scheduled_time_end", None)
+                assignment_venue_code = str(coupon.venue_code or coupon_venue_code or "").strip()
+                assignment_venue_name = str(coupon.venue_name or coupon_venue_name or "").strip()
+                rendered_promo_text = render_message_for_guest(
+                    coupon_promo_text,
+                    row.guest,
+                    extra_context=_build_coupon_template_context(
+                        coupon_code=coupon.code,
+                        coupon_series=coupon.series,
+                        coupon_venue_code=assignment_venue_code,
+                        coupon_venue_name=assignment_venue_name,
+                        coupon_promo_text=coupon_promo_text,
+                        coupon_expires_at=lifetime_expires_at,
+                    ),
+                )
                 assignment = CouponCampaignAssignment.objects.create(
                     campaign=mailing,
                     guest=row.guest,
@@ -313,11 +351,11 @@ class CouponCampaignGateService:
                     phone_e164=phone_e164 or None,
                     coupon_series=coupon.series,
                     coupon_code=coupon.code,
-                    venue_code=str(coupon.venue_code or coupon_venue_code or "").strip() or None,
-                    venue_name=str(coupon.venue_name or coupon_venue_name or "").strip() or None,
-                    promo_text=coupon_promo_text or None,
+                    venue_code=assignment_venue_code or None,
+                    venue_name=assignment_venue_name or None,
+                    promo_text=rendered_promo_text or None,
                     assigned_at=now,
-                    lifetime_expires_at=getattr(mailing, "scheduled_time_end", None),
+                    lifetime_expires_at=lifetime_expires_at,
                     status=CouponCampaignAssignment.Status.RESERVED,
                     vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.PENDING,
                 )
@@ -605,11 +643,23 @@ class CouponCampaignGateService:
             ready_guest_ids.add(guest_id)
 
             if not dry_run:
+                rendered_promo_text = render_message_for_guest(
+                    coupon_promo_text,
+                    row.guest,
+                    extra_context=_build_coupon_template_context(
+                        coupon_code=assignment.coupon_code,
+                        coupon_series=assignment.coupon_series,
+                        coupon_venue_code=assignment.venue_code or coupon_venue_code,
+                        coupon_venue_name=assignment.venue_name or coupon_venue_name,
+                        coupon_promo_text=assignment.promo_text or coupon_promo_text,
+                        coupon_expires_at=assignment.lifetime_expires_at,
+                    ),
+                )
                 assignment.person_id = valid_channel.person_id
                 assignment.phone_e164 = str(valid_channel.phone_e164 or "").strip() or assignment.phone_e164
                 assignment.venue_code = assignment.venue_code or coupon_venue_code
                 assignment.venue_name = assignment.venue_name or coupon_venue_name or None
-                assignment.promo_text = assignment.promo_text or coupon_promo_text or None
+                assignment.promo_text = rendered_promo_text or assignment.promo_text or coupon_promo_text or None
                 assignment.save(
                     update_fields=[
                         "person_id",
@@ -638,6 +688,7 @@ class CouponCampaignGateService:
                         ),
                     },
                 )
+                rendered = append_coupon_message_footer(rendered)
                 if row.text_mailing_list != rendered:
                     row.text_mailing_list = rendered
                     text_rows_to_update.append(row)
