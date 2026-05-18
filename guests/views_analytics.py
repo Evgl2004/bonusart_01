@@ -61,22 +61,11 @@ class BotsDashboardView(TemplateView):
         raw_period_days = self.request.GET.get("period_days")
         selected_period_days = normalize_bots_period_days(raw_period_days)
         today_local = timezone.localdate()
-        closed_day = today_local - timedelta(days=1)
-        requested_date_to = _parse_iso_date(self.request.GET.get("date_to"))
-        if requested_date_to is None:
-            selected_date_to = closed_day
-        elif requested_date_to >= today_local:
-            selected_date_to = closed_day
-        else:
-            selected_date_to = requested_date_to
-        if raw_period_days:
-            selected_date_from = selected_date_to - timedelta(days=selected_period_days - 1)
-        else:
-            selected_date_from = _parse_iso_date(self.request.GET.get("date_from"))
-            if selected_date_from is None:
-                selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
-            if selected_date_from > selected_date_to:
-                selected_date_from = selected_date_to - timedelta(days=self.default_days - 1)
+        selected_date_to = _resolve_bots_dashboard_date_to(
+            raw_date_to=self.request.GET.get("date_to"),
+            today_local=today_local,
+        )
+        selected_date_from = selected_date_to - timedelta(days=selected_period_days - 1)
 
         payload = build_bots_dashboard_payload(
             date_from=selected_date_from,
@@ -99,3 +88,18 @@ def _parse_iso_date(raw_value: str | None):
         return date.fromisoformat(text)
     except ValueError:
         return None
+
+
+def _resolve_bots_dashboard_date_to(*, raw_date_to: str | None, today_local: date) -> date:
+    """
+    Возвращает актуальный последний закрытый день для дашборда ботов.
+
+    Старые ссылки могли сохранять `date_to` в адресной строке. Для обычного входа
+    страница всегда должна открываться на актуальном закрытом дне, поэтому любой
+    устаревший или будущий `date_to` нормализуется к локальному вчера.
+    """
+    closed_day = today_local - timedelta(days=1)
+    requested_date_to = _parse_iso_date(raw_date_to)
+    if requested_date_to == closed_day:
+        return requested_date_to
+    return closed_day

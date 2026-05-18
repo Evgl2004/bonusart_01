@@ -284,7 +284,7 @@
         {% for days in period_options %}
           <a
             class="period-switch-btn {% if selected_period_days == days %}is-active{% endif %}"
-            href="?period_days={{ days }}&date_to={{ selected_date_to }}"
+            href="?period_days={{ days }}"
           >
             {{ days }} дней
           </a>

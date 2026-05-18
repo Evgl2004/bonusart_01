@@ -186,7 +186,7 @@ def build_bots_dashboard_payload(
         periods=(7, 14, 30),
         snapshot_now=header_totals,
     )
-    yesterday_growth = _build_yesterday_growth(date_to=date_to)
+    yesterday_growth = _build_yesterday_growth(date_to=date_to, rows=rows)
     normalized_period_days = normalize_bots_period_days(period_days)
     return {
         "filters": {
@@ -270,23 +270,51 @@ def _build_quick_growth(
     return result
 
 
-def _build_yesterday_growth(*, date_to: date) -> dict[str, Any]:
-    yesterday = date_to - timedelta(days=1)
-    day_before_yesterday = date_to - timedelta(days=2)
-    snapshot_yesterday = _build_snapshot_totals(as_of=yesterday)
-    snapshot_day_before = _build_snapshot_totals(as_of=day_before_yesterday)
-    delta_channels_total = snapshot_yesterday["channels_total"] - snapshot_day_before["channels_total"]
-    delta_channels_optin = (
-        snapshot_yesterday["channels_registered_optin"] - snapshot_day_before["channels_registered_optin"]
-    )
-    delta_unique_total = snapshot_yesterday["unique_persons_total"] - snapshot_day_before["unique_persons_total"]
-    delta_unique_optin = (
-        snapshot_yesterday["unique_persons_registered_optin"]
-        - snapshot_day_before["unique_persons_registered_optin"]
-    )
+def _build_yesterday_growth(*, date_to: date, rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """
+    Собирает карточку прироста за последний отображаемый день.
+
+    На странице `date_to` равен локальному вчера, поэтому пользовательский заголовок
+    остаётся "Прирост за вчера". Значения берём из последней строки графика, чтобы
+    карточка и нижние daily-графики не расходились на один день.
+    """
+    if rows:
+        last_row = rows[-1]
+        delta_channels_total = _sum_row_ints(
+            last_row,
+            (
+                "channels_total_telegram_delta",
+                "channels_total_vk_delta",
+                "channels_total_max_delta",
+            ),
+        )
+        delta_channels_optin = _sum_row_ints(
+            last_row,
+            (
+                "channels_registered_optin_telegram_delta",
+                "channels_registered_optin_vk_delta",
+                "channels_registered_optin_max_delta",
+            ),
+        )
+        delta_unique_total = int(last_row.get("unique_persons_total_delta") or 0)
+        delta_unique_optin = int(last_row.get("unique_persons_registered_optin_delta") or 0)
+    else:
+        previous_day = date_to - timedelta(days=1)
+        snapshot_current = _build_snapshot_totals(as_of=date_to)
+        snapshot_previous = _build_snapshot_totals(as_of=previous_day)
+        delta_channels_total = snapshot_current["channels_total"] - snapshot_previous["channels_total"]
+        delta_channels_optin = (
+            snapshot_current["channels_registered_optin"]
+            - snapshot_previous["channels_registered_optin"]
+        )
+        delta_unique_total = snapshot_current["unique_persons_total"] - snapshot_previous["unique_persons_total"]
+        delta_unique_optin = (
+            snapshot_current["unique_persons_registered_optin"]
+            - snapshot_previous["unique_persons_registered_optin"]
+        )
     return {
-        "date": yesterday.isoformat(),
-        "date_label": yesterday.strftime("%d.%m"),
+        "date": date_to.isoformat(),
+        "date_label": date_to.strftime("%d.%m"),
         "channels_total_delta": delta_channels_total,
         "channels_total_delta_display": _format_signed(delta_channels_total),
         "channels_registered_optin_delta": delta_channels_optin,
@@ -296,6 +324,10 @@ def _build_yesterday_growth(*, date_to: date) -> dict[str, Any]:
         "unique_persons_registered_optin_delta": delta_unique_optin,
         "unique_persons_registered_optin_delta_display": _format_signed(delta_unique_optin),
     }
+
+
+def _sum_row_ints(row: dict[str, Any], keys: tuple[str, ...]) -> int:
+    return sum(int(row.get(key) or 0) for key in keys)
 
 
 def _format_signed(value: int) -> str:
