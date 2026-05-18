@@ -117,7 +117,7 @@
         <table class="table table-sm align-middle mb-0">
           <thead class="table-light">
             <tr>
-              <th>ID строки</th>
+              <th>№</th>
               <th>Телефон</th>
               <th>Email</th>
               <th>Статус</th>
@@ -128,8 +128,8 @@
           </thead>
           <tbody>
             {% for row in rows %}
-              <tr>
-                <td>{{ row.id }}</td>
+              <tr data-row-id="{{ row.id }}">
+                <td>{{ forloop.counter }}</td>
                 <td>{{ row.phone|default:"—" }}</td>
                 <td>{{ row.email|default:"—" }}</td>
                 <td>{{ row.status_label }}</td>

@@ -226,6 +226,58 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(audience_response.status_code, 200)
         self.assertContains(audience_response, guest.phone)
 
+    def test_audience_page_shows_campaign_row_number_not_physical_id(self):
+        """
+        В таблице аудитории показываем понятный номер внутри кампании, а не PK общей таблицы.
+        """
+        other_mailing = self._create_mailing()
+        other_guest = Guest.objects.create(
+            phone="+79990000011",
+            first_name="Пётр",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=other_mailing,
+            guest=other_guest,
+            phone=other_guest.phone,
+            email="",
+            text_mailing_list="Другая кампания",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000012",
+            first_name="Анна",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Тестовое сообщение",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotEqual(row.id, 1)
+        self.assertContains(response, "<th>№</th>", html=True)
+        self.assertNotContains(response, "ID строки")
+        self.assertContains(response, f'data-row-id="{row.id}"', html=False)
+        self.assertContains(response, "<td>1</td>", html=True)
+
     def test_edit_page_shows_campaign_nav_without_wizard(self):
         """
         Экран параметров должен показывать каркас кампании без мастера.
