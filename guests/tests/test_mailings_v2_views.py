@@ -31,6 +31,7 @@ from guests.models import (
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
+    TerminalDepartmentMap,
     VtelemaxRecipientChannel,
 )
 
@@ -137,6 +138,23 @@ class MailingsV2ViewsTests(TestCase):
         )
         self.assertContains(response, "mail-template-texts")
         self.assertContains(response, "Открыть реестр купонов")
+
+    def test_campaign_form_renders_coupon_venue_options(self):
+        """
+        Справочник заведений должен попадать не только в поле формы, но и в HTML select.
+        """
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-sami",
+            department_id="DEP_SAMI",
+            department_name="Сами Сусами",
+            is_active=True,
+        )
+
+        response = self.client.get(reverse("mailings_v2_campaigns_new"), secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<select name="coupon_venue_code"', html=False)
+        self.assertContains(response, '<option value="DEP_SAMI">Сами Сусами (DEP_SAMI)</option>', html=False)
 
     def test_edit_and_audience_pages_v2(self):
         """

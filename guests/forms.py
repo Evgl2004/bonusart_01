@@ -173,6 +173,7 @@ class MailingForm(forms.ModelForm):
             venue_choices, venue_map = self._build_coupon_venue_choices()
             self._coupon_venue_map = venue_map
             self.fields["coupon_venue_code"].choices = venue_choices
+            self.fields["coupon_venue_code"].widget.choices = venue_choices
             self.fields["coupon_venue_code"].required = False
 
         if "coupon_series" in self.fields:
