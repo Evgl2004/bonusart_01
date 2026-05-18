@@ -177,6 +177,18 @@ class VtelemaxCouponSyncServiceTests(TestCase):
             retry_max_seconds=300,
         )
 
+    def test_queue_lock_queryset_locks_only_queue_table(self):
+        """
+        Lock очереди не должен распространяться на nullable-связь assignment.
+        """
+        queryset = (
+            VtelemaxCouponSyncService._queue_events_for_update_queryset()
+            .select_related("assignment")
+            .filter(direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS)
+        )
+
+        self.assertEqual(queryset.query.select_for_update_of, ("self",))
+
     @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
     def test_process_batch_sends_assignments_as_single_batch_and_marks_items_acked(self, mocked_client_cls):
         assignment, event = self._create_assignment_with_event()

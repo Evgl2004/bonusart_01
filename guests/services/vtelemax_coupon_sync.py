@@ -138,6 +138,17 @@ class VtelemaxCouponSyncService:
             retry_max_seconds=retry_max_seconds,
         )
 
+    @staticmethod
+    def _queue_events_for_update_queryset():
+        """
+        Блокирует только строки очереди, не nullable-связи через `assignment`.
+
+        В PostgreSQL `SELECT ... FOR UPDATE` нельзя применять к nullable-стороне
+        `LEFT OUTER JOIN`. Для очереди нам нужна блокировка именно
+        `CouponVtelemaxSyncQueue`, поэтому явно ограничиваем lock областью `self`.
+        """
+        return CouponVtelemaxSyncQueue.objects.select_for_update(of=("self",))
+
     def process_batch(self, *, limit: int, now=None) -> CouponVtelemaxSyncBatchStats:
         """
         Обрабатывает пачку событий очереди.
@@ -213,7 +224,7 @@ class VtelemaxCouponSyncService:
         with transaction.atomic():
             # Берем строки под lock, чтобы конкурирующие воркеры не отправляли один item дважды.
             locked_events = list(
-                CouponVtelemaxSyncQueue.objects.select_for_update()
+                self._queue_events_for_update_queryset()
                 .select_related("assignment")
                 .filter(id__in=event_ids, direction=direction)
                 .order_by("id")
@@ -255,7 +266,7 @@ class VtelemaxCouponSyncService:
 
         with transaction.atomic():
             events_for_update = list(
-                CouponVtelemaxSyncQueue.objects.select_for_update()
+                self._queue_events_for_update_queryset()
                 .select_related("assignment")
                 .filter(id__in=[int(event.id) for event in send_events])
                 .order_by("id")
@@ -425,7 +436,7 @@ class VtelemaxCouponSyncService:
             return
         with transaction.atomic():
             failed_events = list(
-                CouponVtelemaxSyncQueue.objects.select_for_update()
+                self._queue_events_for_update_queryset()
                 .select_related("assignment")
                 .filter(id__in=[int(event.id) for event in events])
             )
