@@ -153,6 +153,44 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, '<select name="venue_code"', html=False)
         self.assertNotContains(response, 'name="venue_name"', html=False)
 
+    def test_coupon_registry_shows_selected_batch_actions(self):
+        batch = CouponPoolBatch.objects.create(
+            batch_code="TEST_BATCH_ACTIONS",
+            series="TEST_ACTIONS",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            prefix="TST-",
+            random_length=8,
+            count_requested=2,
+            count_generated=2,
+            generated_by="tester",
+            export_file_path="tools/test_actions.csv",
+        )
+        CouponRegistryEntry.objects.create(
+            series=batch.series,
+            code="TST-ACTION1",
+            venue_code=batch.venue_code,
+            venue_name=batch.venue_name,
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            batch=batch,
+            pool_status=CouponRegistryEntry.PoolStatus.GENERATED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.NOT_CHECKED,
+        )
+
+        response = self.client.get(
+            reverse("coupon_registry"),
+            {"batch_code": batch.batch_code},
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Созданная партия")
+        self.assertContains(response, batch.batch_code)
+        self.assertContains(response, "Скачать CSV")
+        self.assertContains(response, "Проверить iikoCard")
+        self.assertContains(response, "TST-ACTION1")
+
     def test_coupon_campaign_reports_builds_selected_campaign_report(self):
         snapshot_mock = Mock()
         snapshot_mock.to_dict.return_value = {

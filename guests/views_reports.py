@@ -191,6 +191,11 @@ class CouponRegistryView(TemplateView):
             "verified_to": verified_to_raw,
             "campaign_id": campaign_id or "",
         }
+        context["selected_batch"] = (
+            CouponPoolBatch.objects.filter(batch_code=batch_code).first()
+            if batch_code
+            else None
+        )
         context["pool_status_choices"] = CouponRegistryEntry.PoolStatus.choices
         context["iiko_check_status_choices"] = CouponRegistryEntry.IikoCheckStatus.choices
         context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
