@@ -180,6 +180,7 @@ python manage.py run_coupon_vtelemax_sync_worker --once --batch-size 100 --force
 - [ ] верхний уровень содержит `request_id`, `direction`, `sent_at`, `items[]`;
 - [ ] нет верхнеуровневого `payload`;
 - [ ] каждый item содержит `event_id`;
+- [ ] каждый `assignments` item содержит `valid_until` в ISO 8601 с timezone;
 - [ ] количество items соответствует числу тестовых назначений;
 - [ ] HMAC успешно проверен.
 

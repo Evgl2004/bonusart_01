@@ -112,6 +112,20 @@ def _build_coupon_template_context(
     }
 
 
+def _format_coupon_valid_until(value) -> str | None:
+    """
+    Возвращает срок действия купона для машинного контракта vtelemax.
+
+    Значение отправляется в локальной таймзоне проекта, чтобы UI vtelemax мог
+    показывать гостю ту же дату и время, которые маркетолог видит в SAGUR.
+    """
+    if value is None:
+        return None
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, timezone.get_current_timezone())
+    return timezone.localtime(value).isoformat(timespec="seconds")
+
+
 @dataclass(slots=True)
 class CouponGateIssue:
     """
@@ -778,6 +792,7 @@ class CouponCampaignGateService:
             "phone_e164": assignment.phone_e164,
             "coupon_series": assignment.coupon_series,
             "coupon_code": assignment.coupon_code,
+            "valid_until": _format_coupon_valid_until(assignment.lifetime_expires_at),
             "venue_code": assignment.venue_code,
             "venue_name": assignment.venue_name,
             "promo_text": assignment.promo_text,

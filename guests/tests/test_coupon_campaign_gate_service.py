@@ -147,6 +147,10 @@ class CouponCampaignGateServiceTests(TestCase):
         queue_event = CouponVtelemaxSyncQueue.objects.filter(assignment=assignment).order_by("-id").first()
         self.assertIsNotNone(queue_event)
         self.assertEqual(queue_event.status, CouponVtelemaxSyncQueue.Status.PENDING)
+        self.assertEqual(
+            queue_event.payload_json.get("valid_until"),
+            timezone.localtime(self.mailing.scheduled_time_end).isoformat(timespec="seconds"),
+        )
 
         row.refresh_from_db()
         self.assertEqual(row.text_mailing_list, "placeholder")

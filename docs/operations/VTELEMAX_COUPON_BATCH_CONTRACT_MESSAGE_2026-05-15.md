@@ -10,7 +10,7 @@
 
 Обновление по итогам обратной связи vtelemax:
 
-- текущий batch payload достаточен, дополнительные обязательные поля со стороны vtelemax не требуются;
+- в `assignments` item добавлено поле `valid_until` — машиночитаемый срок действия купона;
 - batch size 100 поддерживается;
 - текущий лимит тела запроса на стороне vtelemax: 512 KB;
 - логи по `request_id`/`event_id` и item-level `results[]` на стороне vtelemax предусмотрены.
@@ -46,14 +46,16 @@
       "campaign_id": 55,
       "assignment_id": 101,
       "coupon_series": "TEST",
-      "coupon_code": "TST-A001"
+      "coupon_code": "TST-A001",
+      "valid_until": "2026-05-18T23:59:59+05:00"
     },
     {
       "event_id": "event-uuid-2",
       "campaign_id": 55,
       "assignment_id": 102,
       "coupon_series": "TEST",
-      "coupon_code": "TST-A002"
+      "coupon_code": "TST-A002",
+      "valid_until": "2026-05-18T23:59:59+05:00"
     }
   ]
 }
@@ -153,6 +155,7 @@ SHA256(BODY)
       "phone_e164": "+79991112233",
       "coupon_series": "TEST",
       "coupon_code": "TST-A001",
+      "valid_until": "2026-05-18T23:59:59+05:00",
       "venue_code": "DEP_1",
       "venue_name": "Тестовое заведение",
       "promo_text": "Скидка 20%",
@@ -167,8 +170,11 @@ SHA256(BODY)
 
 - найти получателя по `person_id` или `phone_e164`;
 - привязать к нему купон `coupon_series + coupon_code`;
+- сохранить `valid_until` как отдельный срок действия купона для карточки гостя;
 - сделать купон активным/видимым в интерфейсе vtelemax;
 - вернуть item-level ACK по `event_id`.
+
+Поле `valid_until` передается только в `assignments`, формируется из `CouponCampaignAssignment.lifetime_expires_at` и отправляется в ISO 8601 с timezone. В `status_update` его можно не передавать, если срок действия купона не менялся.
 
 Если получатель не найден или купон невозможно привязать, не нужно отклонять всю пачку. Нужно вернуть ошибку только по конкретному item.
 
