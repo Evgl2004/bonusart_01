@@ -215,6 +215,112 @@ class CouponCampaignGateServiceTests(TestCase):
             f"Ваш персональный купон: TST-AAA112\n\n{COUPON_MESSAGE_FOOTER}",
         )
 
+    def test_prepare_rows_blocks_finished_assignment_status(self):
+        """
+        Повторный запуск не должен отправлять купон, уже закрытый жизненным циклом.
+        """
+        row = self._create_row("1237")
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900001237")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-AAA114",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.EXPIRED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=row.guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-AAA114",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            promo_text="Скидка 20% на сет по купону.",
+            assigned_at=self.now,
+            lifetime_expires_at=self.now - timedelta(minutes=5),
+            status=CouponCampaignAssignment.Status.EXPIRED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            assignment=assignment,
+            payload_json={"coupon_code": "TST-AAA114"},
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            attempts=1,
+            next_retry_at=self.now,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+
+        ready_rows, report = CouponCampaignGateService().prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 0)
+        self.assertEqual(report.issues_by_code().get("coupon_assignment_not_dispatchable"), 1)
+        row.refresh_from_db()
+        self.assertEqual(row.text_mailing_list, "placeholder")
+
+    def test_prepare_rows_blocks_assignment_after_lifetime_end(self):
+        """
+        UI run-now/retry не должен досылать купон после окончания срока кампании.
+        """
+        row = self._create_row("1238")
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900001238")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-AAA115",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=row.guest,
+            coupon=coupon,
+            coupon_series="TEST",
+            coupon_code="TST-AAA115",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            promo_text="Скидка 20% на сет по купону.",
+            assigned_at=self.now,
+            lifetime_expires_at=self.now - timedelta(minutes=1),
+            status=CouponCampaignAssignment.Status.SENT,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            assignment=assignment,
+            payload_json={"coupon_code": "TST-AAA115"},
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            attempts=1,
+            next_retry_at=self.now,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+
+        ready_rows, report = CouponCampaignGateService().prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 0)
+        self.assertEqual(report.issues_by_code().get("coupon_assignment_lifetime_expired"), 1)
+        row.refresh_from_db()
+        self.assertEqual(row.text_mailing_list, "placeholder")
+
     def test_prepare_rows_renders_coupon_promo_text_with_template_variables(self):
         """
         Текст акции в карточке купона использует те же переменные, что и шаблон рассылки.

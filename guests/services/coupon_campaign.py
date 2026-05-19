@@ -26,6 +26,12 @@ from guests.services.coupon_constants import (
 from guests.services.template_render import render_message_for_guest
 
 
+COUPON_ASSIGNMENT_DISPATCHABLE_STATUSES = {
+    CouponCampaignAssignment.Status.RESERVED,
+    CouponCampaignAssignment.Status.SENT,
+}
+
+
 def _normalize_phone_e164_ru(raw_value: str | None) -> str | None:
     """
     Нормализует телефон в формат `+7XXXXXXXXXX`.
@@ -452,6 +458,31 @@ class CouponCampaignGateService:
                         guest_id=guest_id,
                         code="assignment_not_found",
                         message="Для гостя не найдено назначение купона.",
+                    )
+                )
+                continue
+
+            if assignment.status not in COUPON_ASSIGNMENT_DISPATCHABLE_STATUSES:
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_assignment_not_dispatchable",
+                        message=(
+                            "Назначенный купон уже не активен для отправки: "
+                            f"статус `{assignment.status}`."
+                        ),
+                    )
+                )
+                continue
+
+            if assignment.lifetime_expires_at and assignment.lifetime_expires_at <= now:
+                report.issues.append(
+                    CouponGateIssue(
+                        row_id=int(row.id),
+                        guest_id=guest_id,
+                        code="coupon_assignment_lifetime_expired",
+                        message="Срок действия назначенного купона уже истёк.",
                     )
                 )
                 continue
