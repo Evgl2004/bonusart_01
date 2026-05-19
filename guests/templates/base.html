@@ -120,22 +120,37 @@
 
         <a
           href="{% url 'reports' %}"
-          class="{% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'coupon_registry' %}active{% endif %}"
+          class="{% if current == 'reports' or current == 'reports_coupon_campaigns' %}active{% endif %}"
         >
           Отчёты
         </a>
-        {% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'coupon_registry' %}
+        {% if current == 'reports' or current == 'reports_coupon_campaigns' %}
           <a
             href="{% url 'reports_coupon_campaigns' %}"
             class="submenu-link {% if current == 'reports_coupon_campaigns' %}active{% endif %}"
           >
             Купонные кампании
           </a>
+        {% endif %}
+
+        <a
+          href="{% url 'coupon_registry' %}"
+          class="{% if current == 'coupon_registry' or current == 'coupon_generation' %}active{% endif %}"
+        >
+          Купоны
+        </a>
+        {% if current == 'coupon_registry' or current == 'coupon_generation' %}
           <a
             href="{% url 'coupon_registry' %}"
             class="submenu-link {% if current == 'coupon_registry' %}active{% endif %}"
           >
             Реестр купонов
+          </a>
+          <a
+            href="{% url 'coupon_generation' %}"
+            class="submenu-link {% if current == 'coupon_generation' %}active{% endif %}"
+          >
+            Генерация купонов
           </a>
         {% endif %}
 

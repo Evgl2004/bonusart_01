@@ -13,19 +13,9 @@
     min-width: 0;
   }
 
-  .coupon-command {
-    white-space: normal;
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
   .coupon-registry-page .table code {
     white-space: normal;
     overflow-wrap: anywhere;
-  }
-
-  .coupon-next-step {
-    border-left: 4px solid #0d6efd;
   }
 
   .coupon-code {
@@ -54,10 +44,6 @@
   .coupon-registry-table td:nth-child(3) {
     min-width: 8.5rem;
   }
-
-  .coupon-cli-details summary {
-    cursor: pointer;
-  }
 </style>
 {% endblock %}
 
@@ -71,6 +57,7 @@
     <div class="d-flex gap-2 flex-wrap">
       <a class="btn btn-outline-secondary btn-sm" href="{% url 'reports' %}">К отчётам</a>
       <a class="btn btn-outline-primary btn-sm" href="{{ coupon_campaign_reports_url }}">Отчёты по кампаниям</a>
+      <a class="btn btn-primary btn-sm" href="{{ coupon_generation_url }}">Генерация купонов</a>
     </div>
   </div>
 
@@ -159,175 +146,6 @@
           <div class="h6 mb-0">{{ registry_stats.used_total }} / {{ registry_stats.check_error_total }}</div>
         </div>
       </div>
-    </div>
-  </div>
-
-  {% if selected_batch %}
-    <div class="card border-0 shadow-sm mb-3 coupon-next-step">
-      <div class="card-body">
-        <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
-          <div>
-            <div class="text-muted small mb-1">Созданная партия</div>
-            <h2 class="h6 mb-2">{{ selected_batch.series }}</h2>
-            <div class="small text-muted">
-              batch: <code>{{ selected_batch.batch_code }}</code>
-              · купонов: {{ selected_batch.count_generated }}
-              · заведение: {{ selected_batch.venue_name|default:selected_batch.venue_code|default:"—" }}
-            </div>
-            {% if selected_batch.export_file_path %}
-              <div class="small text-muted mt-1">CSV: {{ selected_batch.export_file_path }}</div>
-            {% endif %}
-          </div>
-          <div class="d-flex gap-2 flex-wrap">
-            <form method="post" action="{{ coupon_ops_url }}">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="download_csv">
-              <input type="hidden" name="batch_code" value="{{ selected_batch.batch_code }}">
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <button type="submit" class="btn btn-primary btn-sm">Скачать CSV</button>
-            </form>
-            <form method="post" action="{{ coupon_ops_url }}">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="verify_pool">
-              <input type="hidden" name="batch_code" value="{{ selected_batch.batch_code }}">
-              <input type="hidden" name="sample_info_check_limit" value="5">
-              <input type="hidden" name="page_size" value="500">
-              <input type="hidden" name="max_pages" value="200">
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <button type="submit" class="btn btn-outline-primary btn-sm">Проверить iikoCard</button>
-            </form>
-          </div>
-        </div>
-      </div>
-    </div>
-  {% endif %}
-
-  <div class="card border-0 shadow-sm mb-3">
-    <div class="card-body">
-      <h2 class="h6 mb-3">Операции реестра</h2>
-      <div class="row g-3">
-        <div class="col-12">
-          <div class="border rounded p-3 h-100">
-            <h3 class="h6 mb-2">1) Сгенерировать пул + CSV</h3>
-            <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="generate_pool">
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <div class="col-12 col-md-4">
-                <label class="form-label small mb-1">Серия</label>
-                <input type="text" name="series" class="form-control form-control-sm" placeholder="TEST" required>
-              </div>
-              <div class="col-12 col-md-4">
-                <label class="form-label small mb-1">Заведение</label>
-                <select name="venue_code" class="form-select form-select-sm" required>
-                  {% for value, label in coupon_venue_choices %}
-                    <option value="{{ value }}">{{ label }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-12 col-md-3">
-                <label class="form-label small mb-1">Префикс</label>
-                <input type="text" name="prefix" class="form-control form-control-sm" value="TST-">
-              </div>
-              <div class="col-12 col-md-3">
-                <label class="form-label small mb-1">Количество</label>
-                <input type="number" name="count" class="form-control form-control-sm" value="100" min="1" step="1" required>
-              </div>
-              <div class="col-12 col-md-3">
-                <label class="form-label small mb-1">Длина случайной части</label>
-                <input type="number" name="random_length" class="form-control form-control-sm" value="12" min="1" step="1" required>
-              </div>
-              <div class="col-12 col-md-3">
-                <label class="form-label small mb-1">Алфавит</label>
-                <select name="alphabet_mode" class="form-select form-select-sm">
-                  {% for value, label in alphabet_mode_choices %}
-                    <option value="{{ value }}">{{ label }}</option>
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-12 col-md-6">
-                <label class="form-label small mb-1">Код партии (опционально)</label>
-                <input type="text" name="batch_code" class="form-control form-control-sm" placeholder="Если пусто — сгенерируется автоматически">
-              </div>
-              <div class="col-12 col-md-6">
-                <label class="form-label small mb-1">Оператор (опционально)</label>
-                <input type="text" name="generated_by" class="form-control form-control-sm" placeholder="По умолчанию логин пользователя">
-              </div>
-              <div class="col-12">
-                <div class="form-check">
-                  <input class="form-check-input" type="checkbox" value="1" id="include_optional_fields" name="include_optional_fields">
-                  <label class="form-check-label small" for="include_optional_fields">
-                    Добавить опциональные поля CSV (activated, activation_date, multi_use, deleted)
-                  </label>
-                </div>
-              </div>
-              <div class="col-12">
-                <button type="submit" class="btn btn-primary btn-sm">Сгенерировать и сохранить CSV</button>
-              </div>
-            </form>
-          </div>
-        </div>
-
-        <div class="col-12">
-          <div class="border rounded p-3 h-100 mb-3">
-            <h3 class="h6 mb-2">2) Проверить загрузку в iikoCard</h3>
-            <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="verify_pool">
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <div class="col-12 col-md-6">
-                <label class="form-label small mb-1">Код партии</label>
-                <input type="text" name="batch_code" class="form-control form-control-sm" value="{% if selected_batch %}{{ selected_batch.batch_code }}{% endif %}" placeholder="TEST_20260514_001">
-              </div>
-              <div class="col-12 col-md-6">
-                <label class="form-label small mb-1">Серия (если без batch)</label>
-                <input type="text" name="series" class="form-control form-control-sm" placeholder="TEST">
-              </div>
-              <div class="col-12 col-md-4">
-                <label class="form-label small mb-1">sample_info_check_limit</label>
-                <input type="number" name="sample_info_check_limit" class="form-control form-control-sm" value="2" min="1" step="1">
-              </div>
-              <div class="col-12 col-md-4">
-                <label class="form-label small mb-1">page_size</label>
-                <input type="number" name="page_size" class="form-control form-control-sm" value="500" min="1" step="1">
-              </div>
-              <div class="col-12 col-md-4">
-                <label class="form-label small mb-1">max_pages</label>
-                <input type="number" name="max_pages" class="form-control form-control-sm" value="200" min="1" step="1">
-              </div>
-              <div class="col-12">
-                <button type="submit" class="btn btn-outline-primary btn-sm">Запустить проверку</button>
-              </div>
-            </form>
-          </div>
-
-          <div class="border rounded p-3 h-100">
-            <h3 class="h6 mb-2">3) Скачать CSV по batch</h3>
-            <form method="post" action="{{ coupon_ops_url }}" class="row g-2">
-              {% csrf_token %}
-              <input type="hidden" name="action" value="download_csv">
-              <input type="hidden" name="next" value="{{ request.get_full_path }}">
-              <div class="col-12 col-md-8">
-                <label class="form-label small mb-1">Код партии</label>
-                <input type="text" name="batch_code" class="form-control form-control-sm" value="{% if selected_batch %}{{ selected_batch.batch_code }}{% endif %}" placeholder="TEST_20260514_001" required>
-              </div>
-              <div class="col-12 col-md-4 d-flex align-items-end">
-                <button type="submit" class="btn btn-outline-secondary btn-sm w-100">Скачать CSV</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </div>
-
-      <details class="coupon-cli-details mt-3">
-        <summary class="small text-muted">Технические CLI-команды</summary>
-        <div class="border rounded p-2 mt-2 bg-light">
-          <p class="mb-1 small">Генерация:</p>
-          <code class="d-block mb-2 coupon-command">{{ generate_command_hint }}</code>
-          <p class="mb-1 small">Проверка:</p>
-          <code class="d-block coupon-command">{{ verify_command_hint }}</code>
-        </div>
-      </details>
     </div>
   </div>
 

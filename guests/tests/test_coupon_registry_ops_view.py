@@ -45,6 +45,7 @@ class CouponRegistryOpsViewTests(TestCase):
 
             self.assertEqual(response.status_code, 302)
             batch = CouponPoolBatch.objects.get(series="TEST_OPS")
+            self.assertTrue(response.url.startswith(reverse("coupon_generation")))
             self.assertIn("batch_code=", response.url)
             self.assertEqual(batch.count_generated, 2)
             self.assertEqual(batch.generated_by, "tester")
@@ -108,6 +109,7 @@ class CouponRegistryOpsViewTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("coupon_generation")))
         self.assertIn("batch_code=TEST_VERIFY_001", response.url)
         call_command_mock.assert_called_once_with(
             "verify_coupon_pool_iiko",

@@ -134,11 +134,10 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Использован")
         self.assertContains(response, "123456789")
         self.assertContains(response, "Синхронизирован")
-        self.assertContains(response, "--venue-code")
-        self.assertContains(response, "--sample-info-check-limit")
-        self.assertContains(response, "coupon-command")
+        self.assertContains(response, "Генерация купонов")
+        self.assertNotContains(response, "Операции реестра")
 
-    def test_coupon_registry_generation_form_uses_venue_catalog(self):
+    def test_coupon_generation_form_uses_venue_catalog(self):
         TerminalDepartmentMap.objects.create(
             terminal_group_id="terminal-gruzinka",
             department_id="DEP_GRUZINKA",
@@ -146,14 +145,14 @@ class CouponReportsViewsTests(TestCase):
             is_active=True,
         )
 
-        response = self.client.get(reverse("coupon_registry"), secure=True)
+        response = self.client.get(reverse("coupon_generation"), secure=True)
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Грузинка (DEP_GRUZINKA)")
         self.assertContains(response, '<select name="venue_code"', html=False)
         self.assertNotContains(response, 'name="venue_name"', html=False)
 
-    def test_coupon_registry_shows_selected_batch_actions(self):
+    def test_coupon_generation_shows_selected_batch_actions(self):
         batch = CouponPoolBatch.objects.create(
             batch_code="TEST_BATCH_ACTIONS",
             series="TEST_ACTIONS",
@@ -179,17 +178,17 @@ class CouponReportsViewsTests(TestCase):
         )
 
         response = self.client.get(
-            reverse("coupon_registry"),
+            reverse("coupon_generation"),
             {"batch_code": batch.batch_code},
             secure=True,
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Созданная партия")
+        self.assertContains(response, "Текущая партия")
         self.assertContains(response, batch.batch_code)
         self.assertContains(response, "Скачать CSV")
         self.assertContains(response, "Проверить iikoCard")
-        self.assertContains(response, "TST-ACTION1")
+        self.assertContains(response, "Открыть в реестре")
 
     def test_coupon_campaign_reports_builds_selected_campaign_report(self):
         snapshot_mock = Mock()

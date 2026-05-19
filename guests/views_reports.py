@@ -191,15 +191,38 @@ class CouponRegistryView(TemplateView):
             "verified_to": verified_to_raw,
             "campaign_id": campaign_id or "",
         }
-        context["selected_batch"] = (
+        context["pool_status_choices"] = CouponRegistryEntry.PoolStatus.choices
+        context["iiko_check_status_choices"] = CouponRegistryEntry.IikoCheckStatus.choices
+        context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
+        context["coupon_generation_url"] = reverse("coupon_generation")
+        return context
+
+
+class CouponGenerationView(TemplateView):
+    """
+    Экран операций с купонными пулами.
+
+    Реестр купонов оставляем только для просмотра и фильтрации. На этой странице
+    оператор выполняет прикладные действия: генерацию CSV, проверку загрузки в
+    iikoCard и повторное скачивание CSV по коду партии.
+    """
+
+    template_name = "reports/coupon_generation.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        batch_code = str(self.request.GET.get("batch_code") or "").strip()
+        selected_batch = (
             CouponPoolBatch.objects.filter(batch_code=batch_code).first()
             if batch_code
             else None
         )
-        context["pool_status_choices"] = CouponRegistryEntry.PoolStatus.choices
-        context["iiko_check_status_choices"] = CouponRegistryEntry.IikoCheckStatus.choices
-        context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
+
+        context["selected_batch"] = selected_batch
         context["coupon_ops_url"] = reverse("coupon_registry_ops")
+        context["coupon_registry_url"] = reverse("coupon_registry")
+        context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
         context["alphabet_mode_choices"] = CouponPoolBatch.AlphabetMode.choices
         context["coupon_venue_choices"], _ = build_coupon_venue_choices()
         context["generate_command_hint"] = (
@@ -336,7 +359,7 @@ class CouponRegistryOpsView(View):
             ),
         )
         return self._redirect_with_query(
-            reverse("coupon_registry"),
+            reverse("coupon_generation"),
             {"batch_code": result.batch.batch_code},
         )
 
@@ -376,7 +399,7 @@ class CouponRegistryOpsView(View):
                         f"found={batch.verified_found_count}, not_found={batch.verified_not_found_count}."
                     ),
                 )
-                return self._redirect_with_query(reverse("coupon_registry"), {"batch_code": batch.batch_code})
+                return self._redirect_with_query(reverse("coupon_generation"), {"batch_code": batch.batch_code})
 
         messages.success(
             request,
@@ -405,12 +428,12 @@ class CouponRegistryOpsView(View):
                     "Сначала сформируйте экспорт через генерацию пула."
                 ),
             )
-            return self._redirect_with_query(reverse("coupon_registry"), {"batch_code": batch.batch_code})
+            return self._redirect_with_query(reverse("coupon_generation"), {"batch_code": batch.batch_code})
 
         csv_path = Path(batch.export_file_path).expanduser()
         if not csv_path.is_file():
             messages.error(request, f"CSV-файл не найден по пути: {csv_path}")
-            return self._redirect_with_query(reverse("coupon_registry"), {"batch_code": batch.batch_code})
+            return self._redirect_with_query(reverse("coupon_generation"), {"batch_code": batch.batch_code})
 
         return FileResponse(
             csv_path.open("rb"),
