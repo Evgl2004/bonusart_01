@@ -33,9 +33,9 @@
   }
 
   .mail-bot-choice-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 0.45rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
   }
 
   .mail-bot-choice-list .form-check {
@@ -44,6 +44,7 @@
     border: 1px solid #e5e7eb;
     border-radius: 0.45rem;
     background: #f8fafc;
+    width: 100%;
   }
 </style>
 
@@ -99,7 +100,21 @@
                 title="Шаблон текста, который получит гость. Для ручных рассылок используйте свои шаблоны, а не системные."
               >?</button>
             </div>
-            <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
+            <div class="d-flex gap-2 flex-wrap">
+              <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_new' %}">Создать шаблон</a>
+              <a
+                class="btn btn-sm btn-outline-secondary disabled"
+                href="#"
+                id="mail-template-edit"
+                target="_blank"
+                rel="noopener"
+                aria-disabled="true"
+                tabindex="-1"
+                data-url-template="{% url 'mailings_v2_templates_edit' 0 %}"
+              >
+                Редактировать шаблон
+              </a>
+            </div>
           </div>
           {{ form.template }}
           {% if only_system_templates_available %}
@@ -224,7 +239,7 @@
                 class="btn btn-outline-secondary mail-help-btn"
                 data-bs-toggle="tooltip"
                 data-bs-placement="top"
-                title="Приоритет задач в универсальной очереди: высокий, обычный или массовый."
+                title="Высокий — для срочных точечных сообщений, идёт раньше остальных. Обычный — для стандартных небольших кампаний. Массовый — для маркетинговых рассылок и больших списков, мягче нагружает очередь. Для обычных акций лучше выбирать «Массовый», «Высокий» оставлять только для действительно срочных случаев."
               >?</button>
             </div>
             {{ form.queue_priority }}
@@ -255,8 +270,8 @@
           {% endif %}
         </div>
 
-        <div class="row" id="coupon-details" {% if not form.coupon_series.value %}hidden{% endif %}>
-          <div class="col-md-6 mb-3">
+        <div id="coupon-details" {% if not form.coupon_series.value %}hidden{% endif %}>
+          <div class="mb-3">
             <div class="mail-label-row">
               {{ form.coupon_venue_code.label_tag }}
               <button
@@ -272,7 +287,7 @@
               <div class="text-danger small mt-1">{{ form.coupon_venue_code.errors|join:", " }}</div>
             {% endif %}
           </div>
-          <div class="col-md-6 mb-3">
+          <div class="mb-3">
             <div class="mail-label-row">
               {{ form.coupon_promo_text.label_tag }}
               <button
@@ -355,6 +370,7 @@
 (function () {
   const templateDataNode = document.getElementById('mail-template-texts');
   const templateSelect = document.getElementById('id_template');
+  const templateEditButton = document.getElementById('mail-template-edit');
   const couponSeriesSelect = document.getElementById('id_coupon_series');
   const couponDetails = document.getElementById('coupon-details');
   const promoTextField = document.getElementById('id_coupon_promo_text');
@@ -371,6 +387,23 @@
 
   function selectedTemplateText() {
     return templateTexts[String(templateSelect.value || '')] || '';
+  }
+
+  function syncTemplateEditButton() {
+    if (!templateEditButton) return;
+    const selectedTemplateId = String(templateSelect.value || '').trim();
+    if (!selectedTemplateId) {
+      templateEditButton.href = '#';
+      templateEditButton.classList.add('disabled');
+      templateEditButton.setAttribute('aria-disabled', 'true');
+      templateEditButton.setAttribute('tabindex', '-1');
+      return;
+    }
+    const urlTemplate = templateEditButton.dataset.urlTemplate || '';
+    templateEditButton.href = urlTemplate.replace('/0/', `/${selectedTemplateId}/`);
+    templateEditButton.classList.remove('disabled');
+    templateEditButton.setAttribute('aria-disabled', 'false');
+    templateEditButton.removeAttribute('tabindex');
   }
 
   function couponModeEnabled() {
@@ -395,7 +428,10 @@
     promoTextField.dataset.autoFilled = '1';
   }
 
-  templateSelect.addEventListener('change', autofillPromoText);
+  templateSelect.addEventListener('change', function () {
+    syncTemplateEditButton();
+    autofillPromoText();
+  });
   couponSeriesSelect.addEventListener('change', function () {
     syncCouponDetailsVisibility();
     autofillPromoText();
@@ -403,6 +439,7 @@
   promoTextField.addEventListener('input', function () {
     promoTextField.dataset.autoFilled = promoTextField.value === lastAutoFilledValue ? '1' : '0';
   });
+  syncTemplateEditButton();
   syncCouponDetailsVisibility();
 })();
 

@@ -108,7 +108,7 @@ class MailingForm(forms.ModelForm):
             "coupon_promo_text": forms.Textarea(
                 attrs={
                     "class": "form-control",
-                    "rows": 3,
+                    "rows": 7,
                     "placeholder": "Например: Скидка 20% на сет при заказе от 1500 ₽.",
                 }
             ),

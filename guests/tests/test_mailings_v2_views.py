@@ -155,10 +155,16 @@ class MailingsV2ViewsTests(TestCase):
         )
         self.assertContains(response, "mail-template-texts")
         self.assertContains(response, "Открыть реестр купонов")
-        self.assertContains(response, "templateSelect.addEventListener('change', autofillPromoText)")
+        self.assertContains(response, 'id="mail-template-edit"', html=False)
+        self.assertContains(response, 'target="_blank"', html=False)
+        self.assertContains(response, "syncTemplateEditButton")
+        self.assertContains(response, "mailings-v2/templates/0/edit")
+        self.assertContains(response, "templateSelect.addEventListener('change', function ()")
         self.assertContains(response, "couponSeriesSelect.addEventListener('change', function ()")
         self.assertContains(response, "couponModeEnabled")
         self.assertContains(response, "couponDetails.hidden = !couponModeEnabled()")
+        self.assertContains(response, "Высокий — для срочных точечных сообщений")
+        self.assertContains(response, 'rows="7"', html=False)
 
     def test_campaign_form_renders_bot_profiles_as_checkboxes(self):
         """
@@ -172,6 +178,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, 'type="checkbox" name="bot_profiles"', html=False)
         self.assertContains(response, self.bot.name)
         self.assertNotContains(response, '<select name="bot_profiles"', html=False)
+        self.assertContains(response, "flex-direction: column")
 
     def test_campaign_form_renders_coupon_venue_options(self):
         """
