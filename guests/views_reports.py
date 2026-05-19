@@ -53,6 +53,16 @@ def _safe_token(value: str) -> str:
     return token or "NA"
 
 
+def _default_batch_csv_path(batch: CouponPoolBatch) -> Path:
+    """
+    Возвращает безопасный путь для восстановления CSV партии.
+
+    CSV-файл может пропасть при пересоздании контейнера, поэтому путь должен
+    зависеть от batch-кода, а не от временного состояния формы генерации.
+    """
+    return Path("tools") / f"iikocard_coupon_import_{_safe_token(batch.batch_code)}.csv"
+
+
 class ReportsWorkbenchView(TemplateView):
     """
     Главная точка входа раздела «Отчёты».
@@ -436,20 +446,17 @@ class CouponRegistryOpsView(View):
                 return self._redirect_with_query(reverse("coupon_generation"), {"series_hint": batch_code})
             messages.error(request, f"Партия `{batch_code}` не найдена.")
             return redirect(self._resolve_next_url(request))
-        if not batch.export_file_path:
-            messages.error(
-                request,
-                (
-                    f"У партии `{batch.batch_code}` отсутствует путь к CSV. "
-                    "Сначала сформируйте экспорт через генерацию пула."
-                ),
-            )
-            return self._redirect_with_query(reverse("coupon_generation"), {"batch_code": batch.batch_code})
-
-        csv_path = Path(batch.export_file_path).expanduser()
+        csv_path = Path(batch.export_file_path).expanduser() if batch.export_file_path else _default_batch_csv_path(batch)
         if not csv_path.is_file():
-            messages.error(request, f"CSV-файл не найден по пути: {csv_path}")
-            return self._redirect_with_query(reverse("coupon_generation"), {"batch_code": batch.batch_code})
+            try:
+                csv_path = CouponPoolService().export_batch_csv(
+                    batch=batch,
+                    output_path=str(csv_path),
+                    include_optional_fields=False,
+                )
+            except (CouponPoolGenerationError, OSError) as exc:
+                messages.error(request, f"CSV-файл не найден и не восстановлен: {exc}")
+                return self._redirect_with_query(reverse("coupon_generation"), {"batch_code": batch.batch_code})
 
         return FileResponse(
             csv_path.open("rb"),

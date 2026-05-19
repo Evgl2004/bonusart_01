@@ -153,6 +153,63 @@ class CouponRegistryOpsViewTests(TestCase):
             self.assertIn("download.csv", response["Content-Disposition"])
             response.close()
 
+    def test_download_csv_action_restores_missing_file_from_registry(self):
+        with TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "missing_download.csv"
+            batch = CouponPoolBatch.objects.create(
+                batch_code="TEST_RESTORE_001",
+                series="TEST_RESTORE",
+                venue_code="DEP_1",
+                venue_name="Тестовое заведение",
+                prefix="TST-",
+                random_length=8,
+                alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
+                count_requested=2,
+                count_generated=2,
+                generated_by="tester",
+                export_file_path=str(csv_path),
+            )
+            CouponRegistryEntry.objects.create(
+                series=batch.series,
+                code="TST-RESTORE1",
+                venue_code=batch.venue_code,
+                venue_name=batch.venue_name,
+                source=CouponRegistryEntry.SourceType.GENERATED,
+                is_active=True,
+                batch=batch,
+                pool_status=CouponRegistryEntry.PoolStatus.GENERATED,
+                iiko_check_status=CouponRegistryEntry.IikoCheckStatus.NOT_CHECKED,
+            )
+            CouponRegistryEntry.objects.create(
+                series=batch.series,
+                code="TST-RESTORE2",
+                venue_code=batch.venue_code,
+                venue_name=batch.venue_name,
+                source=CouponRegistryEntry.SourceType.GENERATED,
+                is_active=True,
+                batch=batch,
+                pool_status=CouponRegistryEntry.PoolStatus.GENERATED,
+                iiko_check_status=CouponRegistryEntry.IikoCheckStatus.NOT_CHECKED,
+            )
+
+            response = self.client.post(
+                reverse("coupon_registry_ops"),
+                {
+                    "action": "download_csv",
+                    "batch_code": batch.batch_code,
+                },
+                secure=True,
+            )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(csv_path.exists())
+            self.assertIn("missing_download.csv", response["Content-Disposition"])
+            body = b"".join(response.streaming_content).decode("utf-8")
+            self.assertIn("series;number", body)
+            self.assertIn("TEST_RESTORE;TST-RESTORE1", body)
+            self.assertIn("TEST_RESTORE;TST-RESTORE2", body)
+            response.close()
+
     def test_download_csv_action_guides_when_series_entered_instead_of_batch(self):
         CouponPoolBatch.objects.create(
             batch_code="TEST_SERIES_BATCH_001",
