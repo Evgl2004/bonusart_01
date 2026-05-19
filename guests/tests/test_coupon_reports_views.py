@@ -190,6 +190,44 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Проверить iikoCard")
         self.assertContains(response, "Открыть в реестре")
 
+    def test_coupon_generation_shows_recent_batches_filtered_by_series(self):
+        matched_batch = CouponPoolBatch.objects.create(
+            batch_code="TEST_RECENT_MATCH_001",
+            series="TEST_RECENT",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            prefix="TST-",
+            random_length=8,
+            count_requested=2,
+            count_generated=2,
+            generated_by="tester",
+            export_file_path="tools/test_recent_match.csv",
+        )
+        CouponPoolBatch.objects.create(
+            batch_code="TEST_RECENT_OTHER_001",
+            series="OTHER_RECENT",
+            venue_code="DEP_2",
+            venue_name="Другое заведение",
+            prefix="OTH-",
+            random_length=8,
+            count_requested=1,
+            count_generated=1,
+            generated_by="tester",
+            export_file_path="tools/test_recent_other.csv",
+        )
+
+        response = self.client.get(
+            reverse("coupon_generation"),
+            {"series_hint": matched_batch.series},
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Последние партии")
+        self.assertContains(response, matched_batch.batch_code)
+        self.assertNotContains(response, "TEST_RECENT_OTHER_001")
+        self.assertContains(response, "Скачать CSV")
+
     def test_coupon_campaign_reports_builds_selected_campaign_report(self):
         snapshot_mock = Mock()
         snapshot_mock.to_dict.return_value = {

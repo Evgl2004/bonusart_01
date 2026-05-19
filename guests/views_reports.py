@@ -213,13 +213,19 @@ class CouponGenerationView(TemplateView):
         context = super().get_context_data(**kwargs)
 
         batch_code = str(self.request.GET.get("batch_code") or "").strip()
+        series_hint = str(self.request.GET.get("series_hint") or "").strip()
         selected_batch = (
             CouponPoolBatch.objects.filter(batch_code=batch_code).first()
             if batch_code
             else None
         )
+        recent_batches_qs = CouponPoolBatch.objects.order_by("-generated_at")
+        if series_hint:
+            recent_batches_qs = recent_batches_qs.filter(series__icontains=series_hint)
 
         context["selected_batch"] = selected_batch
+        context["series_hint"] = series_hint
+        context["recent_batches"] = list(recent_batches_qs[:20])
         context["coupon_ops_url"] = reverse("coupon_registry_ops")
         context["coupon_registry_url"] = reverse("coupon_registry")
         context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
@@ -418,6 +424,16 @@ class CouponRegistryOpsView(View):
 
         batch = CouponPoolBatch.objects.filter(batch_code=batch_code).first()
         if batch is None:
+            series_batches_exists = CouponPoolBatch.objects.filter(series=batch_code).exists()
+            if series_batches_exists:
+                messages.error(
+                    request,
+                    (
+                        f"`{batch_code}` выглядит как серия купонов, а для скачивания нужен код партии. "
+                        "Ниже показаны партии этой серии."
+                    ),
+                )
+                return self._redirect_with_query(reverse("coupon_generation"), {"series_hint": batch_code})
             messages.error(request, f"Партия `{batch_code}` не найдена.")
             return redirect(self._resolve_next_url(request))
         if not batch.export_file_path:

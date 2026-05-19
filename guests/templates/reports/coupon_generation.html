@@ -91,6 +91,87 @@
     </div>
   {% endif %}
 
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-3">
+        <div>
+          <h2 class="h6 mb-1">Последние партии</h2>
+          <p class="text-muted small mb-0">CSV скачивается по коду партии. Серия может содержать несколько партий.</p>
+        </div>
+        <form method="get" class="d-flex gap-2 flex-wrap">
+          <input
+            type="text"
+            name="series_hint"
+            value="{{ series_hint }}"
+            class="form-control form-control-sm"
+            placeholder="Найти партии по серии"
+            style="min-width: 18rem;"
+          >
+          <button type="submit" class="btn btn-outline-primary btn-sm">Найти</button>
+          {% if series_hint %}
+            <a class="btn btn-outline-secondary btn-sm" href="{% url 'coupon_generation' %}">Сбросить</a>
+          {% endif %}
+        </form>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Код партии</th>
+              <th>Серия</th>
+              <th>Заведение</th>
+              <th>Купонов</th>
+              <th>Проверка iikoCard</th>
+              <th>Создана</th>
+              <th class="text-end">Действия</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for batch in recent_batches %}
+              <tr>
+                <td><code>{{ batch.batch_code }}</code></td>
+                <td>{{ batch.series }}</td>
+                <td>{{ batch.venue_name|default:batch.venue_code|default:"—" }}</td>
+                <td>{{ batch.count_generated }}</td>
+                <td>{{ batch.get_verification_status_display }}</td>
+                <td>{{ batch.generated_at|date:"d.m.Y H:i" }}</td>
+                <td>
+                  <div class="d-flex justify-content-end gap-2 flex-wrap">
+                    <form method="post" action="{{ coupon_ops_url }}">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="download_csv">
+                      <input type="hidden" name="batch_code" value="{{ batch.batch_code }}">
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <button type="submit" class="btn btn-primary btn-sm">Скачать CSV</button>
+                    </form>
+                    <form method="post" action="{{ coupon_ops_url }}">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="verify_pool">
+                      <input type="hidden" name="batch_code" value="{{ batch.batch_code }}">
+                      <input type="hidden" name="sample_info_check_limit" value="5">
+                      <input type="hidden" name="page_size" value="500">
+                      <input type="hidden" name="max_pages" value="200">
+                      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+                      <button type="submit" class="btn btn-outline-primary btn-sm">Проверить</button>
+                    </form>
+                    <a class="btn btn-outline-secondary btn-sm" href="{{ coupon_registry_url }}?batch_code={{ batch.batch_code }}">
+                      Реестр
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="7" class="text-center text-muted py-4">Партии купонов не найдены.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div class="card border-0 shadow-sm mb-3 coupon-operation-card">
     <div class="card-body">
       <h2 class="h6 mb-3">1. Сгенерировать пул и CSV</h2>

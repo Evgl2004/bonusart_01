@@ -152,3 +152,31 @@ class CouponRegistryOpsViewTests(TestCase):
             self.assertIn("attachment;", response["Content-Disposition"])
             self.assertIn("download.csv", response["Content-Disposition"])
             response.close()
+
+    def test_download_csv_action_guides_when_series_entered_instead_of_batch(self):
+        CouponPoolBatch.objects.create(
+            batch_code="TEST_SERIES_BATCH_001",
+            series="TEST_SERIES",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            prefix="TST-",
+            random_length=8,
+            alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
+            count_requested=1,
+            count_generated=1,
+            generated_by="tester",
+            export_file_path="tools/test_series.csv",
+        )
+
+        response = self.client.post(
+            reverse("coupon_registry_ops"),
+            {
+                "action": "download_csv",
+                "batch_code": "TEST_SERIES",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.url.startswith(reverse("coupon_generation")))
+        self.assertIn("series_hint=TEST_SERIES", response.url)
