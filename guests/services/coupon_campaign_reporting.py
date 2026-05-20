@@ -6,7 +6,51 @@ from decimal import Decimal
 
 from django.db.models import Count, Q
 
-from guests.models import CouponCampaignAssignment, Mailing, OrderFact
+from guests.models import CouponCampaignAssignment, Mailing, OlapSalesRawLine, OrderFact
+
+
+def _to_decimal(value) -> Decimal:
+    if value in (None, ""):
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except Exception:  # noqa: BLE001
+        return Decimal("0")
+
+
+def _normalize_text(value) -> str:
+    return str(value or "").strip()
+
+
+def _order_identity(row: dict[str, object]) -> tuple[object, str, int | None, str]:
+    order_number = row.get("order_number")
+    return (
+        row.get("business_date"),
+        _normalize_text(row.get("department_id")),
+        int(order_number) if order_number is not None else None,
+        _normalize_text(row.get("uniq_order_id")),
+    )
+
+
+def _raw_line_net_sum(row: dict[str, object]) -> Decimal:
+    if row.get("dish_sum_after_discount") in (None, ""):
+        return _raw_line_gross_sum(row)
+    return _to_decimal(row.get("dish_sum_after_discount"))
+
+
+def _raw_line_gross_sum(row: dict[str, object]) -> Decimal:
+    return _to_decimal(row.get("dish_sum_before_discount"))
+
+
+def _raw_line_quantity(row: dict[str, object]) -> Decimal:
+    quantity = _to_decimal(row.get("dish_amount"))
+    return quantity if quantity > 0 else Decimal("1")
+
+
+def _percent_share(value: Decimal, total: Decimal) -> float:
+    if total <= 0:
+        return 0.0
+    return float(round((value / total) * Decimal("100"), 2))
 
 
 @dataclass(slots=True)
@@ -32,6 +76,10 @@ class CouponCampaignPerformanceSnapshot:
     returned_window_days: int = 0
     revenue_net_used: Decimal = Decimal("0")
     unique_used_guests: int = 0
+    coupon_orders_total: int = 0
+    daily_usage_rows: list[dict[str, object]] = field(default_factory=list)
+    product_rank_rows: list[dict[str, object]] = field(default_factory=list)
+    order_detail_rows: list[dict[str, object]] = field(default_factory=list)
     late_usage_rows: list[dict[str, object]] = field(default_factory=list)
 
     @property
@@ -73,9 +121,10 @@ class CouponCampaignPerformanceSnapshot:
         """
         Средний чек по заказам с применением купонов кампании.
         """
-        if self.assignments_used <= 0:
+        denominator = int(self.coupon_orders_total or self.assignments_used or 0)
+        if denominator <= 0:
             return Decimal("0")
-        return self.revenue_net_used / Decimal(self.assignments_used)
+        return self.revenue_net_used / Decimal(denominator)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -98,6 +147,10 @@ class CouponCampaignPerformanceSnapshot:
             "revenue_net_used": str(self.revenue_net_used),
             "coupon_orders_avg_check": str(self.coupon_orders_avg_check),
             "unique_used_guests": int(self.unique_used_guests),
+            "coupon_orders_total": int(self.coupon_orders_total),
+            "daily_usage_rows": list(self.daily_usage_rows),
+            "product_rank_rows": list(self.product_rank_rows),
+            "order_detail_rows": list(self.order_detail_rows),
             "usage_rate_percent": float(self.usage_rate_percent),
             "returned_guests_rate_percent": float(self.returned_guests_rate_percent),
             "late_usage_rows": list(self.late_usage_rows),
@@ -202,7 +255,12 @@ def build_coupon_campaign_performance_snapshot(
             "order_number",
             "coupon_series",
             "coupon_number",
+            "department_id",
+            "department_name",
+            "uniq_order_id",
             "net_sum",
+            "gross_sum",
+            "discount_sum",
         )
         .order_by("business_date", "id")
     )
@@ -216,6 +274,51 @@ def build_coupon_campaign_performance_snapshot(
         if key not in first_order_fact_by_key:
             first_order_fact_by_key[key] = row
 
+    order_identities = {
+        _order_identity(row)
+        for row in order_fact_rows
+        if row.get("business_date") is not None and row.get("order_number") is not None
+    }
+    order_uniq_ids = sorted({identity[3] for identity in order_identities if identity[3]})
+
+    raw_filter = Q(coupon_series__in=series_values, coupon_number__in=code_values)
+    if order_uniq_ids:
+        raw_filter |= Q(uniq_order_id__in=order_uniq_ids)
+
+    raw_line_rows = list(
+        OlapSalesRawLine.objects.filter(raw_filter)
+        .values(
+            "id",
+            "guest_id",
+            "business_date",
+            "department_id",
+            "department_name",
+            "order_number",
+            "uniq_order_id",
+            "dish_code",
+            "dish_name",
+            "dish_amount",
+            "dish_sum_before_discount",
+            "dish_sum_after_discount",
+            "discount_sum",
+            "coupon_series",
+            "coupon_number",
+        )
+        .order_by("business_date", "order_number", "id")
+    )
+
+    raw_lines_by_identity: dict[tuple[object, str, int | None, str], list[dict[str, object]]] = {}
+    raw_lines_by_coupon_key: dict[tuple[str, str], list[dict[str, object]]] = {}
+    for raw_row in raw_line_rows:
+        raw_identity = _order_identity(raw_row)
+        raw_lines_by_identity.setdefault(raw_identity, []).append(raw_row)
+        raw_coupon_key = (
+            _normalize_text(raw_row.get("coupon_series")),
+            _normalize_text(raw_row.get("coupon_number")),
+        )
+        if raw_coupon_key[0] and raw_coupon_key[1]:
+            raw_lines_by_coupon_key.setdefault(raw_coupon_key, []).append(raw_row)
+
     campaign_start = mailing.scheduled_time_begin
     campaign_end = mailing.scheduled_time_end
     campaign_start_date = campaign_start.date()
@@ -225,6 +328,10 @@ def build_coupon_campaign_performance_snapshot(
     unique_used_guest_ids: set[int] = set()
     late_rows: list[dict[str, object]] = []
     revenue_total = Decimal("0")
+    counted_order_keys: set[tuple[object, ...]] = set()
+    daily_stats: dict[object, dict[str, object]] = {}
+    product_stats: dict[tuple[str, str], dict[str, object]] = {}
+    order_detail_rows: list[dict[str, object]] = []
     used_statuses = {
         CouponCampaignAssignment.Status.USED,
         CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
@@ -284,14 +391,140 @@ def build_coupon_campaign_performance_snapshot(
                 )
 
         if fact_row is not None:
-            try:
-                revenue_total += Decimal(str(fact_row.get("net_sum") or "0"))
-            except Exception:  # noqa: BLE001
+            identity = _order_identity(fact_row)
+            order_key = ("order", *identity) if identity[0] is not None and identity[2] is not None else ("coupon", *key)
+            if order_key in counted_order_keys:
                 continue
+            counted_order_keys.add(order_key)
+
+            raw_lines = raw_lines_by_identity.get(identity) or raw_lines_by_coupon_key.get(key, [])
+            if raw_lines:
+                order_net_sum = sum((_raw_line_net_sum(row) for row in raw_lines), Decimal("0"))
+                order_gross_sum = sum((_raw_line_gross_sum(row) for row in raw_lines), Decimal("0"))
+            else:
+                order_net_sum = _to_decimal(fact_row.get("net_sum"))
+                order_gross_sum = _to_decimal(fact_row.get("gross_sum"))
+
+            order_discount_sum = max(order_gross_sum - order_net_sum, Decimal("0"))
+            revenue_total += order_net_sum
+            snapshot.coupon_orders_total += 1
+
+            business_date = fact_business_date or fact_row.get("business_date")
+            if business_date is not None:
+                daily_row = daily_stats.setdefault(
+                    business_date,
+                    {
+                        "business_date": business_date.isoformat(),
+                        "orders_count": 0,
+                        "revenue_net": Decimal("0"),
+                        "gross_sum": Decimal("0"),
+                        "discount_sum": Decimal("0"),
+                    },
+                )
+                daily_row["orders_count"] = int(daily_row["orders_count"]) + 1
+                daily_row["revenue_net"] = daily_row["revenue_net"] + order_net_sum
+                daily_row["gross_sum"] = daily_row["gross_sum"] + order_gross_sum
+                daily_row["discount_sum"] = daily_row["discount_sum"] + order_discount_sum
+
+            order_items: list[dict[str, object]] = []
+            for raw_row in raw_lines:
+                product_key = (
+                    _normalize_text(raw_row.get("dish_code")),
+                    _normalize_text(raw_row.get("dish_name")) or "Без названия",
+                )
+                product_row = product_stats.setdefault(
+                    product_key,
+                    {
+                        "dish_code": product_key[0],
+                        "dish_name": product_key[1],
+                        "orders": set(),
+                        "quantity_total": Decimal("0"),
+                        "gross_sum": Decimal("0"),
+                        "revenue_net": Decimal("0"),
+                        "discount_sum": Decimal("0"),
+                    },
+                )
+                quantity = _raw_line_quantity(raw_row)
+                raw_gross_sum = _raw_line_gross_sum(raw_row)
+                raw_net_sum = _raw_line_net_sum(raw_row)
+                raw_discount_sum = max(raw_gross_sum - raw_net_sum, Decimal("0"))
+                product_row["orders"].add(order_key)
+                product_row["quantity_total"] = product_row["quantity_total"] + quantity
+                product_row["gross_sum"] = product_row["gross_sum"] + raw_gross_sum
+                product_row["revenue_net"] = product_row["revenue_net"] + raw_net_sum
+                product_row["discount_sum"] = product_row["discount_sum"] + raw_discount_sum
+                order_items.append(
+                    {
+                        "dish_code": product_key[0],
+                        "dish_name": product_key[1],
+                        "quantity": str(quantity),
+                        "gross_sum": str(raw_gross_sum),
+                        "revenue_net": str(raw_net_sum),
+                        "discount_sum": str(raw_discount_sum),
+                    }
+                )
+
+            order_detail_rows.append(
+                {
+                    "business_date": business_date.isoformat() if business_date else None,
+                    "order_number": fact_row.get("order_number"),
+                    "guest_id": int(guest_id) if guest_id else fact_row.get("guest_id"),
+                    "coupon_code": key[1],
+                    "department_name": fact_row.get("department_name") or "",
+                    "gross_sum": str(order_gross_sum),
+                    "revenue_net": str(order_net_sum),
+                    "discount_sum": str(order_discount_sum),
+                    "items_count": len(order_items) if order_items else int(fact_row.get("items_count") or 0),
+                    "items": order_items,
+                }
+            )
 
     snapshot.late_usage_rows = late_rows
     snapshot.revenue_net_used = revenue_total
     snapshot.unique_used_guests = len(unique_used_guest_ids)
+
+    max_daily_revenue = max(
+        (row["revenue_net"] for row in daily_stats.values()),
+        default=Decimal("0"),
+    )
+    snapshot.daily_usage_rows = [
+        {
+            "business_date": row["business_date"],
+            "orders_count": int(row["orders_count"]),
+            "revenue_net": str(row["revenue_net"]),
+            "gross_sum": str(row["gross_sum"]),
+            "discount_sum": str(row["discount_sum"]),
+            "revenue_share_percent": _percent_share(row["revenue_net"], max_daily_revenue),
+        }
+        for _, row in sorted(daily_stats.items(), key=lambda item: item[0])
+    ]
+    snapshot.product_rank_rows = sorted(
+        [
+            {
+                "dish_code": row["dish_code"],
+                "dish_name": row["dish_name"],
+                "orders_count": len(row["orders"]),
+                "quantity_total": str(row["quantity_total"]),
+                "gross_sum": str(row["gross_sum"]),
+                "revenue_net": str(row["revenue_net"]),
+                "discount_sum": str(row["discount_sum"]),
+            }
+            for row in product_stats.values()
+        ],
+        key=lambda row: (
+            -int(row["orders_count"]),
+            -_to_decimal(row["revenue_net"]),
+            str(row["dish_name"]),
+        ),
+    )[:20]
+    snapshot.order_detail_rows = sorted(
+        order_detail_rows,
+        key=lambda row: (
+            str(row.get("business_date") or ""),
+            int(row.get("order_number") or 0),
+            str(row.get("coupon_code") or ""),
+        ),
+    )
 
     # Метрика returned_guest_coupon.
     window_days = _resolve_returned_window_days(mailing, returned_window_days)

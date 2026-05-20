@@ -6,7 +6,17 @@ from decimal import Decimal
 from django.test import TestCase
 from django.utils import timezone
 
-from guests.models import CouponCampaignAssignment, CouponRegistryEntry, Guest, Mailing, MailingGuest, MessageTemplate, OrderFact
+from guests.models import (
+    CouponCampaignAssignment,
+    CouponRegistryEntry,
+    Guest,
+    Mailing,
+    MailingGuest,
+    MessageTemplate,
+    OlapCheckSyncJournal,
+    OlapSalesRawLine,
+    OrderFact,
+)
 from guests.services.coupon_campaign_reporting import (
     CouponCampaignPerformanceSnapshot,
     build_coupon_campaign_performance_snapshot,
@@ -130,6 +140,54 @@ class CouponCampaignReportingServiceTests(TestCase):
             first_seen_at=self.now,
         )
 
+    def _create_olap_journal(self, *, guest: Guest, order_number: int, uniq_order_id: str):
+        return OlapCheckSyncJournal.objects.create(
+            idempotency_key=f"journal-{uniq_order_id}",
+            status=OlapCheckSyncJournal.Status.LOADED,
+            guest=guest,
+            terminal_group_id="TERM_1",
+            order_number=order_number,
+            order_external_id=uniq_order_id,
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            department_code="DEP_1",
+            loaded_at=self.now,
+        )
+
+    def _create_raw_line(
+        self,
+        *,
+        journal: OlapCheckSyncJournal,
+        guest: Guest,
+        uniq_order_id: str,
+        order_number: int,
+        dish_code: str,
+        dish_name: str,
+        before: str,
+        after: str,
+        coupon_number: str,
+    ) -> OlapSalesRawLine:
+        return OlapSalesRawLine.objects.create(
+            row_fingerprint=f"{uniq_order_id}-{dish_code}",
+            sync_journal=journal,
+            guest=guest,
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            department_code="DEP_1",
+            department_name="Тестовое заведение",
+            order_number=order_number,
+            uniq_order_id=uniq_order_id,
+            dish_code=dish_code,
+            dish_name=dish_name,
+            dish_amount="1",
+            dish_sum_before_discount=before,
+            dish_sum_after_discount=after,
+            discount_sum=str(Decimal(before) - Decimal(after)),
+            bonus_sum="0.00",
+            coupon_series="TEST",
+            coupon_number=coupon_number,
+        )
+
     def test_builds_kpi_snapshot_with_usage_and_return_metrics(self):
         mailing = self._create_mailing(coupon_series="TEST")
 
@@ -216,11 +274,84 @@ class CouponCampaignReportingServiceTests(TestCase):
         self.assertEqual(payload["returned_window_days"], 30)
         self.assertEqual(payload["revenue_net_used"], "700.00")
         self.assertEqual(payload["coupon_orders_avg_check"], "350.00")
+        self.assertEqual(payload["coupon_orders_total"], 2)
         self.assertEqual(payload["unique_used_guests"], 2)
         self.assertEqual(payload["usage_rate_percent"], 66.67)
         self.assertEqual(payload["returned_guests_rate_percent"], 100.0)
         self.assertEqual(len(payload["late_usage_rows"]), 1)
         self.assertEqual(payload["late_usage_rows"][0]["coupon_code"], "TST-USED-LATE")
+
+    def test_uses_paid_olap_lines_for_revenue_and_product_breakdown(self):
+        mailing = self._create_mailing(coupon_series="TEST")
+        guest = self._create_guest("3001")
+        MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Купонная рассылка",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        assignment = self._create_assignment(
+            mailing=mailing,
+            guest=guest,
+            code="TST-GIFT",
+            status=CouponCampaignAssignment.Status.USED,
+            used_at=self.now,
+        )
+        self._create_order_fact(
+            guest=guest,
+            order_number=301,
+            uniq_suffix="gift",
+            business_date=self.now.date(),
+            coupon_number=assignment.coupon_code,
+            net_sum="540.00",
+        )
+        journal = self._create_olap_journal(
+            guest=guest,
+            order_number=301,
+            uniq_order_id="uniq-gift",
+        )
+        self._create_raw_line(
+            journal=journal,
+            guest=guest,
+            uniq_order_id="uniq-gift",
+            order_number=301,
+            dish_code="DRINK-1",
+            dish_name="Фейхоа",
+            before="350.00",
+            after="350.00",
+            coupon_number=assignment.coupon_code,
+        )
+        self._create_raw_line(
+            journal=journal,
+            guest=guest,
+            uniq_order_id="uniq-gift",
+            order_number=301,
+            dish_code="COFFEE-AM",
+            dish_name="Американо",
+            before="190.00",
+            after="0.00",
+            coupon_number=assignment.coupon_code,
+        )
+
+        payload = build_coupon_campaign_performance_snapshot(mailing=mailing).to_dict()
+
+        self.assertEqual(payload["revenue_net_used"], "350.00")
+        self.assertEqual(payload["coupon_orders_avg_check"], "350.00")
+        self.assertEqual(payload["coupon_orders_total"], 1)
+        self.assertEqual(payload["daily_usage_rows"][0]["orders_count"], 1)
+        self.assertEqual(payload["daily_usage_rows"][0]["revenue_net"], "350.00")
+        self.assertEqual(len(payload["product_rank_rows"]), 2)
+        product_names = {row["dish_name"] for row in payload["product_rank_rows"]}
+        self.assertEqual(product_names, {"Фейхоа", "Американо"})
+        gift_row = next(row for row in payload["product_rank_rows"] if row["dish_name"] == "Американо")
+        self.assertEqual(gift_row["gross_sum"], "190.00")
+        self.assertEqual(gift_row["revenue_net"], "0.00")
+        self.assertEqual(payload["order_detail_rows"][0]["revenue_net"], "350.00")
+        self.assertEqual(len(payload["order_detail_rows"][0]["items"]), 2)
 
     def test_returns_empty_metrics_when_campaign_has_no_coupon_series(self):
         mailing = self._create_mailing(coupon_series="")
@@ -249,6 +380,7 @@ class CouponCampaignReportingServiceTests(TestCase):
         self.assertEqual(payload["returned_guest_coupon"], 0)
         self.assertEqual(payload["returned_guests_rate_percent"], 0.0)
         self.assertEqual(payload["revenue_net_used"], str(Decimal("0")))
+        self.assertEqual(payload["coupon_orders_total"], 0)
 
     def test_returned_guests_rate_falls_back_to_assignments_used_when_in_campaign_zero(self):
         snapshot = CouponCampaignPerformanceSnapshot(

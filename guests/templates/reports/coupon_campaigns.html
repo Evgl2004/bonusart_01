@@ -84,8 +84,8 @@
       </div>
       <div class="col-12 col-md-6 col-xl-3">
         <div class="card border-0 shadow-sm h-100"><div class="card-body">
-          <div class="text-muted small">Возвращаемость</div>
-          <div class="h5 mb-0">{{ coupon_campaign_report.returned_guests_rate_percent }}%</div>
+          <div class="text-muted small">Оплачено по заказам с купоном</div>
+          <div class="h5 mb-0">{{ coupon_campaign_report.revenue_net_used }}</div>
         </div></div>
       </div>
     </div>
@@ -109,15 +109,143 @@
         <div class="card border-0 shadow-sm h-100">
           <div class="card-body">
             <h3 class="h6 mb-3">Деньги и гости</h3>
-            <div class="small mb-1">Выручка по купонам: <b>{{ coupon_campaign_report.revenue_net_used }}</b></div>
-            <div class="small mb-1">Средний чек по купонам: <b>{{ coupon_campaign_report.coupon_orders_avg_check }}</b></div>
+            <div class="small mb-1">Оплаченная сумма заказов с купоном: <b>{{ coupon_campaign_report.revenue_net_used }}</b></div>
+            <div class="small mb-1">Средний оплаченный чек с купоном: <b>{{ coupon_campaign_report.coupon_orders_avg_check }}</b></div>
+            <div class="small mb-1">Заказов с купоном: <b>{{ coupon_campaign_report.coupon_orders_total }}</b></div>
             <div class="small mb-1">Уникальных гостей с применением: <b>{{ coupon_campaign_report.unique_used_guests }}</b></div>
-            <div class="small mb-1">
-              Вернувшиеся гости (окно {{ coupon_campaign_report.returned_window_days }} дн.): <b>{{ coupon_campaign_report.returned_guest_coupon }}</b>
-            </div>
-            <div class="small mb-0">Доля вернувшихся: <b>{{ coupon_campaign_report.returned_guests_rate_percent }}%</b></div>
+            <div class="small text-muted">Сумма считается по строкам OLAP после скидок, поэтому подарочные позиции с ценой 0 не раздувают выручку.</div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-xl-5">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-header bg-white">
+            <h3 class="h6 mb-0">Заказы с купоном по дням</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Дата</th>
+                  <th>Заказов</th>
+                  <th>Оплачено</th>
+                  <th style="width: 35%;">Доля</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in coupon_campaign_report.daily_usage_rows %}
+                  <tr>
+                    <td>{{ row.business_date }}</td>
+                    <td>{{ row.orders_count }}</td>
+                    <td>{{ row.revenue_net }}</td>
+                    <td>
+                      <div class="progress" style="height: 8px;">
+                        <div class="progress-bar" role="progressbar" style="width: {{ row.revenue_share_percent }}%;"></div>
+                      </div>
+                    </td>
+                  </tr>
+                {% empty %}
+                  <tr>
+                    <td colspan="4" class="text-center text-muted py-3">Заказов с купоном пока нет.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-xl-7">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-header bg-white">
+            <h3 class="h6 mb-0">Рейтинг позиций в заказах с купоном</h3>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Позиция</th>
+                  <th>Код</th>
+                  <th>Заказов</th>
+                  <th>Кол-во</th>
+                  <th>До скидки</th>
+                  <th>Оплачено</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in coupon_campaign_report.product_rank_rows %}
+                  <tr>
+                    <td>{{ row.dish_name }}</td>
+                    <td><code>{{ row.dish_code|default:"—" }}</code></td>
+                    <td>{{ row.orders_count }}</td>
+                    <td>{{ row.quantity_total }}</td>
+                    <td>{{ row.gross_sum }}</td>
+                    <td>{{ row.revenue_net }}</td>
+                  </tr>
+                {% empty %}
+                  <tr>
+                    <td colspan="6" class="text-center text-muted py-3">Позиции заказов пока не найдены.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white">
+        <h3 class="h6 mb-0">Заказы с применёнными купонами</h3>
+      </div>
+      <div class="card-body">
+        {% for order in coupon_campaign_report.order_detail_rows %}
+          <details class="border rounded p-2 mb-2">
+            <summary class="fw-semibold">
+              {{ order.business_date|default:"—" }} · заказ {{ order.order_number|default:"—" }} ·
+              купон <code>{{ order.coupon_code }}</code> · оплачено {{ order.revenue_net }}
+            </summary>
+            <div class="small text-muted mt-2 mb-2">
+              Заведение: {{ order.department_name|default:"—" }} ·
+              гость #{{ order.guest_id|default:"—" }} ·
+              до скидки {{ order.gross_sum }} · скидка {{ order.discount_sum }}
+            </div>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>Позиция</th>
+                    <th>Код</th>
+                    <th>Кол-во</th>
+                    <th>До скидки</th>
+                    <th>Оплачено</th>
+                    <th>Скидка</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in order.items %}
+                    <tr>
+                      <td>{{ item.dish_name }}</td>
+                      <td><code>{{ item.dish_code|default:"—" }}</code></td>
+                      <td>{{ item.quantity }}</td>
+                      <td>{{ item.gross_sum }}</td>
+                      <td>{{ item.revenue_net }}</td>
+                      <td>{{ item.discount_sum }}</td>
+                    </tr>
+                  {% empty %}
+                    <tr>
+                      <td colspan="6" class="text-center text-muted py-3">Детальные позиции заказа не найдены.</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        {% empty %}
+          <div class="text-muted small">Заказов с применёнными купонами пока нет.</div>
+        {% endfor %}
       </div>
     </div>
 

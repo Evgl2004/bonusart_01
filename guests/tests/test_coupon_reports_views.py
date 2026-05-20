@@ -247,6 +247,42 @@ class CouponReportsViewsTests(TestCase):
             "revenue_net_used": "57000.00",
             "coupon_orders_avg_check": "1425.00",
             "unique_used_guests": 38,
+            "coupon_orders_total": 40,
+            "daily_usage_rows": [
+                {
+                    "business_date": "2026-05-20",
+                    "orders_count": 4,
+                    "revenue_net": "57000.00",
+                    "gross_sum": "60000.00",
+                    "discount_sum": "3000.00",
+                    "revenue_share_percent": 100.0,
+                }
+            ],
+            "product_rank_rows": [
+                {
+                    "dish_code": "COFFEE-AM",
+                    "dish_name": "Американо",
+                    "orders_count": 4,
+                    "quantity_total": "4",
+                    "gross_sum": "760.00",
+                    "revenue_net": "0.00",
+                    "discount_sum": "760.00",
+                }
+            ],
+            "order_detail_rows": [
+                {
+                    "business_date": "2026-05-20",
+                    "order_number": 5001,
+                    "guest_id": 100,
+                    "coupon_code": "TST-001",
+                    "department_name": "Тестовое заведение",
+                    "gross_sum": "1500.00",
+                    "revenue_net": "1200.00",
+                    "discount_sum": "300.00",
+                    "items_count": 1,
+                    "items": [],
+                }
+            ],
             "usage_rate_percent": 30.77,
             "returned_guests_rate_percent": 34.29,
             "late_usage_rows": [],
@@ -266,5 +302,10 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Кампания #")
         self.assertContains(response, "57000.00")
         self.assertContains(response, "30,77%")
+        self.assertContains(response, "Заказы с купоном по дням")
+        self.assertContains(response, "Рейтинг позиций в заказах с купоном")
+        self.assertContains(response, "Американо")
+        self.assertNotContains(response, "Возвращаемость")
+        self.assertNotContains(response, "Вернувшиеся гости")
         self.assertContains(response, "Карточка кампании")
         build_mock.assert_called_once_with(mailing=self.mailing)
