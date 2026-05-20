@@ -153,8 +153,17 @@
           </div>
           <div class="col-12 col-xl-7">
             {% if coupon_campaign_report.daily_usage_rows %}
-              <div class="text-muted small mb-2">
-                Показывает, в какие дни применяли купоны, сколько заказов они дали и какая была оплаченная сумма.
+              <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                <div class="text-muted small">
+                  Показывает календарь кампании: дни без применений остаются на графике с нулевыми значениями.
+                </div>
+                {% if coupon_campaign_report.daily_usage_rows|length > 14 %}
+                  <div class="btn-group btn-group-sm" role="group" aria-label="Диапазон графика по дням">
+                    <button type="button" class="btn btn-primary" data-coupon-chart-range="first14">Первые 14 дней</button>
+                    <button type="button" class="btn btn-outline-primary" data-coupon-chart-range="last14">Последние 14 дней</button>
+                    <button type="button" class="btn btn-outline-primary" data-coupon-chart-range="all">Весь период</button>
+                  </div>
+                {% endif %}
               </div>
               <div id="couponDailyUsageChart" style="height: 320px; min-height: 320px;"></div>
             {% else %}
@@ -307,19 +316,34 @@
           return;
         }
 
-        const dates = rows.map((row) => row.business_date);
-        const orders = rows.map((row) => Number(row.orders_count || 0));
-        const revenue = rows.map((row) => Number(row.revenue_net || 0));
-        const avgCheck = rows.map((row) => Number(row.avg_check || 0));
+        const rangeButtons = document.querySelectorAll("[data-coupon-chart-range]");
+        let rangeMode = rows.length > 14 ? "first14" : "all";
         let chart = null;
 
-        function renderChart() {
-          if (chart) {
-            chart.resize();
-            return;
+        function getVisibleRows() {
+          if (rangeMode === "first14") {
+            return rows.slice(0, 14);
           }
-          chart = window.echarts.init(chartNode);
-          chart.setOption({
+          if (rangeMode === "last14") {
+            return rows.slice(Math.max(rows.length - 14, 0));
+          }
+          return rows;
+        }
+
+        function updateRangeButtons() {
+          rangeButtons.forEach(function(button) {
+            const isActive = button.dataset.couponChartRange === rangeMode;
+            button.classList.toggle("btn-primary", isActive);
+            button.classList.toggle("btn-outline-primary", !isActive);
+          });
+        }
+
+        function buildChartOption(chartRows) {
+          const dates = chartRows.map((row) => row.business_date);
+          const orders = chartRows.map((row) => Number(row.orders_count || 0));
+          const revenue = chartRows.map((row) => Number(row.revenue_net || 0));
+          const avgCheck = chartRows.map((row) => Number(row.avg_check || 0));
+          return {
             tooltip: { trigger: "axis" },
             legend: { top: 0 },
             grid: { left: 48, right: 56, top: 48, bottom: 36 },
@@ -333,7 +357,8 @@
                 name: "Заказов",
                 type: "bar",
                 data: orders,
-                yAxisIndex: 0
+                yAxisIndex: 0,
+                barMaxWidth: 32
               },
               {
                 name: "Оплачено",
@@ -350,8 +375,25 @@
                 yAxisIndex: 1
               }
             ]
-          });
+          };
         }
+
+        function renderChart() {
+          if (!chart) {
+            chart = window.echarts.init(chartNode);
+          }
+          chart.setOption(buildChartOption(getVisibleRows()), true);
+          chart.resize();
+        }
+
+        rangeButtons.forEach(function(button) {
+          button.addEventListener("click", function() {
+            rangeMode = button.dataset.couponChartRange || "all";
+            updateRangeButtons();
+            renderChart();
+          });
+        });
+        updateRangeButtons();
 
         const details = chartNode.closest("details");
         if (details) {

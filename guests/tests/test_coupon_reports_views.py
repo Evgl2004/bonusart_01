@@ -250,14 +250,15 @@ class CouponReportsViewsTests(TestCase):
             "coupon_orders_total": 40,
             "daily_usage_rows": [
                 {
-                    "business_date": "2026-05-20",
-                    "orders_count": 4,
-                    "used_coupons_count": 4,
-                    "revenue_net": "57000.00",
-                    "gross_sum": "60000.00",
-                    "discount_sum": "3000.00",
-                    "avg_check": "14250.00",
+                    "business_date": (self.now.date() + timedelta(days=offset)).isoformat(),
+                    "orders_count": 4 if offset == 0 else 0,
+                    "used_coupons_count": 4 if offset == 0 else 0,
+                    "revenue_net": "57000.00" if offset == 0 else "0",
+                    "gross_sum": "60000.00" if offset == 0 else "0",
+                    "discount_sum": "3000.00" if offset == 0 else "0",
+                    "avg_check": "14250.00" if offset == 0 else "0",
                 }
+                for offset in range(15)
             ],
             "product_rank_rows": [
                 {
@@ -305,6 +306,9 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "30,77%")
         self.assertContains(response, "Заказы с купоном по дням")
         self.assertContains(response, "Средний чек")
+        self.assertContains(response, "Первые 14 дней")
+        self.assertContains(response, "Последние 14 дней")
+        self.assertContains(response, "Весь период")
         self.assertContains(response, "Рейтинг позиций в заказах с купоном")
         self.assertContains(response, "Американо")
         self.assertNotContains(response, ">Доля<", html=False)

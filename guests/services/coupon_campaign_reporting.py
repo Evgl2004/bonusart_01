@@ -47,6 +47,47 @@ def _raw_line_quantity(row: dict[str, object]) -> Decimal:
     return quantity if quantity > 0 else Decimal("1")
 
 
+def _build_campaign_day_rows(
+    *,
+    start_date,
+    end_date,
+    daily_stats: dict[object, dict[str, object]],
+) -> list[dict[str, object]]:
+    """
+    Возвращает календарную шкалу кампании с нулевыми строками для дней без заказов.
+    """
+    rows: list[dict[str, object]] = []
+    current_date = start_date
+    while current_date <= end_date:
+        source = daily_stats.get(current_date) or {
+            "business_date": current_date.isoformat(),
+            "orders_count": 0,
+            "used_coupons_count": 0,
+            "revenue_net": Decimal("0"),
+            "gross_sum": Decimal("0"),
+            "discount_sum": Decimal("0"),
+        }
+        orders_count = int(source["orders_count"])
+        revenue_net = _to_decimal(source["revenue_net"])
+        rows.append(
+            {
+                "business_date": source["business_date"],
+                "orders_count": orders_count,
+                "used_coupons_count": int(source["used_coupons_count"]),
+                "revenue_net": str(revenue_net),
+                "gross_sum": str(_to_decimal(source["gross_sum"])),
+                "discount_sum": str(_to_decimal(source["discount_sum"])),
+                "avg_check": str(
+                    revenue_net / Decimal(orders_count)
+                    if orders_count > 0
+                    else Decimal("0")
+                ),
+            }
+        )
+        current_date += timedelta(days=1)
+    return rows
+
+
 @dataclass(slots=True)
 class CouponCampaignPerformanceSnapshot:
     """
@@ -479,22 +520,11 @@ def build_coupon_campaign_performance_snapshot(
     snapshot.revenue_net_used = revenue_total
     snapshot.unique_used_guests = len(unique_used_guest_ids)
 
-    snapshot.daily_usage_rows = [
-        {
-            "business_date": row["business_date"],
-            "orders_count": int(row["orders_count"]),
-            "used_coupons_count": int(row["used_coupons_count"]),
-            "revenue_net": str(row["revenue_net"]),
-            "gross_sum": str(row["gross_sum"]),
-            "discount_sum": str(row["discount_sum"]),
-            "avg_check": str(
-                row["revenue_net"] / Decimal(int(row["orders_count"]))
-                if int(row["orders_count"]) > 0
-                else Decimal("0")
-            ),
-        }
-        for _, row in sorted(daily_stats.items(), key=lambda item: item[0])
-    ]
+    snapshot.daily_usage_rows = _build_campaign_day_rows(
+        start_date=campaign_start_date,
+        end_date=campaign_end_date,
+        daily_stats=daily_stats,
+    )
     snapshot.product_rank_rows = sorted(
         [
             {

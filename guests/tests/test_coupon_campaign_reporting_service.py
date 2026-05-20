@@ -342,10 +342,17 @@ class CouponCampaignReportingServiceTests(TestCase):
         self.assertEqual(payload["revenue_net_used"], "350.00")
         self.assertEqual(payload["coupon_orders_avg_check"], "350.00")
         self.assertEqual(payload["coupon_orders_total"], 1)
-        self.assertEqual(payload["daily_usage_rows"][0]["orders_count"], 1)
-        self.assertEqual(payload["daily_usage_rows"][0]["used_coupons_count"], 1)
-        self.assertEqual(payload["daily_usage_rows"][0]["revenue_net"], "350.00")
-        self.assertEqual(payload["daily_usage_rows"][0]["avg_check"], "350.00")
+        self.assertEqual(len(payload["daily_usage_rows"]), 5)
+        today_row = next(
+            row
+            for row in payload["daily_usage_rows"]
+            if row["business_date"] == self.now.date().isoformat()
+        )
+        self.assertEqual(payload["daily_usage_rows"][0]["orders_count"], 0)
+        self.assertEqual(today_row["orders_count"], 1)
+        self.assertEqual(today_row["used_coupons_count"], 1)
+        self.assertEqual(today_row["revenue_net"], "350.00")
+        self.assertEqual(today_row["avg_check"], "350.00")
         self.assertEqual(len(payload["product_rank_rows"]), 2)
         product_names = {row["dish_name"] for row in payload["product_rank_rows"]}
         self.assertEqual(product_names, {"Фейхоа", "Американо"})
