@@ -109,7 +109,7 @@
                 <div class="list-group-item px-0">
                   <div class="d-flex justify-content-between gap-2">
                     <div>
-                      <div class="fw-semibold">#{{ item.task_id }} · {{ item.provider_type }} · {{ item.status }}</div>
+                      <div class="fw-semibold">Задача #{{ item.task_id }} · {{ item.provider_type }} · {{ item.status }}</div>
                       <div class="small text-muted">
                         {% if item.guest_phone %}{{ item.guest_phone }}{% else %}без телефона{% endif %}
                       </div>
@@ -141,7 +141,7 @@
             <table class="table table-sm mb-0">
               <thead class="table-light">
                 <tr>
-                  <th>ID</th>
+                  <th>ID строки</th>
                   <th>Телефон</th>
                   <th>Статус</th>
                   <th>Delivery</th>
@@ -179,7 +179,7 @@
             <table class="table table-sm mb-0">
               <thead class="table-light">
                 <tr>
-                  <th>ID</th>
+                  <th>ID задачи</th>
                   <th>Статус</th>
                   <th>Провайдер</th>
                   <th>Приоритет</th>
