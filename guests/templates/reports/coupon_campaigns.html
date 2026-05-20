@@ -132,7 +132,6 @@
                   <th>Дата</th>
                   <th>Заказов</th>
                   <th>Оплачено</th>
-                  <th style="width: 35%;">Доля</th>
                 </tr>
               </thead>
               <tbody>
@@ -141,20 +140,24 @@
                     <td>{{ row.business_date }}</td>
                     <td>{{ row.orders_count }}</td>
                     <td>{{ row.revenue_net }}</td>
-                    <td>
-                      <div class="progress" style="height: 8px;">
-                        <div class="progress-bar" role="progressbar" style="width: {{ row.revenue_share_percent }}%;"></div>
-                      </div>
-                    </td>
                   </tr>
                 {% empty %}
                   <tr>
-                    <td colspan="4" class="text-center text-muted py-3">Заказов с купоном пока нет.</td>
+                    <td colspan="3" class="text-center text-muted py-3">Заказов с купоном пока нет.</td>
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
+          {% if coupon_campaign_report.daily_usage_rows %}
+            <details class="border-top px-3 py-2">
+              <summary class="small fw-semibold">График по дням</summary>
+              <div class="text-muted small mt-2 mb-2">
+                Показывает, в какие дни купоны применяли чаще и какую оплаченную сумму дали эти заказы.
+              </div>
+              <div id="couponDailyUsageChart" style="height: 280px;"></div>
+            </details>
+          {% endif %}
         </div>
       </div>
       <div class="col-12 col-xl-7">
@@ -284,6 +287,94 @@
         </table>
       </div>
     </div>
+    {{ coupon_campaign_report.daily_usage_rows|json_script:"coupon-daily-usage-data" }}
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script>
+      (function() {
+        const chartNode = document.getElementById("couponDailyUsageChart");
+        const dataNode = document.getElementById("coupon-daily-usage-data");
+        if (!chartNode || !dataNode || !window.echarts) {
+          return;
+        }
+
+        let rows = [];
+        try {
+          rows = JSON.parse(dataNode.textContent || "[]");
+        } catch (error) {
+          rows = [];
+        }
+        if (!rows.length) {
+          return;
+        }
+
+        const dates = rows.map((row) => row.business_date);
+        const orders = rows.map((row) => Number(row.orders_count || 0));
+        const coupons = rows.map((row) => Number(row.used_coupons_count || 0));
+        const revenue = rows.map((row) => Number(row.revenue_net || 0));
+        const avgCheck = rows.map((row) => Number(row.avg_check || 0));
+        let chart = null;
+
+        function renderChart() {
+          if (chart) {
+            chart.resize();
+            return;
+          }
+          chart = window.echarts.init(chartNode);
+          chart.setOption({
+            tooltip: { trigger: "axis" },
+            legend: { top: 0 },
+            grid: { left: 48, right: 56, top: 48, bottom: 36 },
+            xAxis: { type: "category", data: dates },
+            yAxis: [
+              { type: "value", name: "Кол-во" },
+              { type: "value", name: "Рубли" }
+            ],
+            series: [
+              {
+                name: "Купонов",
+                type: "bar",
+                data: coupons,
+                yAxisIndex: 0
+              },
+              {
+                name: "Заказов",
+                type: "bar",
+                data: orders,
+                yAxisIndex: 0
+              },
+              {
+                name: "Оплачено",
+                type: "line",
+                smooth: true,
+                data: revenue,
+                yAxisIndex: 1
+              },
+              {
+                name: "Средний чек",
+                type: "line",
+                smooth: true,
+                data: avgCheck,
+                yAxisIndex: 1
+              }
+            ]
+          });
+        }
+
+        const details = chartNode.closest("details");
+        if (details) {
+          details.addEventListener("toggle", function() {
+            if (details.open) {
+              setTimeout(renderChart, 0);
+            }
+          });
+        }
+        window.addEventListener("resize", function() {
+          if (chart) {
+            chart.resize();
+          }
+        });
+      })();
+    </script>
   {% elif selected_campaign %}
     <div class="alert alert-info">Для выбранной кампании нет данных отчёта.</div>
   {% else %}

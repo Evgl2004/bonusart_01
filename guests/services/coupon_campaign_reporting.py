@@ -47,12 +47,6 @@ def _raw_line_quantity(row: dict[str, object]) -> Decimal:
     return quantity if quantity > 0 else Decimal("1")
 
 
-def _percent_share(value: Decimal, total: Decimal) -> float:
-    if total <= 0:
-        return 0.0
-    return float(round((value / total) * Decimal("100"), 2))
-
-
 @dataclass(slots=True)
 class CouponCampaignPerformanceSnapshot:
     """
@@ -416,12 +410,14 @@ def build_coupon_campaign_performance_snapshot(
                     {
                         "business_date": business_date.isoformat(),
                         "orders_count": 0,
+                        "used_coupons_count": 0,
                         "revenue_net": Decimal("0"),
                         "gross_sum": Decimal("0"),
                         "discount_sum": Decimal("0"),
                     },
                 )
                 daily_row["orders_count"] = int(daily_row["orders_count"]) + 1
+                daily_row["used_coupons_count"] = int(daily_row["used_coupons_count"]) + 1
                 daily_row["revenue_net"] = daily_row["revenue_net"] + order_net_sum
                 daily_row["gross_sum"] = daily_row["gross_sum"] + order_gross_sum
                 daily_row["discount_sum"] = daily_row["discount_sum"] + order_discount_sum
@@ -483,18 +479,19 @@ def build_coupon_campaign_performance_snapshot(
     snapshot.revenue_net_used = revenue_total
     snapshot.unique_used_guests = len(unique_used_guest_ids)
 
-    max_daily_revenue = max(
-        (row["revenue_net"] for row in daily_stats.values()),
-        default=Decimal("0"),
-    )
     snapshot.daily_usage_rows = [
         {
             "business_date": row["business_date"],
             "orders_count": int(row["orders_count"]),
+            "used_coupons_count": int(row["used_coupons_count"]),
             "revenue_net": str(row["revenue_net"]),
             "gross_sum": str(row["gross_sum"]),
             "discount_sum": str(row["discount_sum"]),
-            "revenue_share_percent": _percent_share(row["revenue_net"], max_daily_revenue),
+            "avg_check": str(
+                row["revenue_net"] / Decimal(int(row["orders_count"]))
+                if int(row["orders_count"]) > 0
+                else Decimal("0")
+            ),
         }
         for _, row in sorted(daily_stats.items(), key=lambda item: item[0])
     ]

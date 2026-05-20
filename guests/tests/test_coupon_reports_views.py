@@ -252,10 +252,11 @@ class CouponReportsViewsTests(TestCase):
                 {
                     "business_date": "2026-05-20",
                     "orders_count": 4,
+                    "used_coupons_count": 4,
                     "revenue_net": "57000.00",
                     "gross_sum": "60000.00",
                     "discount_sum": "3000.00",
-                    "revenue_share_percent": 100.0,
+                    "avg_check": "14250.00",
                 }
             ],
             "product_rank_rows": [
@@ -303,8 +304,10 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "57000.00")
         self.assertContains(response, "30,77%")
         self.assertContains(response, "Заказы с купоном по дням")
+        self.assertContains(response, "График по дням")
         self.assertContains(response, "Рейтинг позиций в заказах с купоном")
         self.assertContains(response, "Американо")
+        self.assertNotContains(response, ">Доля<", html=False)
         self.assertNotContains(response, "Возвращаемость")
         self.assertNotContains(response, "Вернувшиеся гости")
         self.assertContains(response, "Карточка кампании")
