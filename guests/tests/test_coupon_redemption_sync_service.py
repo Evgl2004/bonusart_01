@@ -262,6 +262,126 @@ class CouponRedemptionSyncServiceTests(TestCase):
         self.assertEqual(stats.queue_events_created, 0)
         self.assertEqual(stats.queue_events_updated, 1)
 
+    def test_repeat_sync_does_not_reopen_acked_used_event(self):
+        guest = self._create_guest("2323")
+        assignment = self._create_assignment(guest=guest, code="TST-USED-ACKED-1")
+        self._create_order_fact(
+            guest=guest,
+            order_number=232,
+            coupon_series="TEST",
+            coupon_number="TST-USED-ACKED-1",
+            uniq_suffix="used-acked-1",
+        )
+
+        service = CouponRedemptionSyncService()
+        service.sync_from_order_facts()
+
+        assignment.refresh_from_db()
+        event = CouponVtelemaxSyncQueue.objects.get(
+            assignment=assignment,
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+        )
+        acked_at = self.now + timedelta(minutes=1)
+        event.status = CouponVtelemaxSyncQueue.Status.ACKED
+        event.attempts = 1
+        event.sent_at = acked_at
+        event.ack_at = acked_at
+        event.last_error = None
+        event.save(update_fields=["status", "attempts", "sent_at", "ack_at", "last_error", "updated_at"])
+        assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = acked_at
+        assignment.save(update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"])
+
+        stats = service.sync_from_order_facts()
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.USED)
+        self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
+        self.assertEqual(
+            CouponVtelemaxSyncQueue.objects.filter(
+                assignment=assignment,
+                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            ).count(),
+            1,
+        )
+        event.refresh_from_db()
+        self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(event.ack_at, acked_at)
+        self.assertIsNone(event.last_error)
+
+        self.assertEqual(stats.assignments_already_used, 1)
+        self.assertEqual(stats.queue_events_created, 0)
+        self.assertEqual(stats.queue_events_updated, 0)
+
+    def test_used_after_acked_expired_creates_new_status_event(self):
+        self.mailing.scheduled_time_begin = self.now - timedelta(days=3)
+        self.mailing.scheduled_time_end = self.now - timedelta(days=2)
+        self.mailing.save(update_fields=["scheduled_time_begin", "scheduled_time_end", "updated_at"])
+        guest = self._create_guest("2424")
+        assignment = self._create_assignment(guest=guest, code="TST-EXPIRED-ACKED-1")
+        assignment.status = CouponCampaignAssignment.Status.EXPIRED
+        assignment.save(update_fields=["status", "updated_at"])
+        assignment.coupon.pool_status = CouponRegistryEntry.PoolStatus.EXPIRED
+        assignment.coupon.is_active = False
+        assignment.coupon.save(update_fields=["pool_status", "is_active", "updated_at"])
+
+        expired_event = CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            assignment=assignment,
+            payload_json={
+                "campaign_id": assignment.campaign_id,
+                "assignment_id": assignment.id,
+                "coupon_series": assignment.coupon_series,
+                "coupon_code": assignment.coupon_code,
+                "status": CouponCampaignAssignment.Status.EXPIRED,
+                "meta": {
+                    "post_campaign_close": True,
+                    "remove_from_guest": True,
+                    "release_to_pool": False,
+                },
+            },
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            attempts=1,
+            sent_at=self.now - timedelta(days=1),
+            ack_at=self.now - timedelta(days=1),
+            next_retry_at=self.now - timedelta(days=1),
+        )
+        self._create_order_fact(
+            guest=guest,
+            order_number=242,
+            coupon_series="TEST",
+            coupon_number="TST-EXPIRED-ACKED-1",
+            uniq_suffix="expired-acked-1",
+        )
+
+        stats = CouponRedemptionSyncService().sync_from_order_facts()
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN)
+        self.assertEqual(assignment.used_order_id, 242)
+        assignment.coupon.refresh_from_db()
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.USED_AFTER_CAMPAIGN)
+
+        events = list(
+            CouponVtelemaxSyncQueue.objects.filter(
+                assignment=assignment,
+                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            ).order_by("id")
+        )
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0].id, expired_event.id)
+        self.assertEqual(events[0].status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(events[0].payload_json.get("status"), CouponCampaignAssignment.Status.EXPIRED)
+        self.assertEqual(events[1].status, CouponVtelemaxSyncQueue.Status.PENDING)
+        self.assertEqual(events[1].payload_json.get("status"), CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN)
+        self.assertEqual(events[1].payload_json.get("used_order_id"), 242)
+        self.assertEqual(events[1].payload_json.get("meta", {}).get("used_after_campaign"), True)
+
+        self.assertEqual(stats.assignments_marked_used, 1)
+        self.assertEqual(stats.assignments_marked_used_after_campaign, 1)
+        self.assertEqual(stats.queue_events_created, 1)
+        self.assertEqual(stats.queue_events_updated, 0)
+
     def test_counts_missing_assignment_and_guest_mismatch(self):
         guest_expected = self._create_guest("3333")
         guest_actual = self._create_guest("4444")

@@ -210,7 +210,7 @@ class CouponRedemptionSyncService:
                         ]
                     )
 
-                queue_created = self._upsert_status_update_event(
+                queue_result = self._upsert_status_update_event(
                     assignment=assignment,
                     status=target_status,
                     used_order_id=int(fact_order_number) if fact_order_number is not None else None,
@@ -218,9 +218,9 @@ class CouponRedemptionSyncService:
                     now=now,
                     dry_run=dry_run,
                 )
-                if queue_created:
+                if queue_result is True:
                     stats.queue_events_created += 1
-                else:
+                elif queue_result is False:
                     stats.queue_events_updated += 1
 
         return stats
@@ -273,13 +273,14 @@ class CouponRedemptionSyncService:
         used_business_date: date | None,
         now,
         dry_run: bool,
-    ) -> bool:
+    ) -> bool | None:
         """
         Обновляет или создаёт событие `status_update` для передачи статуса купона в vtelemax.
 
         Возвращает:
         1. `True` — если создана новая запись очереди;
-        2. `False` — если существующая запись обновлена.
+        2. `False` — если существующая запись обновлена;
+        3. `None` — если уже подтверждённое событие полностью покрывает текущее состояние.
         """
         payload: dict[str, Any] = {
             "campaign_id": int(assignment.campaign_id),
@@ -325,6 +326,26 @@ class CouponRedemptionSyncService:
                 )
             return True
 
+        if existing.status == CouponVtelemaxSyncQueue.Status.ACKED:
+            existing_identity = CouponRedemptionSyncService._status_update_payload_identity(existing.payload_json)
+            payload_identity = CouponRedemptionSyncService._status_update_payload_identity(payload)
+            if existing_identity == payload_identity:
+                return None
+
+            if not dry_run:
+                CouponVtelemaxSyncQueue.objects.create(
+                    direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+                    assignment=assignment,
+                    payload_json=payload,
+                    status=CouponVtelemaxSyncQueue.Status.PENDING,
+                    attempts=0,
+                    next_retry_at=now,
+                    last_error=None,
+                    sent_at=None,
+                    ack_at=None,
+                )
+            return True
+
         if not dry_run:
             existing.payload_json = payload
             existing.status = CouponVtelemaxSyncQueue.Status.PENDING
@@ -344,3 +365,25 @@ class CouponRedemptionSyncService:
                 ]
             )
         return False
+
+    @staticmethod
+    def _status_update_payload_identity(payload: dict[str, Any]) -> tuple[str, ...]:
+        meta = payload.get("meta")
+        if not isinstance(meta, dict):
+            meta = {}
+
+        def normalized(value: Any) -> str:
+            if value is None:
+                return ""
+            return str(value)
+
+        return (
+            normalized(payload.get("campaign_id")),
+            normalized(payload.get("assignment_id")),
+            normalized(payload.get("coupon_series")),
+            normalized(payload.get("coupon_code")),
+            normalized(payload.get("status")),
+            normalized(payload.get("used_order_id")),
+            normalized(payload.get("used_business_date")),
+            normalized(meta.get("used_after_campaign")),
+        )
