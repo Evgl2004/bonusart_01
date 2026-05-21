@@ -437,7 +437,7 @@ E2E считается пройденным, если:
 | `used_after_campaign` | | |
 | `expired` | | |
 | `canceled -> release` | OK | Кампания `#6`: `status_update:canceled` с `meta.release_to_pool=true` ACKed, купон возвращён в пул SAGUR и удалён у гостя C во vtelemax. |
-| `reassign` | OK | Кампания `#7`: тот же `coupon_series+coupon_code` повторно назначен гостю D и подтверждён во vtelemax как активный/видимый. |
+| `reassign` | OK | Кампания `#7`: тот же `coupon_series+coupon_code` повторно назначен гостю D, подтверждён во vtelemax как активный/видимый, затем очищен через cleanup cancel. |
 | partial ACK | | |
 | no `results[]` negative test | | |
 | audit clean | | |
@@ -531,8 +531,12 @@ E2E считается пройденным, если:
 | Reassign гостю D | OK | Кампания `#7`, `assignment_id=8`, тот же `coupon_id=15`, тот же `coupon_code=REL-DBEXB604`, статус `reserved`. |
 | Batch `assignments` для D | OK | `event_id=74519f3f-8d40-4393-b652-1d93c703c8b7`, ACKed в SAGUR. |
 | Post-state vtelemax после reassign | OK | vtelemax подтвердил активный/видимый купон у D, отсутствие купона у C, ровно одну активную связку по `coupon_series+coupon_code`. |
+| Cleanup кампании `#7` | OK | Кампания `#7` остановлена, строка аудитории отменена, создано финальное `status_update:canceled` с `meta.release_to_pool=true`. |
+| ACK cleanup release | OK | `event_id=c4c55aba-7484-4189-a7be-54848a7648e1`, `processed=1 acked=1 failed=0 status_updates_acked=1`. |
+| Финальный post-cleanup SAGUR | OK | Assignment `#8`: `status=canceled`, `vtelemax_sync_status=ok`; купон `REL-DBEXB604`: `pool_status=verified_loaded`, `is_active=true`, `assigned_at=None`; `dispatch_tasks=[]`. |
+| Финальный post-cleanup vtelemax | OK | Купон отсутствует у C и D; `active_visible_occupied_rows=0`, `any_rows_for_coupon=0`, rejected=0, problems=[]. |
 
-Итог по сценарию `canceled -> release -> reassign`: **пройден**.
+Итог по сценарию `canceled -> release -> reassign -> cleanup`: **пройден**.
 
 Зафиксированная семантика:
 
@@ -540,7 +544,8 @@ E2E считается пройденным, если:
 - SAGUR возвращает купон в пул только после item-level ACK от vtelemax;
 - тот же `coupon_series + coupon_code` может быть повторно назначен другому гостю;
 - повторное назначение не создаёт дубль у старого гостя;
-- в тесте reassign сообщения гостям не отправлялись, проверялся именно жизненный цикл купона и состояние vtelemax.
+- в тесте reassign сообщения гостям не отправлялись, проверялся именно жизненный цикл купона и состояние vtelemax;
+- после cleanup тестовый купон освобождён и не висит активным ни у одного гостя.
 
 Итоговое решение:
 
