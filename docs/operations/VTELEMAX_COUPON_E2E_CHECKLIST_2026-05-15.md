@@ -436,8 +436,8 @@ E2E считается пройденным, если:
 | `used` | | |
 | `used_after_campaign` | | |
 | `expired` | | |
-| `canceled -> release` | | |
-| `reassign` | | |
+| `canceled -> release` | OK | Кампания `#6`: `status_update:canceled` с `meta.release_to_pool=true` ACKed, купон возвращён в пул SAGUR и удалён у гостя C во vtelemax. |
+| `reassign` | OK | Кампания `#7`: тот же `coupon_series+coupon_code` повторно назначен гостю D и подтверждён во vtelemax как активный/видимый. |
 | partial ACK | | |
 | no `results[]` negative test | | |
 | audit clean | | |
@@ -495,7 +495,52 @@ E2E считается пройденным, если:
 | Оплаченная сумма по заказу после скидок | `350.00` |
 | Подарочная позиция | `Американо`, до скидки `190.00`, оплачено `0.00` |
 
-Итог по позитивному сценарию: **пройден**. Оставшиеся отдельные проверки полного контракта: `used_after_campaign`, `canceled -> release -> reassign`; повторный `expired` можно выполнить после завершения активных тестовых купонов кампании `#5`, если потребуется дополнительное подтверждение.
+Итог по позитивному сценарию: **пройден**. Оставшиеся отдельные проверки полного контракта: `used_after_campaign`; повторный `expired` можно выполнить после завершения активных тестовых купонов кампании `#5`, если потребуется дополнительное подтверждение.
+
+### 17.2. Фактически зафиксированный результат: `canceled -> release -> reassign`
+
+Дата фиксации: 2026-05-21.
+
+Цель проверки: подтвердить, что неотправленный `reserved`-купон можно безопасно отменить, освободить только после ACK vtelemax и повторно назначить другому гостю тем же `coupon_series + coupon_code`.
+
+Тестовые данные:
+
+| Поле | Значение |
+|---|---|
+| `coupon_series` | `E2E_CANCEL_RELEASE_20260521` |
+| `coupon_code` | `REL-DBEXB604` |
+| Заведение | `Сами Сусами` |
+| `venue_code` | `c9a0df27-11dc-4bee-83a3-f0a5aa16c185` |
+| Гость C | `+79129923438`, `person_id=c93cb561-f002-42de-935d-eb79dbaad0ea` |
+| Гость D | `+79995487851`, `person_id=3765e30a-8fce-4620-a5b3-3ea65c1d41ac` |
+
+Фактически пройденная цепочка:
+
+| Шаг | Результат | Подтверждение |
+|---|---|---|
+| Генерация и проверка пула | OK | Создана серия из 1 купона, CSV загружен в iikoCard, партия подтверждена как `loaded`. |
+| Назначение гостю C | OK | Кампания `#6`, `assignment_id=7`, купон `REL-DBEXB604`, статус `reserved`. |
+| Batch `assignments` для C | OK | `event_id=7c351c55-fcf5-4fa2-8d3f-e758986c4363`, ACKed в SAGUR и подтверждён во vtelemax. |
+| Отправка сообщения C | OK | Сообщение не отправлялось: `dispatch_tasks=[]`, кампания не активировалась для фактической доставки. |
+| Pre-state vtelemax перед отменой | OK | vtelemax подтвердил активный/видимый купон у C и отсутствие этого купона у других гостей. |
+| Safe cancel кампании `#6` | OK | Строка аудитории отменена, assignment переведён в `canceled`, создано `status_update:canceled`. |
+| Release-событие | OK | `event_id=8972983a-6545-4ba1-bddf-a81905ee0288`, `meta.release_to_pool=true`, `meta.remove_from_guest=true`. |
+| ACK release от vtelemax | OK | `processed=1 acked=1 failed=0 status_updates_acked=1`; во vtelemax купон удалён у C, active_visible_count=0. |
+| Возврат купона в пул SAGUR | OK | Купон `REL-DBEXB604`: `pool_status=verified_loaded`, `is_active=true`, `assigned_at=None`. |
+| Pre-state vtelemax перед reassign | OK | vtelemax подтвердил: у C купона нет, у D купона нет, активной занятой связки по `series+code` нет. |
+| Reassign гостю D | OK | Кампания `#7`, `assignment_id=8`, тот же `coupon_id=15`, тот же `coupon_code=REL-DBEXB604`, статус `reserved`. |
+| Batch `assignments` для D | OK | `event_id=74519f3f-8d40-4393-b652-1d93c703c8b7`, ACKed в SAGUR. |
+| Post-state vtelemax после reassign | OK | vtelemax подтвердил активный/видимый купон у D, отсутствие купона у C, ровно одну активную связку по `coupon_series+coupon_code`. |
+
+Итог по сценарию `canceled -> release -> reassign`: **пройден**.
+
+Зафиксированная семантика:
+
+- `canceled` с `meta.release_to_pool=true` удаляет купон у гостя во vtelemax;
+- SAGUR возвращает купон в пул только после item-level ACK от vtelemax;
+- тот же `coupon_series + coupon_code` может быть повторно назначен другому гостю;
+- повторное назначение не создаёт дубль у старого гостя;
+- в тесте reassign сообщения гостям не отправлялись, проверялся именно жизненный цикл купона и состояние vtelemax.
 
 Итоговое решение:
 
