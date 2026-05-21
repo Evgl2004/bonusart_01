@@ -1034,7 +1034,11 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(DispatchTask.objects.filter(mailing_guest=row).count(), 0)
         report = self.client.session.get("mailing_ops_run_now_report")
         self.assertIsInstance(report, dict)
-        self.assertGreaterEqual(int(report.get("coupon_gate_blocked_rows") or 0), 1)
+        self.assertEqual(report.get("processed_rows_total"), 1)
+        self.assertEqual(report.get("processed_batches"), 1)
+        self.assertEqual(int(report.get("coupon_gate_blocked_rows") or 0), 1)
+        self.assertFalse(bool(report.get("reached_batch_limit")))
+        self.assertTrue(bool(report.get("stopped_on_coupon_sync_gate_wait")))
         self.assertTrue(bool(report.get("coupon_gate_blocked_reasons")))
 
     def test_campaign_runs_page_filters_rows_and_tasks(self):

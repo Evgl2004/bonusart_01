@@ -1928,6 +1928,34 @@ def _build_mailing_dry_run_report(mailing: Mailing, now) -> dict[str, object]:
     return report
 
 
+def _is_coupon_sync_gate_ack_wait_report(gate_report: dict[str, object]) -> bool:
+    """
+    Проверяет, что batch run-now остановился только из-за ожидания ACK купона от vtelemax.
+    """
+    if not bool(gate_report.get("coupon_mode")):
+        return False
+    if int(gate_report.get("rows_total") or 0) <= 0:
+        return False
+    if int(gate_report.get("rows_ready") or 0) > 0:
+        return False
+    if int(gate_report.get("rows_blocked") or 0) <= 0:
+        return False
+
+    global_blockers = gate_report.get("global_blockers") or []
+    if global_blockers:
+        return False
+
+    issues_by_code = gate_report.get("issues_by_code") or {}
+    if not isinstance(issues_by_code, dict) or not issues_by_code:
+        return False
+
+    soft_block_codes = {
+        str(code)
+        for code in getattr(mailing_worker_cmd, "COUPON_GATE_SOFT_BLOCK_CODES", set())
+    }
+    return all(str(code) in soft_block_codes for code in issues_by_code)
+
+
 def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, object]:
     """
     Выполняет ограниченный one-shot запуск кампании через существующий producer-путь.
@@ -1936,10 +1964,12 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
     processed_rows_total = 0
     processed_batches = 0
     reached_batch_limit = False
+    stopped_on_coupon_sync_gate_wait = False
     gate_reports: list[dict[str, object]] = []
 
     if report_before["send_window_open"] and report_before["ready_rows"] > 0:
         for _ in range(max_batches):
+            gate_reports_before = len(gate_reports)
             processed = int(
                 mailing_worker_cmd.process_one_mailing(
                     mailing=mailing,
@@ -1952,7 +1982,14 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
                 break
             processed_rows_total += processed
             processed_batches += 1
-        if processed_batches >= max_batches:
+            new_gate_reports = gate_reports[gate_reports_before:]
+            if new_gate_reports and all(
+                _is_coupon_sync_gate_ack_wait_report(gate_report)
+                for gate_report in new_gate_reports
+            ):
+                stopped_on_coupon_sync_gate_wait = True
+                break
+        if processed_batches >= max_batches and not stopped_on_coupon_sync_gate_wait:
             reached_batch_limit = True
 
     report_after = _build_mailing_dry_run_report(mailing=mailing, now=timezone.now())
@@ -1987,6 +2024,7 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
         "batch_size": int(mailing_worker_cmd.BATCH_SIZE),
         "max_batches": int(max_batches),
         "reached_batch_limit": bool(reached_batch_limit),
+        "stopped_on_coupon_sync_gate_wait": bool(stopped_on_coupon_sync_gate_wait),
         "coupon_mode": bool(getattr(mailing, "coupon_series", None)),
         "coupon_series": str(getattr(mailing, "coupon_series", "") or "").strip(),
         "coupon_venue_code": str(getattr(mailing, "coupon_venue_code", "") or "").strip(),
