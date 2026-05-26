@@ -33,6 +33,12 @@ class Command(BaseCommand):
             help="Лимит гостей для расчёта. Если не задан, используется max_recipients_per_run из настроек.",
         )
         parser.add_argument(
+            "--scan-limit",
+            type=int,
+            default=None,
+            help="Сколько подходящих по условию гостей просмотреть для оценки. Не влияет на лимит одного запуска.",
+        )
+        parser.add_argument(
             "--sample-limit",
             type=int,
             default=20,
@@ -44,6 +50,7 @@ class Command(BaseCommand):
             preview = preview_coupon_autoscenario_audience(
                 scenario_code=options["scenario_code"],
                 limit=options["limit"],
+                scan_limit=options["scan_limit"],
                 sample_limit=options["sample_limit"],
             )
         except CouponAutoscenarioPreviewError as exc:
@@ -61,12 +68,14 @@ class Command(BaseCommand):
         self.stdout.write(f"venue_name={preview.venue_name or '-'}")
         self.stdout.write(f"inactive_days_threshold={preview.inactive_days_threshold}")
         self.stdout.write(f"max_recipients_per_run={preview.max_recipients_per_run}")
+        self.stdout.write(f"scan_limit={preview.scan_limit}")
         self.stdout.write("")
         self.stdout.write("=== Аудитория ===")
         self.stdout.write(f"scanned_guests={preview.scanned_guests}")
         self.stdout.write(f"matched_guests={preview.matched_guests}")
         self.stdout.write(f"sendable_guests={preview.sendable_guests}")
         self.stdout.write(f"blocked_without_channel={preview.blocked_without_channel}")
+        self.stdout.write(f"planned_recipients_for_run={preview.planned_recipients_for_run}")
         self.stdout.write("")
         self.stdout.write("=== Купоны ===")
         self.stdout.write(f"available_coupons={preview.available_coupons}")
@@ -79,12 +88,21 @@ class Command(BaseCommand):
                 self.stdout.write(f"- {warning}")
 
         self.stdout.write("")
-        self.stdout.write("=== Пример аудитории ===")
-        if not preview.sample_rows:
-            self.stdout.write("Нет строк для вывода.")
-            return
+        self.stdout.write("=== Пример достижимой аудитории ===")
+        if preview.sample_sendable_rows:
+            self._print_rows(preview.sample_sendable_rows)
+        else:
+            self.stdout.write("Нет гостей с доступным каналом доставки в просмотренном диапазоне.")
 
-        for row in preview.sample_rows:
+        self.stdout.write("")
+        self.stdout.write("=== Пример заблокированной аудитории ===")
+        if preview.sample_blocked_rows:
+            self._print_rows(preview.sample_blocked_rows)
+        else:
+            self.stdout.write("Нет гостей без канала доставки в просмотренном диапазоне.")
+
+    def _print_rows(self, rows) -> None:
+        for row in rows:
             channels = ", ".join(row.sendable_channels) if row.sendable_channels else "-"
             last_visit = row.last_visit_at.isoformat() if row.last_visit_at else "-"
             self.stdout.write(

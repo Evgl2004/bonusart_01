@@ -19,6 +19,7 @@ from guests.services.notification_scenarios import (
 
 
 SUPPORTED_COUPON_AUTOSCENARIOS = {SCENARIO_CODE_INACTIVE_30D_COUPON}
+DEFAULT_PREVIEW_SCAN_LIMIT = 5000
 
 
 class CouponAutoscenarioPreviewError(ValueError):
@@ -60,14 +61,18 @@ class CouponAutoscenarioPreview:
     venue_name: str
     inactive_days_threshold: int
     max_recipients_per_run: int
+    scan_limit: int
     scanned_guests: int
     matched_guests: int
     sendable_guests: int
     blocked_without_channel: int
+    planned_recipients_for_run: int
     available_coupons: int
     coupon_shortage: int
     warnings: tuple[str, ...] = field(default_factory=tuple)
     sample_rows: tuple[CouponAutoscenarioAudienceRow, ...] = field(default_factory=tuple)
+    sample_sendable_rows: tuple[CouponAutoscenarioAudienceRow, ...] = field(default_factory=tuple)
+    sample_blocked_rows: tuple[CouponAutoscenarioAudienceRow, ...] = field(default_factory=tuple)
 
     def as_dict(self) -> dict:
         return {
@@ -79,14 +84,18 @@ class CouponAutoscenarioPreview:
             "venue_name": self.venue_name,
             "inactive_days_threshold": self.inactive_days_threshold,
             "max_recipients_per_run": self.max_recipients_per_run,
+            "scan_limit": self.scan_limit,
             "scanned_guests": self.scanned_guests,
             "matched_guests": self.matched_guests,
             "sendable_guests": self.sendable_guests,
             "blocked_without_channel": self.blocked_without_channel,
+            "planned_recipients_for_run": self.planned_recipients_for_run,
             "available_coupons": self.available_coupons,
             "coupon_shortage": self.coupon_shortage,
             "warnings": list(self.warnings),
             "sample_rows": [row.as_dict() for row in self.sample_rows],
+            "sample_sendable_rows": [row.as_dict() for row in self.sample_sendable_rows],
+            "sample_blocked_rows": [row.as_dict() for row in self.sample_blocked_rows],
         }
 
 
@@ -94,6 +103,7 @@ def preview_coupon_autoscenario_audience(
     *,
     scenario_code: str,
     limit: int | None = None,
+    scan_limit: int | None = None,
     sample_limit: int = 20,
     now: datetime | None = None,
 ) -> CouponAutoscenarioPreview:
@@ -128,18 +138,21 @@ def preview_coupon_autoscenario_audience(
         warnings.append("Сценарий сейчас выключен; расчёт выполнен как черновик.")
     if scenario.trigger_type != NotificationScenario.TriggerType.SCHEDULE:
         warnings.append("Сценарий не относится к планировщику; автоматический запуск невозможен без смены trigger_type.")
+    if config.execution_mode == CouponAutomationConfig.ExecutionMode.REPORT_ONLY:
+        warnings.append("Купонная настройка в режиме 'Только отчёт'; автоматическая выдача купонов не должна запускаться.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
         warnings.append("Купонная настройка в режиме 'Пауза'.")
 
     inactive_days = _extract_inactive_days(scenario)
     safe_limit = max(1, int(limit or config.max_recipients_per_run or 100))
+    safe_scan_limit = _resolve_preview_scan_limit(scan_limit=scan_limit, run_limit=safe_limit)
     safe_sample_limit = max(0, int(sample_limit))
     current_now = now or timezone.now()
 
     candidates = list(
         _collect_candidate_guests(
             inactive_days=inactive_days,
-            limit=safe_limit,
+            limit=safe_scan_limit,
             now=current_now,
         )
     )
@@ -169,15 +182,23 @@ def preview_coupon_autoscenario_audience(
 
     sendable_guests = sum(1 for row in matched_rows if row.has_sendable_channel)
     blocked_without_channel = len(matched_rows) - sendable_guests
+    planned_recipients_for_run = min(sendable_guests, safe_limit)
     available_coupons = _count_available_coupons(config=config)
-    coupon_shortage = max(sendable_guests - available_coupons, 0)
+    coupon_shortage = max(planned_recipients_for_run - available_coupons, 0)
 
     if not str(config.coupon_series or "").strip():
         warnings.append("Серия купонов не указана; назначение купонов невозможно.")
     if coupon_shortage > 0:
         warnings.append(
-            f"Доступных купонов меньше, чем гостей с каналом доставки: не хватает {coupon_shortage}."
+            f"Для ближайшего запуска не хватает купонов: {coupon_shortage}."
         )
+    if sendable_guests > planned_recipients_for_run:
+        warnings.append(
+            f"Достижимых гостей больше лимита одного прохода: за запуск будет взято не более {planned_recipients_for_run}."
+        )
+
+    sendable_rows = [row for row in matched_rows if row.has_sendable_channel]
+    blocked_rows = [row for row in matched_rows if not row.has_sendable_channel]
 
     return CouponAutoscenarioPreview(
         scenario_id=int(scenario.id),
@@ -188,15 +209,25 @@ def preview_coupon_autoscenario_audience(
         venue_name=str(config.venue_name or "").strip(),
         inactive_days_threshold=inactive_days,
         max_recipients_per_run=safe_limit,
+        scan_limit=safe_scan_limit,
         scanned_guests=scanned_guests,
         matched_guests=len(matched_rows),
         sendable_guests=sendable_guests,
         blocked_without_channel=blocked_without_channel,
+        planned_recipients_for_run=planned_recipients_for_run,
         available_coupons=available_coupons,
         coupon_shortage=coupon_shortage,
         warnings=tuple(warnings),
         sample_rows=tuple(matched_rows[:safe_sample_limit]),
+        sample_sendable_rows=tuple(sendable_rows[:safe_sample_limit]),
+        sample_blocked_rows=tuple(blocked_rows[:safe_sample_limit]),
     )
+
+
+def _resolve_preview_scan_limit(*, scan_limit: int | None, run_limit: int) -> int:
+    if scan_limit is None:
+        return max(DEFAULT_PREVIEW_SCAN_LIMIT, run_limit)
+    return max(run_limit, max(1, int(scan_limit)))
 
 
 def _build_sendable_channels_map(*, guest_ids: list[int]) -> dict[int, tuple[str, ...]]:

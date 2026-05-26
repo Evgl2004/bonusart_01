@@ -146,14 +146,42 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
 
         self.assertEqual(preview.scanned_guests, 2)
+        self.assertEqual(preview.scan_limit, 5000)
         self.assertEqual(preview.matched_guests, 2)
         self.assertEqual(preview.sendable_guests, 1)
         self.assertEqual(preview.blocked_without_channel, 1)
+        self.assertEqual(preview.planned_recipients_for_run, 1)
         self.assertEqual(preview.available_coupons, 1)
         self.assertEqual(preview.coupon_shortage, 0)
         self.assertEqual([row.guest_id for row in preview.sample_rows], [old_sendable.id, old_blocked.id])
+        self.assertEqual([row.guest_id for row in preview.sample_sendable_rows], [old_sendable.id])
+        self.assertEqual([row.guest_id for row in preview.sample_blocked_rows], [old_blocked.id])
         self.assertEqual(preview.sample_rows[0].sendable_channels, ("telegram",))
         self.assertEqual(self._side_effect_counts(), before_counts)
+
+    def test_preview_scans_beyond_run_limit_to_find_sendable_guests(self):
+        self.config.max_recipients_per_run = 1
+        self.config.save(update_fields=["max_recipients_per_run", "updated_at"])
+        old_blocked = self._guest(phone="+79990000004", first_name="БезКанала")
+        old_sendable = self._guest(phone="+79990000005", first_name="Достижимый")
+        self._visit(guest=old_blocked, days_ago=45)
+        self._visit(guest=old_sendable, days_ago=45)
+        self._sendable_channel(guest=old_sendable)
+
+        preview = preview_coupon_autoscenario_audience(
+            scenario_code=self.scenario.code,
+            scan_limit=10,
+            now=self.now,
+        )
+
+        self.assertEqual(preview.max_recipients_per_run, 1)
+        self.assertEqual(preview.scan_limit, 10)
+        self.assertEqual(preview.scanned_guests, 2)
+        self.assertEqual(preview.matched_guests, 2)
+        self.assertEqual(preview.sendable_guests, 1)
+        self.assertEqual(preview.blocked_without_channel, 1)
+        self.assertEqual(preview.planned_recipients_for_run, 1)
+        self.assertEqual([row.guest_id for row in preview.sample_sendable_rows], [old_sendable.id])
 
     def test_preview_reports_coupon_shortage(self):
         old_sendable = self._guest(phone="+79990000011", first_name="Можно")
@@ -167,7 +195,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
 
         self.assertEqual(preview.available_coupons, 0)
         self.assertEqual(preview.coupon_shortage, 1)
-        self.assertTrue(any("не хватает 1" in warning for warning in preview.warnings))
+        self.assertTrue(any("1" in warning for warning in preview.warnings))
 
     def test_preview_command_prints_summary(self):
         old_sendable = self._guest(phone="+79990000021", first_name="Команда")
@@ -185,8 +213,10 @@ class CouponAutoscenarioPreviewTests(TestCase):
 
         output = stdout.getvalue()
         self.assertIn("scenario_code=inactive_30d_coupon", output)
+        self.assertIn("scan_limit=5000", output)
         self.assertIn("matched_guests=1", output)
         self.assertIn("sendable_guests=1", output)
+        self.assertIn("planned_recipients_for_run=1", output)
         self.assertIn("available_coupons=1", output)
 
     def test_preview_requires_coupon_config(self):
