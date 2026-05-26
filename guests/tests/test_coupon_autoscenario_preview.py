@@ -387,6 +387,45 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(plan.plan_items[0].guest_id, pilot_guest.id)
         self.assertEqual(plan.plan_items[0].coupon_id, pilot_coupon.id)
 
+    def test_execution_plan_can_force_include_pilot_phone_outside_business_segment(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 5
+        self.config.settings = {
+            "pilot_phones": ["+79990000122"],
+            "pilot_include_unmatched": True,
+        }
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        pilot_guest = self._guest(phone="+79990000122", first_name="FreshPilot")
+        old_guest = self._guest(phone="+79990000123", first_name="OldGuest")
+        self._visit(guest=pilot_guest, days_ago=5)
+        self._visit(guest=old_guest, days_ago=45)
+        self._sendable_channel(guest=pilot_guest)
+        self._sendable_channel(guest=old_guest)
+        pilot_coupon = self._available_coupon(code="AUTO-FORCED-PILOT")
+        self._available_coupon(code="AUTO-OLD")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.pilot_phone_filters, ("+79990000122",))
+        self.assertEqual(plan.pilot_forced_guests, 1)
+        self.assertEqual(plan.blocked_by_pilot_filter, 1)
+        self.assertEqual(plan.eligible_guests, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, pilot_guest.id)
+        self.assertEqual(plan.plan_items[0].coupon_id, pilot_coupon.id)
+        self.assertTrue(any("дополнительно включено" in warning for warning in plan.warnings))
+
     def test_plan_command_prints_safe_summary(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
         self.config.settings = {"pilot_phones": ["+79990000121"]}

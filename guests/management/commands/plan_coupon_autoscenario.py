@@ -91,6 +91,7 @@ class Command(BaseCommand):
             f"{', '.join(str(value) for value in plan.pilot_guest_id_filters) if plan.pilot_guest_id_filters else '-'}"
         )
         self.stdout.write(f"used_default_pilot_phone={plan.used_default_pilot_phone}")
+        self.stdout.write(f"pilot_forced_guests={plan.pilot_forced_guests}")
         self.stdout.write(f"eligible_guests={plan.eligible_guests}")
 
         self.stdout.write("")

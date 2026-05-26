@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from django.db import transaction
-from django.db.models import Q, QuerySet
+from django.db.models import OuterRef, Q, QuerySet, Subquery
 from django.utils import timezone
 
 from guests.models import (
@@ -18,6 +18,7 @@ from guests.models import (
     Guest,
     NotificationEvent,
     NotificationScenario,
+    VisitHistory,
     VtelemaxRecipientChannel,
 )
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon_global_venue
@@ -36,6 +37,11 @@ DEFAULT_PREVIEW_SCAN_LIMIT = 5000
 DEFAULT_PILOT_PHONE_E164 = "+79129923438"
 PILOT_PHONE_SETTINGS_KEYS = ("pilot_phone_e164", "pilot_phone", "pilot_phones", "pilot_phone_e164s")
 PILOT_GUEST_ID_SETTINGS_KEYS = ("pilot_guest_id", "pilot_guest_ids")
+PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS = (
+    "pilot_include_unmatched",
+    "pilot_force_include",
+    "pilot_force_include_recipients",
+)
 
 
 class CouponAutoscenarioPreviewError(ValueError):
@@ -166,6 +172,7 @@ class CouponAutoscenarioExecutionPlan:
     pilot_phone_filters: tuple[str, ...]
     pilot_guest_id_filters: tuple[int, ...]
     used_default_pilot_phone: bool
+    pilot_forced_guests: int
     eligible_guests: int
     planned_assignments: int
     available_coupons: int
@@ -196,6 +203,7 @@ class CouponAutoscenarioExecutionPlan:
             "pilot_phone_filters": list(self.pilot_phone_filters),
             "pilot_guest_id_filters": list(self.pilot_guest_id_filters),
             "used_default_pilot_phone": self.used_default_pilot_phone,
+            "pilot_forced_guests": self.pilot_forced_guests,
             "eligible_guests": self.eligible_guests,
             "planned_assignments": self.planned_assignments,
             "available_coupons": self.available_coupons,
@@ -385,6 +393,12 @@ def build_coupon_autoscenario_execution_plan(
         scan_limit=safe_scan_limit,
         now=current_now,
     )
+    pilot_filter = _resolve_pilot_recipient_filter(config=config)
+    matched_rows, pilot_forced_guests = _append_unmatched_pilot_rows_if_requested(
+        matched_rows=matched_rows,
+        config=config,
+        pilot_filter=pilot_filter,
+    )
     sendable_rows = [row for row in matched_rows if row.has_sendable_channel]
     blocked_without_channel = len(matched_rows) - len(sendable_rows)
 
@@ -398,13 +412,16 @@ def build_coupon_autoscenario_execution_plan(
         cooldown_days=int(config.cooldown_days or 0),
         now=current_now,
     )
-    pilot_filter = _resolve_pilot_recipient_filter(config=config)
     if (
         config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
         and pilot_filter.used_default_phone
     ):
         warnings.append(
             f"Пилотный список получателей не задан; используется безопасная заглушка {DEFAULT_PILOT_PHONE_E164}."
+        )
+    if pilot_forced_guests > 0:
+        warnings.append(
+            f"Для пилотной проверки дополнительно включено гостей вне основного сегмента: {pilot_forced_guests}."
         )
 
     eligible_rows: list[CouponAutoscenarioAudienceRow] = []
@@ -479,6 +496,7 @@ def build_coupon_autoscenario_execution_plan(
         pilot_phone_filters=pilot_filter.phones,
         pilot_guest_id_filters=pilot_filter.guest_ids,
         used_default_pilot_phone=pilot_filter.used_default_phone,
+        pilot_forced_guests=pilot_forced_guests,
         eligible_guests=len(eligible_rows),
         planned_assignments=len(plan_items),
         available_coupons=available_coupons_count,
@@ -836,6 +854,80 @@ def _is_allowed_by_pilot_filter(
         return True
     normalized_phone = normalize_phone_e164(row.phone)
     return bool(normalized_phone and normalized_phone in set(pilot_filter.phones))
+
+
+def _append_unmatched_pilot_rows_if_requested(
+    *,
+    matched_rows: list[CouponAutoscenarioAudienceRow],
+    config: CouponAutomationConfig,
+    pilot_filter: PilotRecipientFilter,
+) -> tuple[list[CouponAutoscenarioAudienceRow], int]:
+    if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
+        return matched_rows, 0
+    if not _settings_bool(config.settings, PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS):
+        return matched_rows, 0
+    if pilot_filter.is_empty:
+        return matched_rows, 0
+
+    existing_guest_ids = {row.guest_id for row in matched_rows}
+    filters = Q()
+    if pilot_filter.guest_ids:
+        filters |= Q(id__in=pilot_filter.guest_ids)
+    if pilot_filter.phones:
+        filters |= Q(phone__in=pilot_filter.phones)
+    if not filters:
+        return matched_rows, 0
+
+    last_visit_subquery = (
+        VisitHistory.objects.filter(guest_id=OuterRef("pk"))
+        .order_by("-visit_date")
+        .values("visit_date")[:1]
+    )
+    guests = list(
+        Guest.objects.annotate(last_visit_at=Subquery(last_visit_subquery))
+        .filter(filters)
+        .order_by("id")
+    )
+    channels_map = _build_sendable_channels_map(guest_ids=[int(guest.id) for guest in guests])
+
+    extra_rows: list[CouponAutoscenarioAudienceRow] = []
+    for guest in guests:
+        guest_id = int(guest.id)
+        if guest_id in existing_guest_ids:
+            continue
+        extra_rows.append(
+            CouponAutoscenarioAudienceRow(
+                guest_id=guest_id,
+                phone=str(guest.phone or ""),
+                first_name=str(guest.first_name or ""),
+                last_name=str(guest.last_name or ""),
+                last_visit_at=getattr(guest, "last_visit_at", None),
+                sendable_channels=tuple(channels_map.get(guest_id, ())),
+            )
+        )
+        existing_guest_ids.add(guest_id)
+
+    if not extra_rows:
+        return matched_rows, 0
+    return [*matched_rows, *extra_rows], len(extra_rows)
+
+
+def _settings_bool(settings, keys: tuple[str, ...]) -> bool:
+    payload = settings if isinstance(settings, dict) else {}
+    for key in keys:
+        if key not in payload:
+            continue
+        value = payload.get(key)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        normalized = str(value or "").strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on", "да"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", "нет"}:
+            return False
+    return False
 
 
 def _build_candidate_rows(
