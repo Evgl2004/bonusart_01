@@ -14,11 +14,14 @@ from guests.models import (
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
+    DispatchTask,
     Guest,
+    NotificationEvent,
     NotificationScenario,
     VtelemaxRecipientChannel,
 )
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon_global_venue
+from guests.services.notification_events import ScenarioNotConfiguredError, create_notification_event
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
 from guests.services.notification_scenarios import (
     _collect_candidate_guests,
@@ -594,6 +597,111 @@ def execute_coupon_autoscenario_pilot(
     )
 
 
+def create_autoscenario_dispatch_after_vtelemax_ack(
+    *,
+    assignment_id: int,
+    now: datetime | None = None,
+) -> int:
+    """
+    Создаёт задачу отправки гостю после ACK assignment-события во vtelemax.
+
+    До ACK купон уже зарезервирован в SAGUR, но сообщение гостю не ставится в
+    очередь. Эта функция является вторым шагом: vtelemax подтвердил карточку
+    купона, значит гостю можно отправлять уведомление.
+    """
+    try:
+        safe_assignment_id = int(assignment_id)
+    except (TypeError, ValueError):
+        return 0
+    if safe_assignment_id <= 0:
+        return 0
+
+    current_now = now or timezone.now()
+    with transaction.atomic():
+        assignment = (
+            CouponAutoscenarioAssignment.objects.select_for_update()
+            .select_related("guest", "scenario", "scenario__template", "coupon", "run", "config")
+            .filter(id=safe_assignment_id)
+            .first()
+        )
+        if assignment is None:
+            return 0
+        if assignment.status != CouponAutoscenarioAssignment.Status.RESERVED:
+            _refresh_autoscenario_run_status(run_id=assignment.run_id)
+            return 0
+        if assignment.vtelemax_sync_status != CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK:
+            return 0
+        if assignment.guest_id is None or assignment.guest is None:
+            _mark_autoscenario_assignment_dispatch_error(
+                assignment=assignment,
+                error_text="Нельзя создать отправку: у назначения нет гостя.",
+            )
+            return 0
+
+        dedupe_key = _autoscenario_dispatch_dedupe_key(assignment_id=assignment.id)
+        existing_tasks = _autoscenario_dispatch_task_count(
+            scenario=assignment.scenario,
+            dedupe_key=dedupe_key,
+        )
+        if existing_tasks > 0:
+            _mark_autoscenario_assignment_sent(assignment=assignment, sent_at=current_now)
+            _refresh_autoscenario_run_status(run_id=assignment.run_id)
+            return 0
+
+        payload = _build_autoscenario_dispatch_payload(assignment=assignment)
+        template_context = _build_autoscenario_template_context(
+            coupon_code=assignment.coupon_code,
+            coupon_series=assignment.coupon_series,
+            venue_code=assignment.venue_code or "",
+            venue_name=assignment.venue_name or "",
+            valid_until=assignment.lifetime_expires_at,
+        )
+        try:
+            created_count = create_notification_event(
+                scenario_code=assignment.scenario.code,
+                guest=assignment.guest,
+                dedupe_key=dedupe_key,
+                source_ref=f"coupon_autoscenario_assignment:{assignment.id}",
+                event_source_type=NotificationEvent.SourceType.SCHEDULE,
+                task_source_type=DispatchTask.SourceType.SYSTEM,
+                payload=payload,
+                template_context=template_context,
+                fallback_message_text=assignment.promo_text or "",
+                event_at=current_now,
+                coupon_code=assignment.coupon_code,
+                coupon_external_id=f"{assignment.coupon_series}:{assignment.coupon_code}",
+                coupon_expires_at=assignment.lifetime_expires_at,
+            )
+        except ScenarioNotConfiguredError as exc:
+            _mark_autoscenario_assignment_dispatch_error(
+                assignment=assignment,
+                error_text=str(exc),
+            )
+            return 0
+
+        total_tasks = _autoscenario_dispatch_task_count(
+            scenario=assignment.scenario,
+            dedupe_key=dedupe_key,
+        )
+        if created_count > 0 or total_tasks > 0:
+            _mark_autoscenario_assignment_sent(assignment=assignment, sent_at=current_now)
+        else:
+            event = NotificationEvent.objects.filter(
+                scenario=assignment.scenario,
+                dedupe_key=dedupe_key,
+            ).first()
+            error_text = (
+                getattr(event, "error_text", None)
+                or "Не удалось поставить задачу отправки после ACK vtelemax."
+            )
+            _mark_autoscenario_assignment_dispatch_error(
+                assignment=assignment,
+                error_text=error_text,
+            )
+        _refresh_autoscenario_run_status(run_id=assignment.run_id)
+        return int(created_count or 0)
+
+
 def _load_coupon_autoscenario_context(
     *,
     scenario_code: str,
@@ -793,7 +901,7 @@ def _build_autoscenario_template_context(
     coupon_series: str,
     venue_code: str,
     venue_name: str,
-    valid_until: datetime,
+    valid_until: datetime | None,
 ) -> dict[str, str]:
     return {
         "coupon_code": str(coupon_code or "").strip(),
@@ -801,8 +909,83 @@ def _build_autoscenario_template_context(
         "coupon_venue_code": str(venue_code or "").strip(),
         "coupon_venue_name": str(venue_name or "").strip(),
         "coupon_expires_at": timezone.localtime(valid_until).strftime("%d.%m.%Y") if valid_until else "",
-        "valid_until": _format_valid_until(valid_until),
+        "valid_until": _format_valid_until(valid_until) or "",
     }
+
+
+def _autoscenario_dispatch_dedupe_key(*, assignment_id: int) -> str:
+    return f"coupon_autoscenario_assignment:{int(assignment_id)}"
+
+
+def _autoscenario_dispatch_task_count(
+    *,
+    scenario: NotificationScenario,
+    dedupe_key: str,
+) -> int:
+    source_key_fragment = f"{scenario.code}:{dedupe_key}"
+    return DispatchTask.objects.filter(
+        notification_scenario=scenario,
+        source_type=DispatchTask.SourceType.SYSTEM,
+        idempotency_key__contains=source_key_fragment,
+    ).count()
+
+
+def _build_autoscenario_dispatch_payload(*, assignment: CouponAutoscenarioAssignment) -> dict:
+    return {
+        "source": "coupon_autoscenario",
+        "autoscenario_run_id": int(assignment.run_id),
+        "autoscenario_assignment_id": int(assignment.id),
+        "scenario_id": int(assignment.scenario_id),
+        "scenario_code": assignment.scenario.code,
+        "coupon_series": assignment.coupon_series,
+        "coupon_code": assignment.coupon_code,
+        "coupon_venue_code": assignment.venue_code,
+        "coupon_venue_name": assignment.venue_name,
+        "coupon_valid_until": _format_valid_until(assignment.lifetime_expires_at),
+    }
+
+
+def _mark_autoscenario_assignment_sent(
+    *,
+    assignment: CouponAutoscenarioAssignment,
+    sent_at: datetime,
+) -> None:
+    assignment.status = CouponAutoscenarioAssignment.Status.SENT
+    assignment.sent_at = sent_at
+    assignment.save(update_fields=["status", "sent_at", "updated_at"])
+
+
+def _mark_autoscenario_assignment_dispatch_error(
+    *,
+    assignment: CouponAutoscenarioAssignment,
+    error_text: str,
+) -> None:
+    assignment.status = CouponAutoscenarioAssignment.Status.ERROR
+    assignment.vtelemax_sync_error = str(error_text or "").strip()[:2000]
+    assignment.save(update_fields=["status", "vtelemax_sync_error", "updated_at"])
+    _refresh_autoscenario_run_status(run_id=assignment.run_id)
+
+
+def _refresh_autoscenario_run_status(*, run_id: int | None) -> None:
+    if not run_id:
+        return
+    run = CouponAutoscenarioRun.objects.select_for_update().filter(id=run_id).first()
+    if run is None:
+        return
+    assignments = CouponAutoscenarioAssignment.objects.filter(run=run)
+    if assignments.filter(status=CouponAutoscenarioAssignment.Status.ERROR).exists():
+        next_status = CouponAutoscenarioRun.Status.ERROR
+    elif assignments.filter(
+        vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING
+    ).exists() or assignments.filter(status=CouponAutoscenarioAssignment.Status.RESERVED).exists():
+        next_status = CouponAutoscenarioRun.Status.SYNC_PENDING
+    elif assignments.exists():
+        next_status = CouponAutoscenarioRun.Status.COMPLETED
+    else:
+        next_status = CouponAutoscenarioRun.Status.PLANNED
+    if run.status != next_status:
+        run.status = next_status
+        run.save(update_fields=["status", "updated_at"])
 
 
 def _format_valid_until(value) -> str | None:

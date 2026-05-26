@@ -8,15 +8,19 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.models import (
+    BotProfile,
     CouponAutoscenarioAssignment,
     CouponAutoscenarioRun,
     CouponAutomationConfig,
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
+    DispatchTask,
     Guest,
+    GuestBotBinding,
     Mailing,
     MessageTemplate,
+    NotificationEvent,
     NotificationScenario,
 )
 from guests.services.vtelemax_coupon_sync import VtelemaxCouponSyncService
@@ -194,6 +198,23 @@ class VtelemaxCouponSyncServiceTests(TestCase):
             created_at=self.now,
             updated_at=self.now,
         )
+        bot = BotProfile.objects.create(
+            code=f"auto-test-bot-{self._random_digits(4)}",
+            name="Autoscenario test bot",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            token="test-token",
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=bot,
+            external_chat_id=f"chat-{guest.id}",
+            external_user_id=f"user-{guest.id}",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
         coupon = CouponRegistryEntry.objects.create(
             series="AUTO_SYNC",
             code=f"AUTO-{self._random_digits(6)}",
@@ -354,6 +375,23 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         )
         self.assertIsNotNone(assignment.vtelemax_synced_at)
         self.assertIsNone(assignment.vtelemax_sync_error)
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.SENT)
+        self.assertIsNotNone(assignment.sent_at)
+        self.assertEqual(DispatchTask.objects.filter(notification_scenario=assignment.scenario).count(), 1)
+        task = DispatchTask.objects.get(notification_scenario=assignment.scenario)
+        self.assertEqual(task.source_type, DispatchTask.SourceType.SYSTEM)
+        self.assertEqual(task.guest_id, assignment.guest_id)
+        self.assertEqual(task.provider_type, BotProfile.ProviderType.TELEGRAM)
+        self.assertEqual(task.priority, DispatchTask.Priority.BULK)
+        self.assertEqual(task.status, DispatchTask.Status.PENDING)
+        self.assertEqual(task.payload["source"], "coupon_autoscenario")
+        self.assertEqual(task.payload["autoscenario_assignment_id"], assignment.id)
+        self.assertEqual(task.payload["coupon_code"], assignment.coupon_code)
+        self.assertIn(f"{assignment.scenario.code}:coupon_autoscenario_assignment:{assignment.id}", task.idempotency_key)
+        event_obj = NotificationEvent.objects.get(scenario=assignment.scenario)
+        self.assertEqual(event_obj.status, NotificationEvent.Status.TASK_CREATED)
+        assignment.run.refresh_from_db()
+        self.assertEqual(assignment.run.status, CouponAutoscenarioRun.Status.COMPLETED)
 
     @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
     def test_process_batch_handles_item_level_partial_ack(self, mocked_client_cls):

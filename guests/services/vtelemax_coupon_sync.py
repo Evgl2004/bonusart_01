@@ -518,6 +518,27 @@ class VtelemaxCouponSyncService:
         2. купон освобождается обратно в пул ТОЛЬКО после ACK, чтобы исключить
            повторную выдачу до фактического скрытия купона у предыдущего гостя.
         """
+        if (
+            event.direction == CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS
+            and event.autoscenario_assignment_id
+        ):
+            try:
+                from guests.services.coupon_autoscenarios import (
+                    create_autoscenario_dispatch_after_vtelemax_ack,
+                )
+
+                create_autoscenario_dispatch_after_vtelemax_ack(
+                    assignment_id=int(event.autoscenario_assignment_id),
+                    now=event.ack_at,
+                )
+            except Exception:
+                logger.exception(
+                    "Не удалось создать dispatch-задачу автосценария после ACK vtelemax: event_id=%s assignment_id=%s",
+                    event.event_id,
+                    event.autoscenario_assignment_id,
+                )
+            return
+
         if event.direction != CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE:
             return
         assignment = event.assignment or event.autoscenario_assignment
