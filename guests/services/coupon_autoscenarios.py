@@ -27,11 +27,15 @@ from guests.services.notification_scenarios import (
     _collect_candidate_guests,
     _extract_inactive_days,
 )
+from guests.services.guest_resolution import normalize_phone_e164
 from guests.services.template_render import render_message_for_guest
 
 
 SUPPORTED_COUPON_AUTOSCENARIOS = {SCENARIO_CODE_INACTIVE_30D_COUPON}
 DEFAULT_PREVIEW_SCAN_LIMIT = 5000
+DEFAULT_PILOT_PHONE_E164 = "+79129923438"
+PILOT_PHONE_SETTINGS_KEYS = ("pilot_phone_e164", "pilot_phone", "pilot_phones", "pilot_phone_e164s")
+PILOT_GUEST_ID_SETTINGS_KEYS = ("pilot_guest_id", "pilot_guest_ids")
 
 
 class CouponAutoscenarioPreviewError(ValueError):
@@ -158,6 +162,10 @@ class CouponAutoscenarioExecutionPlan:
     blocked_without_channel: int
     blocked_existing_active_coupon: int
     blocked_by_cooldown: int
+    blocked_by_pilot_filter: int
+    pilot_phone_filters: tuple[str, ...]
+    pilot_guest_id_filters: tuple[int, ...]
+    used_default_pilot_phone: bool
     eligible_guests: int
     planned_assignments: int
     available_coupons: int
@@ -184,6 +192,10 @@ class CouponAutoscenarioExecutionPlan:
             "blocked_without_channel": self.blocked_without_channel,
             "blocked_existing_active_coupon": self.blocked_existing_active_coupon,
             "blocked_by_cooldown": self.blocked_by_cooldown,
+            "blocked_by_pilot_filter": self.blocked_by_pilot_filter,
+            "pilot_phone_filters": list(self.pilot_phone_filters),
+            "pilot_guest_id_filters": list(self.pilot_guest_id_filters),
+            "used_default_pilot_phone": self.used_default_pilot_phone,
             "eligible_guests": self.eligible_guests,
             "planned_assignments": self.planned_assignments,
             "available_coupons": self.available_coupons,
@@ -213,6 +225,17 @@ class CouponAutoscenarioExecutionResult:
             "queue_events_created": self.queue_events_created,
             "plan": self.plan.as_dict(),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class PilotRecipientFilter:
+    phones: tuple[str, ...] = field(default_factory=tuple)
+    guest_ids: tuple[int, ...] = field(default_factory=tuple)
+    used_default_phone: bool = False
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.phones and not self.guest_ids
 
 
 def preview_coupon_autoscenario_audience(
@@ -375,16 +398,32 @@ def build_coupon_autoscenario_execution_plan(
         cooldown_days=int(config.cooldown_days or 0),
         now=current_now,
     )
+    pilot_filter = _resolve_pilot_recipient_filter(config=config)
+    if (
+        config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
+        and pilot_filter.used_default_phone
+    ):
+        warnings.append(
+            f"Пилотный список получателей не задан; используется безопасная заглушка {DEFAULT_PILOT_PHONE_E164}."
+        )
 
     eligible_rows: list[CouponAutoscenarioAudienceRow] = []
     blocked_existing_active_coupon = 0
     blocked_by_cooldown = 0
+    blocked_by_pilot_filter = 0
     for row in sendable_rows:
         if row.guest_id in active_assignment_guest_ids:
             blocked_existing_active_coupon += 1
             continue
         if row.guest_id in cooldown_guest_ids:
             blocked_by_cooldown += 1
+            continue
+        if not _is_allowed_by_pilot_filter(
+            row=row,
+            config=config,
+            pilot_filter=pilot_filter,
+        ):
+            blocked_by_pilot_filter += 1
             continue
         eligible_rows.append(row)
 
@@ -436,6 +475,10 @@ def build_coupon_autoscenario_execution_plan(
         blocked_without_channel=blocked_without_channel,
         blocked_existing_active_coupon=blocked_existing_active_coupon,
         blocked_by_cooldown=blocked_by_cooldown,
+        blocked_by_pilot_filter=blocked_by_pilot_filter,
+        pilot_phone_filters=pilot_filter.phones,
+        pilot_guest_id_filters=pilot_filter.guest_ids,
+        used_default_pilot_phone=pilot_filter.used_default_phone,
         eligible_guests=len(eligible_rows),
         planned_assignments=len(plan_items),
         available_coupons=available_coupons_count,
@@ -725,6 +768,74 @@ def _load_coupon_autoscenario_context(
             f"Для сценария '{safe_code}' не настроен CouponAutomationConfig."
         ) from exc
     return scenario, config
+
+
+def _resolve_pilot_recipient_filter(*, config: CouponAutomationConfig) -> PilotRecipientFilter:
+    if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
+        return PilotRecipientFilter()
+
+    settings = config.settings if isinstance(config.settings, dict) else {}
+
+    phones: list[str] = []
+    for key in PILOT_PHONE_SETTINGS_KEYS:
+        for value in _iter_setting_values(settings.get(key)):
+            normalized = normalize_phone_e164(value)
+            if normalized:
+                phones.append(normalized)
+
+    guest_ids: list[int] = []
+    for key in PILOT_GUEST_ID_SETTINGS_KEYS:
+        for value in _iter_setting_values(settings.get(key)):
+            try:
+                guest_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if guest_id > 0:
+                guest_ids.append(guest_id)
+
+    unique_phones = tuple(dict.fromkeys(phones))
+    unique_guest_ids = tuple(dict.fromkeys(guest_ids))
+    used_default_phone = False
+    if (
+        config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
+        and not unique_phones
+        and not unique_guest_ids
+    ):
+        unique_phones = (DEFAULT_PILOT_PHONE_E164,)
+        used_default_phone = True
+
+    return PilotRecipientFilter(
+        phones=unique_phones,
+        guest_ids=unique_guest_ids,
+        used_default_phone=used_default_phone,
+    )
+
+
+def _iter_setting_values(value) -> tuple:
+    if value is None:
+        return ()
+    if isinstance(value, (list, tuple, set)):
+        return tuple(value)
+    if isinstance(value, str):
+        normalized = value.replace(";", ",").replace("\n", ",")
+        return tuple(part.strip() for part in normalized.split(",") if part.strip())
+    return (value,)
+
+
+def _is_allowed_by_pilot_filter(
+    *,
+    row: CouponAutoscenarioAudienceRow,
+    config: CouponAutomationConfig,
+    pilot_filter: PilotRecipientFilter,
+) -> bool:
+    if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
+        return True
+    if pilot_filter.is_empty:
+        return False
+    if int(row.guest_id) in set(pilot_filter.guest_ids):
+        return True
+    normalized_phone = normalize_phone_e164(row.phone)
+    return bool(normalized_phone and normalized_phone in set(pilot_filter.phones))
 
 
 def _build_candidate_rows(

@@ -282,11 +282,13 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
         self.config.max_recipients_per_run = 5
         self.config.cooldown_days = 30
+        self.config.settings = {"pilot_phones": ["+79990000101"]}
         self.config.save(
             update_fields=[
                 "execution_mode",
                 "max_recipients_per_run",
                 "cooldown_days",
+                "settings",
                 "updated_at",
             ]
         )
@@ -351,9 +353,44 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(plan.planned_assignments, 1)
         self.assertTrue(any("Только отч" in blocker for blocker in plan.blockers))
 
+    def test_execution_plan_uses_default_pilot_phone_when_allowlist_is_empty(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 5
+        self.config.settings = {}
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        pilot_guest = self._guest(phone="+79129923438", first_name="DefaultPilot")
+        other_guest = self._guest(phone="+79990000112", first_name="Other")
+        for guest in [pilot_guest, other_guest]:
+            self._visit(guest=guest, days_ago=45)
+            self._sendable_channel(guest=guest)
+        pilot_coupon = self._available_coupon(code="AUTO-DEFAULT-PILOT")
+        self._available_coupon(code="AUTO-OTHER")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertTrue(plan.used_default_pilot_phone)
+        self.assertEqual(plan.pilot_phone_filters, ("+79129923438",))
+        self.assertEqual(plan.blocked_by_pilot_filter, 1)
+        self.assertEqual(plan.eligible_guests, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, pilot_guest.id)
+        self.assertEqual(plan.plan_items[0].coupon_id, pilot_coupon.id)
+
     def test_plan_command_prints_safe_summary(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
-        self.config.save(update_fields=["execution_mode", "updated_at"])
+        self.config.settings = {"pilot_phones": ["+79990000121"]}
+        self.config.save(update_fields=["execution_mode", "settings", "updated_at"])
         guest = self._guest(phone="+79990000121", first_name="CommandPlan")
         self._visit(guest=guest, days_ago=45)
         self._sendable_channel(guest=guest)
@@ -378,10 +415,12 @@ class CouponAutoscenarioPreviewTests(TestCase):
     def test_execute_pilot_dry_run_has_no_side_effects(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
         self.config.max_recipients_per_run = 1
+        self.config.settings = {"pilot_phones": ["+79990000131"]}
         self.config.save(
             update_fields=[
                 "execution_mode",
                 "max_recipients_per_run",
+                "settings",
                 "updated_at",
             ]
         )
@@ -409,6 +448,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
     def test_execute_pilot_confirm_reserves_coupon_and_queues_vtelemax_without_messages(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
         self.config.max_recipients_per_run = 1
+        self.config.settings = {"pilot_phones": ["+79990000141"]}
         self.config.coupon_promo_text_template = (
             "Купон {coupon_code} для {first_name}. Действует до {coupon_expires_at}."
         )
@@ -417,6 +457,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
                 "execution_mode",
                 "max_recipients_per_run",
                 "coupon_promo_text_template",
+                "settings",
                 "updated_at",
             ]
         )
@@ -497,7 +538,8 @@ class CouponAutoscenarioPreviewTests(TestCase):
 
     def test_execute_pilot_command_dry_run_prints_no_side_effects(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
-        self.config.save(update_fields=["execution_mode", "updated_at"])
+        self.config.settings = {"pilot_phones": ["+79990000161"]}
+        self.config.save(update_fields=["execution_mode", "settings", "updated_at"])
         guest = self._guest(phone="+79990000161", first_name="CommandDryRun")
         self._visit(guest=guest, days_ago=45)
         self._sendable_channel(guest=guest)

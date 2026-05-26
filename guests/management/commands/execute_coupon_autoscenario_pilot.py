@@ -97,6 +97,16 @@ class Command(BaseCommand):
         self.stdout.write(f"blocked_without_channel={plan.blocked_without_channel}")
         self.stdout.write(f"blocked_existing_active_coupon={plan.blocked_existing_active_coupon}")
         self.stdout.write(f"blocked_by_cooldown={plan.blocked_by_cooldown}")
+        self.stdout.write(f"blocked_by_pilot_filter={plan.blocked_by_pilot_filter}")
+        self.stdout.write(
+            "pilot_phone_filters="
+            f"{', '.join(plan.pilot_phone_filters) if plan.pilot_phone_filters else '-'}"
+        )
+        self.stdout.write(
+            "pilot_guest_id_filters="
+            f"{', '.join(str(value) for value in plan.pilot_guest_id_filters) if plan.pilot_guest_id_filters else '-'}"
+        )
+        self.stdout.write(f"used_default_pilot_phone={plan.used_default_pilot_phone}")
         self.stdout.write(f"eligible_guests={plan.eligible_guests}")
 
         self.stdout.write("")
