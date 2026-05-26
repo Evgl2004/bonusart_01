@@ -2668,6 +2668,177 @@ class CouponCampaignAssignment(models.Model):
         return f"campaign={self.campaign_id} coupon={self.coupon_series}:{self.coupon_code} status={self.status}"
 
 
+class CouponAutoscenarioRun(models.Model):
+    """
+    Техническая волна купонного автосценария.
+
+    Это не пользовательская рассылочная кампания. Запись нужна для аудита
+    регулярного правила: сколько гостей нашли, сколько отсеяли и сколько
+    купонов зарезервировали в конкретном проходе.
+    """
+
+    class Status(models.TextChoices):
+        PLANNED = "planned", "Сформирован план"
+        RESERVED = "reserved", "Купоны зарезервированы"
+        SYNC_PENDING = "sync_pending", "Ожидает подтверждения vtelemax"
+        COMPLETED = "completed", "Завершён"
+        ERROR = "error", "Ошибка"
+
+    scenario = models.ForeignKey(
+        "NotificationScenario",
+        on_delete=models.PROTECT,
+        related_name="coupon_autoscenario_runs",
+    )
+    config = models.ForeignKey(
+        "CouponAutomationConfig",
+        on_delete=models.PROTECT,
+        related_name="runs",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.PLANNED,
+        db_index=True,
+    )
+    execution_mode = models.CharField(max_length=24, db_index=True)
+    scan_limit = models.PositiveIntegerField(default=0)
+    max_recipients_per_run = models.PositiveIntegerField(default=0)
+    scanned_guests = models.PositiveIntegerField(default=0)
+    matched_guests = models.PositiveIntegerField(default=0)
+    sendable_guests = models.PositiveIntegerField(default=0)
+    blocked_without_channel = models.PositiveIntegerField(default=0)
+    blocked_existing_active_coupon = models.PositiveIntegerField(default=0)
+    blocked_by_cooldown = models.PositiveIntegerField(default=0)
+    eligible_guests = models.PositiveIntegerField(default=0)
+    planned_assignments = models.PositiveIntegerField(default=0)
+    created_assignments = models.PositiveIntegerField(default=0)
+    queue_events_created = models.PositiveIntegerField(default=0)
+    coupon_shortage = models.PositiveIntegerField(default=0)
+    warnings = models.JSONField(default=list, blank=True)
+    blockers = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_autoscenario_runs"
+        verbose_name = "Технический запуск купонного автосценария"
+        verbose_name_plural = "Технические запуски купонных автосценариев"
+        indexes = [
+            models.Index(fields=["scenario", "created_at"], name="cautorun_scen_created_idx"),
+            models.Index(fields=["status", "created_at"], name="cautorun_status_created_idx"),
+        ]
+
+    def __str__(self):
+        return f"scenario={self.scenario_id} run={self.id} status={self.status}"
+
+
+class CouponAutoscenarioAssignment(models.Model):
+    """
+    Назначение купона гостю в рамках технической волны автосценария.
+    """
+
+    class Status(models.TextChoices):
+        RESERVED = CouponCampaignAssignment.Status.RESERVED, "Зарезервирован"
+        SENT = CouponCampaignAssignment.Status.SENT, "Отправлен"
+        USED = CouponCampaignAssignment.Status.USED, "Использован"
+        USED_AFTER_CAMPAIGN = (
+            CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+            "Использован после завершения акции",
+        )
+        EXPIRED = CouponCampaignAssignment.Status.EXPIRED, "Истёк"
+        CANCELED = CouponCampaignAssignment.Status.CANCELED, "Отменён"
+        ERROR = CouponCampaignAssignment.Status.ERROR, "Ошибка"
+
+    class VtelemaxSyncStatus(models.TextChoices):
+        PENDING = CouponCampaignAssignment.VtelemaxSyncStatus.PENDING, "Ожидает синхронизации"
+        OK = CouponCampaignAssignment.VtelemaxSyncStatus.OK, "Синхронизирован"
+        ERROR = CouponCampaignAssignment.VtelemaxSyncStatus.ERROR, "Ошибка синхронизации"
+
+    run = models.ForeignKey(
+        "CouponAutoscenarioRun",
+        on_delete=models.CASCADE,
+        related_name="assignments",
+    )
+    scenario = models.ForeignKey(
+        "NotificationScenario",
+        on_delete=models.PROTECT,
+        related_name="coupon_autoscenario_assignments",
+    )
+    config = models.ForeignKey(
+        "CouponAutomationConfig",
+        on_delete=models.PROTECT,
+        related_name="assignments",
+    )
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="coupon_autoscenario_assignments",
+    )
+    coupon = models.ForeignKey(
+        "CouponRegistryEntry",
+        on_delete=models.PROTECT,
+        related_name="autoscenario_assignments",
+    )
+    person_id = models.UUIDField(blank=True, null=True, db_index=True)
+    phone_e164 = models.CharField(max_length=32, blank=True, null=True, db_index=True)
+    coupon_series = models.CharField(max_length=120, db_index=True)
+    coupon_code = models.CharField(max_length=120)
+    venue_code = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    venue_name = models.CharField(max_length=255, blank=True, null=True)
+    promo_text = models.TextField(blank=True, null=True)
+    assigned_at = models.DateTimeField(default=timezone.now, db_index=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
+    lifetime_expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.RESERVED,
+        db_index=True,
+    )
+    used_at = models.DateTimeField(blank=True, null=True)
+    used_order_id = models.BigIntegerField(blank=True, null=True, db_index=True)
+    vtelemax_sync_status = models.CharField(
+        max_length=16,
+        choices=VtelemaxSyncStatus.choices,
+        default=VtelemaxSyncStatus.PENDING,
+        db_index=True,
+    )
+    vtelemax_synced_at = models.DateTimeField(blank=True, null=True)
+    vtelemax_sync_error = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_autoscenario_assignments"
+        verbose_name = "Назначение купона автосценария"
+        verbose_name_plural = "Назначения купонов автосценариев"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "guest"],
+                name="cautoass_run_guest_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["run", "coupon_series", "coupon_code"],
+                name="cautoass_run_coupon_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["run", "person_id"],
+                condition=models.Q(person_id__isnull=False),
+                name="cautoass_run_person_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["scenario", "status"], name="cautoass_scen_status_idx"),
+            models.Index(fields=["status", "vtelemax_sync_status"], name="cautoass_sync_status_idx"),
+            models.Index(fields=["coupon_series", "status"], name="cautoass_series_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"run={self.run_id} coupon={self.coupon_series}:{self.coupon_code} status={self.status}"
+
+
 class CouponVtelemaxSyncQueue(models.Model):
     """
     Очередь отправки событий по купонам из SAGUR в vtelemax.
@@ -2687,6 +2858,13 @@ class CouponVtelemaxSyncQueue(models.Model):
     direction = models.CharField(max_length=20, choices=Direction.choices, db_index=True)
     assignment = models.ForeignKey(
         "CouponCampaignAssignment",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="vtelemax_queue_events",
+    )
+    autoscenario_assignment = models.ForeignKey(
+        "CouponAutoscenarioAssignment",
         on_delete=models.SET_NULL,
         blank=True,
         null=True,

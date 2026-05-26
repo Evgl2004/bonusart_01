@@ -8,12 +8,16 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.models import (
+    CouponAutoscenarioAssignment,
+    CouponAutoscenarioRun,
+    CouponAutomationConfig,
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
     Guest,
     Mailing,
     MessageTemplate,
+    NotificationScenario,
 )
 from guests.services.vtelemax_coupon_sync import VtelemaxCouponSyncService
 
@@ -143,6 +147,98 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         )
         return assignment, event
 
+    def _create_autoscenario_assignment_with_event(
+        self,
+    ) -> tuple[CouponAutoscenarioAssignment, CouponVtelemaxSyncQueue]:
+        scenario = NotificationScenario.objects.create(
+            code="coupon_sync_auto_test",
+            name="Autoscenario coupon sync test",
+            description="",
+            is_active=True,
+            is_system=True,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            template=self.template,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            settings={"inactive_days": 30},
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_SYNC",
+            venue_code="DEP_1",
+            venue_name="Автосценарий",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            max_active_coupons_per_guest=1,
+            cooldown_days=30,
+        )
+        run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            status=CouponAutoscenarioRun.Status.SYNC_PENDING,
+            execution_mode=config.execution_mode,
+            scan_limit=10,
+            max_recipients_per_run=10,
+            scanned_guests=1,
+            matched_guests=1,
+            sendable_guests=1,
+            eligible_guests=1,
+            planned_assignments=1,
+        )
+        guest = Guest.objects.create(
+            phone=f"+7998{self._random_digits(7)}",
+            first_name="Auto",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_SYNC",
+            code=f"AUTO-{self._random_digits(6)}",
+            venue_code="DEP_1",
+            venue_name="Автосценарий",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.create(
+            run=run,
+            scenario=scenario,
+            config=config,
+            guest=guest,
+            coupon=coupon,
+            phone_e164=guest.phone,
+            coupon_series=coupon.series,
+            coupon_code=coupon.code,
+            venue_code=coupon.venue_code,
+            venue_name=coupon.venue_name,
+            promo_text="Автосценарий промо",
+            assigned_at=self.now,
+            lifetime_expires_at=self.now + timedelta(days=14),
+            status=CouponAutoscenarioAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+        )
+        event = CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            autoscenario_assignment=assignment,
+            payload_json={
+                "source": "autoscenario",
+                "autoscenario_run_id": int(run.id),
+                "scenario_code": scenario.code,
+                "assignment_id": int(assignment.id),
+                "guest_id": int(guest.id),
+                "coupon_series": coupon.series,
+                "coupon_code": coupon.code,
+                "status": assignment.status,
+            },
+            status=CouponVtelemaxSyncQueue.Status.PENDING,
+            attempts=0,
+            next_retry_at=self.now - timedelta(seconds=5),
+        )
+        return assignment, event
+
     def _random_digits(self, length: int) -> str:
         """
         Возвращает детерминированный набор цифр фиксированной длины для тестовых ключей.
@@ -227,6 +323,35 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         self.assertIsNotNone(event.ack_at)
         self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
         self.assertEqual(second_assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.OK)
+        self.assertIsNotNone(assignment.vtelemax_synced_at)
+        self.assertIsNone(assignment.vtelemax_sync_error)
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_process_batch_marks_autoscenario_assignment_acked(self, mocked_client_cls):
+        assignment, event = self._create_autoscenario_assignment_with_event()
+        mocked_client = self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[self._acked_result(event)],
+        )
+
+        stats = self._build_service().process_batch(limit=10, now=self.now)
+
+        self.assertEqual(stats.processed, 1)
+        self.assertEqual(stats.acked, 1)
+        self.assertEqual(stats.assignments_acked, 1)
+        request_body = json.loads(mocked_client.post.call_args.kwargs["content"].decode("utf-8"))
+        item = request_body["items"][0]
+        self.assertEqual(item["source"], "autoscenario")
+        self.assertEqual(item["assignment_id"], assignment.id)
+        self.assertEqual(item["autoscenario_assignment_id"], assignment.id)
+
+        event.refresh_from_db()
+        assignment.refresh_from_db()
+        self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(
+            assignment.vtelemax_sync_status,
+            CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+        )
         self.assertIsNotNone(assignment.vtelemax_synced_at)
         self.assertIsNone(assignment.vtelemax_sync_error)
 

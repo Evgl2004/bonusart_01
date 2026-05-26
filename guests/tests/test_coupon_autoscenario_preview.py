@@ -9,6 +9,8 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.models import (
+    CouponAutoscenarioAssignment,
+    CouponAutoscenarioRun,
     CouponAutomationConfig,
     CouponCampaignAssignment,
     CouponRegistryEntry,
@@ -26,6 +28,7 @@ from guests.models import (
 from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
     build_coupon_autoscenario_execution_plan,
+    execute_coupon_autoscenario_pilot,
     preview_coupon_autoscenario_audience,
 )
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
@@ -372,9 +375,157 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertIn("planned_assignments=1", output)
         self.assertIn("AUTO-CMD-PLAN", output)
 
+    def test_execute_pilot_dry_run_has_no_side_effects(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000131", first_name="DryRun")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._available_coupon(code="AUTO-DRY")
+        before_counts = self._side_effect_counts()
+
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=False,
+            now=self.now,
+        )
+
+        self.assertTrue(result.dry_run)
+        self.assertFalse(result.confirmed)
+        self.assertIsNone(result.run_id)
+        self.assertEqual(result.plan.planned_assignments, 1)
+        self.assertEqual(result.created_assignments, 0)
+        self.assertEqual(result.queue_events_created, 0)
+        self.assertEqual(self._side_effect_counts(), before_counts)
+
+    def test_execute_pilot_confirm_reserves_coupon_and_queues_vtelemax_without_messages(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.coupon_promo_text_template = (
+            "Купон {coupon_code} для {first_name}. Действует до {coupon_expires_at}."
+        )
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "coupon_promo_text_template",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000141", first_name="Pilot")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest, platform=VtelemaxRecipientChannel.Platform.MAX)
+        coupon = self._available_coupon(code="AUTO-PILOT")
+
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=self.now,
+        )
+
+        self.assertFalse(result.dry_run)
+        self.assertTrue(result.confirmed)
+        self.assertIsNotNone(result.run_id)
+        self.assertEqual(result.created_assignments, 1)
+        self.assertEqual(result.queue_events_created, 1)
+
+        run = CouponAutoscenarioRun.objects.get(id=result.run_id)
+        self.assertEqual(run.status, CouponAutoscenarioRun.Status.SYNC_PENDING)
+        self.assertEqual(run.scenario_id, self.scenario.id)
+        self.assertEqual(run.created_assignments, 1)
+        self.assertEqual(run.queue_events_created, 1)
+
+        assignment = CouponAutoscenarioAssignment.objects.get(run=run)
+        self.assertEqual(assignment.guest_id, guest.id)
+        self.assertEqual(assignment.coupon_id, coupon.id)
+        self.assertEqual(assignment.coupon_code, "AUTO-PILOT")
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.RESERVED)
+        self.assertEqual(
+            assignment.vtelemax_sync_status,
+            CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+        )
+        self.assertIn("AUTO-PILOT", assignment.promo_text)
+        self.assertIn("Pilot", assignment.promo_text)
+
+        coupon.refresh_from_db()
+        self.assertFalse(coupon.is_active)
+        self.assertEqual(coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+        self.assertIsNotNone(coupon.assigned_at)
+
+        queue_event = CouponVtelemaxSyncQueue.objects.get(autoscenario_assignment=assignment)
+        self.assertIsNone(queue_event.assignment_id)
+        self.assertEqual(queue_event.direction, CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS)
+        self.assertEqual(queue_event.status, CouponVtelemaxSyncQueue.Status.PENDING)
+        self.assertEqual(queue_event.payload_json["source"], "autoscenario")
+        self.assertEqual(queue_event.payload_json["scenario_code"], self.scenario.code)
+        self.assertEqual(queue_event.payload_json["assignment_id"], assignment.id)
+        self.assertEqual(queue_event.payload_json["coupon_code"], "AUTO-PILOT")
+        self.assertIn("valid_until", queue_event.payload_json)
+
+        self.assertEqual(CouponCampaignAssignment.objects.count(), 0)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_execute_pilot_confirm_requires_pilot_mode(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
+        self.config.save(update_fields=["execution_mode", "updated_at"])
+        guest = self._guest(phone="+79990000151", first_name="BlockedMode")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._available_coupon(code="AUTO-BLOCKED-MODE")
+
+        with self.assertRaises(CouponAutoscenarioPreviewError):
+            execute_coupon_autoscenario_pilot(
+                scenario_code=self.scenario.code,
+                scan_limit=20,
+                confirm=True,
+                now=self.now,
+            )
+
+        self.assertEqual(CouponAutoscenarioRun.objects.count(), 0)
+        self.assertEqual(CouponAutoscenarioAssignment.objects.count(), 0)
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.count(), 0)
+
+    def test_execute_pilot_command_dry_run_prints_no_side_effects(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.save(update_fields=["execution_mode", "updated_at"])
+        guest = self._guest(phone="+79990000161", first_name="CommandDryRun")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._available_coupon(code="AUTO-CMD-DRY")
+        before_counts = self._side_effect_counts()
+        stdout = StringIO()
+
+        call_command(
+            "execute_coupon_autoscenario_pilot",
+            "--scenario-code",
+            self.scenario.code,
+            "--scan-limit",
+            "20",
+            stdout=stdout,
+        )
+
+        output = stdout.getvalue()
+        self.assertIn("dry_run=True", output)
+        self.assertIn("created_assignments=0", output)
+        self.assertIn("queue_events_created=0", output)
+        self.assertIn("guest_messages_created=0", output)
+        self.assertEqual(self._side_effect_counts(), before_counts)
+
     @staticmethod
     def _side_effect_counts() -> dict[str, int]:
         return {
+            "autoscenario_runs": CouponAutoscenarioRun.objects.count(),
+            "autoscenario_assignments": CouponAutoscenarioAssignment.objects.count(),
             "notification_events": NotificationEvent.objects.count(),
             "dispatch_tasks": DispatchTask.objects.count(),
             "coupon_assignments": CouponCampaignAssignment.objects.count(),

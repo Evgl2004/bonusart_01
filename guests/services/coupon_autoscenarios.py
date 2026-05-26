@@ -3,13 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from django.db import transaction
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 
 from guests.models import (
+    CouponAutoscenarioAssignment,
+    CouponAutoscenarioRun,
     CouponAutomationConfig,
     CouponCampaignAssignment,
     CouponRegistryEntry,
+    CouponVtelemaxSyncQueue,
+    Guest,
     NotificationScenario,
     VtelemaxRecipientChannel,
 )
@@ -19,6 +24,7 @@ from guests.services.notification_scenarios import (
     _collect_candidate_guests,
     _extract_inactive_days,
 )
+from guests.services.template_render import render_message_for_guest
 
 
 SUPPORTED_COUPON_AUTOSCENARIOS = {SCENARIO_CODE_INACTIVE_30D_COUPON}
@@ -183,6 +189,26 @@ class CouponAutoscenarioExecutionPlan:
             "blockers": list(self.blockers),
             "warnings": list(self.warnings),
             "plan_items": [item.as_dict() for item in self.plan_items],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CouponAutoscenarioExecutionResult:
+    plan: CouponAutoscenarioExecutionPlan
+    dry_run: bool
+    confirmed: bool
+    run_id: int | None = None
+    created_assignments: int = 0
+    queue_events_created: int = 0
+
+    def as_dict(self) -> dict:
+        return {
+            "dry_run": self.dry_run,
+            "confirmed": self.confirmed,
+            "run_id": self.run_id,
+            "created_assignments": self.created_assignments,
+            "queue_events_created": self.queue_events_created,
+            "plan": self.plan.as_dict(),
         }
 
 
@@ -418,6 +444,156 @@ def build_coupon_autoscenario_execution_plan(
     )
 
 
+def execute_coupon_autoscenario_pilot(
+    *,
+    scenario_code: str,
+    limit: int | None = None,
+    scan_limit: int | None = None,
+    confirm: bool = False,
+    now: datetime | None = None,
+) -> CouponAutoscenarioExecutionResult:
+    """
+    Выполняет безопасный пробный запуск купонного автосценария.
+
+    Без `confirm=True` команда работает как сухой прогон: строит план и ничего
+    не меняет в базе. При подтверждении создаёт техническую волну, резервирует
+    купоны и ставит assignment-события в очередь vtelemax. Сообщения гостям на
+    этом шаге не создаются и не отправляются.
+    """
+    current_now = now or timezone.now()
+    scenario, config = _load_coupon_autoscenario_context(scenario_code=scenario_code)
+    plan = build_coupon_autoscenario_execution_plan(
+        scenario_code=scenario.code,
+        limit=limit,
+        scan_limit=scan_limit,
+        now=current_now,
+    )
+
+    if not confirm:
+        return CouponAutoscenarioExecutionResult(
+            plan=plan,
+            dry_run=True,
+            confirmed=False,
+        )
+
+    if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
+        raise CouponAutoscenarioPreviewError(
+            "Фактический пробный запуск разрешён только для режима 'Пилот'."
+        )
+    if not plan.can_execute:
+        blockers = "; ".join(plan.blockers) or "план не готов к запуску"
+        raise CouponAutoscenarioPreviewError(f"Нельзя выполнить пробный запуск: {blockers}.")
+
+    with transaction.atomic():
+        run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            status=CouponAutoscenarioRun.Status.SYNC_PENDING,
+            execution_mode=config.execution_mode,
+            scan_limit=plan.scan_limit,
+            max_recipients_per_run=plan.max_recipients_per_run,
+            scanned_guests=plan.scanned_guests,
+            matched_guests=plan.matched_guests,
+            sendable_guests=plan.sendable_guests,
+            blocked_without_channel=plan.blocked_without_channel,
+            blocked_existing_active_coupon=plan.blocked_existing_active_coupon,
+            blocked_by_cooldown=plan.blocked_by_cooldown,
+            eligible_guests=plan.eligible_guests,
+            planned_assignments=plan.planned_assignments,
+            coupon_shortage=plan.coupon_shortage,
+            warnings=list(plan.warnings),
+            blockers=list(plan.blockers),
+        )
+
+        coupon_ids = [item.coupon_id for item in plan.plan_items]
+        locked_coupons = {
+            int(coupon.id): coupon
+            for coupon in CouponRegistryEntry.objects.select_for_update().filter(id__in=coupon_ids)
+        }
+        guests = {
+            int(guest.id): guest
+            for guest in Guest.objects.filter(id__in=[item.guest_id for item in plan.plan_items])
+        }
+        primary_channels = _build_primary_channel_map(
+            guest_ids=[item.guest_id for item in plan.plan_items]
+        )
+
+        created_assignments = 0
+        queue_events_created = 0
+        for item in plan.plan_items:
+            coupon = locked_coupons.get(item.coupon_id)
+            guest = guests.get(item.guest_id)
+            if coupon is None or guest is None:
+                raise CouponAutoscenarioPreviewError(
+                    f"План устарел: не найден купон или гость для coupon_id={item.coupon_id}, guest_id={item.guest_id}."
+                )
+            if not _is_coupon_still_available(coupon=coupon, config=config):
+                raise CouponAutoscenarioPreviewError(
+                    f"План устарел: купон {coupon.series}:{coupon.code} уже недоступен."
+                )
+
+            channel = primary_channels.get(item.guest_id)
+            rendered_promo_text = _render_autoscenario_coupon_text(
+                scenario=scenario,
+                config=config,
+                guest=guest,
+                coupon_code=item.coupon_code,
+                coupon_series=item.coupon_series,
+                venue_code=item.venue_code,
+                venue_name=item.venue_name,
+                valid_until=item.valid_until,
+            )
+            assignment = CouponAutoscenarioAssignment.objects.create(
+                run=run,
+                scenario=scenario,
+                config=config,
+                guest=guest,
+                coupon=coupon,
+                person_id=channel.person_id if channel else None,
+                phone_e164=str(channel.phone_e164 or "").strip() if channel else item.phone,
+                coupon_series=item.coupon_series,
+                coupon_code=item.coupon_code,
+                venue_code=item.venue_code or None,
+                venue_name=item.venue_name or None,
+                promo_text=rendered_promo_text or None,
+                assigned_at=current_now,
+                lifetime_expires_at=item.valid_until,
+                status=CouponAutoscenarioAssignment.Status.RESERVED,
+                vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+            )
+            created_assignments += 1
+
+            coupon.is_active = False
+            coupon.pool_status = CouponRegistryEntry.PoolStatus.ASSIGNED
+            coupon.assigned_at = current_now
+            coupon.save(update_fields=["is_active", "pool_status", "assigned_at", "updated_at"])
+
+            CouponVtelemaxSyncQueue.objects.create(
+                direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+                autoscenario_assignment=assignment,
+                payload_json=_build_autoscenario_assignment_payload(
+                    run=run,
+                    assignment=assignment,
+                ),
+                status=CouponVtelemaxSyncQueue.Status.PENDING,
+                next_retry_at=current_now,
+            )
+            queue_events_created += 1
+
+        run.created_assignments = created_assignments
+        run.queue_events_created = queue_events_created
+        run.save(update_fields=["created_assignments", "queue_events_created", "updated_at"])
+
+    return CouponAutoscenarioExecutionResult(
+        plan=plan,
+        dry_run=False,
+        confirmed=True,
+        run_id=int(run.id),
+        created_assignments=created_assignments,
+        queue_events_created=queue_events_created,
+    )
+
+
 def _load_coupon_autoscenario_context(
     *,
     scenario_code: str,
@@ -540,10 +716,132 @@ def _available_coupon_queryset(*, config: CouponAutomationConfig) -> QuerySet[Co
     return queryset.order_by("id")
 
 
+def _is_coupon_still_available(*, coupon: CouponRegistryEntry, config: CouponAutomationConfig) -> bool:
+    if not bool(coupon.is_active):
+        return False
+    if coupon.pool_status != CouponRegistryEntry.PoolStatus.VERIFIED_LOADED:
+        return False
+    if str(coupon.series or "").strip() != str(config.coupon_series or "").strip():
+        return False
+    venue_code = str(config.venue_code or "").strip()
+    coupon_venue_code = str(coupon.venue_code or "").strip()
+    if is_coupon_global_venue(venue_code):
+        return coupon_venue_code in {"", COUPON_VENUE_GLOBAL_CODE}
+    if venue_code:
+        return coupon_venue_code == venue_code
+    return True
+
+
+def _build_primary_channel_map(*, guest_ids: list[int]) -> dict[int, VtelemaxRecipientChannel]:
+    if not guest_ids:
+        return {}
+    result: dict[int, VtelemaxRecipientChannel] = {}
+    for channel in (
+        VtelemaxRecipientChannel.objects.filter(guest_id__in=guest_ids)
+        .order_by("guest_id", "platform", "id")
+        .only(
+            "guest_id",
+            "person_id",
+            "platform",
+            "phone_e164",
+            "external_id",
+            "is_registered",
+            "notifications_allowed",
+        )
+    ):
+        guest_id = int(channel.guest_id)
+        if guest_id in result:
+            continue
+        if not _is_channel_sendable(channel):
+            continue
+        result[guest_id] = channel
+    return result
+
+
+def _render_autoscenario_coupon_text(
+    *,
+    scenario: NotificationScenario,
+    config: CouponAutomationConfig,
+    guest: Guest,
+    coupon_code: str,
+    coupon_series: str,
+    venue_code: str,
+    venue_name: str,
+    valid_until: datetime,
+) -> str:
+    template_text = str(config.coupon_promo_text_template or "").strip()
+    if not template_text:
+        template_text = str(getattr(scenario.template, "message_text", "") or "").strip()
+    if not template_text:
+        return ""
+    return render_message_for_guest(
+        template_text,
+        guest,
+        extra_context=_build_autoscenario_template_context(
+            coupon_code=coupon_code,
+            coupon_series=coupon_series,
+            venue_code=venue_code,
+            venue_name=venue_name,
+            valid_until=valid_until,
+        ),
+    )
+
+
+def _build_autoscenario_template_context(
+    *,
+    coupon_code: str,
+    coupon_series: str,
+    venue_code: str,
+    venue_name: str,
+    valid_until: datetime,
+) -> dict[str, str]:
+    return {
+        "coupon_code": str(coupon_code or "").strip(),
+        "coupon_series": str(coupon_series or "").strip(),
+        "coupon_venue_code": str(venue_code or "").strip(),
+        "coupon_venue_name": str(venue_name or "").strip(),
+        "coupon_expires_at": timezone.localtime(valid_until).strftime("%d.%m.%Y") if valid_until else "",
+        "valid_until": _format_valid_until(valid_until),
+    }
+
+
+def _format_valid_until(value) -> str | None:
+    if value is None:
+        return None
+    if timezone.is_naive(value):
+        value = timezone.make_aware(value, timezone.get_current_timezone())
+    return timezone.localtime(value).isoformat(timespec="seconds")
+
+
+def _build_autoscenario_assignment_payload(
+    *,
+    run: CouponAutoscenarioRun,
+    assignment: CouponAutoscenarioAssignment,
+) -> dict:
+    return {
+        "source": "autoscenario",
+        "autoscenario_run_id": int(run.id),
+        "scenario_id": int(assignment.scenario_id),
+        "scenario_code": assignment.scenario.code,
+        "assignment_id": int(assignment.id),
+        "guest_id": int(assignment.guest_id) if assignment.guest_id else None,
+        "person_id": str(assignment.person_id) if assignment.person_id else None,
+        "phone_e164": assignment.phone_e164,
+        "coupon_series": assignment.coupon_series,
+        "coupon_code": assignment.coupon_code,
+        "valid_until": _format_valid_until(assignment.lifetime_expires_at),
+        "venue_code": assignment.venue_code,
+        "venue_name": assignment.venue_name,
+        "promo_text": assignment.promo_text,
+        "status": assignment.status,
+        "vtelemax_sync_status": assignment.vtelemax_sync_status,
+    }
+
+
 def _active_assignment_guest_ids(*, guest_ids: list[int], coupon_series: str) -> set[int]:
     if not guest_ids or not coupon_series:
         return set()
-    return set(
+    campaign_guest_ids = set(
         CouponCampaignAssignment.objects.filter(
             guest_id__in=guest_ids,
             coupon_series=coupon_series,
@@ -553,6 +851,17 @@ def _active_assignment_guest_ids(*, guest_ids: list[int], coupon_series: str) ->
             ],
         ).values_list("guest_id", flat=True)
     )
+    autoscenario_guest_ids = set(
+        CouponAutoscenarioAssignment.objects.filter(
+            guest_id__in=guest_ids,
+            coupon_series=coupon_series,
+            status__in=[
+                CouponAutoscenarioAssignment.Status.RESERVED,
+                CouponAutoscenarioAssignment.Status.SENT,
+            ],
+        ).values_list("guest_id", flat=True)
+    )
+    return campaign_guest_ids | autoscenario_guest_ids
 
 
 def _cooldown_guest_ids(
@@ -565,7 +874,7 @@ def _cooldown_guest_ids(
     if not guest_ids or not coupon_series or cooldown_days <= 0:
         return set()
     cutoff = now - timedelta(days=cooldown_days)
-    return set(
+    campaign_guest_ids = set(
         CouponCampaignAssignment.objects.filter(
             guest_id__in=guest_ids,
             coupon_series=coupon_series,
@@ -578,3 +887,17 @@ def _cooldown_guest_ids(
             ],
         ).values_list("guest_id", flat=True)
     )
+    autoscenario_guest_ids = set(
+        CouponAutoscenarioAssignment.objects.filter(
+            guest_id__in=guest_ids,
+            coupon_series=coupon_series,
+            assigned_at__gte=cutoff,
+            status__in=[
+                CouponAutoscenarioAssignment.Status.SENT,
+                CouponAutoscenarioAssignment.Status.USED,
+                CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+                CouponAutoscenarioAssignment.Status.EXPIRED,
+            ],
+        ).values_list("guest_id", flat=True)
+    )
+    return campaign_guest_ids | autoscenario_guest_ids

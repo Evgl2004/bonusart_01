@@ -14,7 +14,12 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone as django_timezone
 
-from guests.models import CouponCampaignAssignment, CouponRegistryEntry, CouponVtelemaxSyncQueue
+from guests.models import (
+    CouponAutoscenarioAssignment,
+    CouponCampaignAssignment,
+    CouponRegistryEntry,
+    CouponVtelemaxSyncQueue,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +62,7 @@ class VtelemaxCouponSyncService:
     1. batched-обработку pending/error/sent событий;
     2. HMAC-подпись запроса;
     3. retry с exponential backoff;
-    4. обновление статусов `CouponCampaignAssignment.vtelemax_sync_status`.
+        4. обновление статусов назначений ручных кампаний и автосценариев.
     """
 
     def __init__(
@@ -175,7 +180,7 @@ class VtelemaxCouponSyncService:
 
         events = list(
             candidate_qs.filter(attempts__lt=self.max_attempts)
-            .select_related("assignment")
+            .select_related("assignment", "autoscenario_assignment")
             .order_by("next_retry_at", "id")[:safe_limit]
         )
         stats.scanned = len(events) + stats.skipped_max_attempts
@@ -225,7 +230,7 @@ class VtelemaxCouponSyncService:
             # Берем строки под lock, чтобы конкурирующие воркеры не отправляли один item дважды.
             locked_events = list(
                 self._queue_events_for_update_queryset()
-                .select_related("assignment")
+                .select_related("assignment", "autoscenario_assignment")
                 .filter(id__in=event_ids, direction=direction)
                 .order_by("id")
             )
@@ -267,7 +272,7 @@ class VtelemaxCouponSyncService:
         with transaction.atomic():
             events_for_update = list(
                 self._queue_events_for_update_queryset()
-                .select_related("assignment")
+                .select_related("assignment", "autoscenario_assignment")
                 .filter(id__in=[int(event.id) for event in send_events])
                 .order_by("id")
             )
@@ -291,7 +296,7 @@ class VtelemaxCouponSyncService:
                             "updated_at",
                         ]
                     )
-                    self._mark_assignment_ok(assignment=event_for_update.assignment, synced_at=attempt_time)
+                    self._mark_assignment_ok(event=event_for_update, synced_at=attempt_time)
                     self._apply_post_ack_effects(event=event_for_update)
                     result["acked"] += 1
                     if event_for_update.direction == CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS:
@@ -314,7 +319,7 @@ class VtelemaxCouponSyncService:
                     ]
                 )
                 self._mark_assignment_error(
-                    assignment=event_for_update.assignment,
+                    event=event_for_update,
                     error_text=error_text,
                     failed_at=attempt_time,
                 )
@@ -383,6 +388,10 @@ class VtelemaxCouponSyncService:
         item["event_id"] = str(event.event_id)
         if event.assignment_id and not item.get("assignment_id"):
             item["assignment_id"] = int(event.assignment_id)
+        if event.autoscenario_assignment_id and not item.get("assignment_id"):
+            item["assignment_id"] = int(event.autoscenario_assignment_id)
+        if event.autoscenario_assignment_id and not item.get("autoscenario_assignment_id"):
+            item["autoscenario_assignment_id"] = int(event.autoscenario_assignment_id)
         return item
 
     @staticmethod
@@ -437,7 +446,7 @@ class VtelemaxCouponSyncService:
         with transaction.atomic():
             failed_events = list(
                 self._queue_events_for_update_queryset()
-                .select_related("assignment")
+                .select_related("assignment", "autoscenario_assignment")
                 .filter(id__in=[int(event.id) for event in events])
             )
             for failed in failed_events:
@@ -454,7 +463,7 @@ class VtelemaxCouponSyncService:
                     ]
                 )
                 self._mark_assignment_error(
-                    assignment=failed.assignment,
+                    event=failed,
                     error_text=error_text,
                     failed_at=failed_at,
                 )
@@ -511,7 +520,7 @@ class VtelemaxCouponSyncService:
         """
         if event.direction != CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE:
             return
-        assignment = event.assignment
+        assignment = event.assignment or event.autoscenario_assignment
         if assignment is None:
             return
 
@@ -523,12 +532,20 @@ class VtelemaxCouponSyncService:
         if status_value != CouponCampaignAssignment.Status.CANCELED or not release_to_pool:
             return
 
-        assignment_for_update = (
-            CouponCampaignAssignment.objects.select_for_update()
-            .select_related("coupon")
-            .filter(id=assignment.id)
-            .first()
-        )
+        if event.autoscenario_assignment_id:
+            assignment_for_update = (
+                CouponAutoscenarioAssignment.objects.select_for_update()
+                .select_related("coupon")
+                .filter(id=assignment.id)
+                .first()
+            )
+        else:
+            assignment_for_update = (
+                CouponCampaignAssignment.objects.select_for_update()
+                .select_related("coupon")
+                .filter(id=assignment.id)
+                .first()
+            )
         if assignment_for_update is None or assignment_for_update.coupon_id is None:
             return
         if assignment_for_update.status != CouponCampaignAssignment.Status.CANCELED:
@@ -551,7 +568,8 @@ class VtelemaxCouponSyncService:
         coupon.save(update_fields=["is_active", "pool_status", "assigned_at", "updated_at"])
 
     @staticmethod
-    def _mark_assignment_ok(*, assignment: CouponCampaignAssignment | None, synced_at) -> None:
+    def _mark_assignment_ok(*, event: CouponVtelemaxSyncQueue, synced_at) -> None:
+        assignment = event.assignment or event.autoscenario_assignment
         if assignment is None:
             return
         assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.OK
@@ -569,10 +587,11 @@ class VtelemaxCouponSyncService:
     @staticmethod
     def _mark_assignment_error(
         *,
-        assignment: CouponCampaignAssignment | None,
+        event: CouponVtelemaxSyncQueue,
         error_text: str,
         failed_at,
     ) -> None:
+        assignment = event.assignment or event.autoscenario_assignment
         if assignment is None:
             return
         assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.ERROR
