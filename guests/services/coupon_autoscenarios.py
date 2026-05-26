@@ -686,7 +686,7 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
     current_now = now or timezone.now()
     with transaction.atomic():
         assignment = (
-            CouponAutoscenarioAssignment.objects.select_for_update()
+            _autoscenario_assignments_for_update_queryset()
             .select_related("guest", "scenario", "scenario__template", "coupon", "run", "config")
             .filter(id=safe_assignment_id)
             .first()
@@ -770,6 +770,13 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             )
         _refresh_autoscenario_run_status(run_id=assignment.run_id)
         return int(created_count or 0)
+
+
+def _autoscenario_assignments_for_update_queryset():
+    """
+    Блокирует только строку назначения автосценария, не nullable-связи из select_related.
+    """
+    return CouponAutoscenarioAssignment.objects.select_for_update(of=("self",))
 
 
 def _load_coupon_autoscenario_context(

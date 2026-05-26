@@ -27,6 +27,7 @@ from guests.models import (
 )
 from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
+    _autoscenario_assignments_for_update_queryset,
     build_coupon_autoscenario_execution_plan,
     execute_coupon_autoscenario_pilot,
     preview_coupon_autoscenario_audience,
@@ -590,6 +591,15 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(CouponCampaignAssignment.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
         self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_autoscenario_assignment_lock_queryset_locks_only_assignment_table(self):
+        queryset = (
+            _autoscenario_assignments_for_update_queryset()
+            .select_related("guest", "scenario", "scenario__template", "coupon", "run", "config")
+            .filter(id=1)
+        )
+
+        self.assertEqual(queryset.query.select_for_update_of, ("self",))
 
     def test_execute_pilot_confirm_requires_pilot_mode(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
