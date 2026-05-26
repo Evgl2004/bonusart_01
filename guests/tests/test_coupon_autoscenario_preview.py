@@ -15,6 +15,7 @@ from guests.models import (
     CouponVtelemaxSyncQueue,
     DispatchTask,
     Guest,
+    Mailing,
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
@@ -24,6 +25,7 @@ from guests.models import (
 )
 from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
+    build_coupon_autoscenario_execution_plan,
     preview_coupon_autoscenario_audience,
 )
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
@@ -128,6 +130,54 @@ class CouponAutoscenarioPreviewTests(TestCase):
             iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
         )
 
+    def _mailing(self) -> Mailing:
+        return Mailing.objects.create(
+            name="Autoscenario legacy assignment holder",
+            template=self.template,
+            scheduled_date=self.now.date(),
+            scheduled_time_begin=self.now,
+            scheduled_time_end=self.now + timedelta(days=14),
+            is_active=False,
+            created_at=self.now,
+            updated_at=self.now,
+            send_window_begin=self.now.time(),
+            send_window_end=(self.now + timedelta(hours=2)).time(),
+            target_mode=Mailing.TargetMode.PRIMARY_ONLY,
+            queue_priority=Mailing.QueuePriority.BULK,
+            coupon_series=self.config.coupon_series,
+            coupon_venue_code=self.config.venue_code,
+            coupon_venue_name=self.config.venue_name,
+            coupon_promo_text="Test promo",
+        )
+
+    def _assignment(
+        self,
+        *,
+        mailing: Mailing,
+        guest: Guest,
+        coupon: CouponRegistryEntry,
+        status: str,
+        assigned_at=None,
+    ) -> CouponCampaignAssignment:
+        coupon.is_active = False
+        coupon.pool_status = CouponRegistryEntry.PoolStatus.ASSIGNED
+        coupon.assigned_at = assigned_at or self.now
+        coupon.save(update_fields=["is_active", "pool_status", "assigned_at", "updated_at"])
+        return CouponCampaignAssignment.objects.create(
+            campaign=mailing,
+            guest=guest,
+            coupon=coupon,
+            phone_e164=guest.phone,
+            coupon_series=coupon.series,
+            coupon_code=coupon.code,
+            venue_code=coupon.venue_code,
+            venue_name=coupon.venue_name,
+            assigned_at=assigned_at or self.now,
+            lifetime_expires_at=self.now + timedelta(days=14),
+            status=status,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+        )
+
     def test_preview_counts_audience_channels_and_coupons_without_side_effects(self):
         old_sendable = self._guest(phone="+79990000001", first_name="Можно")
         old_blocked = self._guest(phone="+79990000002", first_name="БезКанала")
@@ -224,6 +274,103 @@ class CouponAutoscenarioPreviewTests(TestCase):
 
         with self.assertRaises(CouponAutoscenarioPreviewError):
             preview_coupon_autoscenario_audience(scenario_code=self.scenario.code, now=self.now)
+
+    def test_execution_plan_pairs_eligible_guests_with_coupons_without_side_effects(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 5
+        self.config.cooldown_days = 30
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "cooldown_days",
+                "updated_at",
+            ]
+        )
+        eligible = self._guest(phone="+79990000101", first_name="Eligible")
+        active = self._guest(phone="+79990000102", first_name="Active")
+        cooldown = self._guest(phone="+79990000103", first_name="Cooldown")
+        blocked = self._guest(phone="+79990000104", first_name="Blocked")
+        for guest in [eligible, active, cooldown, blocked]:
+            self._visit(guest=guest, days_ago=45)
+        for guest in [eligible, active, cooldown]:
+            self._sendable_channel(guest=guest)
+
+        mailing = self._mailing()
+        active_coupon = self._available_coupon(code="AUTO-ACTIVE")
+        cooldown_coupon = self._available_coupon(code="AUTO-COOLDOWN")
+        self._assignment(
+            mailing=mailing,
+            guest=active,
+            coupon=active_coupon,
+            status=CouponCampaignAssignment.Status.RESERVED,
+        )
+        self._assignment(
+            mailing=mailing,
+            guest=cooldown,
+            coupon=cooldown_coupon,
+            status=CouponCampaignAssignment.Status.USED,
+            assigned_at=self.now - timedelta(days=10),
+        )
+        available_coupon = self._available_coupon(code="AUTO-PLAN")
+        before_counts = self._side_effect_counts()
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.matched_guests, 4)
+        self.assertEqual(plan.sendable_guests, 3)
+        self.assertEqual(plan.blocked_without_channel, 1)
+        self.assertEqual(plan.blocked_existing_active_coupon, 1)
+        self.assertEqual(plan.blocked_by_cooldown, 1)
+        self.assertEqual(plan.eligible_guests, 1)
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, eligible.id)
+        self.assertEqual(plan.plan_items[0].coupon_id, available_coupon.id)
+        self.assertEqual(self._side_effect_counts(), before_counts)
+
+    def test_execution_plan_blocks_report_only_mode(self):
+        guest = self._guest(phone="+79990000111", first_name="ReportOnly")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._available_coupon(code="AUTO-REPORT")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            now=self.now,
+        )
+
+        self.assertFalse(plan.can_execute)
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertTrue(any("Только отч" in blocker for blocker in plan.blockers))
+
+    def test_plan_command_prints_safe_summary(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.save(update_fields=["execution_mode", "updated_at"])
+        guest = self._guest(phone="+79990000121", first_name="CommandPlan")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._available_coupon(code="AUTO-CMD-PLAN")
+        stdout = StringIO()
+
+        call_command(
+            "plan_coupon_autoscenario",
+            "--scenario-code",
+            self.scenario.code,
+            "--scan-limit",
+            "20",
+            stdout=stdout,
+        )
+
+        output = stdout.getvalue()
+        self.assertIn("scenario_code=inactive_30d_coupon", output)
+        self.assertIn("can_execute=True", output)
+        self.assertIn("planned_assignments=1", output)
+        self.assertIn("AUTO-CMD-PLAN", output)
 
     @staticmethod
     def _side_effect_counts() -> dict[str, int]:
