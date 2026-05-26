@@ -9,6 +9,7 @@ from django.utils import timezone
 from .models import (
     BotProfile,
     Category,
+    CouponAutomationConfig,
     CouponCampaignAssignment,
     CouponPoolBatch,
     CouponRegistryEntry,
@@ -812,6 +813,85 @@ class NotificationScenarioBotProfileLinkInline(admin.TabularInline):
     autocomplete_fields = ("bot_profile",)
     verbose_name = "Разрешённый бот"
     verbose_name_plural = "Разрешённые боты"
+
+
+@admin.register(CouponAutomationConfig)
+class CouponAutomationConfigAdmin(admin.ModelAdmin):
+    """
+    Техническая панель настроек будущих купонных автосценариев.
+    """
+
+    list_display = (
+        "id",
+        "scenario_code",
+        "execution_mode",
+        "coupon_series",
+        "venue_name",
+        "coupon_validity_days",
+        "max_recipients_per_run",
+        "cooldown_days",
+        "updated_at",
+    )
+    list_filter = ("execution_mode", "venue_code", "coupon_validity_days")
+    search_fields = (
+        "scenario__code",
+        "scenario__name",
+        "coupon_series",
+        "venue_code",
+        "venue_name",
+        "iikocard_action_note",
+    )
+    raw_id_fields = ("scenario",)
+    readonly_fields = ("created_at", "updated_at")
+    list_per_page = 100
+    fieldsets = (
+        (
+            "Сценарий",
+            {
+                "fields": ("scenario", "execution_mode"),
+            },
+        ),
+        (
+            "Купон и заведение",
+            {
+                "fields": (
+                    "coupon_series",
+                    "venue_code",
+                    "venue_name",
+                    "coupon_validity_days",
+                    "min_order_amount",
+                    "iikocard_action_note",
+                ),
+            },
+        ),
+        (
+            "Текст и лимиты",
+            {
+                "fields": (
+                    "coupon_promo_text_template",
+                    "max_recipients_per_run",
+                    "max_active_coupons_per_guest",
+                    "cooldown_days",
+                ),
+            },
+        ),
+        (
+            "Дополнительные настройки",
+            {
+                "fields": ("settings",),
+            },
+        ),
+        (
+            "Служебные поля",
+            {
+                "fields": ("created_at", "updated_at"),
+            },
+        ),
+    )
+
+    @admin.display(description="Код сценария", ordering="scenario__code")
+    def scenario_code(self, obj):
+        return obj.scenario.code if obj.scenario_id else "-"
 
 
 @admin.register(NotificationScenario)

@@ -1919,6 +1919,173 @@ class NotificationScenarioBotProfileLink(models.Model):
         return f"scenario={self.scenario_id} bot={self.bot_profile_id}"
 
 
+class CouponAutomationConfig(models.Model):
+    """
+    Купонные настройки для автоматического сценария уведомлений.
+
+    Модель не запускает отправки сама по себе. Она хранит утверждённые правила
+    будущего автосценария рядом с `NotificationScenario`, чтобы купонная
+    логика не пряталась в свободном JSON без валидации.
+    """
+
+    class ExecutionMode(models.TextChoices):
+        REPORT_ONLY = "report_only", "Только отчёт"
+        PILOT = "pilot", "Пилот"
+        AUTOMATIC = "automatic", "Автоматически"
+        PAUSED = "paused", "Пауза"
+
+    scenario = models.OneToOneField(
+        "NotificationScenario",
+        on_delete=models.CASCADE,
+        related_name="coupon_automation_config",
+        help_text="Сценарий уведомлений, для которого настроена купонная автоматизация.",
+    )
+    execution_mode = models.CharField(
+        max_length=24,
+        choices=ExecutionMode.choices,
+        default=ExecutionMode.REPORT_ONLY,
+        db_index=True,
+        help_text="Режим работы купонного автосценария.",
+    )
+    coupon_series = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Серия купонов, из которой автосценарий будет брать доступные купоны.",
+    )
+    venue_code = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Код заведения или __global__ для сетевой акции.",
+    )
+    venue_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Название заведения для отображения и payload vtelemax.",
+    )
+    coupon_validity_days = models.PositiveSmallIntegerField(
+        default=14,
+        help_text="Срок действия выдаваемого купона в днях.",
+    )
+    coupon_promo_text_template = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Текст акции для карточки купона; поддержка переменных добавляется на уровне executor.",
+    )
+    min_order_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Справочная минимальная сумма заказа, настроенная в iikoCard.",
+    )
+    iikocard_action_note = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Что именно настроено в iikoCard: подарок, скидка, место продаж, тип заказа.",
+    )
+    max_recipients_per_run = models.PositiveIntegerField(
+        default=100,
+        help_text="Максимум гостей, которых сценарий может обработать за один проход.",
+    )
+    max_active_coupons_per_guest = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Защита от нескольких активных купонов одной акции у одного гостя.",
+    )
+    cooldown_days = models.PositiveIntegerField(
+        default=30,
+        help_text="Минимальная пауза перед повторным попаданием гостя в этот купонный сценарий.",
+    )
+    settings = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Резерв для дополнительных параметров сценария до появления специализированных полей.",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_automation_configs"
+        verbose_name = "Купонная настройка автосценария"
+        verbose_name_plural = "Купонные настройки автосценариев"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    execution_mode__in=["report_only", "pilot", "automatic", "paused"]
+                ),
+                name="cauto_execution_mode_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(coupon_validity_days__gte=1),
+                name="cauto_validity_days_gte_1",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_recipients_per_run__gte=1),
+                name="cauto_max_recipients_gte_1",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(max_active_coupons_per_guest__gte=1),
+                name="cauto_max_active_gte_1",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(cooldown_days__gte=0),
+                name="cauto_cooldown_days_gte_0",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["execution_mode"], name="cauto_mode_idx"),
+            models.Index(fields=["coupon_series"], name="cauto_series_idx"),
+            models.Index(fields=["venue_code"], name="cauto_venue_idx"),
+        ]
+
+    def clean(self):
+        super().clean()
+
+        if self.coupon_series:
+            self.coupon_series = self.coupon_series.strip()
+        if self.venue_code:
+            self.venue_code = self.venue_code.strip()
+        if self.venue_name:
+            self.venue_name = self.venue_name.strip()
+
+        active_modes = {
+            self.ExecutionMode.PILOT,
+            self.ExecutionMode.AUTOMATIC,
+        }
+        if self.execution_mode in active_modes and not self.coupon_series:
+            raise ValidationError(
+                {
+                    "coupon_series": (
+                        "Для режимов 'Пилот' и 'Автоматически' нужно указать серию купонов."
+                    )
+                }
+            )
+
+        errors = {}
+
+        if self.coupon_validity_days is not None and self.coupon_validity_days < 1:
+            errors["coupon_validity_days"] = "Срок действия купона должен быть не меньше 1 дня."
+        if self.max_recipients_per_run is not None and self.max_recipients_per_run < 1:
+            errors["max_recipients_per_run"] = "Лимит получателей за проход должен быть не меньше 1."
+        if self.max_active_coupons_per_guest is not None and self.max_active_coupons_per_guest < 1:
+            errors["max_active_coupons_per_guest"] = "Лимит активных купонов гостя должен быть не меньше 1."
+        if self.cooldown_days is not None and self.cooldown_days < 0:
+            errors["cooldown_days"] = "Пауза повторного попадания не может быть отрицательной."
+        if self.min_order_amount is not None and self.min_order_amount < 0:
+            errors["min_order_amount"] = "Минимальная сумма заказа не может быть отрицательной."
+
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        return f"scenario={self.scenario_id} mode={self.execution_mode} series={self.coupon_series or '-'}"
+
+
 class NotificationEvent(models.Model):
     """
     Факт срабатывания сценария уведомления для конкретного гостя.
