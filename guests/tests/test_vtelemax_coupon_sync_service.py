@@ -350,6 +350,8 @@ class VtelemaxCouponSyncServiceTests(TestCase):
     @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
     def test_process_batch_marks_autoscenario_assignment_acked(self, mocked_client_cls):
         assignment, event = self._create_autoscenario_assignment_with_event()
+        assignment.scenario.is_active = False
+        assignment.scenario.save(update_fields=["is_active", "updated_at"])
         mocked_client = self._mock_vtelemax_response(
             mocked_client_cls,
             results=[self._acked_result(event)],
@@ -377,6 +379,7 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         self.assertIsNone(assignment.vtelemax_sync_error)
         self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.SENT)
         self.assertIsNotNone(assignment.sent_at)
+        self.assertFalse(assignment.scenario.is_active)
         self.assertEqual(DispatchTask.objects.filter(notification_scenario=assignment.scenario).count(), 1)
         task = DispatchTask.objects.get(notification_scenario=assignment.scenario)
         self.assertEqual(task.source_type, DispatchTask.SourceType.SYSTEM)

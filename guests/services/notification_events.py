@@ -399,6 +399,7 @@ def create_notification_event(
     route_priority: Optional[str] = None,
     route_target_mode: Optional[str] = None,
     route_allowed_bot_profile_ids: Optional[Iterable[int]] = None,
+    allow_inactive_scenario: bool = False,
 ) -> int:
     """
     Создаёт NotificationEvent и ставит задачи в DispatchTask по сценарию.
@@ -421,15 +422,23 @@ def create_notification_event(
         logger.warning("Сценарий/ключ дедупликации не задан: scenario='%s', dedupe='%s'", scenario_code, dedupe_key)
         return 0
 
+    scenario_filter = {"code": safe_scenario_code}
+    if not allow_inactive_scenario:
+        scenario_filter["is_active"] = True
+
     scenario = (
         NotificationScenario.objects.select_related("template")
         .prefetch_related("bot_profile_links")
-        .filter(code=safe_scenario_code, is_active=True)
+        .filter(**scenario_filter)
         .first()
     )
     if scenario is None:
+        if allow_inactive_scenario:
+            message = f"Сценарий '{safe_scenario_code}' не найден."
+        else:
+            message = f"Сценарий '{safe_scenario_code}' не найден или выключен."
         raise ScenarioNotConfiguredError(
-            f"Сценарий '{safe_scenario_code}' не найден или выключен."
+            message
         )
 
     now = timezone.now()

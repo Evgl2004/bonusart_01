@@ -371,7 +371,13 @@ def build_coupon_autoscenario_execution_plan(
     warnings: list[str] = []
 
     if not scenario.is_active:
-        blockers.append("Сценарий выключен.")
+        if config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT:
+            warnings.append(
+                "NotificationScenario выключен; пилотный купонный автосценарий будет выполнен "
+                "только через явный запуск, без старого планировщика уведомлений."
+            )
+        else:
+            blockers.append("Сценарий выключен.")
     if scenario.trigger_type != NotificationScenario.TriggerType.SCHEDULE:
         blockers.append("Сценарий не относится к планировщику.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.REPORT_ONLY:
@@ -732,6 +738,9 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
                 coupon_code=assignment.coupon_code,
                 coupon_external_id=f"{assignment.coupon_series}:{assignment.coupon_code}",
                 coupon_expires_at=assignment.lifetime_expires_at,
+                allow_inactive_scenario=(
+                    assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
+                ),
             )
         except ScenarioNotConfiguredError as exc:
             _mark_autoscenario_assignment_dispatch_error(

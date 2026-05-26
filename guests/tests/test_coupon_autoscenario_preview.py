@@ -426,6 +426,42 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(plan.plan_items[0].coupon_id, pilot_coupon.id)
         self.assertTrue(any("дополнительно включено" in warning for warning in plan.warnings))
 
+    def test_execution_plan_allows_pilot_when_notification_scenario_is_inactive(self):
+        self.scenario.is_active = False
+        self.scenario.save(update_fields=["is_active", "updated_at"])
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.settings = {
+            "pilot_phones": ["+79990000124"],
+            "pilot_include_unmatched": True,
+        }
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        pilot_guest = self._guest(phone="+79990000124", first_name="InactiveScenarioPilot")
+        self._visit(guest=pilot_guest, days_ago=5)
+        self._sendable_channel(guest=pilot_guest)
+        pilot_coupon = self._available_coupon(code="AUTO-INACTIVE-SCENARIO")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, pilot_guest.id)
+        self.assertEqual(plan.plan_items[0].coupon_id, pilot_coupon.id)
+        self.assertTrue(
+            any("старого планировщика" in warning for warning in plan.warnings)
+        )
+
     def test_plan_command_prints_safe_summary(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
         self.config.settings = {"pilot_phones": ["+79990000121"]}
