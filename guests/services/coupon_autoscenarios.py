@@ -612,6 +612,7 @@ def execute_coupon_autoscenario_pilot(
                 venue_code=item.venue_code,
                 venue_name=item.venue_name,
                 valid_until=item.valid_until,
+                now=current_now,
             )
             assignment = CouponAutoscenarioAssignment.objects.create(
                 run=run,
@@ -722,6 +723,10 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             venue_code=assignment.venue_code or "",
             venue_name=assignment.venue_name or "",
             valid_until=assignment.lifetime_expires_at,
+            days_without_visits=_calculate_days_without_visits(
+                guest_id=int(assignment.guest_id),
+                now=current_now,
+            ),
         )
         is_pilot_execution = assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
         try:
@@ -1096,12 +1101,14 @@ def _render_autoscenario_coupon_text(
     venue_code: str,
     venue_name: str,
     valid_until: datetime,
+    now: datetime | None = None,
 ) -> str:
     template_text = str(config.coupon_promo_text_template or "").strip()
     if not template_text:
         template_text = str(getattr(scenario.template, "message_text", "") or "").strip()
     if not template_text:
         return ""
+    current_now = now or timezone.now()
     return render_message_for_guest(
         template_text,
         guest,
@@ -1111,8 +1118,27 @@ def _render_autoscenario_coupon_text(
             venue_code=venue_code,
             venue_name=venue_name,
             valid_until=valid_until,
+            days_without_visits=_calculate_days_without_visits(
+                guest_id=int(guest.id),
+                now=current_now,
+            ),
         ),
     )
+
+
+def _calculate_days_without_visits(*, guest_id: int | None, now: datetime | None = None) -> int | None:
+    if not guest_id:
+        return None
+    current_now = now or timezone.now()
+    last_visit_at = (
+        VisitHistory.objects.filter(guest_id=int(guest_id))
+        .order_by("-visit_date")
+        .values_list("visit_date", flat=True)
+        .first()
+    )
+    if last_visit_at is None:
+        return None
+    return max(0, int((current_now - last_visit_at).days))
 
 
 def _build_autoscenario_template_context(
@@ -1122,6 +1148,7 @@ def _build_autoscenario_template_context(
     venue_code: str,
     venue_name: str,
     valid_until: datetime | None,
+    days_without_visits: int | None = None,
 ) -> dict[str, str]:
     return {
         "coupon_code": str(coupon_code or "").strip(),
@@ -1130,6 +1157,7 @@ def _build_autoscenario_template_context(
         "coupon_venue_name": str(venue_name or "").strip(),
         "coupon_expires_at": timezone.localtime(valid_until).strftime("%d.%m.%Y") if valid_until else "",
         "valid_until": _format_valid_until(valid_until) or "",
+        "days_without_visits": str(days_without_visits) if days_without_visits is not None else "",
     }
 
 

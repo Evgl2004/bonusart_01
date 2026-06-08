@@ -605,6 +605,8 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(queryset.query.select_for_update_of, ("self",))
 
     def test_pilot_dispatch_after_ack_is_available_immediately_even_for_uniform_scenario(self):
+        self.template.message_text = "Мы давно не виделись ({{ days_without_visits }} дней). Купон {coupon_code}"
+        self.template.save(update_fields=["message_text", "updated_at"])
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
         self.config.max_recipients_per_run = 1
         self.config.settings = {"pilot_phones": ["+79990000145"]}
@@ -616,7 +618,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
                 "updated_at",
             ]
         )
-        now = timezone.now()
+        now = self.now + timedelta(minutes=10)
         self.scenario.distribution_mode = NotificationScenario.DistributionMode.UNIFORM
         self.scenario.timezone = "UTC"
         self.scenario.send_window_begin = (now + timedelta(hours=1)).time().replace(microsecond=0)
@@ -656,7 +658,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             now=self.now,
         )
         assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
-        ack_time = now - timedelta(minutes=1)
+        ack_time = self.now + timedelta(minutes=5)
         assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
         assignment.vtelemax_synced_at = ack_time
         assignment.save(update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"])
@@ -673,6 +675,8 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(task.available_at, ack_time)
         self.assertEqual(task.scheduled_at, ack_time)
         self.assertEqual(task.status, DispatchTask.Status.PENDING)
+        self.assertIn("45 дней", task.message_text)
+        self.assertNotIn("days_without_visits", task.message_text)
 
     def test_execute_pilot_confirm_requires_pilot_mode(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
