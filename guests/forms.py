@@ -589,6 +589,6 @@ CouponAutomationRuleFormSet = forms.inlineformset_factory(
     CouponAutomationRule,
     form=CouponAutomationRuleForm,
     fields=CouponAutomationRuleForm.Meta.fields,
-    extra=3,
+    extra=2,
     can_delete=True,
 )

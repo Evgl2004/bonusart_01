@@ -24,6 +24,28 @@
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white">
+      <strong>Как настроить без лишней боли</strong>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          <div class="fw-semibold">1. Оставьте состояние “Пилот”</div>
+          <div class="text-muted small">Пилот ограничивает выдачу контрольными телефонами и защищает от массового запуска.</div>
+        </div>
+        <div class="col-12 col-lg-4">
+          <div class="fw-semibold">2. Заполните купонные правила</div>
+          <div class="text-muted small">Для заведения выберите его серию. Для запасного варианта выберите “Вся сеть (global)”.</div>
+        </div>
+        <div class="col-12 col-lg-4">
+          <div class="fw-semibold">3. Сохраните и откройте предпросмотр</div>
+          <div class="text-muted small">Предпросмотр покажет, кого система возьмёт, какой купон выдаст и где есть дефицит.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white">
       <strong>Как выбирается купон</strong>
       <div class="text-muted small">{{ coupon_selection_policy_label }}</div>
     </div>
@@ -123,8 +145,8 @@
         <span class="badge text-bg-light">сохраняется вместе с настройками</span>
       </div>
       <div class="alert alert-light border small">
-        Для правила по заведению выберите конкретное заведение и серию купонов. Для правила Вся сеть (global) заведение не учитывается.
-        Если свободных строк не хватает, сохраните форму: появятся новые пустые строки для добавления следующих правил.
+        Минимально нужно заполнить: <strong>Область</strong>, <strong>Заведение</strong> и <strong>Серию купонов</strong>.
+        Остальные условия можно оставить пустыми. Если свободных строк не хватает, сохраните форму: появятся новые строки.
       </div>
 
       {{ rule_formset.management_form }}
@@ -138,7 +160,7 @@
               <th style="min-width: 260px;">Серия купонов</th>
               <th style="width: 120px;">Срок</th>
               <th style="width: 120px;">Приоритет</th>
-              <th style="width: 120px;">Удалить</th>
+              <th style="width: 140px;">Действие</th>
             </tr>
           </thead>
           <tbody>
@@ -159,8 +181,9 @@
                     <div class="text-danger small">{{ rule_form.scope_type.errors|join:", " }}</div>
                   {% endif %}
                 </td>
-                <td>
+                <td class="coupon-rule-venue-cell">
                   {{ rule_form.venue_code }}
+                  <div class="form-text coupon-rule-global-note d-none">Для “Вся сеть (global)” заведение не выбирается.</div>
                   {% if rule_form.venue_code.errors %}
                     <div class="text-danger small">{{ rule_form.venue_code.errors|join:", " }}</div>
                   {% endif %}
@@ -199,29 +222,32 @@
                   {% if rule_form.non_field_errors %}
                     <div class="alert alert-danger py-2 mb-2">{{ rule_form.non_field_errors }}</div>
                   {% endif %}
-                  <div class="row g-2">
-                    <div class="col-12 col-lg-3">
-                      {{ rule_form.min_order_amount.label_tag }}
-                      {{ rule_form.min_order_amount }}
-                      {% if rule_form.min_order_amount.errors %}
-                        <div class="text-danger small">{{ rule_form.min_order_amount.errors|join:", " }}</div>
-                      {% endif %}
+                  <details>
+                    <summary class="small fw-semibold">Дополнительные условия iikoCard и текст карточки купона</summary>
+                    <div class="row g-2 mt-2">
+                      <div class="col-12 col-lg-3">
+                        {{ rule_form.min_order_amount.label_tag }}
+                        {{ rule_form.min_order_amount }}
+                        {% if rule_form.min_order_amount.errors %}
+                          <div class="text-danger small">{{ rule_form.min_order_amount.errors|join:", " }}</div>
+                        {% endif %}
+                      </div>
+                      <div class="col-12 col-lg-4">
+                        {{ rule_form.iikocard_action_note.label_tag }}
+                        {{ rule_form.iikocard_action_note }}
+                        {% if rule_form.iikocard_action_note.errors %}
+                          <div class="text-danger small">{{ rule_form.iikocard_action_note.errors|join:", " }}</div>
+                        {% endif %}
+                      </div>
+                      <div class="col-12 col-lg-5">
+                        {{ rule_form.coupon_promo_text_template.label_tag }}
+                        {{ rule_form.coupon_promo_text_template }}
+                        {% if rule_form.coupon_promo_text_template.errors %}
+                          <div class="text-danger small">{{ rule_form.coupon_promo_text_template.errors|join:", " }}</div>
+                        {% endif %}
+                      </div>
                     </div>
-                    <div class="col-12 col-lg-4">
-                      {{ rule_form.iikocard_action_note.label_tag }}
-                      {{ rule_form.iikocard_action_note }}
-                      {% if rule_form.iikocard_action_note.errors %}
-                        <div class="text-danger small">{{ rule_form.iikocard_action_note.errors|join:", " }}</div>
-                      {% endif %}
-                    </div>
-                    <div class="col-12 col-lg-5">
-                      {{ rule_form.coupon_promo_text_template.label_tag }}
-                      {{ rule_form.coupon_promo_text_template }}
-                      {% if rule_form.coupon_promo_text_template.errors %}
-                        <div class="text-danger small">{{ rule_form.coupon_promo_text_template.errors|join:", " }}</div>
-                      {% endif %}
-                    </div>
-                  </div>
+                  </details>
                 </td>
               </tr>
             {% endfor %}
@@ -327,4 +353,35 @@
     </div>
   </form>
 </div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    function syncRuleScope(scopeSelect) {
+      var row = scopeSelect.closest("tr");
+      if (!row) {
+        return;
+      }
+      var venueCell = row.querySelector(".coupon-rule-venue-cell");
+      if (!venueCell) {
+        return;
+      }
+      var venueSelect = venueCell.querySelector("select");
+      var globalNote = venueCell.querySelector(".coupon-rule-global-note");
+      var isGlobal = scopeSelect.value === "global";
+      if (venueSelect) {
+        venueSelect.classList.toggle("d-none", isGlobal);
+      }
+      if (globalNote) {
+        globalNote.classList.toggle("d-none", !isGlobal);
+      }
+    }
+
+    document.querySelectorAll('select[name$="-scope_type"]').forEach(function (scopeSelect) {
+      syncRuleScope(scopeSelect);
+      scopeSelect.addEventListener("change", function () {
+        syncRuleScope(scopeSelect);
+      });
+    });
+  });
+</script>
 {% endblock %}
