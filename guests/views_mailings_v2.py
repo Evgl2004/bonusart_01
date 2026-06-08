@@ -50,6 +50,7 @@ from guests.services.coupon_campaign_lifecycle import CouponCampaignLifecycleSer
 from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
     build_coupon_autoscenario_execution_plan,
+    execute_coupon_autoscenario_pilot,
 )
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
@@ -1498,6 +1499,43 @@ class MailingsV2ScenariosView(TemplateView):
         return_query = str(request.POST.get("return_query") or "").strip()
         redirect_url = self._build_redirect_url(return_query=return_query)
 
+        if action == "run_coupon_pilot":
+            scenario_code = str(request.POST.get("scenario_code") or "").strip()
+            scan_limit = self._parse_positive_int(
+                request.POST.get("coupon_scan_limit"),
+                default=5000,
+                max_value=100000,
+            )
+            try:
+                result = execute_coupon_autoscenario_pilot(
+                    scenario_code=scenario_code,
+                    scan_limit=scan_limit,
+                    confirm=True,
+                )
+            except CouponAutoscenarioPreviewError as exc:
+                messages.error(request, str(exc))
+                return redirect(redirect_url)
+
+            request.session["mailings_v2_coupon_pilot_report"] = {
+                "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+                "scenario_code": result.plan.scenario_code,
+                "run_id": result.run_id,
+                "created_assignments": result.created_assignments,
+                "queue_events_created": result.queue_events_created,
+                "planned_assignments": result.plan.planned_assignments,
+                "coupon_series": result.plan.coupon_series,
+                "venue_name": result.plan.venue_name,
+            }
+            messages.success(
+                request,
+                (
+                    "Пробный запуск купонного автосценария создан: "
+                    f"run_id={result.run_id}, назначений={result.created_assignments}, "
+                    f"событий vtelemax={result.queue_events_created}."
+                ),
+            )
+            return redirect(redirect_url)
+
         if action != "run_schedule_once":
             messages.error(request, "Неизвестное действие для экрана сценариев.")
             return redirect(redirect_url)
@@ -1692,6 +1730,10 @@ class MailingsV2ScenariosView(TemplateView):
         context["coupon_sample_limit"] = coupon_sample_limit
         context["coupon_plan"] = coupon_plan
         context["coupon_plan_error"] = coupon_plan_error
+        context["coupon_pilot_report"] = self.request.session.pop(
+            "mailings_v2_coupon_pilot_report",
+            None,
+        )
         context["scenarios_total"] = scenarios_scope.count()
         context["scenarios_active"] = scenarios_scope.filter(is_active=True).count()
         context["events_24h_total"] = NotificationEvent.objects.filter(

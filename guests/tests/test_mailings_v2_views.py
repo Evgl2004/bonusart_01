@@ -1855,3 +1855,62 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "REL-1")
         self.assertEqual(response.context["coupon_plan"]["planned_assignments"], 1)
         self.assertEqual(response.context["coupon_plan"]["sample_plan_items"][0]["days_without_visits"], 30)
+
+    def test_scenarios_hub_runs_coupon_autoscenario_pilot(self):
+        """
+        Пробный запуск из UI вызывает только защищённый executor автосценария.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=1,
+            cooldown_days=30,
+        )
+
+        with patch("guests.views_mailings_v2.execute_coupon_autoscenario_pilot") as execute_mock:
+            execute_mock.return_value = SimpleNamespace(
+                run_id=7,
+                created_assignments=1,
+                queue_events_created=1,
+                plan=SimpleNamespace(
+                    scenario_code=scenario.code,
+                    planned_assignments=1,
+                    coupon_series="AUTO_30D",
+                    venue_name="Сами Сусами",
+                ),
+            )
+            response = self.client.post(
+                reverse("mailings_v2_scenarios"),
+                {
+                    "action": "run_coupon_pilot",
+                    "scenario_code": scenario.code,
+                    "coupon_scan_limit": "5000",
+                },
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        execute_mock.assert_called_once_with(
+            scenario_code=scenario.code,
+            scan_limit=5000,
+            confirm=True,
+        )
+        self.assertContains(response, "Пробный запуск создан")
+        self.assertContains(response, "run_id")
+        self.assertEqual(response.context["coupon_pilot_report"]["run_id"], 7)

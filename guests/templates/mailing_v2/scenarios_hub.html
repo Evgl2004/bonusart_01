@@ -212,6 +212,22 @@
         <div class="alert alert-danger mb-0">{{ coupon_plan_error }}</div>
       {% endif %}
 
+      {% if coupon_pilot_report %}
+        <div class="alert alert-success">
+          <div class="fw-semibold mb-1">Пробный запуск создан</div>
+          <div>
+            Сценарий: <code>{{ coupon_pilot_report.scenario_code }}</code>,
+            run_id: <strong>{{ coupon_pilot_report.run_id }}</strong>,
+            назначений: <strong>{{ coupon_pilot_report.created_assignments }}</strong>,
+            событий vtelemax: <strong>{{ coupon_pilot_report.queue_events_created }}</strong>.
+          </div>
+          <div class="small mt-1">
+            Сообщение гостю будет создано только после ACK vtelemax по assignment-событию.
+            Если плановая доставка купонной очереди выключена, обработайте очередь отдельным worker.
+          </div>
+        </div>
+      {% endif %}
+
       {% if coupon_plan %}
         <div class="border rounded p-3">
           <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
@@ -319,6 +335,26 @@
                 {% endfor %}
               </ul>
             </div>
+          {% endif %}
+
+          {% if coupon_plan.can_execute and coupon_plan.execution_mode == "pilot" %}
+            <form method="post" class="border rounded p-3 mb-3">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="run_coupon_pilot">
+              <input type="hidden" name="scenario_code" value="{{ coupon_plan.scenario_code }}">
+              <input type="hidden" name="coupon_scan_limit" value="{{ coupon_scan_limit }}">
+              <input type="hidden" name="return_query" value="{{ return_query }}">
+              <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                  <div class="fw-semibold">Пробный запуск</div>
+                  <div class="small text-muted">
+                    Будут зарезервированы купоны и созданы assignment-события vtelemax.
+                    Сообщения гостям появятся только после ACK vtelemax.
+                  </div>
+                </div>
+                <button type="submit" class="btn btn-warning">Создать пробную волну</button>
+              </div>
+            </form>
           {% endif %}
 
           <div class="table-responsive">
