@@ -21,6 +21,7 @@ from django.utils import timezone
 from guests.models import (
     BotProfile,
     CouponAutomationConfig,
+    CouponAutomationRule,
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
@@ -1999,8 +2000,9 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Настройки купонного автосценария")
         self.assertContains(response, "Состояние автосценария")
         self.assertContains(response, "Черновик")
-        self.assertContains(response, "Правила выбора купона")
+        self.assertContains(response, "Купонные правила")
         self.assertContains(response, "последнее заведение гостя")
+        self.assertContains(response, "Резерв старого режима")
         self.assertContains(response, "Шаблон сообщения гостю")
         self.assertContains(response, "Редактировать шаблон")
         self.assertContains(response, "Описание купона для vtelemax")
@@ -2021,6 +2023,25 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "200.00",
                 "iikocard_action_note": "Подарок при заказе от 200 ₽.",
                 "coupon_promo_text_template": "Тестовый купон автосценария.",
+                "coupon_rules-TOTAL_FORMS": "3",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+                "coupon_rules-0-is_active": "on",
+                "coupon_rules-0-scope_type": CouponAutomationRule.ScopeType.VENUE,
+                "coupon_rules-0-venue_code": "DEP_1",
+                "coupon_rules-0-coupon_series": "AUTO_30D",
+                "coupon_rules-0-coupon_validity_days": "14",
+                "coupon_rules-0-priority": "10",
+                "coupon_rules-0-min_order_amount": "200.00",
+                "coupon_rules-0-iikocard_action_note": "Подарок в Сами Сусами.",
+                "coupon_rules-0-coupon_promo_text_template": "Купон для Сами Сусами.",
+                "coupon_rules-1-is_active": "on",
+                "coupon_rules-1-scope_type": CouponAutomationRule.ScopeType.GLOBAL,
+                "coupon_rules-1-venue_code": "",
+                "coupon_rules-1-coupon_series": "AUTO_GLOBAL",
+                "coupon_rules-1-coupon_validity_days": "21",
+                "coupon_rules-1-priority": "100",
             },
             secure=True,
         )
@@ -2034,5 +2055,17 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(config.venue_name, "Сами Сусами")
         self.assertEqual(config.settings["pilot_phones"], ["+79129923438"])
         self.assertTrue(config.settings["pilot_include_unmatched"])
+        rules = list(config.coupon_rules.order_by("priority", "id"))
+        self.assertEqual(len(rules), 2)
+        self.assertEqual(rules[0].scope_type, CouponAutomationRule.ScopeType.VENUE)
+        self.assertEqual(rules[0].venue_code, "DEP_1")
+        self.assertEqual(rules[0].venue_name, "DEP_1")
+        self.assertEqual(rules[0].coupon_series, "AUTO_30D")
+        self.assertEqual(rules[0].coupon_validity_days, 14)
+        self.assertEqual(rules[0].min_order_amount, 200)
+        self.assertEqual(rules[1].scope_type, CouponAutomationRule.ScopeType.GLOBAL)
+        self.assertEqual(rules[1].venue_code, "__global__")
+        self.assertEqual(rules[1].venue_name, "Общий")
+        self.assertEqual(rules[1].coupon_series, "AUTO_GLOBAL")
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)

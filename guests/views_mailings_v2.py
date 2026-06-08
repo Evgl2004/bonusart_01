@@ -25,7 +25,12 @@ from django.utils import timezone
 from django.views import View
 from django.views.generic import CreateView, DetailView, TemplateView, UpdateView
 
-from guests.forms import CouponAutomationConfigForm, MailingForm, MessageTemplateForm
+from guests.forms import (
+    CouponAutomationConfigForm,
+    CouponAutomationRuleFormSet,
+    MailingForm,
+    MessageTemplateForm,
+)
 from guests.management.commands import mailing_worker as mailing_worker_cmd
 from guests.models import (
     BotProfile,
@@ -1909,9 +1914,36 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
     template_name = "mailing_v2/coupon_autoscenario_settings.html"
     context_object_name = "config"
 
-    def form_valid(self, form):
-        messages.success(self.request, "Настройки купонного автосценария сохранены.")
-        return super().form_valid(form)
+    def _build_rule_formset(self, *, data=None):
+        return CouponAutomationRuleFormSet(
+            data=data,
+            instance=self.object,
+            prefix="coupon_rules",
+        )
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        form = self.get_form()
+        rule_formset = self._build_rule_formset(data=request.POST)
+        if form.is_valid() and rule_formset.is_valid():
+            return self.forms_valid(form, rule_formset)
+        return self.forms_invalid(form, rule_formset)
+
+    def forms_valid(self, form, rule_formset):
+        with transaction.atomic():
+            self.object = form.save()
+            rule_formset.instance = self.object
+            rule_formset.save()
+        messages.success(self.request, "Настройки и купонные правила автосценария сохранены.")
+        return redirect(self.get_success_url())
+
+    def forms_invalid(self, form, rule_formset):
+        return self.render_to_response(
+            self.get_context_data(
+                form=form,
+                rule_formset=rule_formset,
+            )
+        )
 
     def get_success_url(self):
         return reverse(
@@ -1931,6 +1963,7 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         context["coupon_rules"] = list(
             self.object.coupon_rules.order_by("priority", "id")
         )
+        context.setdefault("rule_formset", self._build_rule_formset())
         context["execution_state_label"] = _coupon_autoscenario_state_label(
             self.object.execution_mode
         )

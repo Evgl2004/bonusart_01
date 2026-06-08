@@ -1,8 +1,8 @@
 ﻿from django import forms
 from django.utils import timezone
 
-from .models import BotProfile, Category, CouponAutomationConfig, Mailing, MessageTemplate
-from .services.coupon_constants import COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
+from .models import BotProfile, Category, CouponAutomationConfig, CouponAutomationRule, Mailing, MessageTemplate
+from .services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
 from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
 from .services.guest_resolution import normalize_phone_e164
@@ -278,7 +278,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
     """
 
     coupon_series = forms.ChoiceField(
-        label="Серия купонов",
+        label="Резервная серия старого режима",
         required=False,
         choices=[],
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -332,8 +332,8 @@ class CouponAutomationConfigForm(forms.ModelForm):
         }
         labels = {
             "execution_mode": "Состояние автосценария",
-            "venue_code": "Заведение",
-            "venue_name": "Название заведения",
+            "venue_code": "Резервное заведение старого режима",
+            "venue_name": "Название резервного заведения",
             "coupon_validity_days": "Срок действия купона, дней",
             "max_recipients_per_run": "Лимит гостей за проход",
             "cooldown_days": "Пауза перед повтором, дней",
@@ -433,3 +433,162 @@ class CouponAutomationConfigForm(forms.ModelForm):
             instance.full_clean()
             instance.save()
         return instance
+
+
+class CouponAutomationRuleForm(forms.ModelForm):
+    """
+    Строка пользовательского правила выбора купонной серии для автосценария.
+    """
+
+    coupon_series = forms.ChoiceField(
+        label="Серия купонов",
+        required=False,
+        choices=[],
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
+    )
+
+    class Meta:
+        model = CouponAutomationRule
+        fields = [
+            "is_active",
+            "scope_type",
+            "venue_code",
+            "coupon_series",
+            "coupon_validity_days",
+            "priority",
+            "min_order_amount",
+            "iikocard_action_note",
+            "coupon_promo_text_template",
+        ]
+        widgets = {
+            "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "scope_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "venue_code": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "coupon_validity_days": forms.NumberInput(
+                attrs={"class": "form-control form-control-sm", "min": "1"}
+            ),
+            "priority": forms.NumberInput(attrs={"class": "form-control form-control-sm", "min": "1"}),
+            "min_order_amount": forms.NumberInput(
+                attrs={"class": "form-control form-control-sm", "min": "0", "step": "0.01"}
+            ),
+            "iikocard_action_note": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+            "coupon_promo_text_template": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+        }
+        labels = {
+            "is_active": "Активно",
+            "scope_type": "Область",
+            "venue_code": "Заведение",
+            "coupon_series": "Серия купонов",
+            "coupon_validity_days": "Срок, дней",
+            "priority": "Приоритет",
+            "min_order_amount": "Мин. заказ",
+            "iikocard_action_note": "Что настроено в iikoCard",
+            "coupon_promo_text_template": "Описание купона для vtelemax",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._coupon_venue_map: dict[str, str] = {}
+        if not self.instance.pk:
+            self.initial.setdefault("is_active", False)
+
+        posted_series = ""
+        posted_venue_code = ""
+        if self.data:
+            posted_series = str(self.data.get(self.add_prefix("coupon_series")) or "").strip()
+            posted_venue_code = str(self.data.get(self.add_prefix("venue_code")) or "").strip()
+
+        existing_series = posted_series or str(getattr(self.instance, "coupon_series", "") or "").strip()
+        self.fields["coupon_series"].choices = build_available_coupon_series_choices(
+            existing_series=existing_series,
+        )[0]
+
+        existing_venue_code = posted_venue_code or str(getattr(self.instance, "venue_code", "") or "").strip()
+        existing_venue_name = str(getattr(self.instance, "venue_name", "") or "").strip()
+        venue_choices, venue_map = build_coupon_venue_choices(
+            existing_venue_code=existing_venue_code,
+            existing_venue_name=existing_venue_name,
+        )
+        self._coupon_venue_map = venue_map
+        self.fields["venue_code"].choices = venue_choices
+        self.fields["venue_code"].widget.choices = venue_choices
+
+    def _has_meaningful_rule_data(self) -> bool:
+        """
+        Проверяет, что свободная строка действительно заполнена как правило.
+        """
+        if not self.is_bound:
+            return bool(self.instance and self.instance.pk)
+
+        meaningful_field_names = [
+            "coupon_series",
+            "venue_code",
+            "coupon_validity_days",
+            "min_order_amount",
+            "iikocard_action_note",
+            "coupon_promo_text_template",
+        ]
+        for field_name in meaningful_field_names:
+            value = self.data.get(self.add_prefix(field_name))
+            if str(value or "").strip():
+                return True
+        return False
+
+    def has_changed(self):
+        if not self.instance.pk and not self._has_meaningful_rule_data():
+            return False
+        return super().has_changed()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.cleaned_data.get("DELETE"):
+            return cleaned_data
+
+        scope_type = cleaned_data.get("scope_type") or CouponAutomationRule.ScopeType.VENUE
+        coupon_series = str(cleaned_data.get("coupon_series") or "").strip()
+        venue_code = str(cleaned_data.get("venue_code") or "").strip()
+
+        if not coupon_series:
+            self.add_error("coupon_series", "Укажите серию купонов.")
+
+        if scope_type == CouponAutomationRule.ScopeType.GLOBAL:
+            cleaned_data["venue_code"] = COUPON_VENUE_GLOBAL_CODE
+            cleaned_data["venue_name"] = COUPON_VENUE_GLOBAL_NAME
+        else:
+            if not venue_code:
+                self.add_error("venue_code", "Для правила по заведению выберите заведение.")
+            elif venue_code == COUPON_VENUE_GLOBAL_CODE:
+                self.add_error("venue_code", "Для правила по заведению выберите конкретное заведение.")
+            elif venue_code not in self._coupon_venue_map:
+                self.add_error("venue_code", "Выбранное заведение не найдено в справочнике.")
+            else:
+                cleaned_data["venue_name"] = self._coupon_venue_map.get(venue_code) or venue_code
+
+        cleaned_data["coupon_series"] = coupon_series
+        return cleaned_data
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        scope_type = self.cleaned_data.get("scope_type") or CouponAutomationRule.ScopeType.VENUE
+        if scope_type == CouponAutomationRule.ScopeType.GLOBAL:
+            instance.venue_code = COUPON_VENUE_GLOBAL_CODE
+            instance.venue_name = COUPON_VENUE_GLOBAL_NAME
+        else:
+            venue_code = str(self.cleaned_data.get("venue_code") or "").strip()
+            instance.venue_code = venue_code
+            instance.venue_name = self._coupon_venue_map.get(venue_code) or venue_code
+        instance.coupon_series = str(self.cleaned_data.get("coupon_series") or "").strip()
+        if commit:
+            instance.full_clean()
+            instance.save()
+        return instance
+
+
+CouponAutomationRuleFormSet = forms.inlineformset_factory(
+    CouponAutomationConfig,
+    CouponAutomationRule,
+    form=CouponAutomationRuleForm,
+    fields=CouponAutomationRuleForm.Meta.fields,
+    extra=3,
+    can_delete=True,
+)

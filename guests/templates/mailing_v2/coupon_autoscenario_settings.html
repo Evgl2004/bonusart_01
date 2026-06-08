@@ -18,66 +18,23 @@
   </div>
 
   <div class="alert alert-info">
-    Эта форма меняет только правила автосценария. Купоны не резервируются, события vtelemax не создаются,
+    Эта форма меняет только настройки и правила автосценария. Купоны не резервируются, события vtelemax не создаются,
     сообщения гостям не отправляются.
   </div>
 
   <div class="card border-0 shadow-sm mb-3">
-    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
-      <div>
-        <strong>Правила выбора купона</strong>
-        <div class="text-muted small">
-          {{ coupon_selection_policy_label }}
-        </div>
-      </div>
-      <a class="btn btn-outline-secondary btn-sm" href="{{ coupon_rules_admin_url }}">Редактировать правила в админке</a>
+    <div class="card-header bg-white">
+      <strong>Как выбирается купон</strong>
+      <div class="text-muted small">{{ coupon_selection_policy_label }}</div>
     </div>
     <div class="card-body">
-      <div class="row g-2 small mb-3">
+      <div class="row g-2 small">
         {% for label, value in coupon_selection_policy_rows %}
           <div class="col-12 col-lg-4">
             <span class="text-muted">{{ label }}:</span> {{ value }}
           </div>
         {% endfor %}
       </div>
-      {% if coupon_rules %}
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>Тип</th>
-                <th>Серия</th>
-                <th>Заведение</th>
-                <th>Срок</th>
-                <th>Приоритет</th>
-                <th>Активно</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for rule in coupon_rules %}
-                <tr>
-                  <td>{{ rule.get_scope_type_display }}</td>
-                  <td><code>{{ rule.coupon_series }}</code></td>
-                  <td>
-                    {% if rule.scope_type == "global" %}
-                      Вся сеть (global)
-                    {% else %}
-                      {{ rule.venue_name|default:rule.venue_code }}
-                    {% endif %}
-                  </td>
-                  <td>{{ rule.coupon_validity_days|default:config.coupon_validity_days }} дн.</td>
-                  <td>{{ rule.priority }}</td>
-                  <td>{% if rule.is_active %}да{% else %}нет{% endif %}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      {% else %}
-        <div class="text-muted">
-          Отдельные правила пока не заведены. Используется старый режим: одна серия и одно заведение из формы ниже.
-        </div>
-      {% endif %}
     </div>
   </div>
 
@@ -117,12 +74,14 @@
     <div class="card-body">
       {% csrf_token %}
 
-      {% if form.non_field_errors %}
+      {% if form.non_field_errors or rule_formset.non_form_errors %}
         <div class="alert alert-danger">
           {{ form.non_field_errors }}
+          {{ rule_formset.non_form_errors }}
         </div>
       {% endif %}
 
+      <h2 class="h6 mb-3">Состояние и ограничения</h2>
       <div class="row g-3">
         <div class="col-12 col-lg-4">
           {{ form.execution_mode.label_tag }}
@@ -132,31 +91,6 @@
           {% endif %}
           {% if form.execution_mode.errors %}
             <div class="text-danger small mt-1">{{ form.execution_mode.errors|join:", " }}</div>
-          {% endif %}
-        </div>
-        <div class="col-12 col-lg-4">
-          {{ form.coupon_series.label_tag }}
-          {{ form.coupon_series }}
-          <div class="form-text">Серия берётся из активных купонов, подтверждённых в iikoCard.</div>
-          {% if form.coupon_series.errors %}
-            <div class="text-danger small mt-1">{{ form.coupon_series.errors|join:", " }}</div>
-          {% endif %}
-        </div>
-        <div class="col-12 col-lg-4">
-          {{ form.venue_code.label_tag }}
-          {{ form.venue_code }}
-          {% if form.venue_code.errors %}
-            <div class="text-danger small mt-1">{{ form.venue_code.errors|join:", " }}</div>
-          {% endif %}
-        </div>
-      </div>
-
-      <div class="row g-3 mt-1">
-        <div class="col-12 col-lg-4">
-          {{ form.coupon_validity_days.label_tag }}
-          {{ form.coupon_validity_days }}
-          {% if form.coupon_validity_days.errors %}
-            <div class="text-danger small mt-1">{{ form.coupon_validity_days.errors|join:", " }}</div>
           {% endif %}
         </div>
         <div class="col-12 col-lg-4">
@@ -175,6 +109,124 @@
             <div class="text-danger small mt-1">{{ form.cooldown_days.errors|join:", " }}</div>
           {% endif %}
         </div>
+      </div>
+
+      <hr class="my-4">
+
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+        <div>
+          <h2 class="h6 mb-1">Купонные правила</h2>
+          <div class="text-muted small">
+            Основная настройка автосценария. Можно указать отдельные серии для заведений и резервное правило Вся сеть (global).
+          </div>
+        </div>
+        <span class="badge text-bg-light">сохраняется вместе с настройками</span>
+      </div>
+      <div class="alert alert-light border small">
+        Для правила по заведению выберите конкретное заведение и серию купонов. Для правила Вся сеть (global) заведение не учитывается.
+        Если свободных строк не хватает, сохраните форму: появятся новые пустые строки для добавления следующих правил.
+      </div>
+
+      {{ rule_formset.management_form }}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width: 80px;">Активно</th>
+              <th style="width: 170px;">Область</th>
+              <th style="min-width: 260px;">Заведение</th>
+              <th style="min-width: 260px;">Серия купонов</th>
+              <th style="width: 120px;">Срок</th>
+              <th style="width: 120px;">Приоритет</th>
+              <th style="width: 120px;">Удалить</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rule_form in rule_formset.forms %}
+              <tr>
+                <td>
+                  {{ rule_form.id }}
+                  <div class="form-check">
+                    {{ rule_form.is_active }}
+                  </div>
+                  {% if rule_form.is_active.errors %}
+                    <div class="text-danger small">{{ rule_form.is_active.errors|join:", " }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {{ rule_form.scope_type }}
+                  {% if rule_form.scope_type.errors %}
+                    <div class="text-danger small">{{ rule_form.scope_type.errors|join:", " }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {{ rule_form.venue_code }}
+                  {% if rule_form.venue_code.errors %}
+                    <div class="text-danger small">{{ rule_form.venue_code.errors|join:", " }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {{ rule_form.coupon_series }}
+                  {% if rule_form.coupon_series.errors %}
+                    <div class="text-danger small">{{ rule_form.coupon_series.errors|join:", " }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {{ rule_form.coupon_validity_days }}
+                  {% if rule_form.coupon_validity_days.errors %}
+                    <div class="text-danger small">{{ rule_form.coupon_validity_days.errors|join:", " }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {{ rule_form.priority }}
+                  {% if rule_form.priority.errors %}
+                    <div class="text-danger small">{{ rule_form.priority.errors|join:", " }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if rule_form.instance.pk %}
+                    <div class="form-check">
+                      {{ rule_form.DELETE }}
+                      <label class="form-check-label" for="{{ rule_form.DELETE.id_for_label }}">Удалить</label>
+                    </div>
+                  {% else %}
+                    <span class="text-muted small">новая строка</span>
+                  {% endif %}
+                </td>
+              </tr>
+              <tr>
+                <td colspan="7" class="bg-light">
+                  {% if rule_form.non_field_errors %}
+                    <div class="alert alert-danger py-2 mb-2">{{ rule_form.non_field_errors }}</div>
+                  {% endif %}
+                  <div class="row g-2">
+                    <div class="col-12 col-lg-3">
+                      {{ rule_form.min_order_amount.label_tag }}
+                      {{ rule_form.min_order_amount }}
+                      {% if rule_form.min_order_amount.errors %}
+                        <div class="text-danger small">{{ rule_form.min_order_amount.errors|join:", " }}</div>
+                      {% endif %}
+                    </div>
+                    <div class="col-12 col-lg-4">
+                      {{ rule_form.iikocard_action_note.label_tag }}
+                      {{ rule_form.iikocard_action_note }}
+                      {% if rule_form.iikocard_action_note.errors %}
+                        <div class="text-danger small">{{ rule_form.iikocard_action_note.errors|join:", " }}</div>
+                      {% endif %}
+                    </div>
+                    <div class="col-12 col-lg-5">
+                      {{ rule_form.coupon_promo_text_template.label_tag }}
+                      {{ rule_form.coupon_promo_text_template }}
+                      {% if rule_form.coupon_promo_text_template.errors %}
+                        <div class="text-danger small">{{ rule_form.coupon_promo_text_template.errors|join:", " }}</div>
+                      {% endif %}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
       </div>
 
       <hr class="my-4">
@@ -204,13 +256,21 @@
 
       <hr class="my-4">
 
-      <h2 class="h6 mb-3">Описание купона и условия iikoCard</h2>
+      <h2 class="h6 mb-3">Общее описание купона и условия iikoCard</h2>
       <div class="alert alert-light border">
         <div class="fw-semibold mb-1">Тексты разделены</div>
         <div class="small">Шаблон сообщения — текст, который получит гость в Telegram/VK/MAX.</div>
-        <div class="small">Описание купона для vtelemax — текст в карточке купона и QR-меню.</div>
+        <div class="small">Описание купона для vtelemax — текст в карточке купона и QR-меню. В строке правила его можно переопределить.</div>
       </div>
       <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          {{ form.coupon_validity_days.label_tag }}
+          {{ form.coupon_validity_days }}
+          <div class="form-text">Общий срок, если в конкретном правиле не указан свой.</div>
+          {% if form.coupon_validity_days.errors %}
+            <div class="text-danger small mt-1">{{ form.coupon_validity_days.errors|join:", " }}</div>
+          {% endif %}
+        </div>
         <div class="col-12 col-lg-4">
           {{ form.min_order_amount.label_tag }}
           {{ form.min_order_amount }}
@@ -229,16 +289,41 @@
         <div class="col-12">
           {{ form.coupon_promo_text_template.label_tag }}
           {{ form.coupon_promo_text_template }}
-          <div class="form-text">Описание купона для vtelemax — текст в карточке купона и QR-меню. Это не сообщение в Telegram/VK/MAX.</div>
+          <div class="form-text">Это не сообщение в Telegram/VK/MAX.</div>
           {% if form.coupon_promo_text_template.errors %}
             <div class="text-danger small mt-1">{{ form.coupon_promo_text_template.errors|join:", " }}</div>
           {% endif %}
         </div>
       </div>
+
+      <hr class="my-4">
+
+      <details class="border rounded p-3">
+        <summary class="fw-semibold">Резерв старого режима: одна серия и одно заведение</summary>
+        <div class="text-muted small mt-2 mb-3">
+          Используется только если купонные правила выше не заведены. Для новой настройки используйте таблицу правил.
+        </div>
+        <div class="row g-3">
+          <div class="col-12 col-lg-6">
+            {{ form.coupon_series.label_tag }}
+            {{ form.coupon_series }}
+            {% if form.coupon_series.errors %}
+              <div class="text-danger small mt-1">{{ form.coupon_series.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+          <div class="col-12 col-lg-6">
+            {{ form.venue_code.label_tag }}
+            {{ form.venue_code }}
+            {% if form.venue_code.errors %}
+              <div class="text-danger small mt-1">{{ form.venue_code.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+        </div>
+      </details>
     </div>
     <div class="card-footer bg-white d-flex justify-content-end gap-2">
       <a class="btn btn-outline-secondary" href="{{ scenarios_url }}">Отмена</a>
-      <button class="btn btn-primary" type="submit">Сохранить настройки</button>
+      <button class="btn btn-primary" type="submit">Сохранить настройки и правила</button>
     </div>
   </form>
 </div>
