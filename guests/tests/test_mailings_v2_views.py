@@ -20,6 +20,7 @@ from django.utils import timezone
 
 from guests.models import (
     BotProfile,
+    CouponAutomationConfig,
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
@@ -1768,3 +1769,89 @@ class MailingsV2ViewsTests(TestCase):
             3,
         )
         self.assertContains(run_response, "Последний ручной запуск")
+
+    def test_scenarios_hub_coupon_autoscenario_plan_preview(self):
+        """
+        Экран автосценариев показывает купонные настройки и строит только безопасный план.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=1,
+            cooldown_days=30,
+        )
+
+        with patch("guests.views_mailings_v2.build_coupon_autoscenario_execution_plan") as plan_mock:
+            plan_mock.return_value = SimpleNamespace(
+                as_dict=lambda: {
+                    "scenario_code": scenario.code,
+                    "execution_mode": CouponAutomationConfig.ExecutionMode.PILOT,
+                    "can_execute": True,
+                    "coupon_series": "AUTO_30D",
+                    "venue_code": "DEP_1",
+                    "venue_name": "Сами Сусами",
+                    "scanned_guests": 5000,
+                    "matched_guests": 100,
+                    "sendable_guests": 10,
+                    "blocked_without_channel": 90,
+                    "blocked_existing_active_coupon": 0,
+                    "blocked_by_cooldown": 0,
+                    "blocked_by_pilot_filter": 9,
+                    "pilot_phone_filters": ["+79129923438"],
+                    "pilot_guest_id_filters": [],
+                    "used_default_pilot_phone": False,
+                    "eligible_guests": 1,
+                    "planned_assignments": 1,
+                    "available_coupons": 1,
+                    "coupon_shortage": 0,
+                    "blockers": [],
+                    "warnings": ["Пилотный режим."],
+                    "plan_items": [
+                        {
+                            "guest_id": 133569,
+                            "phone": "+79129923438",
+                            "first_name": "Андрей",
+                            "last_name": "",
+                            "sendable_channels": ["telegram"],
+                            "coupon_series": "AUTO_30D",
+                            "coupon_code": "REL-1",
+                            "last_visit_at": "2026-05-01T00:00:00+00:00",
+                            "days_without_visits": 30,
+                            "valid_until": "2026-06-22T00:00:00+00:00",
+                        }
+                    ],
+                }
+            )
+            response = self.client.get(
+                reverse("mailings_v2_scenarios"),
+                {
+                    "coupon_scenario_code": scenario.code,
+                    "coupon_scan_limit": "5000",
+                    "coupon_sample_limit": "5",
+                },
+                secure=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        plan_mock.assert_called_once_with(scenario_code=scenario.code, scan_limit=5000)
+        self.assertContains(response, "Купонные автосценарии")
+        self.assertContains(response, "Безопасный предпросмотр")
+        self.assertContains(response, "AUTO_30D")
+        self.assertContains(response, "REL-1")
+        self.assertEqual(response.context["coupon_plan"]["planned_assignments"], 1)
+        self.assertEqual(response.context["coupon_plan"]["sample_plan_items"][0]["days_without_visits"], 30)

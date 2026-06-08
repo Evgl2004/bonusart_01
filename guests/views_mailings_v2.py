@@ -29,6 +29,8 @@ from guests.forms import MailingForm, MessageTemplateForm
 from guests.management.commands import mailing_worker as mailing_worker_cmd
 from guests.models import (
     BotProfile,
+    CouponAutomationConfig,
+    CouponAutoscenarioAssignment,
     DispatchTask,
     Guest,
     GuestBotBinding,
@@ -45,6 +47,10 @@ from guests.services.notification_handler_registry import (
 )
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
 from guests.services.coupon_campaign_lifecycle import CouponCampaignLifecycleService
+from guests.services.coupon_autoscenarios import (
+    CouponAutoscenarioPreviewError,
+    build_coupon_autoscenario_execution_plan,
+)
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
 logger = logging.getLogger(__name__)
@@ -1461,6 +1467,19 @@ class MailingsV2ScenariosView(TemplateView):
         return min(parsed, 5000)
 
     @staticmethod
+    def _parse_positive_int(raw_value: str, *, default: int, max_value: int) -> int:
+        """
+        Нормализует пользовательский лимит для безопасного предпросмотра.
+        """
+        try:
+            parsed = int(str(raw_value or "").strip())
+        except (TypeError, ValueError):
+            return int(default)
+        if parsed <= 0:
+            return int(default)
+        return min(parsed, max_value)
+
+    @staticmethod
     def _build_redirect_url(*, return_query: str) -> str:
         """
         Собирает URL возврата на экран сценариев с сохранением фильтров.
@@ -1544,6 +1563,19 @@ class MailingsV2ScenariosView(TemplateView):
         show_inactive = bool(self.request.GET.get("show_inactive"))
         only_system = bool(self.request.GET.get("only_system"))
         with_errors = bool(self.request.GET.get("with_errors"))
+        selected_coupon_scenario_code = str(
+            self.request.GET.get("coupon_scenario_code") or ""
+        ).strip()
+        coupon_scan_limit = self._parse_positive_int(
+            self.request.GET.get("coupon_scan_limit"),
+            default=5000,
+            max_value=100000,
+        )
+        coupon_sample_limit = self._parse_positive_int(
+            self.request.GET.get("coupon_sample_limit"),
+            default=20,
+            max_value=100,
+        )
 
         scenarios_scope = NotificationScenario.objects.select_related("template").annotate(
             events_total=Count("events", distinct=True),
@@ -1602,7 +1634,64 @@ class MailingsV2ScenariosView(TemplateView):
             scenario.template_display_name = display_name
             scenario.template_technical_name = technical_name
 
+        coupon_configs = list(
+            CouponAutomationConfig.objects.select_related("scenario", "scenario__template")
+            .annotate(
+                runs_total=Count("runs", distinct=True),
+                assignments_total=Count("assignments", distinct=True),
+                assignments_sent=Count(
+                    "assignments",
+                    filter=Q(assignments__status=CouponAutoscenarioAssignment.Status.SENT),
+                    distinct=True,
+                ),
+                assignments_used=Count(
+                    "assignments",
+                    filter=Q(
+                        assignments__status__in=[
+                            CouponAutoscenarioAssignment.Status.USED,
+                            CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+                        ]
+                    ),
+                    distinct=True,
+                ),
+                assignments_error=Count(
+                    "assignments",
+                    filter=Q(assignments__status=CouponAutoscenarioAssignment.Status.ERROR),
+                    distinct=True,
+                ),
+                last_run_at=Max("runs__created_at"),
+            )
+            .order_by("scenario__code")[:100]
+        )
+        for config in coupon_configs:
+            template_obj = getattr(config.scenario, "template", None)
+            display_name, technical_name = _resolve_template_title(template_obj)
+            config.template_display_name = display_name
+            config.template_technical_name = technical_name
+
+        coupon_plan = None
+        coupon_plan_error = ""
+        if selected_coupon_scenario_code:
+            try:
+                plan = build_coupon_autoscenario_execution_plan(
+                    scenario_code=selected_coupon_scenario_code,
+                    scan_limit=coupon_scan_limit,
+                )
+                coupon_plan = plan.as_dict()
+                coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
+                    :coupon_sample_limit
+                ]
+            except CouponAutoscenarioPreviewError as exc:
+                coupon_plan_error = str(exc)
+
         context["scenarios"] = scenarios
+        context["coupon_autoscenario_configs"] = coupon_configs
+        context["coupon_execution_mode_choices"] = list(CouponAutomationConfig.ExecutionMode.choices)
+        context["selected_coupon_scenario_code"] = selected_coupon_scenario_code
+        context["coupon_scan_limit"] = coupon_scan_limit
+        context["coupon_sample_limit"] = coupon_sample_limit
+        context["coupon_plan"] = coupon_plan
+        context["coupon_plan_error"] = coupon_plan_error
         context["scenarios_total"] = scenarios_scope.count()
         context["scenarios_active"] = scenarios_scope.filter(is_active=True).count()
         context["events_24h_total"] = NotificationEvent.objects.filter(

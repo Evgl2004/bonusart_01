@@ -89,6 +89,276 @@
   </div>
 
   <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <h2 class="h6 mb-0">Купонные автосценарии</h2>
+        <div class="text-muted small">Безопасный предпросмотр: без резервирования купонов, очереди vtelemax и отправки сообщений.</div>
+      </div>
+      <a class="btn btn-outline-secondary btn-sm" href="/admin/guests/couponautomationconfig/">Настройки в админке</a>
+    </div>
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end mb-3">
+        <input type="hidden" name="q" value="{{ query }}">
+        <input type="hidden" name="trigger_type" value="{{ selected_trigger_type }}">
+        {% if show_inactive %}<input type="hidden" name="show_inactive" value="1">{% endif %}
+        {% if only_system %}<input type="hidden" name="only_system" value="1">{% endif %}
+        {% if with_errors %}<input type="hidden" name="with_errors" value="1">{% endif %}
+        <div class="col-12 col-lg-5">
+          <label class="form-label mb-1">Автосценарий</label>
+          <select class="form-select" name="coupon_scenario_code">
+            <option value="">Выберите купонный автосценарий</option>
+            {% for config in coupon_autoscenario_configs %}
+              <option value="{{ config.scenario.code }}" {% if selected_coupon_scenario_code == config.scenario.code %}selected{% endif %}>
+                {{ config.scenario.code }} · {{ config.scenario.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-6 col-lg-2">
+          <label class="form-label mb-1">Проверить гостей</label>
+          <input class="form-control" type="number" name="coupon_scan_limit" min="1" max="100000" value="{{ coupon_scan_limit }}">
+        </div>
+        <div class="col-6 col-lg-2">
+          <label class="form-label mb-1">Строк примера</label>
+          <input class="form-control" type="number" name="coupon_sample_limit" min="1" max="100" value="{{ coupon_sample_limit }}">
+        </div>
+        <div class="col-12 col-lg-3">
+          <button class="btn btn-primary w-100" type="submit">Предпросмотр</button>
+        </div>
+      </form>
+
+      <div class="table-responsive mb-3">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Сценарий</th>
+              <th>Режим</th>
+              <th>Старый планировщик</th>
+              <th>Купоны</th>
+              <th>Заведение</th>
+              <th>Лимит / пауза</th>
+              <th>Запуски</th>
+              <th>Назначения</th>
+              <th>Шаблон</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for config in coupon_autoscenario_configs %}
+              <tr>
+                <td>
+                  <code>{{ config.scenario.code }}</code>
+                  <div class="small text-muted">{{ config.scenario.name }}</div>
+                </td>
+                <td>
+                  {% if config.execution_mode == "pilot" %}
+                    <span class="badge text-bg-info">{{ config.get_execution_mode_display }}</span>
+                  {% elif config.execution_mode == "automatic" %}
+                    <span class="badge text-bg-success">{{ config.get_execution_mode_display }}</span>
+                  {% elif config.execution_mode == "paused" %}
+                    <span class="badge text-bg-secondary">{{ config.get_execution_mode_display }}</span>
+                  {% else %}
+                    <span class="badge text-bg-light text-dark">{{ config.get_execution_mode_display }}</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if config.scenario.is_active %}
+                    <span class="badge text-bg-success">включён</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">выключен</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if config.coupon_series %}
+                    <code>{{ config.coupon_series }}</code>
+                  {% else %}
+                    <span class="text-muted">серия не задана</span>
+                  {% endif %}
+                  <div class="small text-muted">срок: {{ config.coupon_validity_days }} дн.</div>
+                </td>
+                <td>{{ config.venue_name|default:config.venue_code|default:"—" }}</td>
+                <td>
+                  {{ config.max_recipients_per_run }} за проход
+                  <div class="small text-muted">повтор через {{ config.cooldown_days }} дн.</div>
+                </td>
+                <td>
+                  {{ config.runs_total }}
+                  <div class="small text-muted">{{ config.last_run_at|date:"Y-m-d H:i"|default:"ещё не было" }}</div>
+                </td>
+                <td>
+                  всего {{ config.assignments_total }}
+                  <div class="small text-muted">отправлено {{ config.assignments_sent }}, использовано {{ config.assignments_used }}, ошибок {{ config.assignments_error }}</div>
+                </td>
+                <td>
+                  {% if config.scenario.template %}
+                    {{ config.template_display_name|default:config.scenario.template.name }}
+                    {% if config.template_technical_name %}
+                      <div class="small text-muted">{{ config.template_technical_name }}</div>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="9" class="text-center text-muted py-3">Купонные автосценарии пока не настроены.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      {% if coupon_plan_error %}
+        <div class="alert alert-danger mb-0">{{ coupon_plan_error }}</div>
+      {% endif %}
+
+      {% if coupon_plan %}
+        <div class="border rounded p-3">
+          <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+            <div>
+              <h3 class="h6 mb-1">Предпросмотр: <code>{{ coupon_plan.scenario_code }}</code></h3>
+              <div class="text-muted small">
+                Режим: {{ coupon_plan.execution_mode }} · серия: {{ coupon_plan.coupon_series|default:"—" }} · заведение: {{ coupon_plan.venue_name|default:coupon_plan.venue_code|default:"—" }}
+              </div>
+            </div>
+            {% if coupon_plan.can_execute %}
+              <span class="badge text-bg-success">можно выполнить пробный запуск</span>
+            {% else %}
+              <span class="badge text-bg-warning text-dark">есть блокировки</span>
+            {% endif %}
+          </div>
+
+          <div class="row g-2 mb-3">
+            <div class="col-6 col-lg-2">
+              <div class="text-muted small">Проверено гостей</div>
+              <div class="h5 mb-0">{{ coupon_plan.scanned_guests }}</div>
+            </div>
+            <div class="col-6 col-lg-2">
+              <div class="text-muted small">Подошли по сегменту</div>
+              <div class="h5 mb-0">{{ coupon_plan.matched_guests }}</div>
+            </div>
+            <div class="col-6 col-lg-2">
+              <div class="text-muted small">Достижимы</div>
+              <div class="h5 mb-0">{{ coupon_plan.sendable_guests }}</div>
+            </div>
+            <div class="col-6 col-lg-2">
+              <div class="text-muted small">К выдаче</div>
+              <div class="h5 mb-0">{{ coupon_plan.planned_assignments }}</div>
+            </div>
+            <div class="col-6 col-lg-2">
+              <div class="text-muted small">Купонов доступно</div>
+              <div class="h5 mb-0">{{ coupon_plan.available_coupons }}</div>
+            </div>
+            <div class="col-6 col-lg-2">
+              <div class="text-muted small">Дефицит купонов</div>
+              <div class="h5 mb-0">{{ coupon_plan.coupon_shortage }}</div>
+            </div>
+          </div>
+
+          <div class="table-responsive mb-3">
+            <table class="table table-sm mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Фильтр</th>
+                  <th>Количество</th>
+                  <th>Пояснение</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Без доступного канала</td>
+                  <td>{{ coupon_plan.blocked_without_channel }}</td>
+                  <td class="text-muted">Нет подтверждённого Telegram/VK/MAX канала для отправки.</td>
+                </tr>
+                <tr>
+                  <td>Уже есть активный купон</td>
+                  <td>{{ coupon_plan.blocked_existing_active_coupon }}</td>
+                  <td class="text-muted">Защита от повторной выдачи той же серии.</td>
+                </tr>
+                <tr>
+                  <td>Пауза перед повтором</td>
+                  <td>{{ coupon_plan.blocked_by_cooldown }}</td>
+                  <td class="text-muted">Гость уже получал купон этой серии недавно.</td>
+                </tr>
+                <tr>
+                  <td>Пилотный фильтр</td>
+                  <td>{{ coupon_plan.blocked_by_pilot_filter }}</td>
+                  <td class="text-muted">В пилоте пропускаются только контрольные телефоны или guest_id.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {% if coupon_plan.pilot_phone_filters or coupon_plan.pilot_guest_id_filters %}
+            <div class="small text-muted mb-2">
+              Пилотные телефоны:
+              {% if coupon_plan.pilot_phone_filters %}{{ coupon_plan.pilot_phone_filters|join:", " }}{% else %}—{% endif %};
+              guest_id:
+              {% if coupon_plan.pilot_guest_id_filters %}{{ coupon_plan.pilot_guest_id_filters|join:", " }}{% else %}—{% endif %}.
+              {% if coupon_plan.used_default_pilot_phone %}Используется безопасная заглушка.{% endif %}
+            </div>
+          {% endif %}
+
+          {% if coupon_plan.blockers %}
+            <div class="alert alert-warning py-2">
+              <div class="fw-semibold mb-1">Блокировки</div>
+              <ul class="mb-0">
+                {% for blocker in coupon_plan.blockers %}
+                  <li>{{ blocker }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+
+          {% if coupon_plan.warnings %}
+            <div class="alert alert-info py-2">
+              <div class="fw-semibold mb-1">Предупреждения</div>
+              <ul class="mb-0">
+                {% for warning in coupon_plan.warnings %}
+                  <li>{{ warning }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Гость</th>
+                  <th>Телефон</th>
+                  <th>Каналы</th>
+                  <th>Последний визит</th>
+                  <th>Дней без визитов</th>
+                  <th>Купон</th>
+                  <th>Действует до</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for item in coupon_plan.sample_plan_items %}
+                  <tr>
+                    <td>#{{ item.guest_id }} {{ item.first_name }} {{ item.last_name }}</td>
+                    <td>{{ item.phone|default:"—" }}</td>
+                    <td>{% if item.sendable_channels %}{{ item.sendable_channels|join:", " }}{% else %}—{% endif %}</td>
+                    <td>{{ item.last_visit_at|default:"—" }}</td>
+                    <td>{{ item.days_without_visits|default:"—" }}</td>
+                    <td><code>{{ item.coupon_series }}:{{ item.coupon_code }}</code></td>
+                    <td>{{ item.valid_until }}</td>
+                  </tr>
+                {% empty %}
+                  <tr>
+                    <td colspan="7" class="text-center text-muted py-3">Плановых пар нет.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white">
       <h2 class="h6 mb-0">Ручной запуск плановых сценариев</h2>
     </div>
