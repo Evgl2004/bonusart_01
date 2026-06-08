@@ -244,6 +244,15 @@ class CouponAutoscenarioExecutionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CouponAutoscenarioCleanupResult:
+    assignment_id: int
+    queue_event_id: int
+    queue_event_created: bool
+    coupon_series: str
+    coupon_code: str
+
+
+@dataclass(frozen=True, slots=True)
 class PilotRecipientFilter:
     phones: tuple[str, ...] = field(default_factory=tuple)
     guest_ids: tuple[int, ...] = field(default_factory=tuple)
@@ -683,6 +692,135 @@ def execute_coupon_autoscenario_pilot(
         run_id=int(run.id),
         created_assignments=created_assignments,
         queue_events_created=queue_events_created,
+    )
+
+
+def cleanup_coupon_autoscenario_pilot_assignment(
+    *,
+    assignment_id: int,
+    reason: str = "pilot_cleanup_from_ui",
+    now: datetime | None = None,
+) -> CouponAutoscenarioCleanupResult:
+    """
+    Ставит пилотное назначение автосценария на безопасную очистку.
+
+    Функция не возвращает купон в пул мгновенно. Она создаёт
+    `status_update:canceled` с `release_to_pool=true`; фактический release
+    выполняется общим post-ACK механизмом после подтверждения vtelemax.
+    """
+    try:
+        safe_assignment_id = int(assignment_id)
+    except (TypeError, ValueError) as exc:
+        raise CouponAutoscenarioPreviewError("Некорректный id назначения автосценария.") from exc
+    if safe_assignment_id <= 0:
+        raise CouponAutoscenarioPreviewError("Некорректный id назначения автосценария.")
+
+    current_now = now or timezone.now()
+    with transaction.atomic():
+        assignment = (
+            _autoscenario_assignments_for_update_queryset()
+            .select_related("coupon", "scenario", "run", "config", "guest")
+            .filter(id=safe_assignment_id)
+            .first()
+        )
+        if assignment is None:
+            raise CouponAutoscenarioPreviewError(
+                f"Назначение автосценария #{safe_assignment_id} не найдено."
+            )
+        if assignment.config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
+            raise CouponAutoscenarioPreviewError(
+                "Очистка из UI разрешена только для автосценариев в режиме 'Пилот'."
+            )
+        if assignment.status in {
+            CouponAutoscenarioAssignment.Status.USED,
+            CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+        }:
+            raise CouponAutoscenarioPreviewError(
+                "Нельзя очистить пилот: купон уже отмечен использованным."
+            )
+        if assignment.status not in {
+            CouponAutoscenarioAssignment.Status.RESERVED,
+            CouponAutoscenarioAssignment.Status.SENT,
+            CouponAutoscenarioAssignment.Status.CANCELED,
+        }:
+            raise CouponAutoscenarioPreviewError(
+                f"Нельзя очистить пилот из статуса '{assignment.status}'."
+            )
+        if (
+            assignment.status != CouponAutoscenarioAssignment.Status.CANCELED
+            and assignment.vtelemax_sync_status != CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        ):
+            raise CouponAutoscenarioPreviewError(
+                "Нельзя очистить пилот: assignment-событие ещё не подтверждено vtelemax."
+            )
+
+        if assignment.status != CouponAutoscenarioAssignment.Status.CANCELED:
+            assignment.status = CouponAutoscenarioAssignment.Status.CANCELED
+            assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING
+            assignment.vtelemax_synced_at = None
+            assignment.vtelemax_sync_error = None
+            assignment.save(
+                update_fields=[
+                    "status",
+                    "vtelemax_sync_status",
+                    "vtelemax_synced_at",
+                    "vtelemax_sync_error",
+                    "updated_at",
+                ]
+            )
+
+        payload = _build_autoscenario_status_update_payload(
+            assignment=assignment,
+            status=CouponAutoscenarioAssignment.Status.CANCELED,
+            now=current_now,
+            meta={
+                "cancel_reason": str(reason or "pilot_cleanup_from_ui"),
+                "remove_from_guest": True,
+                "release_to_pool": True,
+            },
+        )
+        existing_event = _find_autoscenario_status_update_event(
+            assignment=assignment,
+            status=CouponAutoscenarioAssignment.Status.CANCELED,
+        )
+        if existing_event is None:
+            event = CouponVtelemaxSyncQueue.objects.create(
+                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+                autoscenario_assignment=assignment,
+                payload_json=payload,
+                status=CouponVtelemaxSyncQueue.Status.PENDING,
+                next_retry_at=current_now,
+            )
+            created = True
+        else:
+            event = existing_event
+            created = False
+            if event.status != CouponVtelemaxSyncQueue.Status.ACKED:
+                event.payload_json = payload
+                event.status = CouponVtelemaxSyncQueue.Status.PENDING
+                event.last_error = None
+                event.next_retry_at = current_now
+                event.sent_at = None
+                event.ack_at = None
+                event.save(
+                    update_fields=[
+                        "payload_json",
+                        "status",
+                        "last_error",
+                        "next_retry_at",
+                        "sent_at",
+                        "ack_at",
+                        "updated_at",
+                    ]
+                )
+        _refresh_autoscenario_run_status(run_id=assignment.run_id)
+
+    return CouponAutoscenarioCleanupResult(
+        assignment_id=int(assignment.id),
+        queue_event_id=int(event.id),
+        queue_event_created=created,
+        coupon_series=assignment.coupon_series,
+        coupon_code=assignment.coupon_code,
     )
 
 
@@ -1326,6 +1464,50 @@ def _build_autoscenario_assignment_payload(
         "status": assignment.status,
         "vtelemax_sync_status": assignment.vtelemax_sync_status,
     }
+
+
+def _build_autoscenario_status_update_payload(
+    *,
+    assignment: CouponAutoscenarioAssignment,
+    status: str,
+    now: datetime,
+    meta: dict,
+) -> dict:
+    return {
+        "source": "autoscenario",
+        "autoscenario_run_id": int(assignment.run_id),
+        "autoscenario_assignment_id": int(assignment.id),
+        "scenario_id": int(assignment.scenario_id),
+        "scenario_code": assignment.scenario.code,
+        "assignment_id": int(assignment.id),
+        "guest_id": int(assignment.guest_id) if assignment.guest_id else None,
+        "person_id": str(assignment.person_id) if assignment.person_id else None,
+        "phone_e164": assignment.phone_e164,
+        "coupon_series": assignment.coupon_series,
+        "coupon_code": assignment.coupon_code,
+        "venue_code": assignment.venue_code,
+        "venue_name": assignment.venue_name,
+        "promo_text": assignment.promo_text,
+        "status": status,
+        "status_at": timezone.localtime(now).isoformat(timespec="seconds"),
+        "meta": meta,
+    }
+
+
+def _find_autoscenario_status_update_event(
+    *,
+    assignment: CouponAutoscenarioAssignment,
+    status: str,
+) -> CouponVtelemaxSyncQueue | None:
+    events = CouponVtelemaxSyncQueue.objects.filter(
+        autoscenario_assignment=assignment,
+        direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+    ).order_by("-id")
+    for event in events:
+        payload = event.payload_json if isinstance(event.payload_json, dict) else {}
+        if str(payload.get("status") or "").strip() == status:
+            return event
+    return None
 
 
 def _active_assignment_guest_ids(*, guest_ids: list[int], coupon_series: str) -> set[int]:

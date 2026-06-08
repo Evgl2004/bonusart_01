@@ -31,6 +31,7 @@ from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
     _autoscenario_assignments_for_update_queryset,
     build_coupon_autoscenario_execution_plan,
+    cleanup_coupon_autoscenario_pilot_assignment,
     create_autoscenario_dispatch_after_vtelemax_ack,
     execute_coupon_autoscenario_pilot,
     preview_coupon_autoscenario_audience,
@@ -594,6 +595,80 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(CouponCampaignAssignment.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
         self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_cleanup_pilot_assignment_creates_canceled_release_event(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.settings = {"pilot_phones": ["+79990000143"]}
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000143", first_name="CleanupPilot")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        coupon = self._available_coupon(code="AUTO-CLEAN")
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=self.now,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = self.now
+        assignment.save(
+            update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"]
+        )
+
+        cleanup_result = cleanup_coupon_autoscenario_pilot_assignment(
+            assignment_id=assignment.id,
+            reason="test_cleanup",
+            now=self.now + timedelta(minutes=5),
+        )
+
+        self.assertEqual(cleanup_result.assignment_id, assignment.id)
+        self.assertTrue(cleanup_result.queue_event_created)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.CANCELED)
+        self.assertEqual(
+            assignment.vtelemax_sync_status,
+            CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+        )
+
+        coupon.refresh_from_db()
+        self.assertFalse(coupon.is_active)
+        self.assertEqual(coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+
+        event = CouponVtelemaxSyncQueue.objects.get(id=cleanup_result.queue_event_id)
+        self.assertEqual(event.direction, CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE)
+        self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.PENDING)
+        self.assertEqual(event.autoscenario_assignment_id, assignment.id)
+        self.assertEqual(event.payload_json["source"], "autoscenario")
+        self.assertEqual(event.payload_json["autoscenario_assignment_id"], assignment.id)
+        self.assertEqual(event.payload_json["status"], CouponAutoscenarioAssignment.Status.CANCELED)
+        self.assertEqual(event.payload_json["meta"]["release_to_pool"], True)
+        self.assertEqual(event.payload_json["meta"]["remove_from_guest"], True)
+        self.assertEqual(event.payload_json["meta"]["cancel_reason"], "test_cleanup")
+
+        repeated = cleanup_coupon_autoscenario_pilot_assignment(
+            assignment_id=assignment.id,
+            reason="test_cleanup",
+            now=self.now + timedelta(minutes=6),
+        )
+        self.assertFalse(repeated.queue_event_created)
+        self.assertEqual(repeated.queue_event_id, event.id)
+        self.assertEqual(
+            CouponVtelemaxSyncQueue.objects.filter(
+                autoscenario_assignment=assignment,
+                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            ).count(),
+            1,
+        )
 
     def test_autoscenario_assignment_lock_queryset_locks_only_assignment_table(self):
         queryset = (

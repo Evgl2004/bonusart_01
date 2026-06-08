@@ -1914,3 +1914,34 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Пробный запуск создан")
         self.assertContains(response, "run_id")
         self.assertEqual(response.context["coupon_pilot_report"]["run_id"], 7)
+
+    def test_scenarios_hub_cleans_coupon_autoscenario_pilot(self):
+        """
+        Очистка пилота из UI вызывает защищённый cleanup-сервис.
+        """
+        with patch("guests.views_mailings_v2.cleanup_coupon_autoscenario_pilot_assignment") as cleanup_mock:
+            cleanup_mock.return_value = SimpleNamespace(
+                assignment_id=15,
+                queue_event_id=21,
+                queue_event_created=True,
+                coupon_series="AUTO_30D",
+                coupon_code="REL-1",
+            )
+            response = self.client.post(
+                reverse("mailings_v2_scenarios"),
+                {
+                    "action": "cleanup_coupon_pilot",
+                    "assignment_id": "15",
+                },
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        cleanup_mock.assert_called_once_with(
+            assignment_id=15,
+            reason="pilot_cleanup_from_ui",
+        )
+        self.assertContains(response, "Cleanup поставлен в очередь")
+        self.assertContains(response, "AUTO_30D:REL-1")
+        self.assertEqual(response.context["coupon_cleanup_report"]["queue_event_id"], 21)

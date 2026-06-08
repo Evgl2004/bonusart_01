@@ -228,6 +228,20 @@
         </div>
       {% endif %}
 
+      {% if coupon_cleanup_report %}
+        <div class="alert alert-success">
+          <div class="fw-semibold mb-1">Cleanup поставлен в очередь</div>
+          <div>
+            Назначение: <strong>#{{ coupon_cleanup_report.assignment_id }}</strong>,
+            событие vtelemax: <strong>#{{ coupon_cleanup_report.queue_event_id }}</strong>,
+            купон: <code>{{ coupon_cleanup_report.coupon_series }}:{{ coupon_cleanup_report.coupon_code }}</code>.
+          </div>
+          <div class="small mt-1">
+            Купон вернётся в пул только после ACK vtelemax по этому `status_update:canceled`.
+          </div>
+        </div>
+      {% endif %}
+
       {% if coupon_plan %}
         <div class="border rounded p-3">
           <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
@@ -391,6 +405,65 @@
           </div>
         </div>
       {% endif %}
+
+      <div class="border rounded p-3 mt-3">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <h3 class="h6 mb-0">Последние назначения автосценариев</h3>
+          <span class="text-muted small">Показаны последние 20 технических назначений.</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>ID</th>
+                <th>Сценарий</th>
+                <th>Гость</th>
+                <th>Купон</th>
+                <th>Статус</th>
+                <th>vtelemax</th>
+                <th>Создано</th>
+                <th class="text-end">Действие</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for assignment in coupon_recent_assignments %}
+                <tr>
+                  <td>#{{ assignment.id }}</td>
+                  <td><code>{{ assignment.scenario.code }}</code></td>
+                  <td>
+                    {% if assignment.guest_id %}
+                      #{{ assignment.guest_id }} {{ assignment.phone_e164|default:"" }}
+                    {% else %}
+                      {{ assignment.phone_e164|default:"—" }}
+                    {% endif %}
+                  </td>
+                  <td><code>{{ assignment.coupon_series }}:{{ assignment.coupon_code }}</code></td>
+                  <td>{{ assignment.get_status_display }}</td>
+                  <td>{{ assignment.get_vtelemax_sync_status_display }}</td>
+                  <td>{{ assignment.created_at|date:"Y-m-d H:i" }}</td>
+                  <td class="text-end">
+                    {% if assignment.can_cleanup_from_ui %}
+                      <form method="post" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="action" value="cleanup_coupon_pilot">
+                        <input type="hidden" name="assignment_id" value="{{ assignment.id }}">
+                        <input type="hidden" name="return_query" value="{{ return_query }}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">Очистить пилот</button>
+                      </form>
+                    {% else %}
+                      <span class="text-muted small">—</span>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% empty %}
+                <tr>
+                  <td colspan="8" class="text-center text-muted py-3">Назначений автосценариев пока нет.</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   </div>
 

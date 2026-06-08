@@ -50,6 +50,7 @@ from guests.services.coupon_campaign_lifecycle import CouponCampaignLifecycleSer
 from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
     build_coupon_autoscenario_execution_plan,
+    cleanup_coupon_autoscenario_pilot_assignment,
     execute_coupon_autoscenario_pilot,
 )
 
@@ -1536,6 +1537,33 @@ class MailingsV2ScenariosView(TemplateView):
             )
             return redirect(redirect_url)
 
+        if action == "cleanup_coupon_pilot":
+            try:
+                result = cleanup_coupon_autoscenario_pilot_assignment(
+                    assignment_id=int(str(request.POST.get("assignment_id") or "0")),
+                    reason="pilot_cleanup_from_ui",
+                )
+            except (TypeError, ValueError, CouponAutoscenarioPreviewError) as exc:
+                messages.error(request, str(exc))
+                return redirect(redirect_url)
+
+            request.session["mailings_v2_coupon_cleanup_report"] = {
+                "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+                "assignment_id": result.assignment_id,
+                "queue_event_id": result.queue_event_id,
+                "queue_event_created": result.queue_event_created,
+                "coupon_series": result.coupon_series,
+                "coupon_code": result.coupon_code,
+            }
+            messages.success(
+                request,
+                (
+                    "Cleanup пилотного купона поставлен в очередь vtelemax: "
+                    f"assignment_id={result.assignment_id}, event_id={result.queue_event_id}."
+                ),
+            )
+            return redirect(redirect_url)
+
         if action != "run_schedule_once":
             messages.error(request, "Неизвестное действие для экрана сценариев.")
             return redirect(redirect_url)
@@ -1707,6 +1735,22 @@ class MailingsV2ScenariosView(TemplateView):
             config.template_display_name = display_name
             config.template_technical_name = technical_name
 
+        coupon_recent_assignments = list(
+            CouponAutoscenarioAssignment.objects.select_related("scenario", "config", "guest", "run")
+            .order_by("-created_at", "-id")[:20]
+        )
+        for assignment in coupon_recent_assignments:
+            assignment.can_cleanup_from_ui = (
+                assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
+                and assignment.status
+                in [
+                    CouponAutoscenarioAssignment.Status.RESERVED,
+                    CouponAutoscenarioAssignment.Status.SENT,
+                ]
+                and assignment.vtelemax_sync_status
+                == CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+            )
+
         coupon_plan = None
         coupon_plan_error = ""
         if selected_coupon_scenario_code:
@@ -1730,8 +1774,13 @@ class MailingsV2ScenariosView(TemplateView):
         context["coupon_sample_limit"] = coupon_sample_limit
         context["coupon_plan"] = coupon_plan
         context["coupon_plan_error"] = coupon_plan_error
+        context["coupon_recent_assignments"] = coupon_recent_assignments
         context["coupon_pilot_report"] = self.request.session.pop(
             "mailings_v2_coupon_pilot_report",
+            None,
+        )
+        context["coupon_cleanup_report"] = self.request.session.pop(
+            "mailings_v2_coupon_cleanup_report",
             None,
         )
         context["scenarios_total"] = scenarios_scope.count()
