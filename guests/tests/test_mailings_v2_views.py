@@ -2002,6 +2002,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Черновик")
         self.assertContains(response, "Купонные правила")
         self.assertContains(response, "Укажите, какую серию купонов выдавать для каждого заведения")
+        self.assertContains(response, "Добавить правило")
         self.assertContains(response, "последнее заведение гостя")
         self.assertContains(response, "Резерв старого режима")
         self.assertContains(response, "Дополнительно: условия iikoCard и карточка купона")

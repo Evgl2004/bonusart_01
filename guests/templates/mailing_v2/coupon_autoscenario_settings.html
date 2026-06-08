@@ -126,6 +126,9 @@
             или закончились купоны, система попробует правило <strong>Вся сеть (global)</strong>.
           </div>
         </div>
+        <button class="btn btn-outline-primary btn-sm" type="button" id="coupon-rule-add">
+          Добавить правило
+        </button>
       </div>
 
       {{ rule_formset.management_form }}
@@ -140,9 +143,16 @@
               <th style="width: 110px;">Удалить</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="coupon-rule-rows">
+            {% if not rule_formset.forms %}
+              <tr id="coupon-rule-empty-message">
+                <td colspan="5" class="text-muted">
+                  Правила пока не добавлены. Нажмите “Добавить правило”, выберите заведение и серию купонов.
+                </td>
+              </tr>
+            {% endif %}
             {% for rule_form in rule_formset.forms %}
-              <tr>
+              <tr class="coupon-rule-row">
                 <td>
                   {{ rule_form.id }}
                   {{ rule_form.coupon_validity_days }}
@@ -183,6 +193,11 @@
                       <label class="form-check-label" for="{{ rule_form.DELETE.id_for_label }}">Удалить</label>
                     </div>
                   {% endif %}
+                  {% if not rule_form.instance.pk %}
+                    <button class="btn btn-outline-secondary btn-sm" type="button" data-remove-rule>
+                      Убрать
+                    </button>
+                  {% endif %}
                 </td>
               </tr>
               {% if rule_form.non_field_errors %}
@@ -210,8 +225,39 @@
         </table>
       </div>
       <div class="form-text">
-        Пустые строки можно не трогать. Чтобы добавить правило, заполните свободную строку, отметьте “Использовать” и сохраните форму.
+        Для 3-4 заведений добавьте несколько правил: одно заведение - одна серия купонов. Резервное правило “Вся сеть (global)” можно добавить отдельной строкой.
       </div>
+
+      <template id="coupon-rule-empty-row-template">
+        <tr class="coupon-rule-row">
+          <td>
+            {{ rule_formset.empty_form.id }}
+            {{ rule_formset.empty_form.coupon_validity_days }}
+            {{ rule_formset.empty_form.priority }}
+            {{ rule_formset.empty_form.min_order_amount }}
+            {{ rule_formset.empty_form.iikocard_action_note }}
+            {{ rule_formset.empty_form.coupon_promo_text_template }}
+            <div class="form-check">
+              {{ rule_formset.empty_form.is_active }}
+            </div>
+          </td>
+          <td>
+            {{ rule_formset.empty_form.scope_type }}
+          </td>
+          <td class="coupon-rule-venue-cell">
+            {{ rule_formset.empty_form.venue_code }}
+            <div class="form-text coupon-rule-global-note d-none">Для правила “Вся сеть (global)” заведение не выбирается.</div>
+          </td>
+          <td>
+            {{ rule_formset.empty_form.coupon_series }}
+          </td>
+          <td>
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-remove-rule>
+              Убрать
+            </button>
+          </td>
+        </tr>
+      </template>
 
       <hr class="my-4">
 
@@ -330,6 +376,47 @@
       scopeSelect.addEventListener("change", function () {
         syncRuleScope(scopeSelect);
       });
+    });
+
+    var addButton = document.getElementById("coupon-rule-add");
+    var rowTemplate = document.getElementById("coupon-rule-empty-row-template");
+    var rowsContainer = document.getElementById("coupon-rule-rows");
+    var totalFormsInput = document.querySelector('input[name="coupon_rules-TOTAL_FORMS"]');
+
+    if (addButton && rowTemplate && rowsContainer && totalFormsInput) {
+      addButton.addEventListener("click", function () {
+        var nextIndex = parseInt(totalFormsInput.value || "0", 10);
+        var html = rowTemplate.innerHTML.replace(/__prefix__/g, String(nextIndex));
+        var emptyMessage = document.getElementById("coupon-rule-empty-message");
+        if (emptyMessage) {
+          emptyMessage.remove();
+        }
+        rowsContainer.insertAdjacentHTML("beforeend", html);
+        totalFormsInput.value = String(nextIndex + 1);
+
+        var addedRow = rowsContainer.querySelector("tr.coupon-rule-row:last-child");
+        if (!addedRow) {
+          return;
+        }
+        var scopeSelect = addedRow.querySelector('select[name$="-scope_type"]');
+        if (scopeSelect) {
+          syncRuleScope(scopeSelect);
+          scopeSelect.addEventListener("change", function () {
+            syncRuleScope(scopeSelect);
+          });
+        }
+      });
+    }
+
+    document.addEventListener("click", function (event) {
+      var removeButton = event.target.closest("[data-remove-rule]");
+      if (!removeButton) {
+        return;
+      }
+      var row = removeButton.closest("tr.coupon-rule-row");
+      if (row) {
+        row.remove();
+      }
     });
   });
 </script>
