@@ -140,6 +140,7 @@
               <th>Запуски</th>
               <th>Назначения</th>
               <th>Шаблон</th>
+              <th>Действия</th>
             </tr>
           </thead>
           <tbody>
@@ -198,10 +199,18 @@
                     <span class="text-muted">—</span>
                   {% endif %}
                 </td>
+                <td>
+                  <a
+                    class="btn btn-outline-primary btn-sm"
+                    href="{% url 'mailings_v2_coupon_autoscenario_settings' config.id %}"
+                  >
+                    Настройки
+                  </a>
+                </td>
               </tr>
             {% empty %}
               <tr>
-                <td colspan="9" class="text-center text-muted py-3">Купонные автосценарии пока не настроены.</td>
+                <td colspan="10" class="text-center text-muted py-3">Купонные автосценарии пока не настроены.</td>
               </tr>
             {% endfor %}
           </tbody>

@@ -1,10 +1,11 @@
 ﻿from django import forms
 from django.utils import timezone
 
-from .models import BotProfile, Category, Mailing, MessageTemplate
+from .models import BotProfile, Category, CouponAutomationConfig, Mailing, MessageTemplate
 from .services.coupon_constants import COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
 from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
+from .services.guest_resolution import normalize_phone_e164
 
 
 class CategoryForm(forms.ModelForm):
@@ -257,3 +258,164 @@ class MailingImportPhonesForm(forms.Form):
         if not file_obj.name.lower().endswith(".xlsx"):
             raise forms.ValidationError("Нужен файл .xlsx")
         return file_obj
+
+
+class CouponAutomationConfigForm(forms.ModelForm):
+    """
+    Пользовательская форма настройки купонного автосценария.
+
+    Часть пилотных параметров пока хранится в `settings`, но на экране
+    выводится как отдельные понятные поля, чтобы не заставлять оператора
+    редактировать JSON вручную.
+    """
+
+    coupon_series = forms.ChoiceField(
+        label="Серия купонов",
+        required=False,
+        choices=[],
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    pilot_phones = forms.CharField(
+        label="Контрольные телефоны пилота",
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "+79129923438",
+            }
+        ),
+        help_text="Один или несколько телефонов через запятую. В режиме «Пилот» это обязательная защита от массового запуска.",
+    )
+    pilot_include_unmatched = forms.BooleanField(
+        label="Добавлять контрольные телефоны вне основного сегмента",
+        required=False,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+        help_text="Полезно для проверки сообщения на своём номере, даже если вы не подходите под условие сегмента.",
+    )
+
+    class Meta:
+        model = CouponAutomationConfig
+        fields = [
+            "execution_mode",
+            "coupon_series",
+            "venue_code",
+            "venue_name",
+            "coupon_validity_days",
+            "max_recipients_per_run",
+            "cooldown_days",
+            "coupon_promo_text_template",
+            "min_order_amount",
+            "iikocard_action_note",
+            "pilot_phones",
+            "pilot_include_unmatched",
+        ]
+        widgets = {
+            "execution_mode": forms.Select(attrs={"class": "form-select"}),
+            "venue_code": forms.Select(attrs={"class": "form-select"}),
+            "venue_name": forms.TextInput(attrs={"class": "form-control"}),
+            "coupon_validity_days": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+            "max_recipients_per_run": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+            "cooldown_days": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+            "coupon_promo_text_template": forms.Textarea(attrs={"class": "form-control", "rows": 5}),
+            "min_order_amount": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0", "step": "0.01"}
+            ),
+            "iikocard_action_note": forms.Textarea(attrs={"class": "form-control", "rows": 4}),
+        }
+        labels = {
+            "execution_mode": "Режим работы",
+            "venue_code": "Заведение",
+            "venue_name": "Название заведения",
+            "coupon_validity_days": "Срок действия купона, дней",
+            "max_recipients_per_run": "Лимит гостей за проход",
+            "cooldown_days": "Пауза перед повтором, дней",
+            "coupon_promo_text_template": "Текст акции в карточке купона",
+            "min_order_amount": "Минимальная сумма заказа в iikoCard",
+            "iikocard_action_note": "Что настроено в iikoCard",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        settings = self.instance.settings if isinstance(self.instance.settings, dict) else {}
+
+        self.fields["coupon_series"].choices = build_available_coupon_series_choices(
+            existing_series=str(getattr(self.instance, "coupon_series", "") or "").strip()
+        )[0]
+
+        venue_choices, self._coupon_venue_map = build_coupon_venue_choices(
+            existing_venue_code=str(getattr(self.instance, "venue_code", "") or "").strip(),
+            existing_venue_name=str(getattr(self.instance, "venue_name", "") or "").strip(),
+        )
+        self.fields["venue_code"].choices = venue_choices
+        self.fields["venue_code"].widget.choices = venue_choices
+
+        pilot_phones = settings.get("pilot_phones") or settings.get("pilot_phone_e164s") or []
+        if isinstance(pilot_phones, str):
+            pilot_phones = [pilot_phones]
+        if not isinstance(pilot_phones, (list, tuple, set)):
+            pilot_phones = []
+        self.initial["pilot_phones"] = ", ".join(str(phone) for phone in pilot_phones if str(phone).strip())
+        self.initial["pilot_include_unmatched"] = bool(settings.get("pilot_include_unmatched"))
+
+    def clean_pilot_phones(self):
+        raw_value = str(self.cleaned_data.get("pilot_phones") or "").strip()
+        if not raw_value:
+            return []
+
+        parts = raw_value.replace(";", ",").replace("\n", ",").split(",")
+        result: list[str] = []
+        invalid: list[str] = []
+        for part in parts:
+            candidate = str(part or "").strip()
+            if not candidate:
+                continue
+            normalized = normalize_phone_e164(candidate)
+            if not normalized:
+                invalid.append(candidate)
+                continue
+            if normalized not in result:
+                result.append(normalized)
+
+        if invalid:
+            raise forms.ValidationError(
+                "Не удалось распознать телефоны: %(phones)s",
+                params={"phones": ", ".join(invalid)},
+            )
+        return result
+
+    def clean(self):
+        cleaned_data = super().clean()
+        execution_mode = cleaned_data.get("execution_mode")
+        pilot_phones = cleaned_data.get("pilot_phones") or []
+        venue_code = str(cleaned_data.get("venue_code") or "").strip()
+
+        if execution_mode == CouponAutomationConfig.ExecutionMode.PILOT and not pilot_phones:
+            self.add_error(
+                "pilot_phones",
+                "Для режима «Пилот» укажите хотя бы один контрольный телефон.",
+            )
+
+        if venue_code and venue_code in getattr(self, "_coupon_venue_map", {}):
+            cleaned_data["venue_name"] = self._coupon_venue_map.get(venue_code) or cleaned_data.get("venue_name")
+
+        return cleaned_data
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        settings = dict(instance.settings or {})
+        pilot_phones = self.cleaned_data.get("pilot_phones") or []
+        if pilot_phones:
+            settings["pilot_phones"] = pilot_phones
+        else:
+            settings.pop("pilot_phones", None)
+            settings.pop("pilot_phone_e164s", None)
+
+        settings["pilot_include_unmatched"] = bool(
+            self.cleaned_data.get("pilot_include_unmatched")
+        )
+        instance.settings = settings
+
+        if commit:
+            instance.full_clean()
+            instance.save()
+        return instance

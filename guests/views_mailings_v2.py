@@ -25,7 +25,7 @@ from django.utils import timezone
 from django.views import View
 from django.views.generic import CreateView, DetailView, TemplateView, UpdateView
 
-from guests.forms import MailingForm, MessageTemplateForm
+from guests.forms import CouponAutomationConfigForm, MailingForm, MessageTemplateForm
 from guests.management.commands import mailing_worker as mailing_worker_cmd
 from guests.models import (
     BotProfile,
@@ -1807,6 +1807,41 @@ class MailingsV2ScenariosView(TemplateView):
         context["query"] = query
         context["return_query"] = self.request.GET.urlencode()
         context["scenarios_run_report"] = self.request.session.pop("mailings_v2_scenarios_run_report", None)
+        return context
+
+
+class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
+    """
+    Пользовательская настройка купонного автосценария.
+
+    Этот экран меняет только правила автосценария. Он не запускает пилот,
+    не резервирует купоны и не создает события vtelemax.
+    """
+
+    model = CouponAutomationConfig
+    form_class = CouponAutomationConfigForm
+    template_name = "mailing_v2/coupon_autoscenario_settings.html"
+    context_object_name = "config"
+
+    def form_valid(self, form):
+        messages.success(self.request, "Настройки купонного автосценария сохранены.")
+        return super().form_valid(form)
+
+    def get_success_url(self):
+        return reverse(
+            "mailings_v2_coupon_autoscenario_settings",
+            kwargs={"pk": self.object.pk},
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["scenarios_url"] = reverse("mailings_v2_scenarios")
+        scenario_code = self.object.scenario.code if self.object and self.object.scenario_id else ""
+        context["preview_url"] = (
+            f"{reverse('mailings_v2_scenarios')}?{urlencode({'coupon_scenario_code': scenario_code})}"
+            if scenario_code
+            else reverse("mailings_v2_scenarios")
+        )
         return context
 
 

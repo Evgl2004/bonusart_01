@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}Автосценарий: настройки купонов{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Настройки купонного автосценария</h1>
+      <p class="text-muted mb-0">
+        {{ config.scenario.code }} · {{ config.scenario.name }}
+      </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-primary" href="{{ preview_url }}">Предпросмотр</a>
+      <a class="btn btn-outline-secondary" href="{{ scenarios_url }}">К автосценариям</a>
+    </div>
+  </div>
+
+  <div class="alert alert-info">
+    Эта форма меняет только правила автосценария. Купоны не резервируются, события vtelemax не создаются,
+    сообщения гостям не отправляются.
+  </div>
+
+  <form method="post" class="card border-0 shadow-sm">
+    <div class="card-body">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger">
+          {{ form.non_field_errors }}
+        </div>
+      {% endif %}
+
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          {{ form.execution_mode.label_tag }}
+          {{ form.execution_mode }}
+          {% if form.execution_mode.help_text %}
+            <div class="form-text">{{ form.execution_mode.help_text }}</div>
+          {% endif %}
+          {% if form.execution_mode.errors %}
+            <div class="text-danger small mt-1">{{ form.execution_mode.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-4">
+          {{ form.coupon_series.label_tag }}
+          {{ form.coupon_series }}
+          <div class="form-text">Серия берётся из активных купонов, подтверждённых в iikoCard.</div>
+          {% if form.coupon_series.errors %}
+            <div class="text-danger small mt-1">{{ form.coupon_series.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-4">
+          {{ form.venue_code.label_tag }}
+          {{ form.venue_code }}
+          {% if form.venue_code.errors %}
+            <div class="text-danger small mt-1">{{ form.venue_code.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="row g-3 mt-1">
+        <div class="col-12 col-lg-4">
+          {{ form.coupon_validity_days.label_tag }}
+          {{ form.coupon_validity_days }}
+          {% if form.coupon_validity_days.errors %}
+            <div class="text-danger small mt-1">{{ form.coupon_validity_days.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-4">
+          {{ form.max_recipients_per_run.label_tag }}
+          {{ form.max_recipients_per_run }}
+          <div class="form-text">Для пилота обычно 1. Для автоматического режима лимит утверждается отдельно.</div>
+          {% if form.max_recipients_per_run.errors %}
+            <div class="text-danger small mt-1">{{ form.max_recipients_per_run.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-4">
+          {{ form.cooldown_days.label_tag }}
+          {{ form.cooldown_days }}
+          <div class="form-text">Защищает гостя от повторной выдачи той же акции слишком часто.</div>
+          {% if form.cooldown_days.errors %}
+            <div class="text-danger small mt-1">{{ form.cooldown_days.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <hr class="my-4">
+
+      <h2 class="h6 mb-3">Пилотная проверка</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-8">
+          {{ form.pilot_phones.label_tag }}
+          {{ form.pilot_phones }}
+          {% if form.pilot_phones.help_text %}
+            <div class="form-text">{{ form.pilot_phones.help_text }}</div>
+          {% endif %}
+          {% if form.pilot_phones.errors %}
+            <div class="text-danger small mt-1">{{ form.pilot_phones.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-4 d-flex align-items-end">
+          <div class="form-check mb-2">
+            {{ form.pilot_include_unmatched }}
+            {{ form.pilot_include_unmatched.label_tag }}
+            {% if form.pilot_include_unmatched.help_text %}
+              <div class="form-text">{{ form.pilot_include_unmatched.help_text }}</div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <hr class="my-4">
+
+      <h2 class="h6 mb-3">Описание акции</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          {{ form.min_order_amount.label_tag }}
+          {{ form.min_order_amount }}
+          {% if form.min_order_amount.errors %}
+            <div class="text-danger small mt-1">{{ form.min_order_amount.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12">
+          {{ form.iikocard_action_note.label_tag }}
+          {{ form.iikocard_action_note }}
+          <div class="form-text">Например: подарок при заказе от 200 ₽, место продаж, тип заказа, серия купонов в iikoCard.</div>
+          {% if form.iikocard_action_note.errors %}
+            <div class="text-danger small mt-1">{{ form.iikocard_action_note.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12">
+          {{ form.coupon_promo_text_template.label_tag }}
+          {{ form.coupon_promo_text_template }}
+          <div class="form-text">Текст карточки купона для vtelemax. Шаблон сообщения гостю настраивается в связанном сценарии.</div>
+          {% if form.coupon_promo_text_template.errors %}
+            <div class="text-danger small mt-1">{{ form.coupon_promo_text_template.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="card-footer bg-white d-flex justify-content-end gap-2">
+      <a class="btn btn-outline-secondary" href="{{ scenarios_url }}">Отмена</a>
+      <button class="btn btn-primary" type="submit">Сохранить настройки</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

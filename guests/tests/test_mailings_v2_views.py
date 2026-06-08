@@ -1957,3 +1957,67 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Cleanup поставлен в очередь")
         self.assertContains(response, "AUTO_30D:REL-1")
         self.assertEqual(response.context["coupon_cleanup_report"]["queue_event_id"], 21)
+
+    def test_coupon_autoscenario_settings_view_updates_safe_pilot_fields(self):
+        """
+        Отдельная страница настроек сохраняет правила пилота без запуска отправок.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+            settings={},
+        )
+
+        url = reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk})
+        response = self.client.get(url, secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Настройки купонного автосценария")
+        self.assertContains(response, "Контрольные телефоны пилота")
+
+        response = self.client.post(
+            url,
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.PILOT,
+                "coupon_series": "AUTO_30D",
+                "venue_code": "DEP_1",
+                "coupon_validity_days": "21",
+                "max_recipients_per_run": "1",
+                "cooldown_days": "45",
+                "pilot_phones": "+79129923438",
+                "pilot_include_unmatched": "on",
+                "min_order_amount": "200.00",
+                "iikocard_action_note": "Подарок при заказе от 200 ₽.",
+                "coupon_promo_text_template": "Тестовый купон автосценария.",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        config.refresh_from_db()
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.PILOT)
+        self.assertEqual(config.coupon_validity_days, 21)
+        self.assertEqual(config.max_recipients_per_run, 1)
+        self.assertEqual(config.cooldown_days, 45)
+        self.assertEqual(config.venue_name, "Сами Сусами")
+        self.assertEqual(config.settings["pilot_phones"], ["+79129923438"])
+        self.assertTrue(config.settings["pilot_include_unmatched"])
+        self.assertEqual(DispatchTask.objects.count(), 0)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
