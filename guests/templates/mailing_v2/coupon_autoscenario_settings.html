@@ -137,8 +137,7 @@
           <thead class="table-light">
             <tr>
               <th style="width: 90px;">Использовать</th>
-              <th style="width: 190px;">Для кого действует</th>
-              <th style="min-width: 300px;">Заведение</th>
+              <th style="min-width: 360px;">Заведение / область</th>
               <th style="min-width: 320px;">Серия купонов</th>
               <th style="width: 110px;">Удалить</th>
             </tr>
@@ -146,8 +145,8 @@
           <tbody id="coupon-rule-rows">
             {% if not rule_formset.forms %}
               <tr id="coupon-rule-empty-message">
-                <td colspan="5" class="text-muted">
-                  Правила пока не добавлены. Нажмите “Добавить правило”, выберите заведение и серию купонов.
+                <td colspan="4" class="text-muted">
+                  Правила пока не добавлены. Нажмите “Добавить правило”, выберите заведение или “Вся сеть (global)” и серию купонов.
                 </td>
               </tr>
             {% endif %}
@@ -155,6 +154,7 @@
               <tr class="coupon-rule-row">
                 <td>
                   {{ rule_form.id }}
+                  {{ rule_form.scope_type }}
                   {{ rule_form.coupon_validity_days }}
                   {{ rule_form.priority }}
                   {{ rule_form.min_order_amount }}
@@ -168,16 +168,12 @@
                   {% endif %}
                 </td>
                 <td>
-                  {{ rule_form.scope_type }}
-                  {% if rule_form.scope_type.errors %}
-                    <div class="text-danger small">{{ rule_form.scope_type.errors|join:", " }}</div>
-                  {% endif %}
-                </td>
-                <td class="coupon-rule-venue-cell">
                   {{ rule_form.venue_code }}
-                  <div class="form-text coupon-rule-global-note d-none">Для правила “Вся сеть (global)” заведение не выбирается.</div>
                   {% if rule_form.venue_code.errors %}
                     <div class="text-danger small">{{ rule_form.venue_code.errors|join:", " }}</div>
+                  {% endif %}
+                  {% if rule_form.scope_type.errors %}
+                    <div class="text-danger small">{{ rule_form.scope_type.errors|join:", " }}</div>
                   {% endif %}
                 </td>
                 <td>
@@ -202,14 +198,14 @@
               </tr>
               {% if rule_form.non_field_errors %}
                 <tr>
-                  <td colspan="5">
+                  <td colspan="4">
                     <div class="alert alert-danger py-2 mb-0">{{ rule_form.non_field_errors }}</div>
                   </td>
                 </tr>
               {% endif %}
               {% if rule_form.coupon_validity_days.errors or rule_form.priority.errors or rule_form.min_order_amount.errors or rule_form.iikocard_action_note.errors or rule_form.coupon_promo_text_template.errors %}
                 <tr>
-                  <td colspan="5">
+                  <td colspan="4">
                     <div class="alert alert-danger py-2 mb-0">
                       {{ rule_form.coupon_validity_days.errors }}
                       {{ rule_form.priority.errors }}
@@ -232,6 +228,7 @@
         <tr class="coupon-rule-row">
           <td>
             {{ rule_formset.empty_form.id }}
+            {{ rule_formset.empty_form.scope_type }}
             {{ rule_formset.empty_form.coupon_validity_days }}
             {{ rule_formset.empty_form.priority }}
             {{ rule_formset.empty_form.min_order_amount }}
@@ -242,11 +239,7 @@
             </div>
           </td>
           <td>
-            {{ rule_formset.empty_form.scope_type }}
-          </td>
-          <td class="coupon-rule-venue-cell">
             {{ rule_formset.empty_form.venue_code }}
-            <div class="form-text coupon-rule-global-note d-none">Для правила “Вся сеть (global)” заведение не выбирается.</div>
           </td>
           <td>
             {{ rule_formset.empty_form.coupon_series }}
@@ -351,33 +344,6 @@
 
 <script>
   document.addEventListener("DOMContentLoaded", function () {
-    function syncRuleScope(scopeSelect) {
-      var row = scopeSelect.closest("tr");
-      if (!row) {
-        return;
-      }
-      var venueCell = row.querySelector(".coupon-rule-venue-cell");
-      if (!venueCell) {
-        return;
-      }
-      var venueSelect = venueCell.querySelector("select");
-      var globalNote = venueCell.querySelector(".coupon-rule-global-note");
-      var isGlobal = scopeSelect.value === "global";
-      if (venueSelect) {
-        venueSelect.classList.toggle("d-none", isGlobal);
-      }
-      if (globalNote) {
-        globalNote.classList.toggle("d-none", !isGlobal);
-      }
-    }
-
-    document.querySelectorAll('select[name$="-scope_type"]').forEach(function (scopeSelect) {
-      syncRuleScope(scopeSelect);
-      scopeSelect.addEventListener("change", function () {
-        syncRuleScope(scopeSelect);
-      });
-    });
-
     var addButton = document.getElementById("coupon-rule-add");
     var rowTemplate = document.getElementById("coupon-rule-empty-row-template");
     var rowsContainer = document.getElementById("coupon-rule-rows");
@@ -397,13 +363,6 @@
         var addedRow = rowsContainer.querySelector("tr.coupon-rule-row:last-child");
         if (!addedRow) {
           return;
-        }
-        var scopeSelect = addedRow.querySelector('select[name$="-scope_type"]');
-        if (scopeSelect) {
-          syncRuleScope(scopeSelect);
-          scopeSelect.addEventListener("change", function () {
-            syncRuleScope(scopeSelect);
-          });
         }
       });
     }

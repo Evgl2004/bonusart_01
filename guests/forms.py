@@ -462,7 +462,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
         ]
         widgets = {
             "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
-            "scope_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
+            "scope_type": forms.HiddenInput(),
             "venue_code": forms.Select(attrs={"class": "form-select form-select-sm"}),
             "coupon_validity_days": forms.HiddenInput(),
             "priority": forms.HiddenInput(),
@@ -473,7 +473,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
         labels = {
             "is_active": "Активно",
             "scope_type": "Область",
-            "venue_code": "Заведение",
+            "venue_code": "Заведение / область",
             "coupon_series": "Серия купонов",
             "coupon_validity_days": "Срок, дней",
             "priority": "Приоритет",
@@ -488,6 +488,8 @@ class CouponAutomationRuleForm(forms.ModelForm):
         if not self.instance.pk:
             self.initial.setdefault("is_active", False)
             self.initial.setdefault("priority", 100)
+            self.initial.setdefault("scope_type", CouponAutomationRule.ScopeType.VENUE)
+        self.fields["scope_type"].required = False
 
         posted_series = ""
         posted_venue_code = ""
@@ -542,9 +544,14 @@ class CouponAutomationRuleForm(forms.ModelForm):
         if self.cleaned_data.get("DELETE"):
             return cleaned_data
 
-        scope_type = cleaned_data.get("scope_type") or CouponAutomationRule.ScopeType.VENUE
         coupon_series = str(cleaned_data.get("coupon_series") or "").strip()
         venue_code = str(cleaned_data.get("venue_code") or "").strip()
+        scope_type = (
+            CouponAutomationRule.ScopeType.GLOBAL
+            if is_coupon_global_venue(venue_code)
+            else CouponAutomationRule.ScopeType.VENUE
+        )
+        cleaned_data["scope_type"] = scope_type
 
         if not coupon_series:
             self.add_error("coupon_series", "Укажите серию купонов.")
@@ -554,9 +561,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
             cleaned_data["venue_name"] = COUPON_VENUE_GLOBAL_NAME
         else:
             if not venue_code:
-                self.add_error("venue_code", "Для правила по заведению выберите заведение.")
-            elif venue_code == COUPON_VENUE_GLOBAL_CODE:
-                self.add_error("venue_code", "Для правила по заведению выберите конкретное заведение.")
+                self.add_error("venue_code", "Выберите заведение или вариант «Вся сеть (global)».")
             elif venue_code not in self._coupon_venue_map:
                 self.add_error("venue_code", "Выбранное заведение не найдено в справочнике.")
             else:
@@ -568,6 +573,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
     def save(self, commit=True):
         instance = super().save(commit=False)
         scope_type = self.cleaned_data.get("scope_type") or CouponAutomationRule.ScopeType.VENUE
+        instance.scope_type = scope_type
         if scope_type == CouponAutomationRule.ScopeType.GLOBAL:
             instance.venue_code = COUPON_VENUE_GLOBAL_CODE
             instance.venue_name = COUPON_VENUE_GLOBAL_NAME

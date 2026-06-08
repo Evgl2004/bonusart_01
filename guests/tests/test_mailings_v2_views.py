@@ -2003,6 +2003,9 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Купонные правила")
         self.assertContains(response, "Укажите, какую серию купонов выдавать для каждого заведения")
         self.assertContains(response, "Добавить правило")
+        self.assertContains(response, "Заведение / область")
+        self.assertContains(response, "Вся сеть (global)")
+        self.assertNotContains(response, "Для кого действует")
         self.assertContains(response, "последнее заведение гостя")
         self.assertContains(response, "Резерв старого режима")
         self.assertContains(response, "Дополнительно: условия iikoCard и карточка купона")
@@ -2030,7 +2033,6 @@ class MailingsV2ViewsTests(TestCase):
                 "coupon_rules-MIN_NUM_FORMS": "0",
                 "coupon_rules-MAX_NUM_FORMS": "1000",
                 "coupon_rules-0-is_active": "on",
-                "coupon_rules-0-scope_type": CouponAutomationRule.ScopeType.VENUE,
                 "coupon_rules-0-venue_code": "DEP_1",
                 "coupon_rules-0-coupon_series": "AUTO_30D",
                 "coupon_rules-0-coupon_validity_days": "",
@@ -2039,8 +2041,7 @@ class MailingsV2ViewsTests(TestCase):
                 "coupon_rules-0-iikocard_action_note": "",
                 "coupon_rules-0-coupon_promo_text_template": "",
                 "coupon_rules-1-is_active": "on",
-                "coupon_rules-1-scope_type": CouponAutomationRule.ScopeType.GLOBAL,
-                "coupon_rules-1-venue_code": "",
+                "coupon_rules-1-venue_code": "__global__",
                 "coupon_rules-1-coupon_series": "AUTO_GLOBAL",
                 "coupon_rules-1-coupon_validity_days": "",
                 "coupon_rules-1-priority": "100",

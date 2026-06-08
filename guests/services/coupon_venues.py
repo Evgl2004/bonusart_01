@@ -36,7 +36,7 @@ def build_coupon_venue_choices(
     venue_map: dict[str, str] = {
         COUPON_VENUE_GLOBAL_CODE: COUPON_VENUE_GLOBAL_NAME,
     }
-    choices.append((COUPON_VENUE_GLOBAL_CODE, f"{COUPON_VENUE_GLOBAL_NAME} (для всех заведений)"))
+    choices.append((COUPON_VENUE_GLOBAL_CODE, "Вся сеть (global)"))
 
     for row in rows:
         dep_id = str(row.get("department_id") or "").strip()
