@@ -337,7 +337,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "coupon_validity_days": "Срок действия купона, дней",
             "max_recipients_per_run": "Лимит гостей за проход",
             "cooldown_days": "Пауза перед повтором, дней",
-            "coupon_promo_text_template": "Описание купона для vtelemax",
+            "coupon_promo_text_template": "Текст карточки купона во vtelemax",
             "min_order_amount": "Минимальная сумма заказа в iikoCard",
             "iikocard_action_note": "Что настроено в iikoCard",
         }
@@ -464,15 +464,11 @@ class CouponAutomationRuleForm(forms.ModelForm):
             "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
             "scope_type": forms.Select(attrs={"class": "form-select form-select-sm"}),
             "venue_code": forms.Select(attrs={"class": "form-select form-select-sm"}),
-            "coupon_validity_days": forms.NumberInput(
-                attrs={"class": "form-control form-control-sm", "min": "1"}
-            ),
-            "priority": forms.NumberInput(attrs={"class": "form-control form-control-sm", "min": "1"}),
-            "min_order_amount": forms.NumberInput(
-                attrs={"class": "form-control form-control-sm", "min": "0", "step": "0.01"}
-            ),
-            "iikocard_action_note": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
-            "coupon_promo_text_template": forms.Textarea(attrs={"class": "form-control", "rows": 2}),
+            "coupon_validity_days": forms.HiddenInput(),
+            "priority": forms.HiddenInput(),
+            "min_order_amount": forms.HiddenInput(),
+            "iikocard_action_note": forms.HiddenInput(),
+            "coupon_promo_text_template": forms.HiddenInput(),
         }
         labels = {
             "is_active": "Активно",
@@ -483,7 +479,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
             "priority": "Приоритет",
             "min_order_amount": "Мин. заказ",
             "iikocard_action_note": "Что настроено в iikoCard",
-            "coupon_promo_text_template": "Описание купона для vtelemax",
+            "coupon_promo_text_template": "Текст карточки купона во vtelemax",
         }
 
     def __init__(self, *args, **kwargs):
@@ -491,6 +487,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
         self._coupon_venue_map: dict[str, str] = {}
         if not self.instance.pk:
             self.initial.setdefault("is_active", False)
+            self.initial.setdefault("priority", 100)
 
         posted_series = ""
         posted_venue_code = ""
@@ -521,6 +518,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
             return bool(self.instance and self.instance.pk)
 
         meaningful_field_names = [
+            "is_active",
             "coupon_series",
             "venue_code",
             "coupon_validity_days",

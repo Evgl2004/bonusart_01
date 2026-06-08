@@ -2000,15 +2000,14 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Настройки купонного автосценария")
         self.assertContains(response, "Состояние автосценария")
         self.assertContains(response, "Черновик")
-        self.assertContains(response, "Как настроить без лишней боли")
         self.assertContains(response, "Купонные правила")
+        self.assertContains(response, "Укажите, какую серию купонов выдавать для каждого заведения")
         self.assertContains(response, "последнее заведение гостя")
         self.assertContains(response, "Резерв старого режима")
-        self.assertContains(response, "Дополнительные условия iikoCard")
+        self.assertContains(response, "Дополнительно: условия iikoCard и карточка купона")
         self.assertContains(response, "Шаблон сообщения гостю")
         self.assertContains(response, "Редактировать шаблон")
-        self.assertContains(response, "Описание купона для vtelemax")
-        self.assertContains(response, "Это не сообщение в Telegram/VK/MAX")
+        self.assertContains(response, "Если “Текст карточки купона” оставить пустым")
         self.assertContains(response, "Контрольные телефоны пилота")
 
         response = self.client.post(
@@ -2033,17 +2032,20 @@ class MailingsV2ViewsTests(TestCase):
                 "coupon_rules-0-scope_type": CouponAutomationRule.ScopeType.VENUE,
                 "coupon_rules-0-venue_code": "DEP_1",
                 "coupon_rules-0-coupon_series": "AUTO_30D",
-                "coupon_rules-0-coupon_validity_days": "14",
-                "coupon_rules-0-priority": "10",
-                "coupon_rules-0-min_order_amount": "200.00",
-                "coupon_rules-0-iikocard_action_note": "Подарок в Сами Сусами.",
-                "coupon_rules-0-coupon_promo_text_template": "Купон для Сами Сусами.",
+                "coupon_rules-0-coupon_validity_days": "",
+                "coupon_rules-0-priority": "100",
+                "coupon_rules-0-min_order_amount": "",
+                "coupon_rules-0-iikocard_action_note": "",
+                "coupon_rules-0-coupon_promo_text_template": "",
                 "coupon_rules-1-is_active": "on",
                 "coupon_rules-1-scope_type": CouponAutomationRule.ScopeType.GLOBAL,
                 "coupon_rules-1-venue_code": "",
                 "coupon_rules-1-coupon_series": "AUTO_GLOBAL",
-                "coupon_rules-1-coupon_validity_days": "21",
+                "coupon_rules-1-coupon_validity_days": "",
                 "coupon_rules-1-priority": "100",
+                "coupon_rules-1-min_order_amount": "",
+                "coupon_rules-1-iikocard_action_note": "",
+                "coupon_rules-1-coupon_promo_text_template": "",
             },
             secure=True,
         )
@@ -2063,8 +2065,8 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(rules[0].venue_code, "DEP_1")
         self.assertEqual(rules[0].venue_name, "DEP_1")
         self.assertEqual(rules[0].coupon_series, "AUTO_30D")
-        self.assertEqual(rules[0].coupon_validity_days, 14)
-        self.assertEqual(rules[0].min_order_amount, 200)
+        self.assertIsNone(rules[0].coupon_validity_days)
+        self.assertIsNone(rules[0].min_order_amount)
         self.assertEqual(rules[1].scope_type, CouponAutomationRule.ScopeType.GLOBAL)
         self.assertEqual(rules[1].venue_code, "__global__")
         self.assertEqual(rules[1].venue_name, "Общий")
