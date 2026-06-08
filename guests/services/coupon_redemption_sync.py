@@ -2,12 +2,38 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Any
+from typing import Any, Literal
 
 from django.db import transaction
 from django.utils import timezone
 
-from guests.models import CouponCampaignAssignment, CouponRegistryEntry, CouponVtelemaxSyncQueue, OrderFact
+from guests.models import (
+    CouponAutoscenarioAssignment,
+    CouponCampaignAssignment,
+    CouponRegistryEntry,
+    CouponVtelemaxSyncQueue,
+    OrderFact,
+)
+
+RedemptionAssignmentKind = Literal["campaign", "autoscenario"]
+RedemptionAssignment = CouponCampaignAssignment | CouponAutoscenarioAssignment
+
+
+_REDEEMABLE_ASSIGNMENT_STATUSES = [
+    CouponCampaignAssignment.Status.RESERVED,
+    CouponCampaignAssignment.Status.SENT,
+    CouponCampaignAssignment.Status.EXPIRED,
+    CouponCampaignAssignment.Status.USED,
+    CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+]
+
+_ASSIGNMENT_STATUS_PRIORITY = {
+    CouponCampaignAssignment.Status.SENT: 0,
+    CouponCampaignAssignment.Status.RESERVED: 1,
+    CouponCampaignAssignment.Status.EXPIRED: 2,
+    CouponCampaignAssignment.Status.USED: 3,
+    CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN: 3,
+}
 
 
 @dataclass(slots=True)
@@ -19,6 +45,8 @@ class CouponRedemptionSyncStats:
     order_facts_total: int = 0
     order_facts_with_coupon: int = 0
     assignments_matched: int = 0
+    campaign_assignments_matched: int = 0
+    autoscenario_assignments_matched: int = 0
     assignments_marked_used: int = 0
     assignments_marked_used_after_campaign: int = 0
     assignments_already_used: int = 0
@@ -33,6 +61,8 @@ class CouponRedemptionSyncStats:
             "order_facts_total": int(self.order_facts_total),
             "order_facts_with_coupon": int(self.order_facts_with_coupon),
             "assignments_matched": int(self.assignments_matched),
+            "campaign_assignments_matched": int(self.campaign_assignments_matched),
+            "autoscenario_assignments_matched": int(self.autoscenario_assignments_matched),
             "assignments_marked_used": int(self.assignments_marked_used),
             "assignments_marked_used_after_campaign": int(self.assignments_marked_used_after_campaign),
             "assignments_already_used": int(self.assignments_already_used),
@@ -42,6 +72,12 @@ class CouponRedemptionSyncStats:
             "queue_events_updated": int(self.queue_events_updated),
             "registry_marked_used": int(self.registry_marked_used),
         }
+
+
+@dataclass(slots=True)
+class _RedemptionAssignmentCandidate:
+    kind: RedemptionAssignmentKind
+    assignment: RedemptionAssignment
 
 
 class CouponRedemptionSyncService:
@@ -117,24 +153,10 @@ class CouponRedemptionSyncService:
         series_values = sorted({item[0] for item in keys})
         code_values = sorted({item[1] for item in keys})
 
-        assignments = list(
-            CouponCampaignAssignment.objects.filter(
-                coupon_series__in=series_values,
-                coupon_code__in=code_values,
-            )
-            .select_related("coupon", "campaign")
-            .order_by("id")
+        assignment_by_key = self._load_assignment_candidates(
+            series_values=series_values,
+            code_values=code_values,
         )
-
-        assignment_by_key: dict[tuple[str, str], CouponCampaignAssignment] = {}
-        for assignment in assignments:
-            key = (
-                str(assignment.coupon_series or "").strip(),
-                str(assignment.coupon_code or "").strip(),
-            )
-            if not key[0] or not key[1]:
-                continue
-            assignment_by_key.setdefault(key, assignment)
 
         now = timezone.now()
 
@@ -147,12 +169,17 @@ class CouponRedemptionSyncService:
                 if not key[0] or not key[1]:
                     continue
 
-                assignment = assignment_by_key.get(key)
-                if assignment is None:
+                candidate = assignment_by_key.get(key)
+                if candidate is None:
                     stats.assignments_missing += 1
                     continue
 
+                assignment = candidate.assignment
                 stats.assignments_matched += 1
+                if candidate.kind == "autoscenario":
+                    stats.autoscenario_assignments_matched += 1
+                else:
+                    stats.campaign_assignments_matched += 1
 
                 fact_guest_id = fact.get("guest_id")
                 if assignment.guest_id and fact_guest_id and int(assignment.guest_id) != int(fact_guest_id):
@@ -168,16 +195,23 @@ class CouponRedemptionSyncService:
                 )
                 assignment_changed = False
 
-                if (
+                usage_is_complete = (
                     assignment.status == target_status
                     and assignment.used_order_id
                     and assignment.used_at
-                ):
+                    and (
+                        not isinstance(assignment, CouponAutoscenarioAssignment)
+                        or assignment.used_business_date is not None
+                    )
+                )
+                if usage_is_complete:
                     stats.assignments_already_used += 1
                 else:
                     assignment.status = target_status
                     assignment.used_at = used_at
                     assignment.used_order_id = int(fact_order_number) if fact_order_number is not None else None
+                    if isinstance(assignment, CouponAutoscenarioAssignment):
+                        assignment.used_business_date = used_business_date
                     assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.PENDING
                     assignment.vtelemax_sync_error = None
                     assignment.vtelemax_synced_at = None
@@ -198,16 +232,19 @@ class CouponRedemptionSyncService:
                     stats.registry_marked_used += 1
 
                 if assignment_changed and not dry_run:
+                    update_fields = [
+                        "status",
+                        "used_at",
+                        "used_order_id",
+                        "vtelemax_sync_status",
+                        "vtelemax_sync_error",
+                        "vtelemax_synced_at",
+                        "updated_at",
+                    ]
+                    if isinstance(assignment, CouponAutoscenarioAssignment):
+                        update_fields.insert(3, "used_business_date")
                     assignment.save(
-                        update_fields=[
-                            "status",
-                            "used_at",
-                            "used_order_id",
-                            "vtelemax_sync_status",
-                            "vtelemax_sync_error",
-                            "vtelemax_synced_at",
-                            "updated_at",
-                        ]
+                        update_fields=update_fields,
                     )
 
                 queue_result = self._upsert_status_update_event(
@@ -226,9 +263,69 @@ class CouponRedemptionSyncService:
         return stats
 
     @staticmethod
+    def _load_assignment_candidates(
+        *,
+        series_values: list[str],
+        code_values: list[str],
+    ) -> dict[tuple[str, str], _RedemptionAssignmentCandidate]:
+        candidates: list[_RedemptionAssignmentCandidate] = []
+
+        campaign_assignments = (
+            CouponCampaignAssignment.objects.filter(
+                coupon_series__in=series_values,
+                coupon_code__in=code_values,
+                status__in=_REDEEMABLE_ASSIGNMENT_STATUSES,
+            )
+            .select_related("coupon", "campaign")
+            .order_by("id")
+        )
+        candidates.extend(
+            _RedemptionAssignmentCandidate(kind="campaign", assignment=assignment)
+            for assignment in campaign_assignments
+        )
+
+        autoscenario_assignments = (
+            CouponAutoscenarioAssignment.objects.filter(
+                coupon_series__in=series_values,
+                coupon_code__in=code_values,
+                status__in=_REDEEMABLE_ASSIGNMENT_STATUSES,
+            )
+            .select_related("coupon", "run", "scenario", "config")
+            .order_by("id")
+        )
+        candidates.extend(
+            _RedemptionAssignmentCandidate(kind="autoscenario", assignment=assignment)
+            for assignment in autoscenario_assignments
+        )
+
+        assignment_by_key: dict[tuple[str, str], _RedemptionAssignmentCandidate] = {}
+        for candidate in candidates:
+            assignment = candidate.assignment
+            key = (
+                str(assignment.coupon_series or "").strip(),
+                str(assignment.coupon_code or "").strip(),
+            )
+            if not key[0] or not key[1]:
+                continue
+            current = assignment_by_key.get(key)
+            if current is None or CouponRedemptionSyncService._candidate_rank(
+                candidate
+            ) < CouponRedemptionSyncService._candidate_rank(current):
+                assignment_by_key[key] = candidate
+        return assignment_by_key
+
+    @staticmethod
+    def _candidate_rank(candidate: _RedemptionAssignmentCandidate) -> tuple[int, float, int]:
+        assignment = candidate.assignment
+        priority = _ASSIGNMENT_STATUS_PRIORITY.get(assignment.status, 99)
+        assigned_at = assignment.assigned_at
+        timestamp = assigned_at.timestamp() if assigned_at else 0.0
+        return (priority, -timestamp, -int(assignment.id or 0))
+
+    @staticmethod
     def _resolve_used_status(
         *,
-        assignment: CouponCampaignAssignment,
+        assignment: RedemptionAssignment,
         used_at,
         used_business_date: date | None,
     ) -> str:
@@ -243,6 +340,21 @@ class CouponRedemptionSyncService:
             CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
         }:
             return CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN
+
+        if isinstance(assignment, CouponAutoscenarioAssignment):
+            expires_at = assignment.lifetime_expires_at
+            if expires_at is None:
+                return CouponAutoscenarioAssignment.Status.USED
+
+            if used_business_date is not None:
+                if used_business_date > expires_at.date():
+                    return CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN
+                if used_business_date < expires_at.date():
+                    return CouponAutoscenarioAssignment.Status.USED
+
+            if used_at is not None and used_at > expires_at:
+                return CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN
+            return CouponAutoscenarioAssignment.Status.USED
 
         campaign_end = getattr(getattr(assignment, "campaign", None), "scheduled_time_end", None)
         if campaign_end is None:
@@ -267,7 +379,7 @@ class CouponRedemptionSyncService:
     @staticmethod
     def _upsert_status_update_event(
         *,
-        assignment: CouponCampaignAssignment,
+        assignment: RedemptionAssignment,
         status: str,
         used_order_id: int | None,
         used_business_date: date | None,
@@ -282,40 +394,25 @@ class CouponRedemptionSyncService:
         2. `False` — если существующая запись обновлена;
         3. `None` — если уже подтверждённое событие полностью покрывает текущее состояние.
         """
-        payload: dict[str, Any] = {
-            "campaign_id": int(assignment.campaign_id),
-            "assignment_id": int(assignment.id),
-            "guest_id": int(assignment.guest_id) if assignment.guest_id else None,
-            "person_id": str(assignment.person_id) if assignment.person_id else None,
-            "phone_e164": assignment.phone_e164,
-            "coupon_series": assignment.coupon_series,
-            "coupon_code": assignment.coupon_code,
-            "venue_code": assignment.venue_code,
-            "venue_name": assignment.venue_name,
-            "promo_text": assignment.promo_text,
-            "status": status,
-            "used_order_id": used_order_id,
-            "used_business_date": used_business_date.isoformat() if used_business_date else None,
-            "meta": {
-                "remove_from_guest": True,
-                "release_to_pool": False,
-                "used_after_campaign": status == CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
-            },
-        }
+        payload = CouponRedemptionSyncService._build_status_update_payload(
+            assignment=assignment,
+            status=status,
+            used_order_id=used_order_id,
+            used_business_date=used_business_date,
+        )
 
         existing = (
-            CouponVtelemaxSyncQueue.objects.filter(
-                assignment=assignment,
-                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
-            )
+            CouponRedemptionSyncService._status_update_event_query(assignment=assignment)
             .order_by("-id")
             .first()
         )
         if existing is None:
             if not dry_run:
+                create_kwargs = CouponRedemptionSyncService._status_update_event_create_kwargs(
+                    assignment=assignment
+                )
                 CouponVtelemaxSyncQueue.objects.create(
                     direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
-                    assignment=assignment,
                     payload_json=payload,
                     status=CouponVtelemaxSyncQueue.Status.PENDING,
                     attempts=0,
@@ -323,6 +420,7 @@ class CouponRedemptionSyncService:
                     last_error=None,
                     sent_at=None,
                     ack_at=None,
+                    **create_kwargs,
                 )
             return True
 
@@ -333,9 +431,11 @@ class CouponRedemptionSyncService:
                 return None
 
             if not dry_run:
+                create_kwargs = CouponRedemptionSyncService._status_update_event_create_kwargs(
+                    assignment=assignment
+                )
                 CouponVtelemaxSyncQueue.objects.create(
                     direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
-                    assignment=assignment,
                     payload_json=payload,
                     status=CouponVtelemaxSyncQueue.Status.PENDING,
                     attempts=0,
@@ -343,6 +443,7 @@ class CouponRedemptionSyncService:
                     last_error=None,
                     sent_at=None,
                     ack_at=None,
+                    **create_kwargs,
                 )
             return True
 
@@ -367,6 +468,65 @@ class CouponRedemptionSyncService:
         return False
 
     @staticmethod
+    def _build_status_update_payload(
+        *,
+        assignment: RedemptionAssignment,
+        status: str,
+        used_order_id: int | None,
+        used_business_date: date | None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "assignment_id": int(assignment.id),
+            "guest_id": int(assignment.guest_id) if assignment.guest_id else None,
+            "person_id": str(assignment.person_id) if assignment.person_id else None,
+            "phone_e164": assignment.phone_e164,
+            "coupon_series": assignment.coupon_series,
+            "coupon_code": assignment.coupon_code,
+            "venue_code": assignment.venue_code,
+            "venue_name": assignment.venue_name,
+            "promo_text": assignment.promo_text,
+            "status": status,
+            "used_order_id": used_order_id,
+            "used_business_date": used_business_date.isoformat() if used_business_date else None,
+            "meta": {
+                "remove_from_guest": True,
+                "release_to_pool": False,
+                "used_after_campaign": status == CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+            },
+        }
+        if isinstance(assignment, CouponAutoscenarioAssignment):
+            payload.update(
+                {
+                    "source": "autoscenario",
+                    "autoscenario_run_id": int(assignment.run_id),
+                    "autoscenario_assignment_id": int(assignment.id),
+                    "scenario_id": int(assignment.scenario_id),
+                    "scenario_code": assignment.scenario.code,
+                }
+            )
+        else:
+            payload["campaign_id"] = int(assignment.campaign_id)
+        return payload
+
+    @staticmethod
+    def _status_update_event_query(*, assignment: RedemptionAssignment):
+        if isinstance(assignment, CouponAutoscenarioAssignment):
+            return CouponVtelemaxSyncQueue.objects.filter(
+                autoscenario_assignment=assignment,
+                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            )
+        return CouponVtelemaxSyncQueue.objects.filter(
+            assignment=assignment,
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+        )
+
+    @staticmethod
+    def _status_update_event_create_kwargs(*, assignment: RedemptionAssignment) -> dict[str, Any]:
+        if isinstance(assignment, CouponAutoscenarioAssignment):
+            return {"autoscenario_assignment": assignment}
+        return {"assignment": assignment}
+
+    @staticmethod
     def _status_update_payload_identity(payload: dict[str, Any]) -> tuple[str, ...]:
         meta = payload.get("meta")
         if not isinstance(meta, dict):
@@ -378,7 +538,12 @@ class CouponRedemptionSyncService:
             return str(value)
 
         return (
+            normalized(payload.get("source")),
             normalized(payload.get("campaign_id")),
+            normalized(payload.get("autoscenario_run_id")),
+            normalized(payload.get("autoscenario_assignment_id")),
+            normalized(payload.get("scenario_id")),
+            normalized(payload.get("scenario_code")),
             normalized(payload.get("assignment_id")),
             normalized(payload.get("coupon_series")),
             normalized(payload.get("coupon_code")),

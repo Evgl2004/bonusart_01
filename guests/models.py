@@ -2799,6 +2799,7 @@ class CouponAutoscenarioAssignment(models.Model):
     )
     used_at = models.DateTimeField(blank=True, null=True)
     used_order_id = models.BigIntegerField(blank=True, null=True, db_index=True)
+    used_business_date = models.DateField(blank=True, null=True, db_index=True)
     vtelemax_sync_status = models.CharField(
         max_length=16,
         choices=VtelemaxSyncStatus.choices,
