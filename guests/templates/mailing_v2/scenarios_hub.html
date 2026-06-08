@@ -262,18 +262,24 @@
             <div class="col-6 col-lg-2">
               <div class="text-muted small">Проверено гостей</div>
               <div class="h5 mb-0">{{ coupon_plan.scanned_guests }}</div>
+              <div class="text-muted small">лимит предпросмотра</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Подошли по сегменту</div>
-              <div class="h5 mb-0">{{ coupon_plan.matched_guests }}</div>
+              <div class="text-muted small">Основной сегмент</div>
+              <div class="h5 mb-0">{{ coupon_plan.segment_matched_guests }}</div>
+              {% if coupon_plan.pilot_forced_guests %}
+                <div class="text-muted small">+{{ coupon_plan.pilot_forced_guests }} добавлено пилотом</div>
+              {% endif %}
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">Достижимы</div>
               <div class="h5 mb-0">{{ coupon_plan.sendable_guests }}</div>
+              <div class="text-muted small">есть Telegram/VK/MAX</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">К выдаче</div>
+              <div class="text-muted small">К выдаче сейчас</div>
               <div class="h5 mb-0">{{ coupon_plan.planned_assignments }}</div>
+              <div class="text-muted small">после всех фильтров</div>
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">Купонов доступно</div>
@@ -313,7 +319,7 @@
                 <tr>
                   <td>Пилотный фильтр</td>
                   <td>{{ coupon_plan.blocked_by_pilot_filter }}</td>
-                  <td class="text-muted">В пилоте пропускаются только контрольные телефоны или guest_id.</td>
+                  <td class="text-muted">В пилоте к выдаче допускаются только контрольные телефоны или guest_id.</td>
                 </tr>
               </tbody>
             </table>
@@ -326,6 +332,9 @@
               guest_id:
               {% if coupon_plan.pilot_guest_id_filters %}{{ coupon_plan.pilot_guest_id_filters|join:", " }}{% else %}—{% endif %}.
               {% if coupon_plan.used_default_pilot_phone %}Используется безопасная заглушка.{% endif %}
+              {% if coupon_plan.pilot_forced_guests %}
+                Добавлено вне основного сегмента: {{ coupon_plan.pilot_forced_guests }}.
+              {% endif %}
             </div>
           {% endif %}
 
@@ -390,10 +399,15 @@
                     <td>#{{ item.guest_id }} {{ item.first_name }} {{ item.last_name }}</td>
                     <td>{{ item.phone|default:"—" }}</td>
                     <td>{% if item.sendable_channels %}{{ item.sendable_channels|join:", " }}{% else %}—{% endif %}</td>
-                    <td>{{ item.last_visit_at|default:"—" }}</td>
-                    <td>{{ item.days_without_visits|default:"—" }}</td>
+                    <td>
+                      {{ item.last_visit_at_display|default:"—" }}
+                      {% if item.is_pilot_forced %}
+                        <div class="text-muted small">контрольный гость пилота</div>
+                      {% endif %}
+                    </td>
+                    <td>{{ item.days_without_visits_label|default:item.days_without_visits|default:"—" }}</td>
                     <td><code>{{ item.coupon_series }}:{{ item.coupon_code }}</code></td>
-                    <td>{{ item.valid_until }}</td>
+                    <td>{{ item.valid_until_display|default:item.valid_until }}</td>
                   </tr>
                 {% empty %}
                   <tr>

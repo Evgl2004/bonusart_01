@@ -60,6 +60,7 @@ class CouponAutoscenarioAudienceRow:
     last_name: str
     last_visit_at: datetime | None
     sendable_channels: tuple[str, ...] = field(default_factory=tuple)
+    is_pilot_forced: bool = False
 
     @property
     def has_sendable_channel(self) -> bool:
@@ -74,6 +75,7 @@ class CouponAutoscenarioAudienceRow:
             "last_visit_at": self.last_visit_at.isoformat() if self.last_visit_at else None,
             "sendable_channels": list(self.sendable_channels),
             "has_sendable_channel": self.has_sendable_channel,
+            "is_pilot_forced": self.is_pilot_forced,
         }
 
 
@@ -140,8 +142,17 @@ class CouponAutoscenarioPlanItem:
     valid_until: datetime
     last_visit_at: datetime | None = None
     days_without_visits: int | None = None
+    is_pilot_forced: bool = False
 
     def as_dict(self) -> dict:
+        valid_until_local = timezone.localtime(self.valid_until)
+        last_visit_local = timezone.localtime(self.last_visit_at) if self.last_visit_at else None
+        if self.days_without_visits is None:
+            days_without_visits_label = "—"
+        elif self.is_pilot_forced:
+            days_without_visits_label = f"{self.days_without_visits} (пилотное значение)"
+        else:
+            days_without_visits_label = str(self.days_without_visits)
         return {
             "guest_id": self.guest_id,
             "phone": self.phone,
@@ -154,8 +165,12 @@ class CouponAutoscenarioPlanItem:
             "venue_code": self.venue_code,
             "venue_name": self.venue_name,
             "valid_until": self.valid_until.isoformat(),
+            "valid_until_display": valid_until_local.strftime("%d.%m.%Y %H:%M"),
             "last_visit_at": self.last_visit_at.isoformat() if self.last_visit_at else None,
+            "last_visit_at_display": last_visit_local.strftime("%d.%m.%Y %H:%M") if last_visit_local else "—",
             "days_without_visits": self.days_without_visits,
+            "days_without_visits_label": days_without_visits_label,
+            "is_pilot_forced": self.is_pilot_forced,
         }
 
 
@@ -202,6 +217,7 @@ class CouponAutoscenarioExecutionPlan:
             "max_recipients_per_run": self.max_recipients_per_run,
             "scan_limit": self.scan_limit,
             "scanned_guests": self.scanned_guests,
+            "segment_matched_guests": max(self.matched_guests - self.pilot_forced_guests, 0),
             "matched_guests": self.matched_guests,
             "sendable_guests": self.sendable_guests,
             "blocked_without_channel": self.blocked_without_channel,
@@ -503,6 +519,7 @@ def build_coupon_autoscenario_execution_plan(
                 valid_until=valid_until,
                 last_visit_at=row.last_visit_at,
                 days_without_visits=days_without_visits,
+                is_pilot_forced=row.is_pilot_forced,
             )
         )
 
@@ -1089,6 +1106,7 @@ def _append_unmatched_pilot_rows_if_requested(
                 last_name=str(guest.last_name or ""),
                 last_visit_at=getattr(guest, "last_visit_at", None),
                 sendable_channels=tuple(channels_map.get(guest_id, ())),
+                is_pilot_forced=True,
             )
         )
         existing_guest_ids.add(guest_id)

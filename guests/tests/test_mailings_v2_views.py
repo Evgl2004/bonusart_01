@@ -1806,6 +1806,7 @@ class MailingsV2ViewsTests(TestCase):
                     "venue_code": "DEP_1",
                     "venue_name": "Сами Сусами",
                     "scanned_guests": 5000,
+                    "segment_matched_guests": 99,
                     "matched_guests": 100,
                     "sendable_guests": 10,
                     "blocked_without_channel": 90,
@@ -1815,6 +1816,7 @@ class MailingsV2ViewsTests(TestCase):
                     "pilot_phone_filters": ["+79129923438"],
                     "pilot_guest_id_filters": [],
                     "used_default_pilot_phone": False,
+                    "pilot_forced_guests": 1,
                     "eligible_guests": 1,
                     "planned_assignments": 1,
                     "available_coupons": 1,
@@ -1831,8 +1833,12 @@ class MailingsV2ViewsTests(TestCase):
                             "coupon_series": "AUTO_30D",
                             "coupon_code": "REL-1",
                             "last_visit_at": "2026-05-01T00:00:00+00:00",
+                            "last_visit_at_display": "01.05.2026 05:00",
                             "days_without_visits": 30,
+                            "days_without_visits_label": "30 (пилотное значение)",
+                            "is_pilot_forced": True,
                             "valid_until": "2026-06-22T00:00:00+00:00",
+                            "valid_until_display": "22.06.2026 05:00",
                         }
                     ],
                 }
@@ -1853,6 +1859,12 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Безопасный предпросмотр")
         self.assertContains(response, "AUTO_30D")
         self.assertContains(response, "REL-1")
+        self.assertContains(response, "Основной сегмент")
+        self.assertContains(response, "+1 добавлено пилотом")
+        self.assertContains(response, "К выдаче сейчас")
+        self.assertContains(response, "30 (пилотное значение)")
+        self.assertContains(response, "контрольный гость пилота")
+        self.assertContains(response, "22.06.2026 05:00")
         self.assertEqual(response.context["coupon_plan"]["planned_assignments"], 1)
         self.assertEqual(response.context["coupon_plan"]["sample_plan_items"][0]["days_without_visits"], 30)
 
