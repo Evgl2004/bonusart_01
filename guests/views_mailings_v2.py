@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.db import transaction
-from django.db.models import Count, F, Max, Q
+from django.db.models import Count, F, Max, Prefetch, Q
 from django.http import QueryDict
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
@@ -30,6 +30,7 @@ from guests.management.commands import mailing_worker as mailing_worker_cmd
 from guests.models import (
     BotProfile,
     CouponAutomationConfig,
+    CouponAutomationRule,
     CouponAutoscenarioAssignment,
     DispatchTask,
     Guest,
@@ -1702,6 +1703,12 @@ class MailingsV2ScenariosView(TemplateView):
 
         coupon_configs = list(
             CouponAutomationConfig.objects.select_related("scenario", "scenario__template")
+            .prefetch_related(
+                Prefetch(
+                    "coupon_rules",
+                    queryset=CouponAutomationRule.objects.order_by("priority", "id"),
+                )
+            )
             .annotate(
                 runs_total=Count("runs", distinct=True),
                 assignments_total=Count("assignments", distinct=True),
@@ -1734,6 +1741,15 @@ class MailingsV2ScenariosView(TemplateView):
             display_name, technical_name = _resolve_template_title(template_obj)
             config.template_display_name = display_name
             config.template_technical_name = technical_name
+            config.active_coupon_rules = [
+                rule for rule in config.coupon_rules.all() if rule.is_active
+            ]
+            config.has_rule_based_coupon_selection = bool(config.active_coupon_rules)
+            config.coupon_selection_policy_label = (
+                "Сначала правило по последнему заведению гостя из order_fact; "
+                "если подходящего правила или купона нет - правило Вся сеть (global). "
+                "Гостю выдаётся не больше одного купона за проход."
+            )
 
         coupon_recent_assignments = list(
             CouponAutoscenarioAssignment.objects.select_related("scenario", "config", "guest", "run")
@@ -1763,6 +1779,11 @@ class MailingsV2ScenariosView(TemplateView):
                 coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
                     :coupon_sample_limit
                 ]
+                for item in coupon_plan["sample_plan_items"]:
+                    item.setdefault("coupon_rule_label", "")
+                    item.setdefault("coupon_selection_source_display", "")
+                    item.setdefault("last_order_department_id", "")
+                    item.setdefault("last_order_department_name", "")
             except CouponAutoscenarioPreviewError as exc:
                 coupon_plan_error = str(exc)
 
@@ -1841,6 +1862,14 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             f"{reverse('mailings_v2_scenarios')}?{urlencode({'coupon_scenario_code': scenario_code})}"
             if scenario_code
             else reverse("mailings_v2_scenarios")
+        )
+        context["coupon_rules"] = list(
+            self.object.coupon_rules.order_by("priority", "id")
+        )
+        context["coupon_rules_admin_url"] = (
+            f"/admin/guests/couponautomationconfig/{self.object.pk}/change/"
+            if self.object.pk
+            else "/admin/guests/couponautomationconfig/"
         )
         return context
 

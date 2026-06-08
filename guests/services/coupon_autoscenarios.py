@@ -4,13 +4,15 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from django.db import transaction
-from django.db.models import OuterRef, Q, QuerySet, Subquery
+from django.db.models import F, OuterRef, Q, QuerySet, Subquery, Window
+from django.db.models.functions import RowNumber
 from django.utils import timezone
 
 from guests.models import (
     CouponAutoscenarioAssignment,
     CouponAutoscenarioRun,
     CouponAutomationConfig,
+    CouponAutomationRule,
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
@@ -18,6 +20,7 @@ from guests.models import (
     Guest,
     NotificationEvent,
     NotificationScenario,
+    OrderFact,
     VisitHistory,
     VtelemaxRecipientChannel,
 )
@@ -143,6 +146,11 @@ class CouponAutoscenarioPlanItem:
     last_visit_at: datetime | None = None
     days_without_visits: int | None = None
     is_pilot_forced: bool = False
+    coupon_rule_id: int | None = None
+    coupon_rule_label: str = ""
+    coupon_selection_source: str = ""
+    last_order_department_id: str = ""
+    last_order_department_name: str = ""
 
     def as_dict(self) -> dict:
         valid_until_local = timezone.localtime(self.valid_until)
@@ -153,6 +161,12 @@ class CouponAutoscenarioPlanItem:
             days_without_visits_label = f"{self.days_without_visits} (пилотное значение)"
         else:
             days_without_visits_label = str(self.days_without_visits)
+        selection_source_labels = {
+            "last_order_department": "по последнему заведению",
+            "global_fallback": "резерв: Вся сеть (global)",
+            "legacy_config": "старый режим настройки",
+            "pilot_rule_fallback": "пилотный резерв",
+        }
         return {
             "guest_id": self.guest_id,
             "phone": self.phone,
@@ -171,6 +185,15 @@ class CouponAutoscenarioPlanItem:
             "days_without_visits": self.days_without_visits,
             "days_without_visits_label": days_without_visits_label,
             "is_pilot_forced": self.is_pilot_forced,
+            "coupon_rule_id": self.coupon_rule_id,
+            "coupon_rule_label": self.coupon_rule_label,
+            "coupon_selection_source": self.coupon_selection_source,
+            "coupon_selection_source_display": selection_source_labels.get(
+                self.coupon_selection_source,
+                self.coupon_selection_source,
+            ),
+            "last_order_department_id": self.last_order_department_id,
+            "last_order_department_name": self.last_order_department_name,
         }
 
 
@@ -279,6 +302,36 @@ class PilotRecipientFilter:
         return not self.phones and not self.guest_ids
 
 
+@dataclass(frozen=True, slots=True)
+class CouponRuleOption:
+    key: str
+    coupon_series: str
+    venue_code: str
+    venue_name: str
+    scope_type: str
+    priority: int
+    rule_id: int | None = None
+    coupon_validity_days: int | None = None
+    coupon_promo_text_template: str = ""
+    is_legacy_fallback: bool = False
+
+    @property
+    def is_global(self) -> bool:
+        return self.scope_type == CouponAutomationRule.ScopeType.GLOBAL or is_coupon_global_venue(self.venue_code)
+
+    @property
+    def label(self) -> str:
+        if self.is_global:
+            return "Вся сеть (global)"
+        return self.venue_name or self.venue_code or "-"
+
+
+@dataclass(frozen=True, slots=True)
+class GuestLastOrderVenue:
+    department_id: str
+    department_name: str
+
+
 def preview_coupon_autoscenario_audience(
     *,
     scenario_code: str,
@@ -338,11 +391,18 @@ def preview_coupon_autoscenario_audience(
     sendable_guests = sum(1 for row in matched_rows if row.has_sendable_channel)
     blocked_without_channel = len(matched_rows) - sendable_guests
     planned_recipients_for_run = min(sendable_guests, safe_limit)
-    available_coupons = _count_available_coupons(config=config)
+    coupon_rules = _effective_coupon_rules(config=config)
+    available_coupons = sum(
+        len(coupons)
+        for coupons in _available_coupons_by_rule(
+            rules=coupon_rules,
+            limit=safe_limit,
+        ).values()
+    )
     coupon_shortage = max(planned_recipients_for_run - available_coupons, 0)
 
-    if not str(config.coupon_series or "").strip():
-        warnings.append("Серия купонов не указана; назначение купонов невозможно.")
+    if not coupon_rules:
+        warnings.append("Не настроено ни одно купонное правило; назначение купонов невозможно.")
     if coupon_shortage > 0:
         warnings.append(
             f"Для ближайшего запуска не хватает купонов: {coupon_shortage}."
@@ -359,7 +419,7 @@ def preview_coupon_autoscenario_audience(
         scenario_id=int(scenario.id),
         scenario_code=scenario.code,
         execution_mode=config.execution_mode,
-        coupon_series=str(config.coupon_series or "").strip(),
+        coupon_series=_format_coupon_series_summary(coupon_rules),
         venue_code=str(config.venue_code or "").strip(),
         venue_name=str(config.venue_name or "").strip(),
         inactive_days_threshold=inactive_days,
@@ -423,9 +483,10 @@ def build_coupon_autoscenario_execution_plan(
     }:
         warnings.append("План построен без права фактического запуска.")
 
-    coupon_series = str(config.coupon_series or "").strip()
-    if not coupon_series:
-        blockers.append("Не указана серия купонов.")
+    coupon_rules = _effective_coupon_rules(config=config)
+    coupon_series_values = tuple(dict.fromkeys(rule.coupon_series for rule in coupon_rules if rule.coupon_series))
+    if not coupon_rules:
+        blockers.append("Не настроено ни одно купонное правило.")
 
     scanned_guests, matched_rows = _build_candidate_rows(
         inactive_days=inactive_days,
@@ -443,11 +504,11 @@ def build_coupon_autoscenario_execution_plan(
 
     active_assignment_guest_ids = _active_assignment_guest_ids(
         guest_ids=[row.guest_id for row in sendable_rows],
-        coupon_series=coupon_series,
+        coupon_series=coupon_series_values,
     )
     cooldown_guest_ids = _cooldown_guest_ids(
         guest_ids=[row.guest_id for row in sendable_rows],
-        coupon_series=coupon_series,
+        coupon_series=coupon_series_values,
         cooldown_days=int(config.cooldown_days or 0),
         now=current_now,
     )
@@ -483,18 +544,24 @@ def build_coupon_autoscenario_execution_plan(
             continue
         eligible_rows.append(row)
 
-    available_coupons = list(_available_coupon_queryset(config=config)[:safe_limit])
-    available_coupons_count = _count_available_coupons(config=config)
+    last_order_venues = _last_order_venue_map(guest_ids=[row.guest_id for row in eligible_rows])
+    coupons_by_rule = _available_coupons_by_rule(rules=coupon_rules, limit=safe_limit)
+    available_coupons_count = sum(len(coupons) for coupons in coupons_by_rule.values())
     planned_recipients = min(len(eligible_rows), safe_limit)
-    coupon_shortage = max(planned_recipients - len(available_coupons), 0)
-    if coupon_shortage > 0:
-        blockers.append(f"Не хватает купонов для ближайшего запуска: {coupon_shortage}.")
-
-    valid_until = current_now + timedelta(days=max(1, int(config.coupon_validity_days or 1)))
     plan_items: list[CouponAutoscenarioPlanItem] = []
-    for row, coupon in zip(eligible_rows[:planned_recipients], available_coupons):
-        venue_code = str(coupon.venue_code or config.venue_code or "").strip()
-        venue_name = str(coupon.venue_name or config.venue_name or "").strip()
+    for row in eligible_rows[:planned_recipients]:
+        rule, coupon, selection_source = _select_coupon_for_row(
+            row=row,
+            rules=coupon_rules,
+            coupons_by_rule=coupons_by_rule,
+            last_order_venues=last_order_venues,
+        )
+        if rule is None or coupon is None:
+            continue
+        venue_code = str(coupon.venue_code or rule.venue_code or "").strip()
+        venue_name = str(coupon.venue_name or rule.venue_name or "").strip()
+        validity_days = rule.coupon_validity_days or config.coupon_validity_days or 1
+        valid_until = current_now + timedelta(days=max(1, int(validity_days)))
         days_without_visits = _days_without_visits_from_last_visit(
             last_visit_at=row.last_visit_at,
             now=current_now,
@@ -520,8 +587,23 @@ def build_coupon_autoscenario_execution_plan(
                 last_visit_at=row.last_visit_at,
                 days_without_visits=days_without_visits,
                 is_pilot_forced=row.is_pilot_forced,
+                coupon_rule_id=rule.rule_id,
+                coupon_rule_label=rule.label,
+                coupon_selection_source=selection_source,
+                last_order_department_id=last_order_venues.get(
+                    row.guest_id,
+                    GuestLastOrderVenue("", ""),
+                ).department_id,
+                last_order_department_name=last_order_venues.get(
+                    row.guest_id,
+                    GuestLastOrderVenue("", ""),
+                ).department_name,
             )
         )
+
+    coupon_shortage = max(planned_recipients - len(plan_items), 0)
+    if coupon_shortage > 0:
+        blockers.append(f"Не хватает подходящих купонов для ближайшего запуска: {coupon_shortage}.")
 
     if planned_recipients == 0:
         warnings.append("Нет достижимых гостей для ближайшего запуска после фильтров.")
@@ -531,7 +613,7 @@ def build_coupon_autoscenario_execution_plan(
         scenario_id=int(scenario.id),
         scenario_code=scenario.code,
         execution_mode=config.execution_mode,
-        coupon_series=coupon_series,
+        coupon_series=_format_coupon_series_summary(coupon_rules),
         venue_code=str(config.venue_code or "").strip(),
         venue_name=str(config.venue_name or "").strip(),
         inactive_days_threshold=inactive_days,
@@ -642,7 +724,7 @@ def execute_coupon_autoscenario_pilot(
                 raise CouponAutoscenarioPreviewError(
                     f"План устарел: не найден купон или гость для coupon_id={item.coupon_id}, guest_id={item.guest_id}."
                 )
-            if not _is_coupon_still_available(coupon=coupon, config=config):
+            if not _is_coupon_available_for_plan_item(coupon=coupon, item=item):
                 raise CouponAutoscenarioPreviewError(
                     f"План устарел: купон {coupon.series}:{coupon.code} уже недоступен."
                 )
@@ -670,6 +752,8 @@ def execute_coupon_autoscenario_pilot(
                 phone_e164=str(channel.phone_e164 or "").strip() if channel else item.phone,
                 coupon_series=item.coupon_series,
                 coupon_code=item.coupon_code,
+                coupon_rule_id=item.coupon_rule_id,
+                coupon_selection_source=item.coupon_selection_source or None,
                 venue_code=item.venue_code or None,
                 venue_name=item.venue_name or None,
                 promo_text=rendered_promo_text or None,
@@ -1207,43 +1291,195 @@ def _is_channel_sendable(channel: VtelemaxRecipientChannel | None) -> bool:
     return True
 
 
-def _count_available_coupons(*, config: CouponAutomationConfig) -> int:
-    return _available_coupon_queryset(config=config).count()
+def _effective_coupon_rules(*, config: CouponAutomationConfig) -> tuple[CouponRuleOption, ...]:
+    rules = list(
+        config.coupon_rules.filter(is_active=True)
+        .exclude(coupon_series="")
+        .order_by("priority", "id")
+    )
+    if rules:
+        result: list[CouponRuleOption] = []
+        for rule in rules:
+            scope_type = str(rule.scope_type or "").strip()
+            venue_code = str(rule.venue_code or "").strip()
+            venue_name = str(rule.venue_name or "").strip()
+            if scope_type == CouponAutomationRule.ScopeType.GLOBAL:
+                venue_code = COUPON_VENUE_GLOBAL_CODE
+                venue_name = venue_name or "Вся сеть"
+            result.append(
+                CouponRuleOption(
+                    key=f"rule:{rule.id}",
+                    rule_id=int(rule.id),
+                    coupon_series=str(rule.coupon_series or "").strip(),
+                    venue_code=venue_code,
+                    venue_name=venue_name,
+                    scope_type=scope_type,
+                    priority=int(rule.priority or 100),
+                    coupon_validity_days=rule.coupon_validity_days,
+                    coupon_promo_text_template=str(rule.coupon_promo_text_template or "").strip(),
+                )
+            )
+        return tuple(result)
 
-
-def _available_coupon_queryset(*, config: CouponAutomationConfig) -> QuerySet[CouponRegistryEntry]:
     coupon_series = str(config.coupon_series or "").strip()
     if not coupon_series:
-        return CouponRegistryEntry.objects.none()
+        return tuple()
 
+    venue_code = str(config.venue_code or "").strip()
+    venue_name = str(config.venue_name or "").strip()
+    scope_type = (
+        CouponAutomationRule.ScopeType.GLOBAL
+        if is_coupon_global_venue(venue_code)
+        else CouponAutomationRule.ScopeType.VENUE
+    )
+    if scope_type == CouponAutomationRule.ScopeType.GLOBAL:
+        venue_code = COUPON_VENUE_GLOBAL_CODE
+        venue_name = venue_name or "Вся сеть"
+    return (
+        CouponRuleOption(
+            key=f"legacy:{config.id}",
+            coupon_series=coupon_series,
+            venue_code=venue_code,
+            venue_name=venue_name,
+            scope_type=scope_type,
+            priority=100,
+            coupon_validity_days=config.coupon_validity_days,
+            coupon_promo_text_template=str(config.coupon_promo_text_template or "").strip(),
+            is_legacy_fallback=True,
+        ),
+    )
+
+
+def _format_coupon_series_summary(rules: tuple[CouponRuleOption, ...]) -> str:
+    series_values = tuple(dict.fromkeys(rule.coupon_series for rule in rules if rule.coupon_series))
+    if not series_values:
+        return ""
+    if len(series_values) == 1:
+        return series_values[0]
+    visible = ", ".join(series_values[:3])
+    if len(series_values) > 3:
+        visible = f"{visible}, ..."
+    return visible
+
+
+def _available_coupon_queryset_for_rule(*, rule: CouponRuleOption) -> QuerySet[CouponRegistryEntry]:
+    if not rule.coupon_series:
+        return CouponRegistryEntry.objects.none()
     queryset = CouponRegistryEntry.objects.filter(
-        series=coupon_series,
+        series=rule.coupon_series,
         is_active=True,
         pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
     )
-    venue_code = str(config.venue_code or "").strip()
-    if is_coupon_global_venue(venue_code):
+    if rule.is_global:
         queryset = queryset.filter(
             Q(venue_code=COUPON_VENUE_GLOBAL_CODE) | Q(venue_code__isnull=True) | Q(venue_code="")
         )
-    elif venue_code:
-        queryset = queryset.filter(venue_code=venue_code)
+    elif rule.venue_code:
+        queryset = queryset.filter(venue_code=rule.venue_code)
     return queryset.order_by("id")
 
 
-def _is_coupon_still_available(*, coupon: CouponRegistryEntry, config: CouponAutomationConfig) -> bool:
+def _available_coupons_by_rule(
+    *,
+    rules: tuple[CouponRuleOption, ...],
+    limit: int,
+) -> dict[str, list[CouponRegistryEntry]]:
+    result: dict[str, list[CouponRegistryEntry]] = {}
+    used_coupon_ids: set[int] = set()
+    safe_limit = max(1, int(limit or 1))
+    for rule in rules:
+        coupons: list[CouponRegistryEntry] = []
+        for coupon in _available_coupon_queryset_for_rule(rule=rule)[:safe_limit]:
+            coupon_id = int(coupon.id)
+            if coupon_id in used_coupon_ids:
+                continue
+            used_coupon_ids.add(coupon_id)
+            coupons.append(coupon)
+        result[rule.key] = coupons
+    return result
+
+
+def _last_order_venue_map(*, guest_ids: list[int]) -> dict[int, GuestLastOrderVenue]:
+    unique_guest_ids = [int(guest_id) for guest_id in dict.fromkeys(guest_ids) if guest_id]
+    if not unique_guest_ids:
+        return {}
+
+    latest_rows = (
+        OrderFact.objects.filter(guest_id__in=unique_guest_ids)
+        .exclude(department_id="")
+        .annotate(
+            rn=Window(
+                expression=RowNumber(),
+                partition_by=[F("guest_id")],
+                order_by=[
+                    F("business_date").desc(nulls_last=True),
+                    F("first_seen_at").desc(nulls_last=True),
+                    F("id").desc(),
+                ],
+            )
+        )
+        .filter(rn=1)
+        .values("guest_id", "department_id", "department_name")
+    )
+    return {
+        int(row["guest_id"]): GuestLastOrderVenue(
+            department_id=str(row.get("department_id") or "").strip(),
+            department_name=str(row.get("department_name") or "").strip(),
+        )
+        for row in latest_rows
+    }
+
+
+def _select_coupon_for_row(
+    *,
+    row: CouponAutoscenarioAudienceRow,
+    rules: tuple[CouponRuleOption, ...],
+    coupons_by_rule: dict[str, list[CouponRegistryEntry]],
+    last_order_venues: dict[int, GuestLastOrderVenue],
+) -> tuple[CouponRuleOption | None, CouponRegistryEntry | None, str]:
+    last_order_venue = last_order_venues.get(row.guest_id)
+    last_department_id = str(last_order_venue.department_id if last_order_venue else "").strip()
+
+    candidates: list[tuple[CouponRuleOption, str]] = []
+    for rule in rules:
+        if rule.is_legacy_fallback:
+            candidates.append((rule, "legacy_config"))
+        elif last_department_id and not rule.is_global and rule.venue_code == last_department_id:
+            candidates.append((rule, "last_order_department"))
+    for rule in rules:
+        if rule.is_global:
+            candidates.append((rule, "global_fallback"))
+    if row.is_pilot_forced and not candidates:
+        candidates.extend((rule, "pilot_rule_fallback") for rule in rules if not rule.is_global)
+
+    seen_keys: set[str] = set()
+    for rule, selection_source in candidates:
+        if rule.key in seen_keys:
+            continue
+        seen_keys.add(rule.key)
+        coupons = coupons_by_rule.get(rule.key) or []
+        if coupons:
+            return rule, coupons.pop(0), selection_source
+    return None, None, ""
+
+
+def _is_coupon_available_for_plan_item(
+    *,
+    coupon: CouponRegistryEntry,
+    item: CouponAutoscenarioPlanItem,
+) -> bool:
     if not bool(coupon.is_active):
         return False
     if coupon.pool_status != CouponRegistryEntry.PoolStatus.VERIFIED_LOADED:
         return False
-    if str(coupon.series or "").strip() != str(config.coupon_series or "").strip():
+    if str(coupon.series or "").strip() != item.coupon_series:
         return False
-    venue_code = str(config.venue_code or "").strip()
+    expected_venue_code = str(item.venue_code or "").strip()
     coupon_venue_code = str(coupon.venue_code or "").strip()
-    if is_coupon_global_venue(venue_code):
+    if is_coupon_global_venue(expected_venue_code):
         return coupon_venue_code in {"", COUPON_VENUE_GLOBAL_CODE}
-    if venue_code:
-        return coupon_venue_code == venue_code
+    if expected_venue_code:
+        return coupon_venue_code == expected_venue_code
     return True
 
 
@@ -1528,13 +1764,26 @@ def _find_autoscenario_status_update_event(
     return None
 
 
-def _active_assignment_guest_ids(*, guest_ids: list[int], coupon_series: str) -> set[int]:
-    if not guest_ids or not coupon_series:
+def _normalize_coupon_series_filter(coupon_series: str | tuple[str, ...] | list[str]) -> tuple[str, ...]:
+    if isinstance(coupon_series, str):
+        values = [coupon_series]
+    else:
+        values = list(coupon_series or [])
+    return tuple(dict.fromkeys(str(value or "").strip() for value in values if str(value or "").strip()))
+
+
+def _active_assignment_guest_ids(
+    *,
+    guest_ids: list[int],
+    coupon_series: str | tuple[str, ...] | list[str],
+) -> set[int]:
+    series_values = _normalize_coupon_series_filter(coupon_series)
+    if not guest_ids or not series_values:
         return set()
     campaign_guest_ids = set(
         CouponCampaignAssignment.objects.filter(
             guest_id__in=guest_ids,
-            coupon_series=coupon_series,
+            coupon_series__in=series_values,
             status__in=[
                 CouponCampaignAssignment.Status.RESERVED,
                 CouponCampaignAssignment.Status.SENT,
@@ -1544,7 +1793,7 @@ def _active_assignment_guest_ids(*, guest_ids: list[int], coupon_series: str) ->
     autoscenario_guest_ids = set(
         CouponAutoscenarioAssignment.objects.filter(
             guest_id__in=guest_ids,
-            coupon_series=coupon_series,
+            coupon_series__in=series_values,
             status__in=[
                 CouponAutoscenarioAssignment.Status.RESERVED,
                 CouponAutoscenarioAssignment.Status.SENT,
@@ -1557,17 +1806,18 @@ def _active_assignment_guest_ids(*, guest_ids: list[int], coupon_series: str) ->
 def _cooldown_guest_ids(
     *,
     guest_ids: list[int],
-    coupon_series: str,
+    coupon_series: str | tuple[str, ...] | list[str],
     cooldown_days: int,
     now: datetime,
 ) -> set[int]:
-    if not guest_ids or not coupon_series or cooldown_days <= 0:
+    series_values = _normalize_coupon_series_filter(coupon_series)
+    if not guest_ids or not series_values or cooldown_days <= 0:
         return set()
     cutoff = now - timedelta(days=cooldown_days)
     campaign_guest_ids = set(
         CouponCampaignAssignment.objects.filter(
             guest_id__in=guest_ids,
-            coupon_series=coupon_series,
+            coupon_series__in=series_values,
             assigned_at__gte=cutoff,
             status__in=[
                 CouponCampaignAssignment.Status.SENT,
@@ -1580,7 +1830,7 @@ def _cooldown_guest_ids(
     autoscenario_guest_ids = set(
         CouponAutoscenarioAssignment.objects.filter(
             guest_id__in=guest_ids,
-            coupon_series=coupon_series,
+            coupon_series__in=series_values,
             assigned_at__gte=cutoff,
             status__in=[
                 CouponAutoscenarioAssignment.Status.SENT,

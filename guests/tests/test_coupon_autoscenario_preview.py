@@ -13,6 +13,7 @@ from guests.models import (
     CouponAutoscenarioAssignment,
     CouponAutoscenarioRun,
     CouponAutomationConfig,
+    CouponAutomationRule,
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
@@ -23,6 +24,7 @@ from guests.models import (
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
+    OrderFact,
     Restaurant,
     VisitHistory,
     VtelemaxRecipientChannel,
@@ -341,6 +343,108 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(plan.planned_assignments, 1)
         self.assertEqual(plan.plan_items[0].guest_id, eligible.id)
         self.assertEqual(plan.plan_items[0].coupon_id, available_coupon.id)
+        self.assertEqual(self._side_effect_counts(), before_counts)
+
+    def test_execution_plan_selects_coupon_rule_by_latest_order_fact_with_global_fallback(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        self.config.coupon_series = ""
+        self.config.venue_code = ""
+        self.config.venue_name = ""
+        self.config.max_recipients_per_run = 10
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "coupon_series",
+                "venue_code",
+                "venue_name",
+                "max_recipients_per_run",
+                "updated_at",
+            ]
+        )
+        CouponAutomationRule.objects.create(
+            config=self.config,
+            scope_type=CouponAutomationRule.ScopeType.VENUE,
+            coupon_series="AUTO_DEP_1",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            priority=10,
+        )
+        CouponAutomationRule.objects.create(
+            config=self.config,
+            scope_type=CouponAutomationRule.ScopeType.GLOBAL,
+            coupon_series="AUTO_GLOBAL",
+            venue_code="__global__",
+            venue_name="Вся сеть",
+            priority=100,
+        )
+        dep_guest = self._guest(phone="+79990000121", first_name="Dep")
+        global_guest = self._guest(phone="+79990000122", first_name="Global")
+        for guest in [dep_guest, global_guest]:
+            self._visit(guest=guest, days_ago=45)
+            self._sendable_channel(guest=guest)
+
+        OrderFact.objects.create(
+            guest=dep_guest,
+            business_date=(self.now - timedelta(days=5)).date(),
+            department_id="DEP_OTHER",
+            department_name="Другое заведение",
+            order_number=1,
+            uniq_order_id="dep-old",
+            first_seen_at=self.now - timedelta(days=5),
+        )
+        OrderFact.objects.create(
+            guest=dep_guest,
+            business_date=(self.now - timedelta(days=1)).date(),
+            department_id="DEP_1",
+            department_name="Тестовое заведение",
+            order_number=2,
+            uniq_order_id="dep-latest",
+            first_seen_at=self.now - timedelta(days=1),
+        )
+        OrderFact.objects.create(
+            guest=global_guest,
+            business_date=(self.now - timedelta(days=1)).date(),
+            department_id="DEP_OTHER",
+            department_name="Другое заведение",
+            order_number=3,
+            uniq_order_id="global-latest",
+            first_seen_at=self.now - timedelta(days=1),
+        )
+        venue_coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_DEP_1",
+            code="DEP-COUPON",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+        global_coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_GLOBAL",
+            code="GLOBAL-COUPON",
+            venue_code="__global__",
+            venue_name="Вся сеть",
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+
+        before_counts = self._side_effect_counts()
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        items_by_guest = {item.guest_id: item for item in plan.plan_items}
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.planned_assignments, 2)
+        self.assertEqual(items_by_guest[dep_guest.id].coupon_id, venue_coupon.id)
+        self.assertEqual(items_by_guest[dep_guest.id].coupon_selection_source, "last_order_department")
+        self.assertEqual(items_by_guest[dep_guest.id].last_order_department_id, "DEP_1")
+        self.assertEqual(items_by_guest[global_guest.id].coupon_id, global_coupon.id)
+        self.assertEqual(items_by_guest[global_guest.id].coupon_selection_source, "global_fallback")
         self.assertEqual(self._side_effect_counts(), before_counts)
 
     def test_execution_plan_blocks_report_only_mode(self):

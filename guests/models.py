@@ -2053,19 +2053,6 @@ class CouponAutomationConfig(models.Model):
         if self.venue_name:
             self.venue_name = self.venue_name.strip()
 
-        active_modes = {
-            self.ExecutionMode.PILOT,
-            self.ExecutionMode.AUTOMATIC,
-        }
-        if self.execution_mode in active_modes and not self.coupon_series:
-            raise ValidationError(
-                {
-                    "coupon_series": (
-                        "Для режимов 'Пилот' и 'Автоматически' нужно указать серию купонов."
-                    )
-                }
-            )
-
         errors = {}
 
         if self.coupon_validity_days is not None and self.coupon_validity_days < 1:
@@ -2084,6 +2071,129 @@ class CouponAutomationConfig(models.Model):
 
     def __str__(self):
         return f"scenario={self.scenario_id} mode={self.execution_mode} series={self.coupon_series or '-'}"
+
+
+class CouponAutomationRule(models.Model):
+    """
+    Купонное правило внутри автосценария.
+
+    Один автосценарий может иметь несколько правил: по конкретным заведениям и
+    одно общее правило для всей сети. Исполнитель выбирает одно правило на гостя.
+    """
+
+    class ScopeType(models.TextChoices):
+        VENUE = "venue", "Заведение"
+        GLOBAL = "global", "Вся сеть (global)"
+
+    config = models.ForeignKey(
+        "CouponAutomationConfig",
+        on_delete=models.CASCADE,
+        related_name="coupon_rules",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    scope_type = models.CharField(
+        max_length=16,
+        choices=ScopeType.choices,
+        default=ScopeType.VENUE,
+        db_index=True,
+    )
+    coupon_series = models.CharField(
+        max_length=120,
+        db_index=True,
+        help_text="Серия купонов, из которой правило будет брать доступные купоны.",
+    )
+    venue_code = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Department.Id для правила по заведению; для правила Вся сеть (global) хранится __global__.",
+    )
+    venue_name = models.CharField(max_length=255, blank=True, default="")
+    coupon_validity_days = models.PositiveSmallIntegerField(
+        blank=True,
+        null=True,
+        help_text="Если задано, переопределяет срок действия из общей настройки.",
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=100,
+        db_index=True,
+        help_text="Меньшее значение означает более высокий приоритет среди правил одного типа.",
+    )
+    min_order_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        blank=True,
+        null=True,
+        help_text="Справочная минимальная сумма заказа, настроенная в iikoCard для этого правила.",
+    )
+    iikocard_action_note = models.TextField(blank=True, null=True)
+    coupon_promo_text_template = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Если задано, переопределяет описание купона из общей настройки.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "coupon_automation_rules"
+        verbose_name = "Купонное правило автосценария"
+        verbose_name_plural = "Купонные правила автосценариев"
+        indexes = [
+            models.Index(fields=["config", "is_active"], name="cautorule_cfg_active_idx"),
+            models.Index(fields=["config", "scope_type", "priority"], name="cautorule_cfg_scope_pri"),
+            models.Index(fields=["coupon_series"], name="cautorule_series_idx"),
+            models.Index(fields=["venue_code"], name="cautorule_venue_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(scope_type__in=["venue", "global"]),
+                name="cautorule_scope_type_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(coupon_validity_days__isnull=True)
+                | models.Q(coupon_validity_days__gte=1),
+                name="cautorule_validity_null_or_gte_1",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(min_order_amount__isnull=True)
+                | models.Q(min_order_amount__gte=0),
+                name="cautorule_min_order_null_or_gte_0",
+            ),
+        ]
+
+    def clean(self):
+        super().clean()
+
+        if self.coupon_series:
+            self.coupon_series = self.coupon_series.strip()
+        if self.venue_code:
+            self.venue_code = self.venue_code.strip()
+        if self.venue_name:
+            self.venue_name = self.venue_name.strip()
+
+        errors = {}
+        if not self.coupon_series:
+            errors["coupon_series"] = "Укажите серию купонов для правила."
+        if self.scope_type == self.ScopeType.GLOBAL:
+            self.venue_code = "__global__"
+            if not self.venue_name:
+                self.venue_name = "Вся сеть"
+        elif not self.venue_code:
+            errors["venue_code"] = "Для правила по заведению укажите код заведения."
+
+        if self.coupon_validity_days is not None and self.coupon_validity_days < 1:
+            errors["coupon_validity_days"] = "Срок действия купона должен быть не меньше 1 дня."
+        if self.min_order_amount is not None and self.min_order_amount < 0:
+            errors["min_order_amount"] = "Минимальная сумма заказа не может быть отрицательной."
+
+        if errors:
+            raise ValidationError(errors)
+
+    def __str__(self):
+        scope = "global" if self.scope_type == self.ScopeType.GLOBAL else self.venue_code
+        return f"config={self.config_id} scope={scope} series={self.coupon_series}"
 
 
 class NotificationEvent(models.Model):
@@ -2781,12 +2891,20 @@ class CouponAutoscenarioAssignment(models.Model):
         on_delete=models.PROTECT,
         related_name="autoscenario_assignments",
     )
+    coupon_rule = models.ForeignKey(
+        "CouponAutomationRule",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="assignments",
+    )
     person_id = models.UUIDField(blank=True, null=True, db_index=True)
     phone_e164 = models.CharField(max_length=32, blank=True, null=True, db_index=True)
     coupon_series = models.CharField(max_length=120, db_index=True)
     coupon_code = models.CharField(max_length=120)
     venue_code = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     venue_name = models.CharField(max_length=255, blank=True, null=True)
+    coupon_selection_source = models.CharField(max_length=32, blank=True, null=True, db_index=True)
     promo_text = models.TextField(blank=True, null=True)
     assigned_at = models.DateTimeField(default=timezone.now, db_index=True)
     sent_at = models.DateTimeField(blank=True, null=True)

@@ -121,9 +121,14 @@ class Command(BaseCommand):
 
         for item in plan.plan_items[:safe_sample_limit]:
             channels = ", ".join(item.sendable_channels) if item.sendable_channels else "-"
+            last_order_venue = item.last_order_department_name or item.last_order_department_id or "-"
+            coupon_rule = item.coupon_rule_label or "-"
+            selection_source = item.coupon_selection_source or "-"
             self.stdout.write(
                 f"guest_id={item.guest_id} phone={item.phone or '-'} "
                 f"coupon={item.coupon_series}:{item.coupon_code} "
                 f"venue={item.venue_name or item.venue_code or '-'} "
+                f"rule={coupon_rule} selection={selection_source} "
+                f"last_order_venue={last_order_venue} "
                 f"valid_until={item.valid_until.isoformat()} channels={channels}"
             )

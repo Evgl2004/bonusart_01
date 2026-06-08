@@ -22,6 +22,58 @@
     сообщения гостям не отправляются.
   </div>
 
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <strong>Правила выбора купона</strong>
+        <div class="text-muted small">
+          Система сначала ищет правило по последнему заведению гостя из order_fact. Если такого правила или свободного купона нет, используется правило Вся сеть (global).
+        </div>
+      </div>
+      <a class="btn btn-outline-secondary btn-sm" href="{{ coupon_rules_admin_url }}">Редактировать правила в админке</a>
+    </div>
+    <div class="card-body">
+      {% if coupon_rules %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Тип</th>
+                <th>Серия</th>
+                <th>Заведение</th>
+                <th>Срок</th>
+                <th>Приоритет</th>
+                <th>Активно</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rule in coupon_rules %}
+                <tr>
+                  <td>{{ rule.get_scope_type_display }}</td>
+                  <td><code>{{ rule.coupon_series }}</code></td>
+                  <td>
+                    {% if rule.scope_type == "global" %}
+                      Вся сеть (global)
+                    {% else %}
+                      {{ rule.venue_name|default:rule.venue_code }}
+                    {% endif %}
+                  </td>
+                  <td>{{ rule.coupon_validity_days|default:config.coupon_validity_days }} дн.</td>
+                  <td>{{ rule.priority }}</td>
+                  <td>{% if rule.is_active %}да{% else %}нет{% endif %}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">
+          Отдельные правила пока не заведены. Используется старый режим: одна серия и одно заведение из формы ниже.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
   <form method="post" class="card border-0 shadow-sm">
     <div class="card-body">
       {% csrf_token %}

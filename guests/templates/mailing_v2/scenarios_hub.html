@@ -208,6 +208,43 @@
                   </a>
                 </td>
               </tr>
+              <tr class="table-light">
+                <td colspan="10">
+                  <div class="small">
+                    <div class="fw-semibold mb-1">Правило выбора купона</div>
+                    <div class="text-muted mb-2">{{ config.coupon_selection_policy_label }}</div>
+                    {% if config.has_rule_based_coupon_selection %}
+                      <div class="d-flex flex-column gap-1">
+                        {% for rule in config.active_coupon_rules %}
+                          <div>
+                            {% if rule.scope_type == "global" %}
+                              <span class="badge text-bg-secondary">Вся сеть (global)</span>
+                            {% else %}
+                              <span class="badge text-bg-light text-dark">Заведение</span>
+                            {% endif %}
+                            <code>{{ rule.coupon_series }}</code>
+                            {% if rule.scope_type == "global" %}
+                              <span class="text-muted">для любого заведения</span>
+                            {% else %}
+                              <span class="text-muted">{{ rule.venue_name|default:rule.venue_code }}</span>
+                            {% endif %}
+                            <span class="text-muted">приоритет {{ rule.priority }}</span>
+                            {% if rule.coupon_validity_days %}
+                              <span class="text-muted">срок {{ rule.coupon_validity_days }} дн.</span>
+                            {% endif %}
+                          </div>
+                        {% endfor %}
+                      </div>
+                    {% else %}
+                      <div>
+                        <span class="badge text-bg-warning">Старый режим</span>
+                        <code>{{ config.coupon_series|default:"серия не задана" }}</code>
+                        <span class="text-muted">{{ config.venue_name|default:config.venue_code|default:"заведение не задано" }}</span>
+                      </div>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
             {% empty %}
               <tr>
                 <td colspan="10" class="text-center text-muted py-3">Купонные автосценарии пока не настроены.</td>
@@ -399,6 +436,8 @@
                   <th>Последний визит</th>
                   <th>Дней без визитов</th>
                   <th>Купон</th>
+                  <th>Правило</th>
+                  <th>Последнее заведение</th>
                   <th>Действует до</th>
                 </tr>
               </thead>
@@ -416,11 +455,18 @@
                     </td>
                     <td>{{ item.days_without_visits_label|default:item.days_without_visits|default:"—" }}</td>
                     <td><code>{{ item.coupon_series }}:{{ item.coupon_code }}</code></td>
+                    <td>
+                      {{ item.coupon_rule_label|default:"старый режим" }}
+                      {% if item.coupon_selection_source_display %}
+                        <div class="text-muted small">{{ item.coupon_selection_source_display }}</div>
+                      {% endif %}
+                    </td>
+                    <td>{{ item.last_order_department_name|default:item.last_order_department_id|default:"—" }}</td>
                     <td>{{ item.valid_until_display|default:item.valid_until }}</td>
                   </tr>
                 {% empty %}
                   <tr>
-                    <td colspan="7" class="text-center text-muted py-3">Плановых пар нет.</td>
+                    <td colspan="9" class="text-center text-muted py-3">Плановых пар нет.</td>
                   </tr>
                 {% endfor %}
               </tbody>

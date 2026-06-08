@@ -10,6 +10,7 @@ from .models import (
     BotProfile,
     Category,
     CouponAutomationConfig,
+    CouponAutomationRule,
     CouponCampaignAssignment,
     CouponPoolBatch,
     CouponRegistryEntry,
@@ -815,6 +816,27 @@ class NotificationScenarioBotProfileLinkInline(admin.TabularInline):
     verbose_name_plural = "Разрешённые боты"
 
 
+class CouponAutomationRuleInline(admin.TabularInline):
+    """
+    Правила выбора купонной серии внутри одного автосценария.
+    """
+
+    model = CouponAutomationRule
+    extra = 1
+    fields = (
+        "is_active",
+        "scope_type",
+        "priority",
+        "coupon_series",
+        "venue_code",
+        "venue_name",
+        "coupon_validity_days",
+        "min_order_amount",
+    )
+    verbose_name = "Купонное правило"
+    verbose_name_plural = "Купонные правила"
+
+
 @admin.register(CouponAutomationConfig)
 class CouponAutomationConfigAdmin(admin.ModelAdmin):
     """
@@ -843,6 +865,7 @@ class CouponAutomationConfigAdmin(admin.ModelAdmin):
     )
     raw_id_fields = ("scenario",)
     readonly_fields = ("created_at", "updated_at")
+    inlines = (CouponAutomationRuleInline,)
     list_per_page = 100
     fieldsets = (
         (
