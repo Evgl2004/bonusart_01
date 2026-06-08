@@ -8,6 +8,14 @@ from .services.coupon_venues import build_coupon_venue_choices
 from .services.guest_resolution import normalize_phone_e164
 
 
+COUPON_AUTOSCENARIO_STATE_CHOICES = [
+    (CouponAutomationConfig.ExecutionMode.REPORT_ONLY, "Черновик"),
+    (CouponAutomationConfig.ExecutionMode.PILOT, "Пилот"),
+    (CouponAutomationConfig.ExecutionMode.AUTOMATIC, "Активен"),
+    (CouponAutomationConfig.ExecutionMode.PAUSED, "Пауза"),
+]
+
+
 class CategoryForm(forms.ModelForm):
     class Meta:
         model = Category
@@ -323,13 +331,13 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "iikocard_action_note": forms.Textarea(attrs={"class": "form-control", "rows": 4}),
         }
         labels = {
-            "execution_mode": "Режим работы",
+            "execution_mode": "Состояние автосценария",
             "venue_code": "Заведение",
             "venue_name": "Название заведения",
             "coupon_validity_days": "Срок действия купона, дней",
             "max_recipients_per_run": "Лимит гостей за проход",
             "cooldown_days": "Пауза перед повтором, дней",
-            "coupon_promo_text_template": "Текст акции в карточке купона",
+            "coupon_promo_text_template": "Описание купона для vtelemax",
             "min_order_amount": "Минимальная сумма заказа в iikoCard",
             "iikocard_action_note": "Что настроено в iikoCard",
         }
@@ -337,6 +345,12 @@ class CouponAutomationConfigForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         settings = self.instance.settings if isinstance(self.instance.settings, dict) else {}
+
+        self.fields["execution_mode"].choices = COUPON_AUTOSCENARIO_STATE_CHOICES
+        self.fields["execution_mode"].help_text = (
+            "Черновик ничего не запускает. Пилот разрешает только контрольные телефоны. "
+            "Активен будет использоваться для боевого расписания после отдельного включения."
+        )
 
         self.fields["coupon_series"].choices = build_available_coupon_series_choices(
             existing_series=str(getattr(self.instance, "coupon_series", "") or "").strip()

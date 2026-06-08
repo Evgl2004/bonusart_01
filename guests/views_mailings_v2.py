@@ -58,6 +58,52 @@ from guests.services.coupon_autoscenarios import (
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
 logger = logging.getLogger(__name__)
 
+COUPON_AUTOSCENARIO_STATE_LABELS = {
+    CouponAutomationConfig.ExecutionMode.REPORT_ONLY: "Черновик",
+    CouponAutomationConfig.ExecutionMode.PILOT: "Пилот",
+    CouponAutomationConfig.ExecutionMode.AUTOMATIC: "Активен",
+    CouponAutomationConfig.ExecutionMode.PAUSED: "Пауза",
+}
+
+COUPON_AUTOSCENARIO_STATE_HINTS = {
+    CouponAutomationConfig.ExecutionMode.REPORT_ONLY: "Можно смотреть предпросмотр, купоны не выдаются.",
+    CouponAutomationConfig.ExecutionMode.PILOT: "Пробный запуск разрешён только для контрольных телефонов.",
+    CouponAutomationConfig.ExecutionMode.AUTOMATIC: "Готов к боевому запуску после включения расписания.",
+    CouponAutomationConfig.ExecutionMode.PAUSED: "Автосценарий временно остановлен.",
+}
+
+
+def _coupon_autoscenario_state_label(mode: str) -> str:
+    return COUPON_AUTOSCENARIO_STATE_LABELS.get(str(mode or ""), str(mode or "—"))
+
+
+def _coupon_autoscenario_state_hint(mode: str) -> str:
+    return COUPON_AUTOSCENARIO_STATE_HINTS.get(str(mode or ""), "")
+
+
+def _coupon_autoscenario_policy_label() -> str:
+    """
+    Кратко описывает принятую стратегию выбора купона для маркетолога.
+    """
+    return (
+        "Сначала правило по последнему заведению гостя из order_fact; "
+        "если подходящего правила или свободного купона нет, используется правило Вся сеть (global)."
+    )
+
+
+def _coupon_autoscenario_policy_rows(*, cooldown_days: int | None) -> list[tuple[str, str]]:
+    """
+    Возвращает человекочитаемые правила, которые должны быть видны на экранах автосценариев.
+    """
+    cooldown_label = f"не чаще 1 раза в {int(cooldown_days or 0)} дн."
+    return [
+        ("Стратегия", "последнее заведение гостя -> Вся сеть (global)"),
+        ("Источник последнего заведения", "order_fact"),
+        ("Ограничение", "не больше 1 купона гостю за проход"),
+        ("Повтор", cooldown_label),
+        ("Если нет купонов", "гость пропускается и попадает в дефицит купонов"),
+    ]
+
 
 class MailingsV2CampaignsHubView(TemplateView):
     """
@@ -1741,14 +1787,15 @@ class MailingsV2ScenariosView(TemplateView):
             display_name, technical_name = _resolve_template_title(template_obj)
             config.template_display_name = display_name
             config.template_technical_name = technical_name
+            config.execution_state_label = _coupon_autoscenario_state_label(config.execution_mode)
+            config.execution_state_hint = _coupon_autoscenario_state_hint(config.execution_mode)
             config.active_coupon_rules = [
                 rule for rule in config.coupon_rules.all() if rule.is_active
             ]
             config.has_rule_based_coupon_selection = bool(config.active_coupon_rules)
-            config.coupon_selection_policy_label = (
-                "Сначала правило по последнему заведению гостя из order_fact; "
-                "если подходящего правила или купона нет - правило Вся сеть (global). "
-                "Гостю выдаётся не больше одного купона за проход."
+            config.coupon_selection_policy_label = _coupon_autoscenario_policy_label()
+            config.coupon_selection_policy_rows = _coupon_autoscenario_policy_rows(
+                cooldown_days=config.cooldown_days,
             )
 
         coupon_recent_assignments = list(
@@ -1776,6 +1823,24 @@ class MailingsV2ScenariosView(TemplateView):
                     scan_limit=coupon_scan_limit,
                 )
                 coupon_plan = plan.as_dict()
+                selected_config = next(
+                    (
+                        config
+                        for config in coupon_configs
+                        if config.scenario.code == selected_coupon_scenario_code
+                    ),
+                    None,
+                )
+                coupon_plan["execution_state_label"] = _coupon_autoscenario_state_label(
+                    coupon_plan.get("execution_mode", "")
+                )
+                coupon_plan["execution_state_hint"] = _coupon_autoscenario_state_hint(
+                    coupon_plan.get("execution_mode", "")
+                )
+                coupon_plan["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label()
+                coupon_plan["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
+                    cooldown_days=getattr(selected_config, "cooldown_days", None),
+                )
                 coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
                     :coupon_sample_limit
                 ]
@@ -1865,6 +1930,31 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         )
         context["coupon_rules"] = list(
             self.object.coupon_rules.order_by("priority", "id")
+        )
+        context["execution_state_label"] = _coupon_autoscenario_state_label(
+            self.object.execution_mode
+        )
+        context["execution_state_hint"] = _coupon_autoscenario_state_hint(
+            self.object.execution_mode
+        )
+        context["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label()
+        context["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
+            cooldown_days=self.object.cooldown_days,
+        )
+        template_obj = getattr(self.object.scenario, "template", None)
+        template_display_name, template_technical_name = _resolve_template_title(template_obj)
+        context["message_template"] = template_obj
+        context["template_display_name"] = template_display_name
+        context["template_technical_name"] = template_technical_name
+        context["template_detail_url"] = (
+            reverse("mailings_v2_templates_detail", kwargs={"pk": template_obj.pk})
+            if template_obj
+            else ""
+        )
+        context["template_edit_url"] = (
+            reverse("mailings_v2_templates_edit", kwargs={"pk": template_obj.pk})
+            if template_obj
+            else ""
         )
         context["coupon_rules_admin_url"] = (
             f"/admin/guests/couponautomationconfig/{self.object.pk}/change/"

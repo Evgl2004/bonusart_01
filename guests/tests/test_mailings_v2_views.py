@@ -1859,6 +1859,13 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Безопасный предпросмотр")
         self.assertContains(response, "AUTO_30D")
         self.assertContains(response, "REL-1")
+        self.assertContains(response, "Состояние")
+        self.assertContains(response, "Пилот")
+        self.assertContains(response, "Правило выбора купона")
+        self.assertContains(response, "последнее заведение гостя")
+        self.assertContains(response, "Вся сеть (global)")
+        self.assertContains(response, "Источник последнего заведения")
+        self.assertContains(response, "order_fact")
         self.assertContains(response, "Основной сегмент")
         self.assertContains(response, "+1 добавлено пилотом")
         self.assertContains(response, "К выдаче сейчас")
@@ -1990,6 +1997,14 @@ class MailingsV2ViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Настройки купонного автосценария")
+        self.assertContains(response, "Состояние автосценария")
+        self.assertContains(response, "Черновик")
+        self.assertContains(response, "Правила выбора купона")
+        self.assertContains(response, "последнее заведение гостя")
+        self.assertContains(response, "Шаблон сообщения гостю")
+        self.assertContains(response, "Редактировать шаблон")
+        self.assertContains(response, "Описание купона для vtelemax")
+        self.assertContains(response, "Это не сообщение в Telegram/VK/MAX")
         self.assertContains(response, "Контрольные телефоны пилота")
 
         response = self.client.post(

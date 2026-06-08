@@ -27,12 +27,19 @@
       <div>
         <strong>Правила выбора купона</strong>
         <div class="text-muted small">
-          Система сначала ищет правило по последнему заведению гостя из order_fact. Если такого правила или свободного купона нет, используется правило Вся сеть (global).
+          {{ coupon_selection_policy_label }}
         </div>
       </div>
       <a class="btn btn-outline-secondary btn-sm" href="{{ coupon_rules_admin_url }}">Редактировать правила в админке</a>
     </div>
     <div class="card-body">
+      <div class="row g-2 small mb-3">
+        {% for label, value in coupon_selection_policy_rows %}
+          <div class="col-12 col-lg-4">
+            <span class="text-muted">{{ label }}:</span> {{ value }}
+          </div>
+        {% endfor %}
+      </div>
       {% if coupon_rules %}
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
@@ -69,6 +76,38 @@
       {% else %}
         <div class="text-muted">
           Отдельные правила пока не заведены. Используется старый режим: одна серия и одно заведение из формы ниже.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div>
+        <strong>Шаблон сообщения гостю</strong>
+        <div class="text-muted small">Это текст, который гость получает в Telegram/VK/MAX.</div>
+      </div>
+      {% if message_template %}
+        <div class="d-flex gap-2 flex-wrap">
+          <a class="btn btn-outline-secondary btn-sm" href="{{ template_detail_url }}" target="_blank" rel="noopener">
+            Открыть шаблон
+          </a>
+          <a class="btn btn-outline-primary btn-sm" href="{{ template_edit_url }}" target="_blank" rel="noopener">
+            Редактировать шаблон
+          </a>
+        </div>
+      {% endif %}
+    </div>
+    <div class="card-body">
+      {% if message_template %}
+        <div class="fw-semibold">{{ template_display_name|default:message_template.name }}</div>
+        {% if template_technical_name %}
+          <div class="text-muted small mb-2">{{ template_technical_name }}</div>
+        {% endif %}
+        <div class="border rounded bg-light p-2 small" style="white-space: pre-wrap;">{{ message_template.message_text }}</div>
+      {% else %}
+        <div class="text-muted">
+          У сценария не выбран шаблон сообщения. Перед пилотом или боевым запуском нужно привязать шаблон в настройках сценария.
         </div>
       {% endif %}
     </div>
@@ -165,7 +204,12 @@
 
       <hr class="my-4">
 
-      <h2 class="h6 mb-3">Описание акции</h2>
+      <h2 class="h6 mb-3">Описание купона и условия iikoCard</h2>
+      <div class="alert alert-light border">
+        <div class="fw-semibold mb-1">Тексты разделены</div>
+        <div class="small">Шаблон сообщения — текст, который получит гость в Telegram/VK/MAX.</div>
+        <div class="small">Описание купона для vtelemax — текст в карточке купона и QR-меню.</div>
+      </div>
       <div class="row g-3">
         <div class="col-12 col-lg-4">
           {{ form.min_order_amount.label_tag }}
@@ -185,7 +229,7 @@
         <div class="col-12">
           {{ form.coupon_promo_text_template.label_tag }}
           {{ form.coupon_promo_text_template }}
-          <div class="form-text">Текст карточки купона для vtelemax. Шаблон сообщения гостю настраивается в связанном сценарии.</div>
+          <div class="form-text">Описание купона для vtelemax — текст в карточке купона и QR-меню. Это не сообщение в Telegram/VK/MAX.</div>
           {% if form.coupon_promo_text_template.errors %}
             <div class="text-danger small mt-1">{{ form.coupon_promo_text_template.errors|join:", " }}</div>
           {% endif %}

@@ -132,8 +132,8 @@
           <thead class="table-light">
             <tr>
               <th>Сценарий</th>
-              <th>Режим</th>
-              <th>Старый планировщик</th>
+              <th>Состояние</th>
+              <th>Старый планировщик уведомлений</th>
               <th>Купоны</th>
               <th>Заведение</th>
               <th>Лимит / пауза</th>
@@ -152,13 +152,16 @@
                 </td>
                 <td>
                   {% if config.execution_mode == "pilot" %}
-                    <span class="badge text-bg-info">{{ config.get_execution_mode_display }}</span>
+                    <span class="badge text-bg-info">{{ config.execution_state_label }}</span>
                   {% elif config.execution_mode == "automatic" %}
-                    <span class="badge text-bg-success">{{ config.get_execution_mode_display }}</span>
+                    <span class="badge text-bg-success">{{ config.execution_state_label }}</span>
                   {% elif config.execution_mode == "paused" %}
-                    <span class="badge text-bg-secondary">{{ config.get_execution_mode_display }}</span>
+                    <span class="badge text-bg-secondary">{{ config.execution_state_label }}</span>
                   {% else %}
-                    <span class="badge text-bg-light text-dark">{{ config.get_execution_mode_display }}</span>
+                    <span class="badge text-bg-light text-dark">{{ config.execution_state_label }}</span>
+                  {% endif %}
+                  {% if config.execution_state_hint %}
+                    <div class="small text-muted">{{ config.execution_state_hint }}</div>
                   {% endif %}
                 </td>
                 <td>
@@ -213,6 +216,13 @@
                   <div class="small">
                     <div class="fw-semibold mb-1">Правило выбора купона</div>
                     <div class="text-muted mb-2">{{ config.coupon_selection_policy_label }}</div>
+                    <div class="row g-2 mb-2">
+                      {% for label, value in config.coupon_selection_policy_rows %}
+                        <div class="col-12 col-lg-4">
+                          <span class="text-muted">{{ label }}:</span> {{ value }}
+                        </div>
+                      {% endfor %}
+                    </div>
                     {% if config.has_rule_based_coupon_selection %}
                       <div class="d-flex flex-column gap-1">
                         {% for rule in config.active_coupon_rules %}
@@ -294,8 +304,11 @@
             <div>
               <h3 class="h6 mb-1">Предпросмотр: <code>{{ coupon_plan.scenario_code }}</code></h3>
               <div class="text-muted small">
-                Режим: {{ coupon_plan.execution_mode }} · серия: {{ coupon_plan.coupon_series|default:"—" }} · заведение: {{ coupon_plan.venue_name|default:coupon_plan.venue_code|default:"—" }}
+                Состояние: {{ coupon_plan.execution_state_label }} · серия: {{ coupon_plan.coupon_series|default:"—" }} · заведение: {{ coupon_plan.venue_name|default:coupon_plan.venue_code|default:"—" }}
               </div>
+              {% if coupon_plan.execution_state_hint %}
+                <div class="text-muted small">{{ coupon_plan.execution_state_hint }}</div>
+              {% endif %}
             </div>
             {% if coupon_plan.can_execute %}
               <span class="badge text-bg-success">можно выполнить пробный запуск</span>
@@ -334,6 +347,18 @@
             <div class="col-6 col-lg-2">
               <div class="text-muted small">Дефицит купонов</div>
               <div class="h5 mb-0">{{ coupon_plan.coupon_shortage }}</div>
+            </div>
+          </div>
+
+          <div class="border rounded p-2 mb-3 bg-light">
+            <div class="fw-semibold small mb-1">Как выбирается купон</div>
+            <div class="small text-muted mb-2">{{ coupon_plan.coupon_selection_policy_label }}</div>
+            <div class="row g-2 small">
+              {% for label, value in coupon_plan.coupon_selection_policy_rows %}
+                <div class="col-12 col-lg-4">
+                  <span class="text-muted">{{ label }}:</span> {{ value }}
+                </div>
+              {% endfor %}
             </div>
           </div>
 
