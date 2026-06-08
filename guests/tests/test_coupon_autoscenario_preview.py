@@ -9,6 +9,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.models import (
+    BotProfile,
     CouponAutoscenarioAssignment,
     CouponAutoscenarioRun,
     CouponAutomationConfig,
@@ -17,6 +18,7 @@ from guests.models import (
     CouponVtelemaxSyncQueue,
     DispatchTask,
     Guest,
+    GuestBotBinding,
     Mailing,
     MessageTemplate,
     NotificationEvent,
@@ -29,6 +31,7 @@ from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
     _autoscenario_assignments_for_update_queryset,
     build_coupon_autoscenario_execution_plan,
+    create_autoscenario_dispatch_after_vtelemax_ack,
     execute_coupon_autoscenario_pilot,
     preview_coupon_autoscenario_audience,
 )
@@ -600,6 +603,76 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
 
         self.assertEqual(queryset.query.select_for_update_of, ("self",))
+
+    def test_pilot_dispatch_after_ack_is_available_immediately_even_for_uniform_scenario(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.settings = {"pilot_phones": ["+79990000145"]}
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        now = timezone.now()
+        self.scenario.distribution_mode = NotificationScenario.DistributionMode.UNIFORM
+        self.scenario.timezone = "UTC"
+        self.scenario.send_window_begin = (now + timedelta(hours=1)).time().replace(microsecond=0)
+        self.scenario.send_window_end = (now + timedelta(hours=2)).time().replace(microsecond=0)
+        self.scenario.save(
+            update_fields=[
+                "distribution_mode",
+                "timezone",
+                "send_window_begin",
+                "send_window_end",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000145", first_name="ImmediatePilot")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        bot = BotProfile.objects.create(
+            code="tg_autoscenario_pilot_immediate",
+            name="Telegram autoscenario pilot immediate",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=bot,
+            external_chat_id="pilot-chat-145",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        self._available_coupon(code="AUTO-PILOT-NOW")
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=self.now,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        ack_time = now - timedelta(minutes=1)
+        assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = ack_time
+        assignment.save(update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"])
+
+        created_tasks = create_autoscenario_dispatch_after_vtelemax_ack(
+            assignment_id=assignment.id,
+            now=ack_time,
+        )
+
+        self.assertEqual(created_tasks, 1)
+        event = NotificationEvent.objects.get(source_ref=f"coupon_autoscenario_assignment:{assignment.id}")
+        task = DispatchTask.objects.get(notification_event=event)
+        self.assertEqual(event.planned_send_at, ack_time)
+        self.assertEqual(task.available_at, ack_time)
+        self.assertEqual(task.scheduled_at, ack_time)
+        self.assertEqual(task.status, DispatchTask.Status.PENDING)
 
     def test_execute_pilot_confirm_requires_pilot_mode(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY

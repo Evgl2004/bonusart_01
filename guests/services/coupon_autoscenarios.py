@@ -723,6 +723,7 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             venue_name=assignment.venue_name or "",
             valid_until=assignment.lifetime_expires_at,
         )
+        is_pilot_execution = assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
         try:
             created_count = create_notification_event(
                 scenario_code=assignment.scenario.code,
@@ -738,9 +739,9 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
                 coupon_code=assignment.coupon_code,
                 coupon_external_id=f"{assignment.coupon_series}:{assignment.coupon_code}",
                 coupon_expires_at=assignment.lifetime_expires_at,
-                allow_inactive_scenario=(
-                    assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
-                ),
+                allow_inactive_scenario=is_pilot_execution,
+                planned_send_at_override=current_now if is_pilot_execution else None,
+                skip_send_limits=is_pilot_execution,
             )
         except ScenarioNotConfiguredError as exc:
             _mark_autoscenario_assignment_dispatch_error(

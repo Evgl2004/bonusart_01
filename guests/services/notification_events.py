@@ -400,6 +400,8 @@ def create_notification_event(
     route_target_mode: Optional[str] = None,
     route_allowed_bot_profile_ids: Optional[Iterable[int]] = None,
     allow_inactive_scenario: bool = False,
+    planned_send_at_override: Optional[datetime] = None,
+    skip_send_limits: bool = False,
 ) -> int:
     """
     Создаёт NotificationEvent и ставит задачи в DispatchTask по сценарию.
@@ -446,7 +448,12 @@ def create_notification_event(
     if timezone.is_naive(safe_event_at):
         safe_event_at = timezone.make_aware(safe_event_at, timezone.get_current_timezone())
 
-    planned_send_at = _calculate_planned_send_at(scenario=scenario, now=now)
+    if planned_send_at_override is not None:
+        planned_send_at = planned_send_at_override
+        if timezone.is_naive(planned_send_at):
+            planned_send_at = timezone.make_aware(planned_send_at, timezone.get_current_timezone())
+    else:
+        planned_send_at = _calculate_planned_send_at(scenario=scenario, now=now)
     safe_payload = _normalize_event_payload(payload)
     safe_event_source_type = _normalize_event_source_type(event_source_type)
 
@@ -481,29 +488,30 @@ def create_notification_event(
         )
         return 0
 
-    adjusted_planned_send_at, defer_reason = _apply_scenario_send_limits(
-        scenario=scenario,
-        guest=guest,
-        planned_send_at=planned_send_at,
-    )
-    if adjusted_planned_send_at != planned_send_at:
-        planned_send_at = adjusted_planned_send_at
-        event_payload = dict(event.payload or {})
-        event_payload["deferred"] = {
-            "reason": defer_reason or "send_limits",
-            "deferred_until": planned_send_at.isoformat(),
-        }
-        event.planned_send_at = planned_send_at
-        event.payload = event_payload
-        event.save(update_fields=["planned_send_at", "payload", "updated_at"])
-        logger.info(
-            "NotificationEvent id=%s scenario=%s guest_id=%s отложено по лимитам до %s (%s)",
-            event.id,
-            scenario.code,
-            guest.id,
-            planned_send_at.isoformat(),
-            defer_reason or "send_limits",
+    if not skip_send_limits:
+        adjusted_planned_send_at, defer_reason = _apply_scenario_send_limits(
+            scenario=scenario,
+            guest=guest,
+            planned_send_at=planned_send_at,
         )
+        if adjusted_planned_send_at != planned_send_at:
+            planned_send_at = adjusted_planned_send_at
+            event_payload = dict(event.payload or {})
+            event_payload["deferred"] = {
+                "reason": defer_reason or "send_limits",
+                "deferred_until": planned_send_at.isoformat(),
+            }
+            event.planned_send_at = planned_send_at
+            event.payload = event_payload
+            event.save(update_fields=["planned_send_at", "payload", "updated_at"])
+            logger.info(
+                "NotificationEvent id=%s scenario=%s guest_id=%s отложено по лимитам до %s (%s)",
+                event.id,
+                scenario.code,
+                guest.id,
+                planned_send_at.isoformat(),
+                defer_reason or "send_limits",
+            )
 
     message_text = _render_scenario_message(
         scenario=scenario,
