@@ -678,6 +678,71 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertIn("45 дней", task.message_text)
         self.assertNotIn("days_without_visits", task.message_text)
 
+    def test_forced_pilot_without_visit_uses_safe_days_value_in_message(self):
+        self.template.message_text = "Long time no see ({{ days_without_visits }} days). Coupon {coupon_code}"
+        self.template.save(update_fields=["message_text", "updated_at"])
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.settings = {
+            "pilot_phones": ["+79990000146"],
+            "pilot_include_unmatched": True,
+        }
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000146", first_name="ForcedPilot")
+        self._sendable_channel(guest=guest)
+        bot = BotProfile.objects.create(
+            code="tg_autoscenario_forced_pilot",
+            name="Telegram autoscenario forced pilot",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=bot,
+            external_chat_id="pilot-chat-146",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        self._available_coupon(code="AUTO-FORCED-NOW")
+
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=self.now,
+        )
+
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        self.assertIn("30 days", assignment.promo_text)
+        queue_event = CouponVtelemaxSyncQueue.objects.get(autoscenario_assignment=assignment)
+        self.assertEqual(queue_event.payload_json["days_without_visits"], 30)
+
+        ack_time = self.now + timedelta(minutes=5)
+        assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = ack_time
+        assignment.save(update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"])
+
+        created_tasks = create_autoscenario_dispatch_after_vtelemax_ack(
+            assignment_id=assignment.id,
+            now=ack_time,
+            days_without_visits=queue_event.payload_json["days_without_visits"],
+        )
+
+        self.assertEqual(created_tasks, 1)
+        event = NotificationEvent.objects.get(source_ref=f"coupon_autoscenario_assignment:{assignment.id}")
+        task = DispatchTask.objects.get(notification_event=event)
+        self.assertIn("30 days", task.message_text)
+        self.assertNotIn("days_without_visits", task.message_text)
+
     def test_execute_pilot_confirm_requires_pilot_mode(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
         self.config.save(update_fields=["execution_mode", "updated_at"])

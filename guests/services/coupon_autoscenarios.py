@@ -42,6 +42,10 @@ PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS = (
     "pilot_force_include",
     "pilot_force_include_recipients",
 )
+PILOT_DAYS_WITHOUT_VISITS_SETTINGS_KEYS = (
+    "pilot_days_without_visits",
+    "test_days_without_visits",
+)
 
 
 class CouponAutoscenarioPreviewError(ValueError):
@@ -134,6 +138,8 @@ class CouponAutoscenarioPlanItem:
     venue_code: str
     venue_name: str
     valid_until: datetime
+    last_visit_at: datetime | None = None
+    days_without_visits: int | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -148,6 +154,8 @@ class CouponAutoscenarioPlanItem:
             "venue_code": self.venue_code,
             "venue_name": self.venue_name,
             "valid_until": self.valid_until.isoformat(),
+            "last_visit_at": self.last_visit_at.isoformat() if self.last_visit_at else None,
+            "days_without_visits": self.days_without_visits,
         }
 
 
@@ -462,6 +470,15 @@ def build_coupon_autoscenario_execution_plan(
     for row, coupon in zip(eligible_rows[:planned_recipients], available_coupons):
         venue_code = str(coupon.venue_code or config.venue_code or "").strip()
         venue_name = str(coupon.venue_name or config.venue_name or "").strip()
+        days_without_visits = _days_without_visits_from_last_visit(
+            last_visit_at=row.last_visit_at,
+            now=current_now,
+        )
+        if days_without_visits is None and config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT:
+            days_without_visits = _resolve_pilot_days_without_visits(
+                config=config,
+                default_days=inactive_days,
+            )
         plan_items.append(
             CouponAutoscenarioPlanItem(
                 guest_id=row.guest_id,
@@ -475,6 +492,8 @@ def build_coupon_autoscenario_execution_plan(
                 venue_code=venue_code,
                 venue_name=venue_name,
                 valid_until=valid_until,
+                last_visit_at=row.last_visit_at,
+                days_without_visits=days_without_visits,
             )
         )
 
@@ -613,6 +632,7 @@ def execute_coupon_autoscenario_pilot(
                 venue_name=item.venue_name,
                 valid_until=item.valid_until,
                 now=current_now,
+                days_without_visits=item.days_without_visits,
             )
             assignment = CouponAutoscenarioAssignment.objects.create(
                 run=run,
@@ -645,6 +665,7 @@ def execute_coupon_autoscenario_pilot(
                 payload_json=_build_autoscenario_assignment_payload(
                     run=run,
                     assignment=assignment,
+                    days_without_visits=item.days_without_visits,
                 ),
                 status=CouponVtelemaxSyncQueue.Status.PENDING,
                 next_retry_at=current_now,
@@ -669,6 +690,7 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
     *,
     assignment_id: int,
     now: datetime | None = None,
+    days_without_visits: int | None = None,
 ) -> int:
     """
     Создаёт задачу отправки гостю после ACK assignment-события во vtelemax.
@@ -723,9 +745,13 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             venue_code=assignment.venue_code or "",
             venue_name=assignment.venue_name or "",
             valid_until=assignment.lifetime_expires_at,
-            days_without_visits=_calculate_days_without_visits(
-                guest_id=int(assignment.guest_id),
-                now=current_now,
+            days_without_visits=(
+                days_without_visits
+                if days_without_visits is not None
+                else _calculate_days_without_visits(
+                    guest_id=int(assignment.guest_id),
+                    now=current_now,
+                )
             ),
         )
         is_pilot_execution = assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
@@ -1102,6 +1128,7 @@ def _render_autoscenario_coupon_text(
     venue_name: str,
     valid_until: datetime,
     now: datetime | None = None,
+    days_without_visits: int | None = None,
 ) -> str:
     template_text = str(config.coupon_promo_text_template or "").strip()
     if not template_text:
@@ -1118,12 +1145,42 @@ def _render_autoscenario_coupon_text(
             venue_code=venue_code,
             venue_name=venue_name,
             valid_until=valid_until,
-            days_without_visits=_calculate_days_without_visits(
-                guest_id=int(guest.id),
-                now=current_now,
+            days_without_visits=(
+                days_without_visits
+                if days_without_visits is not None
+                else _calculate_days_without_visits(
+                    guest_id=int(guest.id),
+                    now=current_now,
+                )
             ),
         ),
     )
+
+
+def _days_without_visits_from_last_visit(
+    *,
+    last_visit_at: datetime | None,
+    now: datetime,
+) -> int | None:
+    if last_visit_at is None:
+        return None
+    return max(0, int((now - last_visit_at).days))
+
+
+def _resolve_pilot_days_without_visits(
+    *,
+    config: CouponAutomationConfig,
+    default_days: int,
+) -> int:
+    payload = config.settings if isinstance(config.settings, dict) else {}
+    for key in PILOT_DAYS_WITHOUT_VISITS_SETTINGS_KEYS:
+        if key not in payload:
+            continue
+        try:
+            return max(0, int(payload.get(key)))
+        except (TypeError, ValueError):
+            continue
+    return max(0, int(default_days or 0))
 
 
 def _calculate_days_without_visits(*, guest_id: int | None, now: datetime | None = None) -> int | None:
@@ -1248,6 +1305,7 @@ def _build_autoscenario_assignment_payload(
     *,
     run: CouponAutoscenarioRun,
     assignment: CouponAutoscenarioAssignment,
+    days_without_visits: int | None = None,
 ) -> dict:
     return {
         "source": "autoscenario",
@@ -1264,6 +1322,7 @@ def _build_autoscenario_assignment_payload(
         "venue_code": assignment.venue_code,
         "venue_name": assignment.venue_name,
         "promo_text": assignment.promo_text,
+        "days_without_visits": days_without_visits,
         "status": assignment.status,
         "vtelemax_sync_status": assignment.vtelemax_sync_status,
     }

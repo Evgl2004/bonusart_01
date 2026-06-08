@@ -509,6 +509,15 @@ class VtelemaxCouponSyncService:
         token = str(value).strip().lower()
         return token in {"1", "true", "yes", "y", "on"}
 
+    @staticmethod
+    def _optional_int(value: Any) -> int | None:
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
     def _apply_post_ack_effects(self, *, event: CouponVtelemaxSyncQueue) -> None:
         """
         Применяет побочные эффекты после подтверждённой отправки события в vtelemax.
@@ -530,6 +539,9 @@ class VtelemaxCouponSyncService:
                 create_autoscenario_dispatch_after_vtelemax_ack(
                     assignment_id=int(event.autoscenario_assignment_id),
                     now=event.ack_at,
+                    days_without_visits=self._optional_int(
+                        (event.payload_json or {}).get("days_without_visits")
+                    ),
                 )
             except Exception:
                 logger.exception(
