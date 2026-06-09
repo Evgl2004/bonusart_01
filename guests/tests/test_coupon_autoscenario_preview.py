@@ -26,7 +26,6 @@ from guests.models import (
     NotificationScenario,
     OrderFact,
     Restaurant,
-    VisitHistory,
     VtelemaxRecipientChannel,
 )
 from guests.services.coupon_autoscenarios import (
@@ -110,11 +109,15 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
 
     def _visit(self, *, guest: Guest, days_ago: int) -> None:
-        VisitHistory.objects.create(
+        sequence = OrderFact.objects.count() + 1
+        OrderFact.objects.create(
             guest=guest,
-            restaurant=self.restaurant,
-            visit_date=self.now - timedelta(days=days_ago),
-            visit_count=1,
+            business_date=(self.now - timedelta(days=days_ago)).date(),
+            department_id=self.restaurant.iiko_id,
+            department_name=self.restaurant.name,
+            order_number=100000 + sequence,
+            uniq_order_id=f"autoscenario-visit-{guest.id}-{sequence}",
+            first_seen_at=self.now - timedelta(days=days_ago),
         )
 
     def _sendable_channel(self, *, guest: Guest, platform: str = VtelemaxRecipientChannel.Platform.TELEGRAM) -> None:
@@ -385,30 +388,30 @@ class CouponAutoscenarioPreviewTests(TestCase):
 
         OrderFact.objects.create(
             guest=dep_guest,
-            business_date=(self.now - timedelta(days=5)).date(),
+            business_date=(self.now - timedelta(days=45)).date(),
             department_id="DEP_OTHER",
             department_name="Другое заведение",
             order_number=1,
             uniq_order_id="dep-old",
-            first_seen_at=self.now - timedelta(days=5),
+            first_seen_at=self.now - timedelta(days=45),
         )
         OrderFact.objects.create(
             guest=dep_guest,
-            business_date=(self.now - timedelta(days=1)).date(),
+            business_date=(self.now - timedelta(days=40)).date(),
             department_id="DEP_1",
             department_name="Тестовое заведение",
             order_number=2,
             uniq_order_id="dep-latest",
-            first_seen_at=self.now - timedelta(days=1),
+            first_seen_at=self.now - timedelta(days=40),
         )
         OrderFact.objects.create(
             guest=global_guest,
-            business_date=(self.now - timedelta(days=1)).date(),
+            business_date=(self.now - timedelta(days=40)).date(),
             department_id="DEP_OTHER",
             department_name="Другое заведение",
             order_number=3,
             uniq_order_id="global-latest",
-            first_seen_at=self.now - timedelta(days=1),
+            first_seen_at=self.now - timedelta(days=40),
         )
         venue_coupon = CouponRegistryEntry.objects.create(
             series="AUTO_DEP_1",

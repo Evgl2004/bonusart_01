@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 
 from django.db import transaction
 from django.db.models import F, OuterRef, Q, QuerySet, Subquery, Window
@@ -21,16 +21,12 @@ from guests.models import (
     NotificationEvent,
     NotificationScenario,
     OrderFact,
-    VisitHistory,
     VtelemaxRecipientChannel,
 )
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon_global_venue
 from guests.services.notification_events import ScenarioNotConfiguredError, create_notification_event
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
-from guests.services.notification_scenarios import (
-    _collect_candidate_guests,
-    _extract_inactive_days,
-)
+from guests.services.notification_scenarios import _extract_inactive_days
 from guests.services.guest_resolution import normalize_phone_e164
 from guests.services.template_render import render_message_for_guest
 
@@ -330,6 +326,9 @@ class CouponRuleOption:
 class GuestLastOrderVenue:
     department_id: str
     department_name: str
+    business_date: date | None = None
+    first_seen_at: datetime | None = None
+    last_visit_at: datetime | None = None
 
 
 def preview_coupon_autoscenario_audience(
@@ -1143,6 +1142,36 @@ def _is_allowed_by_pilot_filter(
     return bool(normalized_phone and normalized_phone in set(pilot_filter.phones))
 
 
+def _latest_order_fact_query_for_guest() -> QuerySet:
+    return OrderFact.objects.filter(guest_id=OuterRef("pk")).order_by(
+        F("business_date").desc(nulls_last=True),
+        F("first_seen_at").desc(nulls_last=True),
+        F("id").desc(),
+    )
+
+
+def _order_fact_visit_datetime(
+    *,
+    business_date: date | datetime | None,
+    first_seen_at: datetime | None = None,
+) -> datetime | None:
+    if business_date is not None:
+        if isinstance(business_date, datetime):
+            if timezone.is_aware(business_date):
+                return business_date
+            return timezone.make_aware(business_date, timezone.get_current_timezone())
+        if isinstance(business_date, date):
+            return timezone.make_aware(
+                datetime.combine(business_date, time.min),
+                timezone.get_current_timezone(),
+            )
+    if first_seen_at is None:
+        return None
+    if timezone.is_aware(first_seen_at):
+        return first_seen_at
+    return timezone.make_aware(first_seen_at, timezone.get_current_timezone())
+
+
 def _append_unmatched_pilot_rows_if_requested(
     *,
     matched_rows: list[CouponAutoscenarioAudienceRow],
@@ -1165,30 +1194,26 @@ def _append_unmatched_pilot_rows_if_requested(
     if not filters:
         return matched_rows, 0
 
-    last_visit_subquery = (
-        VisitHistory.objects.filter(guest_id=OuterRef("pk"))
-        .order_by("-visit_date")
-        .values("visit_date")[:1]
-    )
-    guests = list(
-        Guest.objects.annotate(last_visit_at=Subquery(last_visit_subquery))
-        .filter(filters)
-        .order_by("id")
-    )
-    channels_map = _build_sendable_channels_map(guest_ids=[int(guest.id) for guest in guests])
+    guests = list(Guest.objects.filter(filters).order_by("id"))
+    guest_ids = [int(guest.id) for guest in guests]
+    channels_map = _build_sendable_channels_map(guest_ids=guest_ids)
+    last_order_venues = _last_order_venue_map(guest_ids=guest_ids)
+    last_order_visits = _last_order_visit_at_map(guest_ids=guest_ids)
 
     extra_rows: list[CouponAutoscenarioAudienceRow] = []
     for guest in guests:
         guest_id = int(guest.id)
         if guest_id in existing_guest_ids:
             continue
+        last_order_venue = last_order_venues.get(guest_id)
         extra_rows.append(
             CouponAutoscenarioAudienceRow(
                 guest_id=guest_id,
                 phone=str(guest.phone or ""),
                 first_name=str(guest.first_name or ""),
                 last_name=str(guest.last_name or ""),
-                last_visit_at=getattr(guest, "last_visit_at", None),
+                last_visit_at=last_order_visits.get(guest_id)
+                or (last_order_venue.last_visit_at if last_order_venue else None),
                 sendable_channels=tuple(channels_map.get(guest_id, ())),
                 is_pilot_forced=True,
             )
@@ -1224,12 +1249,15 @@ def _build_candidate_rows(
     scan_limit: int,
     now: datetime,
 ) -> tuple[int, list[CouponAutoscenarioAudienceRow]]:
+    cutoff_date = timezone.localtime(now).date() - timedelta(days=max(1, int(inactive_days)))
+    latest_order_query = _latest_order_fact_query_for_guest()
     candidates = list(
-        _collect_candidate_guests(
-            inactive_days=inactive_days,
-            limit=scan_limit,
-            now=now,
+        Guest.objects.annotate(
+            last_order_business_date=Subquery(latest_order_query.values("business_date")[:1]),
+            last_order_first_seen_at=Subquery(latest_order_query.values("first_seen_at")[:1]),
         )
+        .filter(last_order_business_date__isnull=False, last_order_business_date__lte=cutoff_date)
+        .order_by("id")[: max(1, int(scan_limit))]
     )
     channels_map = _build_sendable_channels_map(guest_ids=[candidate.id for candidate in candidates])
 
@@ -1237,7 +1265,10 @@ def _build_candidate_rows(
     scanned_guests = 0
     for guest in candidates:
         scanned_guests += 1
-        last_visit_at = getattr(guest, "last_visit_at", None)
+        last_visit_at = _order_fact_visit_datetime(
+            business_date=getattr(guest, "last_order_business_date", None),
+            first_seen_at=getattr(guest, "last_order_first_seen_at", None),
+        )
         if last_visit_at is None:
             continue
         days_without_visits = max(0, int((now - last_visit_at).days))
@@ -1419,15 +1450,53 @@ def _last_order_venue_map(*, guest_ids: list[int]) -> dict[int, GuestLastOrderVe
             )
         )
         .filter(rn=1)
-        .values("guest_id", "department_id", "department_name")
+        .values("guest_id", "department_id", "department_name", "business_date", "first_seen_at")
     )
     return {
         int(row["guest_id"]): GuestLastOrderVenue(
             department_id=str(row.get("department_id") or "").strip(),
             department_name=str(row.get("department_name") or "").strip(),
+            business_date=row.get("business_date"),
+            first_seen_at=row.get("first_seen_at"),
+            last_visit_at=_order_fact_visit_datetime(
+                business_date=row.get("business_date"),
+                first_seen_at=row.get("first_seen_at"),
+            ),
         )
         for row in latest_rows
     }
+
+
+def _last_order_visit_at_map(*, guest_ids: list[int]) -> dict[int, datetime]:
+    unique_guest_ids = [int(guest_id) for guest_id in dict.fromkeys(guest_ids) if guest_id]
+    if not unique_guest_ids:
+        return {}
+
+    latest_rows = (
+        OrderFact.objects.filter(guest_id__in=unique_guest_ids)
+        .annotate(
+            rn=Window(
+                expression=RowNumber(),
+                partition_by=[F("guest_id")],
+                order_by=[
+                    F("business_date").desc(nulls_last=True),
+                    F("first_seen_at").desc(nulls_last=True),
+                    F("id").desc(),
+                ],
+            )
+        )
+        .filter(rn=1)
+        .values("guest_id", "business_date", "first_seen_at")
+    )
+    result: dict[int, datetime] = {}
+    for row in latest_rows:
+        last_visit_at = _order_fact_visit_datetime(
+            business_date=row.get("business_date"),
+            first_seen_at=row.get("first_seen_at"),
+        )
+        if last_visit_at is not None:
+            result[int(row["guest_id"])] = last_visit_at
+    return result
 
 
 def _select_coupon_for_row(
@@ -1579,12 +1648,7 @@ def _calculate_days_without_visits(*, guest_id: int | None, now: datetime | None
     if not guest_id:
         return None
     current_now = now or timezone.now()
-    last_visit_at = (
-        VisitHistory.objects.filter(guest_id=int(guest_id))
-        .order_by("-visit_date")
-        .values_list("visit_date", flat=True)
-        .first()
-    )
+    last_visit_at = _last_order_visit_at_map(guest_ids=[int(guest_id)]).get(int(guest_id))
     if last_visit_at is None:
         return None
     return max(0, int((current_now - last_visit_at).days))

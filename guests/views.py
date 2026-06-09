@@ -15,7 +15,7 @@ from django.views.decorators.http import require_POST
 from django.views import View
 from django.contrib import messages
 
-from .models import Guest, GuestCategory, GuestCategoryAssignment, Category, Restaurant, VisitHistory,MessageTemplate
+from .models import Guest, GuestCategory, GuestCategoryAssignment, Category, Restaurant,MessageTemplate
 from .models import GuestBotBinding, Mailing, MailingGuest
 
 from .forms import CategoryForm,MessageTemplateForm,MailingForm
