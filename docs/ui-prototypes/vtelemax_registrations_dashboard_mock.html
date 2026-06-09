@@ -47,7 +47,7 @@
 
     .header-layout {
       display: grid;
-      grid-template-columns: 1.1fr 1fr;
+      grid-template-columns: 0.8fr 1.2fr;
       gap: 14px;
       align-items: start;
     }
@@ -66,7 +66,7 @@
 
     .quick-metrics {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 8px;
     }
 
@@ -118,7 +118,7 @@
 
 
     .kpi-row {
-      display: grid;
+      display: none;
       grid-template-columns: repeat(4, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 14px;
@@ -444,7 +444,6 @@
     function renderAll() {
       renderPeriodButtons();
       renderQuickMetrics();
-      renderKpis();
       renderPeriodText();
       renderChartsOnly();
     }
@@ -459,8 +458,26 @@
 
     function renderQuickMetrics() {
       const now = FULL_ROWS[FULL_ROWS.length - 1];
+      const yesterday = FULL_ROWS.length > 1 ? FULL_ROWS[FULL_ROWS.length - 2] : now;
+      const dayBeforeYesterday = FULL_ROWS.length > 2 ? FULL_ROWS[FULL_ROWS.length - 3] : yesterday;
       const node = document.getElementById("quickMetrics");
-      node.innerHTML = periodOptions.map((days) => {
+      let html = `
+        <article class="quick-chip">
+          <div class="quick-title">Итоги за весь период</div>
+          <div class="quick-line">Каналы: ${formatInt(nowTotalChannels(now))}</div>
+          <div class="quick-line">С согласием: ${formatInt(nowOptinChannels(now))}</div>
+          <div class="quick-line">Гости: ${formatInt(now.unique_persons_total)}</div>
+          <div class="quick-line">Гости с согласием: ${formatInt(now.unique_persons_registered_optin)}</div>
+        </article>
+        <article class="quick-chip">
+          <div class="quick-title">Прирост за вчера (${shortDay(yesterday.day)})</div>
+          <div class="quick-line">Каналы: ${signed(nowTotalChannels(yesterday) - nowTotalChannels(dayBeforeYesterday))}</div>
+          <div class="quick-line">С согласием: ${signed(nowOptinChannels(yesterday) - nowOptinChannels(dayBeforeYesterday))}</div>
+          <div class="quick-line">Гости: ${signed(yesterday.unique_persons_total - dayBeforeYesterday.unique_persons_total)}</div>
+          <div class="quick-line">Гости с согласием: ${signed(yesterday.unique_persons_registered_optin - dayBeforeYesterday.unique_persons_registered_optin)}</div>
+        </article>
+      `;
+      html += periodOptions.map((days) => {
         const prev = snapshotBeforeDays(days);
         return `
           <article class="quick-chip">
@@ -472,6 +489,7 @@
           </article>
         `;
       }).join("");
+      node.innerHTML = html;
     }
 
     function renderKpis() {
