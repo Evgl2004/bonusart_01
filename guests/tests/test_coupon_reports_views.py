@@ -24,6 +24,7 @@ from guests.models import (
     OrderFact,
     TerminalDepartmentMap,
 )
+from guests.views_reports import CouponAutoscenarioReportsView
 
 
 class CouponReportsViewsTests(TestCase):
@@ -362,17 +363,24 @@ class CouponReportsViewsTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        daily_rows = response.context["autoscenario_report"]["daily_rows"]
+        report_day = next(row for row in daily_rows if row["date"] == self.now.date().isoformat())
+        self.assertEqual(report_day["weekday_short"], CouponAutoscenarioReportsView.weekday_short_labels[self.now.date().weekday()])
+        self.assertEqual(report_day["is_weekend"], self.now.date().weekday() >= 5)
+        self.assertIn("\n", report_day["axis_label"])
         self.assertContains(response, scenario.code)
         self.assertContains(response, coupon.code)
         self.assertContains(response, guest.phone)
         self.assertContains(response, "350.00")
         self.assertContains(response, "7001")
-        self.assertContains(response, "Воронка сценария")
+        self.assertContains(response, "Воронка боевых запусков")
         self.assertContains(response, "Динамика по дням")
         self.assertContains(response, "Попали под сценарий")
         self.assertContains(response, "Есть канал")
         self.assertContains(response, "Получили купон")
         self.assertContains(response, "Применили купон")
+        self.assertContains(response, "Выходные дни подсвечены")
+        self.assertContains(response, "Применения считаются по дате заказа из OLAP")
         self.assertContains(response, "Журнал пилотов")
 
     def test_coupon_autoscenario_report_keeps_pilot_runs_out_of_marketing_kpi(self):

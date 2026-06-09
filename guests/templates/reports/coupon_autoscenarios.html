@@ -86,8 +86,9 @@
           <div class="col-12 col-lg-6">
             <div class="text-secondary small mb-1">Что показывает этот отчёт</div>
             <div>
-              Сколько реальных гостей попало под сценарий, сколько из них доступны для отправки,
-              сколько получили купон, сколько применили купон и какую оплаченную сумму дали заказы с купоном.
+              Исторические результаты боевых запусков: сколько реальных гостей попало под сценарий,
+              сколько из них доступны для отправки, сколько получили купон, сколько применили купон
+              и какую оплаченную сумму дали заказы с купоном.
             </div>
           </div>
           <div class="col-12 col-lg-6">
@@ -140,7 +141,7 @@
     <div class="row g-3 mb-3">
       <div class="col-12 col-xl-5">
         <div class="card border-0 shadow-sm h-100">
-          <div class="card-header bg-white fw-semibold">Воронка сценария</div>
+          <div class="card-header bg-white fw-semibold">Воронка боевых запусков</div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
               <thead>
@@ -172,8 +173,8 @@
           <div class="card-body">
             {% if autoscenario_report.daily_has_data %}
               <div class="text-muted small mb-2">
-                График показывает только боевые запуски: аудитория сценария, доступные для отправки гости,
-                выданные купоны и применения из OLAP.
+                График показывает только боевые запуски: аудитория и выдача отражаются в день запуска,
+                применения распределяются по датам заказов из OLAP. Выходные дни подсвечены.
               </div>
               <div id="autoscenarioDailyChart" style="height: 340px; min-height: 340px;"></div>
             {% else %}
@@ -187,8 +188,14 @@
       </div>
     </div>
 
-    <div class="card border-0 shadow-sm mb-3">
-      <div class="card-header bg-white fw-semibold">Данные по дням</div>
+    <details class="card border-0 shadow-sm mb-3">
+      <summary class="card-header bg-white fw-semibold">Данные по дням</summary>
+      <div class="card-body border-bottom">
+        <div class="text-muted small">
+          Это техническая детализация боевых запусков за выбранный период. Если запусков не было,
+          строки периода будут нулевыми, а текущую аудиторию нужно смотреть через предпросмотр автосценария.
+        </div>
+      </div>
       <div class="table-responsive" style="max-height: 340px; overflow-y: auto;">
         <table class="table table-sm align-middle mb-0">
           <thead>
@@ -203,8 +210,11 @@
           </thead>
           <tbody>
             {% for row in autoscenario_report.daily_rows %}
-              <tr>
-                <td>{{ row.date }}</td>
+              <tr{% if row.is_weekend %} class="table-light"{% endif %}>
+                <td>
+                  {{ row.display_date|default:row.date }}
+                  <div class="text-muted small">{{ row.weekday_short }}</div>
+                </td>
                 <td>{{ row.matched_guests }}</td>
                 <td>{{ row.sendable_guests }}</td>
                 <td>{{ row.issued_coupons }}</td>
@@ -215,7 +225,7 @@
           </tbody>
         </table>
       </div>
-    </div>
+    </details>
 
     <div class="row g-3 mb-3">
       <div class="col-12 col-xl-6">
@@ -338,7 +348,7 @@
       {% endif %}
     </div>
 
-    <details class="card border-0 shadow-sm mb-3" open>
+    <details class="card border-0 shadow-sm mb-3">
       <summary class="card-header bg-white fw-semibold">Журнал пилотов</summary>
       <div class="card-body border-bottom">
         <div class="alert alert-secondary mb-3">
@@ -502,26 +512,72 @@
 
         const chart = window.echarts.init(chartNode);
         const dates = rows.map((row) => row.date);
+        const axisLabels = rows.map((row) => row.axis_label || row.date);
+        const rowByDate = new Map(rows.map((row) => [row.date, row]));
+        const weekendAreas = rows
+          .filter((row) => row.is_weekend)
+          .map((row) => [{ xAxis: row.date }, { xAxis: row.date }]);
         const matchedGuests = rows.map((row) => Number(row.matched_guests || 0));
         const sendableGuests = rows.map((row) => Number(row.sendable_guests || 0));
         const issuedCoupons = rows.map((row) => Number(row.issued_coupons || 0));
         const usedCoupons = rows.map((row) => Number(row.used_coupons || 0));
+        const formatInt = (value) => Number(value || 0).toLocaleString("ru-RU");
+        const weekendMarkArea = weekendAreas.length
+          ? {
+              silent: true,
+              itemStyle: { color: "rgba(148, 163, 184, 0.16)" },
+              data: weekendAreas
+            }
+          : null;
 
         chart.setOption({
-          tooltip: { trigger: "axis" },
+          tooltip: {
+            trigger: "axis",
+            confine: true,
+            axisPointer: { type: "shadow" },
+            formatter: (params) => {
+              if (!params || !params.length) {
+                return "";
+              }
+              const row = rowByDate.get(params[0].axisValue) || {};
+              const weekday = row.weekday_short ? `, ${row.weekday_short}` : "";
+              const lines = [`<strong>${row.display_date || params[0].axisValue}${weekday}</strong>`];
+              if (row.is_weekend) {
+                lines.push('<span style="color:#64748b">Выходной день</span>');
+              }
+              params.forEach((item) => {
+                lines.push(`${item.marker}${item.seriesName}: ${formatInt(item.value)}`);
+              });
+              lines.push('<span style="color:#64748b">Применения считаются по дате заказа из OLAP.</span>');
+              return lines.join("<br/>");
+            }
+          },
           legend: { top: 0 },
-          grid: { left: 56, right: 24, top: 48, bottom: 40 },
+          grid: { left: 56, right: 56, top: 52, bottom: 54 },
           xAxis: {
             type: "category",
             data: dates,
-            axisLabel: { rotate: dates.length > 20 ? 45 : 0 }
+            axisLabel: {
+              interval: 0,
+              rotate: dates.length > 20 ? 45 : 0,
+              formatter: (value, index) => axisLabels[index] || value
+            }
           },
-          yAxis: { type: "value", minInterval: 1 },
+          yAxis: [
+            { type: "value", name: "Гостей", minInterval: 1 },
+            { type: "value", name: "Купонов", minInterval: 1 }
+          ],
           series: [
-            { name: "Попали под сценарий", type: "bar", data: matchedGuests },
-            { name: "Есть канал", type: "bar", data: sendableGuests },
-            { name: "Получили купон", type: "line", smooth: true, data: issuedCoupons },
-            { name: "Применили купон", type: "line", smooth: true, data: usedCoupons }
+            {
+              name: "Попали под сценарий",
+              type: "bar",
+              yAxisIndex: 0,
+              data: matchedGuests,
+              ...(weekendMarkArea ? { markArea: weekendMarkArea } : {})
+            },
+            { name: "Есть канал", type: "bar", yAxisIndex: 0, data: sendableGuests },
+            { name: "Получили купон", type: "line", yAxisIndex: 1, smooth: true, data: issuedCoupons },
+            { name: "Применили купон", type: "line", yAxisIndex: 1, smooth: true, data: usedCoupons }
           ]
         });
 

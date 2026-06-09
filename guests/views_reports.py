@@ -137,6 +137,7 @@ class CouponAutoscenarioReportsView(TemplateView):
     template_name = "reports/coupon_autoscenarios.html"
     runs_limit = 50
     assignments_limit = 100
+    weekday_short_labels = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -454,6 +455,10 @@ class CouponAutoscenarioReportsView(TemplateView):
         daily = {
             current_date: {
                 "date": current_date.isoformat(),
+                "display_date": current_date.strftime("%d.%m.%Y"),
+                "axis_label": self._daily_axis_label(current_date),
+                "weekday_short": self.weekday_short_labels[current_date.weekday()],
+                "is_weekend": current_date.weekday() >= 5,
                 "matched_guests": 0,
                 "sendable_guests": 0,
                 "issued_coupons": 0,
@@ -533,6 +538,10 @@ class CouponAutoscenarioReportsView(TemplateView):
         while current_date <= end_date:
             yield current_date
             current_date += timedelta(days=1)
+
+    @classmethod
+    def _daily_axis_label(cls, current_date) -> str:
+        return f"{current_date.strftime('%d.%m')}\n{cls.weekday_short_labels[current_date.weekday()]}"
 
     @staticmethod
     def _format_percent(numerator: int, denominator: int) -> str:
