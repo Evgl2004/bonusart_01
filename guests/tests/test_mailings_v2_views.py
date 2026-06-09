@@ -2136,6 +2136,8 @@ class MailingsV2ViewsTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Настройки не сохранены.")
+        self.assertContains(response, "но в базе они не применены")
         self.assertContains(response, "Для состояния «Активен» выберите «Равномерно в окне»")
         config.refresh_from_db()
         scenario.refresh_from_db()

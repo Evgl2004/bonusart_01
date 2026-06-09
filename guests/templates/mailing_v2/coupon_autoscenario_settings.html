@@ -22,6 +22,39 @@
     сообщения гостям не отправляются. Перед выдачей купонов проверьте результат через предпросмотр.
   </div>
 
+  {% if form.errors or rule_formset.errors or rule_formset.non_form_errors %}
+    <div class="alert alert-danger" role="alert">
+      <div class="fw-semibold mb-1">Настройки не сохранены.</div>
+      <div class="mb-2">
+        Исправьте ошибки ниже и сохраните форму ещё раз. Значения в полях показывают вашу последнюю попытку,
+        но в базе они не применены, купоны не резервировались и сообщения не отправлялись.
+      </div>
+      <ul class="mb-0">
+        {% for field in form %}
+          {% for error in field.errors %}
+            <li>{{ field.label }}: {{ error }}</li>
+          {% endfor %}
+        {% endfor %}
+        {% for error in form.non_field_errors %}
+          <li>{{ error }}</li>
+        {% endfor %}
+        {% for error in rule_formset.non_form_errors %}
+          <li>{{ error }}</li>
+        {% endfor %}
+        {% for rule_form in rule_formset.forms %}
+          {% for field in rule_form %}
+            {% for error in field.errors %}
+              <li>Купонное правило: {{ field.label }}: {{ error }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for error in rule_form.non_field_errors %}
+            <li>Купонное правило: {{ error }}</li>
+          {% endfor %}
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white">
       <strong>Как выбирается купон</strong>

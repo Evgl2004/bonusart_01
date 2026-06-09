@@ -1938,6 +1938,10 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         return redirect(self.get_success_url())
 
     def forms_invalid(self, form, rule_formset):
+        messages.error(
+            self.request,
+            "Настройки не сохранены. Исправьте ошибки в форме и повторите сохранение.",
+        )
         return self.render_to_response(
             self.get_context_data(
                 form=form,
