@@ -163,7 +163,7 @@
             <th>Проверка iiko</th>
             <th>Проверен</th>
             <th>Заведение</th>
-            <th>Кампания</th>
+            <th>Источник</th>
             <th>Гость/телефон</th>
             <th>Использован</th>
             <th>Order ID</th>
@@ -183,8 +183,15 @@
               <td>{% if row.iiko_checked_at %}{{ row.iiko_checked_at|date:"d.m.Y H:i" }}{% else %}—{% endif %}</td>
               <td>{{ row.venue_name|default:row.venue_code|default:"—" }}</td>
               <td>
-                {% if row.latest_assignment and row.latest_assignment.campaign %}
-                  <a href="{% url 'mailings_v2_campaigns_status' row.latest_assignment.campaign.id %}">#{{ row.latest_assignment.campaign.id }}</a>
+                {% if row.latest_assignment %}
+                  {% if row.latest_assignment_source_url %}
+                    <a href="{{ row.latest_assignment_source_url }}">{{ row.latest_assignment_source_label }}</a>
+                  {% else %}
+                    {{ row.latest_assignment_source_label|default:"—" }}
+                  {% endif %}
+                  {% if row.latest_assignment_source_detail %}
+                    <div class="small text-muted">{{ row.latest_assignment_source_detail }}</div>
+                  {% endif %}
                 {% else %}
                   —
                 {% endif %}

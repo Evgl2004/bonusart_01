@@ -9,12 +9,16 @@ from django.urls import reverse
 from django.utils import timezone
 
 from guests.models import (
+    CouponAutomationConfig,
+    CouponAutoscenarioAssignment,
+    CouponAutoscenarioRun,
     CouponCampaignAssignment,
     CouponPoolBatch,
     CouponRegistryEntry,
     Guest,
     Mailing,
     MessageTemplate,
+    NotificationScenario,
     TerminalDepartmentMap,
 )
 
@@ -136,6 +140,101 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Синхронизирован")
         self.assertContains(response, "Генерация купонов")
         self.assertNotContains(response, "Операции реестра")
+
+    def test_coupon_registry_shows_latest_autoscenario_assignment(self):
+        campaign_guest = Guest.objects.create(
+            phone="+79991112233",
+            first_name="Иван",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        autoscenario_guest = Guest.objects.create(
+            phone="+79994445566",
+            first_name="Анна",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_REGISTRY",
+            code="AUTO-0001",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+            iiko_checked_at=self.now,
+        )
+        CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=campaign_guest,
+            coupon=coupon,
+            person_id=uuid4(),
+            phone_e164=campaign_guest.phone,
+            coupon_series=coupon.series,
+            coupon_code=coupon.code,
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            assigned_at=self.now,
+            status=CouponCampaignAssignment.Status.CANCELED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            is_active=False,
+            is_system=True,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series=coupon.series,
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            max_recipients_per_run=1,
+        )
+        run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            status=CouponAutoscenarioRun.Status.COMPLETED,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            planned_assignments=1,
+            created_assignments=1,
+            queue_events_created=1,
+        )
+        CouponAutoscenarioAssignment.objects.create(
+            run=run,
+            scenario=scenario,
+            config=config,
+            guest=autoscenario_guest,
+            coupon=coupon,
+            person_id=uuid4(),
+            phone_e164=autoscenario_guest.phone,
+            coupon_series=coupon.series,
+            coupon_code=coupon.code,
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            assigned_at=self.now + timedelta(minutes=10),
+            status=CouponAutoscenarioAssignment.Status.CANCELED,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now + timedelta(minutes=11),
+        )
+
+        response = self.client.get(
+            reverse("coupon_registry"),
+            {"series": coupon.series},
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "AUTO-0001")
+        self.assertContains(response, "Автосценарий")
+        self.assertContains(response, f"inactive_30d_coupon, run #{run.id}")
+        self.assertContains(response, autoscenario_guest.phone)
+        self.assertNotContains(response, campaign_guest.phone)
 
     def test_coupon_generation_form_uses_venue_catalog(self):
         TerminalDepartmentMap.objects.create(

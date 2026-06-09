@@ -24,7 +24,13 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
 from django.views.generic import TemplateView
 
-from guests.models import CouponCampaignAssignment, CouponPoolBatch, CouponRegistryEntry, Mailing
+from guests.models import (
+    CouponAutoscenarioAssignment,
+    CouponCampaignAssignment,
+    CouponPoolBatch,
+    CouponRegistryEntry,
+    Mailing,
+)
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
 from guests.services.coupon_pool import CouponPoolGenerationError, CouponPoolService
 from guests.services.coupon_venues import build_coupon_venue_choices
@@ -129,8 +135,15 @@ class CouponRegistryView(TemplateView):
                 Prefetch(
                     "campaign_assignments",
                     queryset=CouponCampaignAssignment.objects.select_related("campaign", "guest").order_by("-assigned_at"),
-                    to_attr="assignments_for_ui",
-                )
+                    to_attr="campaign_assignments_for_ui",
+                ),
+                Prefetch(
+                    "autoscenario_assignments",
+                    queryset=CouponAutoscenarioAssignment.objects.select_related("scenario", "guest", "run").order_by(
+                        "-assigned_at"
+                    ),
+                    to_attr="autoscenario_assignments_for_ui",
+                ),
             )
             .order_by("-id")
         )
@@ -158,8 +171,24 @@ class CouponRegistryView(TemplateView):
         page_obj = paginator.get_page(self.request.GET.get("page"))
         coupons_rows = list(page_obj.object_list)
         for coupon in coupons_rows:
-            assignments = getattr(coupon, "assignments_for_ui", [])
-            coupon.latest_assignment = assignments[0] if assignments else None
+            campaign_assignments = list(getattr(coupon, "campaign_assignments_for_ui", []))
+            autoscenario_assignments = list(getattr(coupon, "autoscenario_assignments_for_ui", []))
+            if campaign_id:
+                visible_assignment = next(
+                    (assignment for assignment in campaign_assignments if assignment.campaign_id == campaign_id),
+                    None,
+                )
+                visible_source = "campaign" if visible_assignment else None
+            else:
+                visible_source, visible_assignment = self._latest_coupon_assignment_for_ui(
+                    campaign_assignments=campaign_assignments,
+                    autoscenario_assignments=autoscenario_assignments,
+                )
+            self._attach_assignment_ui_fields(
+                coupon=coupon,
+                assignment=visible_assignment,
+                source=visible_source,
+            )
 
         total_filtered = int(coupons_qs.count())
         # Счётчики считаем явными запросами, чтобы логика была прозрачной для сопровождения.
@@ -206,6 +235,58 @@ class CouponRegistryView(TemplateView):
         context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
         context["coupon_generation_url"] = reverse("coupon_generation")
         return context
+
+    @staticmethod
+    def _latest_coupon_assignment_for_ui(
+        *,
+        campaign_assignments: list[CouponCampaignAssignment],
+        autoscenario_assignments: list[CouponAutoscenarioAssignment],
+    ) -> tuple[str | None, CouponCampaignAssignment | CouponAutoscenarioAssignment | None]:
+        candidates: list[tuple[str, CouponCampaignAssignment | CouponAutoscenarioAssignment]] = [
+            ("campaign", assignment) for assignment in campaign_assignments
+        ]
+        candidates.extend(("autoscenario", assignment) for assignment in autoscenario_assignments)
+        if not candidates:
+            return None, None
+        source, assignment = max(
+            candidates,
+            key=lambda item: item[1].assigned_at or item[1].created_at,
+        )
+        return source, assignment
+
+    @staticmethod
+    def _attach_assignment_ui_fields(
+        *,
+        coupon: CouponRegistryEntry,
+        assignment: CouponCampaignAssignment | CouponAutoscenarioAssignment | None,
+        source: str | None,
+    ) -> None:
+        coupon.latest_assignment = assignment
+        coupon.latest_assignment_source = source
+        coupon.latest_assignment_source_label = ""
+        coupon.latest_assignment_source_detail = ""
+        coupon.latest_assignment_source_url = ""
+
+        if assignment is None:
+            return
+
+        if source == "campaign":
+            coupon.latest_assignment_source_label = f"Кампания #{assignment.campaign_id}"
+            coupon.latest_assignment_source_detail = assignment.campaign.name if assignment.campaign else ""
+            coupon.latest_assignment_source_url = reverse("mailings_v2_campaigns_status", args=[assignment.campaign_id])
+            return
+
+        if source == "autoscenario":
+            scenario_code = assignment.scenario.code if assignment.scenario else ""
+            coupon.latest_assignment_source_label = "Автосценарий"
+            coupon.latest_assignment_source_detail = (
+                f"{scenario_code}, run #{assignment.run_id}" if scenario_code else f"run #{assignment.run_id}"
+            )
+            coupon.latest_assignment_source_url = (
+                f"{reverse('mailings_v2_scenarios')}?{urlencode({'coupon_scenario_code': scenario_code})}"
+                if scenario_code
+                else reverse("mailings_v2_scenarios")
+            )
 
 
 class CouponGenerationView(TemplateView):
