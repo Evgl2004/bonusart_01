@@ -8,7 +8,7 @@
     <div>
       <h1 class="h4 mb-1">Отчёты по автосценариям</h1>
       <p class="text-muted mb-0">
-        Агрегированный отчёт по постоянным купонным механикам: волны, назначения, доставка, применения и выручка.
+        Боевой отчёт по постоянным купонным механикам. Пилотные проверки вынесены в отдельный журнал и не влияют на KPI.
       </p>
     </div>
     <div class="d-flex flex-wrap gap-2">
@@ -20,7 +20,7 @@
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">
       <form method="get" class="row g-3 align-items-end">
-        <div class="col-12 col-lg-5">
+        <div class="col-12 col-xl-5">
           <label class="form-label">Автосценарий</label>
           <select class="form-select" name="scenario_code">
             {% for scenario in scenarios %}
@@ -30,18 +30,26 @@
             {% endfor %}
           </select>
         </div>
-        <div class="col-12 col-sm-6 col-lg-2">
+        <div class="col-12 col-sm-6 col-xl-2">
           <label class="form-label">Период с</label>
           <input class="form-control" type="date" name="date_from" value="{{ filters.date_from }}">
         </div>
-        <div class="col-12 col-sm-6 col-lg-2">
+        <div class="col-12 col-sm-6 col-xl-2">
           <label class="form-label">Период по</label>
           <input class="form-control" type="date" name="date_to" value="{{ filters.date_to }}">
         </div>
-        <div class="col-12 col-lg-3 d-grid">
+        <div class="col-12 col-xl-3 d-grid">
           <button class="btn btn-primary" type="submit">Показать</button>
         </div>
       </form>
+      <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+        <span class="text-muted small">Быстрый период:</span>
+        {% for preset in period_presets %}
+          <a class="btn btn-sm {% if preset.active %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ preset.url }}">
+            {{ preset.label }}
+          </a>
+        {% endfor %}
+      </div>
     </div>
   </div>
 
@@ -54,10 +62,10 @@
           <div>
             <h2 class="h5 mb-1">{{ selected_scenario.name }}</h2>
             <div class="text-muted small">
-              Код: <code>{{ selected_scenario.code }}</code>
-              · состояние: {{ selected_scenario.coupon_automation_config.get_execution_mode_display }}
-              · лимит за проход: {{ selected_scenario.coupon_automation_config.max_recipients_per_run }}
-              · пауза: {{ selected_scenario.coupon_automation_config.cooldown_days }} дн.
+              Код: <code>{{ selected_scenario.code }}</code> ·
+              состояние: {{ selected_scenario.coupon_automation_config.get_execution_mode_display }} ·
+              лимит за проход: {{ selected_scenario.coupon_automation_config.max_recipients_per_run }} ·
+              пауза гостю: {{ selected_scenario.coupon_automation_config.cooldown_days }} дн.
             </div>
           </div>
           <a class="btn btn-outline-primary btn-sm" href="{% url 'mailings_v2_coupon_autoscenario_settings' selected_scenario.coupon_automation_config.id %}">
@@ -67,35 +75,58 @@
       </div>
     </div>
 
-    <div class="row g-3 mb-3">
-      <div class="col-12 col-lg-3">
-        <div class="card border-0 shadow-sm h-100">
-          <div class="card-body">
-            <div class="text-secondary small mb-1">Запусков</div>
-            <div class="h3 mb-0">{{ autoscenario_report.runs_total }}</div>
-            <div class="text-muted small">Технических волн за период</div>
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-semibold">Главный вывод для маркетолога</div>
+      <div class="card-body">
+        <div class="alert {% if autoscenario_report.summary.tone == 'success' %}alert-success{% elif autoscenario_report.summary.tone == 'warning' %}alert-warning{% else %}alert-secondary{% endif %} mb-3">
+          <div class="fw-semibold mb-1">Что можно заключить</div>
+          <div>{{ autoscenario_report.summary.conclusion }}</div>
+        </div>
+        <div class="row g-3">
+          <div class="col-12 col-lg-6">
+            <div class="text-secondary small mb-1">Что показывает этот отчёт</div>
+            <div>
+              Сколько реальных гостей попало под сценарий, сколько из них доступны для отправки,
+              сколько получили купон, сколько применили купон и какую оплаченную сумму дали заказы с купоном.
+            </div>
+          </div>
+          <div class="col-12 col-lg-6">
+            <div class="text-secondary small mb-1">Следующее действие</div>
+            <div>{{ autoscenario_report.summary.recommendation }}</div>
           </div>
         </div>
       </div>
-      <div class="col-12 col-lg-3">
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-12 col-md-6 col-xl-3">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-body">
+            <div class="text-secondary small mb-1">Боевых запусков</div>
+            <div class="h3 mb-0">{{ autoscenario_report.runs_total }}</div>
+            <div class="text-muted small">Только состояние «Активен», без пилотов.</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-md-6 col-xl-3">
         <div class="card border-0 shadow-sm h-100">
           <div class="card-body">
             <div class="text-secondary small mb-1">Выдано купонов</div>
             <div class="h3 mb-0">{{ autoscenario_report.assignments_total }}</div>
-            <div class="text-muted small">Отправлено сообщений: {{ autoscenario_report.dispatch_done }}</div>
+            <div class="text-muted small">Реальным гостям, без контрольных номеров.</div>
           </div>
         </div>
       </div>
-      <div class="col-12 col-lg-3">
+      <div class="col-12 col-md-6 col-xl-3">
         <div class="card border-0 shadow-sm h-100">
           <div class="card-body">
-            <div class="text-secondary small mb-1">Использовано</div>
-            <div class="h3 mb-0">{{ autoscenario_report.used_total }}</div>
-            <div class="text-muted small">После срока: {{ autoscenario_report.used_after_total }}</div>
+            <div class="text-secondary small mb-1">Использовано купонов</div>
+            <div class="h3 mb-0">{{ autoscenario_report.applied_total }}</div>
+            <div class="text-muted small">{{ autoscenario_report.usage_rate_percent }}% от выданных.</div>
           </div>
         </div>
       </div>
-      <div class="col-12 col-lg-3">
+      <div class="col-12 col-md-6 col-xl-3">
         <div class="card border-0 shadow-sm h-100">
           <div class="card-body">
             <div class="text-secondary small mb-1">Оплачено по купонам</div>
@@ -107,39 +138,148 @@
     </div>
 
     <div class="row g-3 mb-3">
-      <div class="col-12 col-xl-6">
+      <div class="col-12 col-xl-5">
         <div class="card border-0 shadow-sm h-100">
-          <div class="card-header bg-white fw-semibold">Воронка и ограничения</div>
+          <div class="card-header bg-white fw-semibold">Воронка сценария</div>
           <div class="table-responsive">
-            <table class="table table-sm mb-0 align-middle">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr>
+                  <th>Шаг</th>
+                  <th class="text-end">Гостей</th>
+                  <th class="text-end">Доля</th>
+                </tr>
+              </thead>
               <tbody>
-                <tr><th>Проверено гостей</th><td>{{ autoscenario_report.run_totals.scanned_guests }}</td></tr>
-                <tr><th>Подошли по сегменту</th><td>{{ autoscenario_report.run_totals.matched_guests }}</td></tr>
-                <tr><th>Есть канал доставки</th><td>{{ autoscenario_report.run_totals.sendable_guests }}</td></tr>
-                <tr><th>Готовы к выдаче</th><td>{{ autoscenario_report.run_totals.eligible_guests }}</td></tr>
-                <tr><th>Нет канала</th><td>{{ autoscenario_report.run_totals.blocked_without_channel }}</td></tr>
-                <tr><th>Уже есть активный купон</th><td>{{ autoscenario_report.run_totals.blocked_existing_active_coupon }}</td></tr>
-                <tr><th>Пауза перед повтором</th><td>{{ autoscenario_report.run_totals.blocked_by_cooldown }}</td></tr>
-                <tr><th>Дефицит купонов</th><td>{{ autoscenario_report.run_totals.coupon_shortage }}</td></tr>
+                {% for row in autoscenario_report.funnel_rows %}
+                  <tr>
+                    <th>
+                      {{ row.label }}
+                      <div class="text-muted small fw-normal">{{ row.note }}</div>
+                    </th>
+                    <td class="text-end">{{ row.value }}</td>
+                    <td class="text-end">{{ row.percent }}%</td>
+                  </tr>
+                {% endfor %}
               </tbody>
             </table>
           </div>
         </div>
       </div>
+      <div class="col-12 col-xl-7">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-header bg-white fw-semibold">Динамика по дням</div>
+          <div class="card-body">
+            {% if autoscenario_report.daily_has_data %}
+              <div class="text-muted small mb-2">
+                График показывает только боевые запуски: аудитория сценария, доступные для отправки гости,
+                выданные купоны и применения из OLAP.
+              </div>
+              <div id="autoscenarioDailyChart" style="height: 340px; min-height: 340px;"></div>
+            {% else %}
+              <div class="alert alert-info mb-0">
+                За выбранный период боевых данных для графика нет. Если были только пилотные отправки,
+                они показаны ниже в журнале пилотов.
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-semibold">Данные по дням</div>
+      <div class="table-responsive" style="max-height: 340px; overflow-y: auto;">
+        <table class="table table-sm align-middle mb-0">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Попали под сценарий</th>
+              <th>Есть канал</th>
+              <th>Получили купон</th>
+              <th>Применили</th>
+              <th>Конверсия применения</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in autoscenario_report.daily_rows %}
+              <tr>
+                <td>{{ row.date }}</td>
+                <td>{{ row.matched_guests }}</td>
+                <td>{{ row.sendable_guests }}</td>
+                <td>{{ row.issued_coupons }}</td>
+                <td>{{ row.used_coupons }}</td>
+                <td>{{ row.usage_rate_percent }}%</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="row g-3 mb-3">
       <div class="col-12 col-xl-6">
         <div class="card border-0 shadow-sm h-100">
           <div class="card-header bg-white fw-semibold">Доставка и статусы</div>
           <div class="table-responsive">
-            <table class="table table-sm mb-0 align-middle">
+            <table class="table table-sm align-middle mb-0">
               <tbody>
-                <tr><th>vtelemax синхронизировано</th><td>{{ autoscenario_report.vtelemax_ok }}</td></tr>
-                <tr><th>vtelemax ожидает</th><td>{{ autoscenario_report.vtelemax_pending }}</td></tr>
-                <tr><th>vtelemax ошибок</th><td>{{ autoscenario_report.vtelemax_error }}</td></tr>
-                <tr><th>Dispatch задач</th><td>{{ autoscenario_report.dispatch_total }}</td></tr>
-                <tr><th>Успешно доставлено</th><td>{{ autoscenario_report.dispatch_done }}</td></tr>
-                <tr><th>Ошибок доставки</th><td>{{ autoscenario_report.dispatch_failed }}</td></tr>
-                <tr><th>Доля доставки</th><td>{{ autoscenario_report.delivery_rate_percent }}%</td></tr>
-                <tr><th>Доля применений</th><td>{{ autoscenario_report.usage_rate_percent }}%</td></tr>
+                <tr>
+                  <th>Синхронизировано с vtelemax</th>
+                  <td class="text-end">{{ autoscenario_report.vtelemax_ok }}</td>
+                </tr>
+                <tr>
+                  <th>Ожидает vtelemax</th>
+                  <td class="text-end">{{ autoscenario_report.vtelemax_pending }}</td>
+                </tr>
+                <tr>
+                  <th>Ошибок vtelemax</th>
+                  <td class="text-end">{{ autoscenario_report.vtelemax_error }}</td>
+                </tr>
+                <tr>
+                  <th>Задач доставки</th>
+                  <td class="text-end">{{ autoscenario_report.dispatch_total }}</td>
+                </tr>
+                <tr>
+                  <th>Успешно доставлено</th>
+                  <td class="text-end">{{ autoscenario_report.dispatch_done }}</td>
+                </tr>
+                <tr>
+                  <th>Ошибок доставки</th>
+                  <td class="text-end">{{ autoscenario_report.dispatch_failed }}</td>
+                </tr>
+                <tr>
+                  <th>Доля доставки</th>
+                  <td class="text-end">{{ autoscenario_report.delivery_rate_percent }}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-xl-6">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-header bg-white fw-semibold">Почему часть гостей не получила купон</div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <tbody>
+                <tr>
+                  <th>Нет канала доставки</th>
+                  <td class="text-end">{{ autoscenario_report.run_totals.blocked_without_channel }}</td>
+                </tr>
+                <tr>
+                  <th>Уже есть активный купон</th>
+                  <td class="text-end">{{ autoscenario_report.run_totals.blocked_existing_active_coupon }}</td>
+                </tr>
+                <tr>
+                  <th>Пауза перед повтором</th>
+                  <td class="text-end">{{ autoscenario_report.run_totals.blocked_by_cooldown }}</td>
+                </tr>
+                <tr>
+                  <th>Дефицит купонов</th>
+                  <td class="text-end">{{ autoscenario_report.run_totals.coupon_shortage }}</td>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -198,8 +338,72 @@
       {% endif %}
     </div>
 
-    <div class="card border-0 shadow-sm mb-3">
-      <div class="card-header bg-white fw-semibold">Последние запуски</div>
+    <details class="card border-0 shadow-sm mb-3" open>
+      <summary class="card-header bg-white fw-semibold">Журнал пилотов</summary>
+      <div class="card-body border-bottom">
+        <div class="alert alert-secondary mb-3">
+          Пилоты нужны для проверки текста, QR-кода, vtelemax и доставки на контрольный номер.
+          Они не входят в маркетинговые KPI, графики, выручку и конверсию боевого отчёта.
+        </div>
+        <div class="row g-3">
+          <div class="col-6 col-lg-3">
+            <div class="text-secondary small">Пилотных запусков</div>
+            <div class="h5 mb-0">{{ autoscenario_report.pilot.runs_total }}</div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="text-secondary small">Пилотных купонов</div>
+            <div class="h5 mb-0">{{ autoscenario_report.pilot.assignments_total }}</div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="text-secondary small">Доставлено</div>
+            <div class="h5 mb-0">{{ autoscenario_report.pilot.dispatch_done }}</div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="text-secondary small">Очищено</div>
+            <div class="h5 mb-0">{{ autoscenario_report.pilot.canceled_total }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm mb-0 align-middle">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Гость</th>
+              <th>Купон</th>
+              <th>Статус</th>
+              <th>vtelemax</th>
+              <th>Доставка</th>
+              <th>Создан</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for assignment in autoscenario_report.pilot.assignments_rows %}
+              <tr>
+                <td>#{{ assignment.id }}</td>
+                <td>#{{ assignment.guest_id }} {{ assignment.phone_e164 }}</td>
+                <td><code>{{ assignment.coupon_series }}:{{ assignment.coupon_code }}</code></td>
+                <td>{{ assignment.get_status_display }}</td>
+                <td>{{ assignment.get_vtelemax_sync_status_display }}</td>
+                <td>
+                  {% if assignment.report_task %}
+                    {{ assignment.report_task.get_status_display }}
+                  {% else %}
+                    нет
+                  {% endif %}
+                </td>
+                <td>{{ assignment.assigned_at|date:"Y-m-d H:i" }}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="7" class="text-center text-muted py-3">Пилотных назначений за период нет.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details class="card border-0 shadow-sm mb-3">
+      <summary class="card-header bg-white fw-semibold">Техническая детализация боевых запусков</summary>
       <div class="table-responsive">
         <table class="table table-sm mb-0 align-middle">
           <thead>
@@ -229,16 +433,12 @@
                 <td>{{ run.queue_events_created }}</td>
               </tr>
             {% empty %}
-              <tr><td colspan="9" class="text-center text-muted py-3">Запусков за период нет.</td></tr>
+              <tr><td colspan="9" class="text-center text-muted py-3">Боевых запусков за период нет.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-    </div>
-
-    <div class="card border-0 shadow-sm">
-      <div class="card-header bg-white fw-semibold">Последние назначения</div>
-      <div class="table-responsive">
+      <div class="table-responsive border-top">
         <table class="table table-sm mb-0 align-middle">
           <thead>
             <tr>
@@ -259,26 +459,77 @@
                 <td>#{{ assignment.id }}</td>
                 <td>#{{ assignment.guest_id }} {{ assignment.phone_e164 }}</td>
                 <td><code>{{ assignment.coupon_series }}:{{ assignment.coupon_code }}</code></td>
-                <td>{{ assignment.venue_name|default:"—" }}</td>
+                <td>{{ assignment.venue_name|default:"нет" }}</td>
                 <td>{{ assignment.get_status_display }}</td>
                 <td>{{ assignment.get_vtelemax_sync_status_display }}</td>
                 <td>
                   {% if assignment.report_task %}
                     {{ assignment.report_task.get_status_display }}
                   {% else %}
-                    —
+                    нет
                   {% endif %}
                 </td>
-                <td>{{ assignment.used_at|date:"Y-m-d H:i"|default:"—" }}</td>
-                <td>{{ assignment.used_order_id|default:"—" }}</td>
+                <td>{{ assignment.used_at|date:"Y-m-d H:i"|default:"нет" }}</td>
+                <td>{{ assignment.used_order_id|default:"нет" }}</td>
               </tr>
             {% empty %}
-              <tr><td colspan="9" class="text-center text-muted py-3">Назначений за период нет.</td></tr>
+              <tr><td colspan="9" class="text-center text-muted py-3">Боевых назначений за период нет.</td></tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-    </div>
+    </details>
+
+    {{ autoscenario_report.daily_rows|json_script:"autoscenario-daily-data" }}
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+    <script>
+      (function() {
+        const chartNode = document.getElementById("autoscenarioDailyChart");
+        const dataNode = document.getElementById("autoscenario-daily-data");
+        if (!chartNode || !dataNode || !window.echarts) {
+          return;
+        }
+
+        let rows = [];
+        try {
+          rows = JSON.parse(dataNode.textContent || "[]");
+        } catch (error) {
+          rows = [];
+        }
+        if (!rows.length) {
+          return;
+        }
+
+        const chart = window.echarts.init(chartNode);
+        const dates = rows.map((row) => row.date);
+        const matchedGuests = rows.map((row) => Number(row.matched_guests || 0));
+        const sendableGuests = rows.map((row) => Number(row.sendable_guests || 0));
+        const issuedCoupons = rows.map((row) => Number(row.issued_coupons || 0));
+        const usedCoupons = rows.map((row) => Number(row.used_coupons || 0));
+
+        chart.setOption({
+          tooltip: { trigger: "axis" },
+          legend: { top: 0 },
+          grid: { left: 56, right: 24, top: 48, bottom: 40 },
+          xAxis: {
+            type: "category",
+            data: dates,
+            axisLabel: { rotate: dates.length > 20 ? 45 : 0 }
+          },
+          yAxis: { type: "value", minInterval: 1 },
+          series: [
+            { name: "Попали под сценарий", type: "bar", data: matchedGuests },
+            { name: "Есть канал", type: "bar", data: sendableGuests },
+            { name: "Получили купон", type: "line", smooth: true, data: issuedCoupons },
+            { name: "Применили купон", type: "line", smooth: true, data: usedCoupons }
+          ]
+        });
+
+        window.addEventListener("resize", function() {
+          chart.resize();
+        });
+      })();
+    </script>
   {% endif %}
 </div>
 {% endblock %}

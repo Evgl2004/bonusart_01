@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlencode
@@ -21,6 +22,7 @@ from django.db.models import Count, Prefetch, Q, Sum
 from django.http import FileResponse, HttpResponseRedirect
 from django.shortcuts import redirect
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
@@ -29,6 +31,7 @@ from django.views.generic import TemplateView
 from guests.models import (
     CouponAutoscenarioAssignment,
     CouponAutoscenarioRun,
+    CouponAutomationConfig,
     CouponCampaignAssignment,
     CouponPoolBatch,
     CouponRegistryEntry,
@@ -171,28 +174,66 @@ class CouponAutoscenarioReportsView(TemplateView):
             "date_from": date_from_raw,
             "date_to": date_to_raw,
         }
+        context["period_presets"] = self._build_period_presets(
+            scenario_code=selected_scenario.code if selected_scenario else scenario_code,
+            date_from=date_from,
+            date_to=date_to,
+        )
         context["back_to_reports_url"] = reverse("reports")
         context["scenarios_url"] = reverse("mailings_v2_scenarios")
         return context
 
+    def _build_period_presets(self, *, scenario_code: str, date_from, date_to) -> list[dict]:
+        today = timezone.localdate()
+        presets = [
+            ("1 неделя", 7),
+            ("2 недели", 14),
+            ("1 месяц", 30),
+            ("2 месяца", 60),
+        ]
+        result = []
+        for label, days in presets:
+            preset_from = today - timedelta(days=days - 1)
+            preset_to = today
+            params = {
+                "scenario_code": scenario_code,
+                "date_from": preset_from.isoformat(),
+                "date_to": preset_to.isoformat(),
+            }
+            result.append(
+                {
+                    "label": label,
+                    "url": f"{reverse('reports_coupon_autoscenarios')}?{urlencode(params)}",
+                    "active": date_from == preset_from and date_to == preset_to,
+                }
+            )
+        return result
+
     def _build_report(self, *, scenario: NotificationScenario, date_from, date_to) -> dict:
-        runs_qs = (
+        all_runs_qs = (
             CouponAutoscenarioRun.objects.filter(scenario=scenario)
             .select_related("scenario", "config")
             .order_by("-created_at")
         )
-        assignments_qs = (
+        all_assignments_qs = (
             CouponAutoscenarioAssignment.objects.filter(scenario=scenario)
             .select_related("run", "guest", "coupon", "coupon_rule")
             .order_by("-assigned_at", "-id")
         )
 
         if date_from:
-            runs_qs = runs_qs.filter(created_at__date__gte=date_from)
-            assignments_qs = assignments_qs.filter(assigned_at__date__gte=date_from)
+            all_runs_qs = all_runs_qs.filter(created_at__date__gte=date_from)
+            all_assignments_qs = all_assignments_qs.filter(assigned_at__date__gte=date_from)
         if date_to:
-            runs_qs = runs_qs.filter(created_at__date__lte=date_to)
-            assignments_qs = assignments_qs.filter(assigned_at__date__lte=date_to)
+            all_runs_qs = all_runs_qs.filter(created_at__date__lte=date_to)
+            all_assignments_qs = all_assignments_qs.filter(assigned_at__date__lte=date_to)
+
+        active_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        pilot_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        runs_qs = all_runs_qs.filter(execution_mode=active_mode)
+        assignments_qs = all_assignments_qs.filter(run__execution_mode=active_mode)
+        pilot_runs_qs = all_runs_qs.filter(execution_mode=pilot_mode)
+        pilot_assignments_qs = all_assignments_qs.filter(run__execution_mode=pilot_mode)
 
         run_totals = runs_qs.aggregate(
             scanned_guests=Sum("scanned_guests"),
@@ -217,48 +258,136 @@ class CouponAutoscenarioReportsView(TemplateView):
         }
 
         assignment_ids = list(assignments_qs.values_list("id", flat=True))
-        source_refs = [self._assignment_source_ref(assignment_id) for assignment_id in assignment_ids]
-        events_qs = NotificationEvent.objects.filter(scenario=scenario, source_ref__in=source_refs)
-        tasks_qs = DispatchTask.objects.filter(notification_event__source_ref__in=source_refs)
-        event_rows = list(events_qs.select_related("guest"))
-        task_rows = list(tasks_qs.select_related("notification_event", "guest").order_by("-created_at"))
-
-        event_by_source_ref = {event.source_ref: event for event in event_rows if event.source_ref}
-        latest_task_by_event_id = {}
-        for task in task_rows:
-            if task.notification_event_id and task.notification_event_id not in latest_task_by_event_id:
-                latest_task_by_event_id[task.notification_event_id] = task
+        delivery_context = self._build_assignment_delivery_context(
+            scenario=scenario,
+            assignment_ids=assignment_ids,
+        )
 
         visible_assignments = list(assignments_qs[: self.assignments_limit])
-        for assignment in visible_assignments:
-            event = event_by_source_ref.get(self._assignment_source_ref(assignment.id))
-            assignment.report_event = event
-            assignment.report_task = latest_task_by_event_id.get(event.id) if event else None
+        self._attach_delivery_context(
+            assignments=visible_assignments,
+            delivery_context=delivery_context,
+        )
+
+        pilot_assignment_ids = list(pilot_assignments_qs.values_list("id", flat=True))
+        pilot_delivery_context = self._build_assignment_delivery_context(
+            scenario=scenario,
+            assignment_ids=pilot_assignment_ids,
+        )
+        visible_pilot_assignments = list(pilot_assignments_qs[: self.assignments_limit])
+        self._attach_delivery_context(
+            assignments=visible_pilot_assignments,
+            delivery_context=pilot_delivery_context,
+        )
 
         revenue = self._build_revenue_snapshot(assignments_qs=assignments_qs, date_from=date_from, date_to=date_to)
+        daily_rows = self._build_daily_rows(
+            runs_qs=runs_qs,
+            assignments_qs=assignments_qs,
+            date_from=date_from,
+            date_to=date_to,
+        )
 
         assignments_total = int(assignments_qs.count())
         sent_total = status_counts.get(CouponAutoscenarioAssignment.Status.SENT, 0)
         used_total = status_counts.get(CouponAutoscenarioAssignment.Status.USED, 0)
         used_after_total = status_counts.get(CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN, 0)
-        delivered_total = int(tasks_qs.filter(status=DispatchTask.Status.DONE).count())
+        delivered_total = int(delivery_context["tasks_qs"].filter(status=DispatchTask.Status.DONE).count())
         delivery_base = sent_total or assignments_total
         delivery_rate = round(delivered_total * 100 / delivery_base, 2) if delivery_base else 0
         usage_base = sent_total or assignments_total
         usage_rate = round((used_total + used_after_total) * 100 / usage_base, 2) if usage_base else 0
 
+        runs_rows = list(runs_qs[: self.runs_limit])
+        latest_run = runs_rows[0] if runs_rows else None
+        active_assignments = sent_total + status_counts.get(CouponAutoscenarioAssignment.Status.RESERVED, 0)
+        applied_total = used_total + used_after_total
+        runs_total = int(runs_qs.count())
+        matched_total = int(run_totals.get("matched_guests") or 0)
+        sendable_total = int(run_totals.get("sendable_guests") or 0)
+        funnel_rows = [
+            {
+                "label": "Попали под сценарий",
+                "value": matched_total,
+                "percent": "100,0" if matched_total else "0,0",
+                "note": "Гости, которые подошли под условие автосценария в боевых запусках.",
+            },
+            {
+                "label": "Есть канал доставки",
+                "value": sendable_total,
+                "percent": self._format_percent(sendable_total, matched_total),
+                "note": "Есть подтверждённый Telegram/VK/MAX канал для отправки.",
+            },
+            {
+                "label": "Получили купон",
+                "value": assignments_total,
+                "percent": self._format_percent(assignments_total, sendable_total),
+                "note": "Купон назначен реальному гостю, без пилотных проверок.",
+            },
+            {
+                "label": "Применили купон",
+                "value": applied_total,
+                "percent": self._format_percent(applied_total, assignments_total),
+                "note": "Купон найден в OLAP/order_fact как использованный.",
+            },
+        ]
+        if runs_total == 0:
+            conclusion = "За выбранный период боевых запусков не было. Маркетинговую эффективность оценивать нельзя."
+            recommendation = (
+                "Пилотные проверки смотрите в отдельном журнале ниже. Для оценки акции нужен запуск "
+                "в состоянии «Активен» и реальные гости, а не контрольные номера."
+            )
+            conclusion_tone = "muted"
+        elif assignments_total == 0:
+            conclusion = "Сценарий запускался, но купоны реальным гостям не выдавались."
+            recommendation = "Проверьте, где сужается воронка: канал доставки, пауза перед повтором или дефицит купонов."
+            conclusion_tone = "warning"
+        elif applied_total > 0:
+            conclusion = "Купоны применялись в заказах, можно оценивать выручку и средний чек."
+            recommendation = "Сравните динамику по дням и проверьте, хватает ли купонов для следующих запусков."
+            conclusion_tone = "success"
+        elif delivered_total > 0:
+            conclusion = "Сообщения доставлены, но применений купонов в OLAP пока нет."
+            recommendation = "Проверьте оффер, срок действия и наличие купона в vtelemax; применения появятся после реального заказа и загрузки OLAP."
+            conclusion_tone = "warning"
+        else:
+            conclusion = "Купоны были подготовлены, но сообщений с ними пока не доставлено."
+            recommendation = "Проверьте очередь vtelemax, dispatch-задачи и каналы доставки."
+            conclusion_tone = "warning"
+
+        pilot_status_counts = {
+            row["status"]: int(row["total"])
+            for row in pilot_assignments_qs.values("status").annotate(total=Count("id"))
+        }
+        pilot_summary = {
+            "runs_total": int(pilot_runs_qs.count()),
+            "runs_rows": list(pilot_runs_qs[: self.runs_limit]),
+            "assignments_total": int(pilot_assignments_qs.count()),
+            "assignments_rows": visible_pilot_assignments,
+            "dispatch_total": int(pilot_delivery_context["tasks_qs"].count()),
+            "dispatch_done": int(
+                pilot_delivery_context["tasks_qs"].filter(status=DispatchTask.Status.DONE).count()
+            ),
+            "reserved_total": pilot_status_counts.get(CouponAutoscenarioAssignment.Status.RESERVED, 0),
+            "sent_total": pilot_status_counts.get(CouponAutoscenarioAssignment.Status.SENT, 0),
+            "canceled_total": pilot_status_counts.get(CouponAutoscenarioAssignment.Status.CANCELED, 0),
+            "used_total": pilot_status_counts.get(CouponAutoscenarioAssignment.Status.USED, 0)
+            + pilot_status_counts.get(CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN, 0),
+        }
+
         return {
-            "runs_total": int(runs_qs.count()),
-            "runs_rows": list(runs_qs[: self.runs_limit]),
+            "runs_total": runs_total,
+            "runs_rows": runs_rows,
+            "latest_run": latest_run,
             "assignments_total": assignments_total,
             "assignments_rows": visible_assignments,
             "status_counts": status_counts,
             "sync_status_counts": sync_status_counts,
-            "events_total": len(event_rows),
-            "dispatch_total": int(tasks_qs.count()),
+            "events_total": len(delivery_context["event_rows"]),
+            "dispatch_total": int(delivery_context["tasks_qs"].count()),
             "dispatch_done": delivered_total,
-            "dispatch_failed": int(tasks_qs.filter(status=DispatchTask.Status.FAILED).count()),
-            "dispatch_pending": int(tasks_qs.filter(status=DispatchTask.Status.PENDING).count()),
+            "dispatch_failed": int(delivery_context["tasks_qs"].filter(status=DispatchTask.Status.FAILED).count()),
+            "dispatch_pending": int(delivery_context["tasks_qs"].filter(status=DispatchTask.Status.PENDING).count()),
             "vtelemax_ok": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK, 0),
             "vtelemax_pending": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING, 0),
             "vtelemax_error": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR, 0),
@@ -266,14 +395,150 @@ class CouponAutoscenarioReportsView(TemplateView):
             "sent_total": sent_total,
             "used_total": used_total,
             "used_after_total": used_after_total,
+            "applied_total": applied_total,
             "expired_total": status_counts.get(CouponAutoscenarioAssignment.Status.EXPIRED, 0),
             "canceled_total": status_counts.get(CouponAutoscenarioAssignment.Status.CANCELED, 0),
+            "active_assignments": active_assignments,
             "error_total": status_counts.get(CouponAutoscenarioAssignment.Status.ERROR, 0),
             "usage_rate_percent": usage_rate,
             "delivery_rate_percent": delivery_rate,
             "run_totals": {key: int(value or 0) for key, value in run_totals.items()},
+            "funnel_rows": funnel_rows,
+            "summary": {
+                "conclusion": conclusion,
+                "recommendation": recommendation,
+                "tone": conclusion_tone,
+            },
             "revenue": revenue,
+            "daily_rows": daily_rows,
+            "daily_has_data": any(
+                row["matched_guests"]
+                or row["sendable_guests"]
+                or row["issued_coupons"]
+                or row["used_coupons"]
+                for row in daily_rows
+            ),
+            "pilot": pilot_summary,
         }
+
+    def _build_assignment_delivery_context(self, *, scenario: NotificationScenario, assignment_ids: list[int]) -> dict:
+        source_refs = [self._assignment_source_ref(assignment_id) for assignment_id in assignment_ids]
+        events_qs = NotificationEvent.objects.filter(scenario=scenario, source_ref__in=source_refs)
+        tasks_qs = DispatchTask.objects.filter(notification_event__source_ref__in=source_refs)
+        event_rows = list(events_qs.select_related("guest"))
+        task_rows = list(tasks_qs.select_related("notification_event", "guest").order_by("-created_at"))
+        event_by_source_ref = {event.source_ref: event for event in event_rows if event.source_ref}
+        latest_task_by_event_id = {}
+        for task in task_rows:
+            if task.notification_event_id and task.notification_event_id not in latest_task_by_event_id:
+                latest_task_by_event_id[task.notification_event_id] = task
+        return {
+            "tasks_qs": tasks_qs,
+            "event_rows": event_rows,
+            "event_by_source_ref": event_by_source_ref,
+            "latest_task_by_event_id": latest_task_by_event_id,
+        }
+
+    def _attach_delivery_context(self, *, assignments, delivery_context: dict) -> None:
+        for assignment in assignments:
+            event = delivery_context["event_by_source_ref"].get(self._assignment_source_ref(assignment.id))
+            assignment.report_event = event
+            assignment.report_task = (
+                delivery_context["latest_task_by_event_id"].get(event.id)
+                if event
+                else None
+            )
+
+    def _build_daily_rows(self, *, runs_qs, assignments_qs, date_from, date_to) -> list[dict]:
+        period_start, period_end = self._resolve_daily_period(date_from=date_from, date_to=date_to)
+        daily = {
+            current_date: {
+                "date": current_date.isoformat(),
+                "matched_guests": 0,
+                "sendable_guests": 0,
+                "issued_coupons": 0,
+                "used_coupons": 0,
+                "usage_rate_percent": "0,0",
+            }
+            for current_date in self._iter_dates(period_start, period_end)
+        }
+
+        for row in (
+            runs_qs.filter(created_at__date__gte=period_start, created_at__date__lte=period_end)
+            .values("created_at__date")
+            .annotate(
+                matched_guests=Sum("matched_guests"),
+                sendable_guests=Sum("sendable_guests"),
+            )
+        ):
+            row_date = row["created_at__date"]
+            if row_date in daily:
+                daily[row_date]["matched_guests"] = int(row["matched_guests"] or 0)
+                daily[row_date]["sendable_guests"] = int(row["sendable_guests"] or 0)
+
+        for row in (
+            assignments_qs.filter(assigned_at__date__gte=period_start, assigned_at__date__lte=period_end)
+            .values("assigned_at__date")
+            .annotate(total=Count("id"))
+        ):
+            row_date = row["assigned_at__date"]
+            if row_date in daily:
+                daily[row_date]["issued_coupons"] = int(row["total"] or 0)
+
+        used_statuses = [
+            CouponAutoscenarioAssignment.Status.USED,
+            CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+        ]
+        for row in (
+            assignments_qs.filter(status__in=used_statuses, used_business_date__isnull=False)
+            .filter(used_business_date__gte=period_start, used_business_date__lte=period_end)
+            .values("used_business_date")
+            .annotate(total=Count("id"))
+        ):
+            row_date = row["used_business_date"]
+            if row_date in daily:
+                daily[row_date]["used_coupons"] += int(row["total"] or 0)
+
+        for row in (
+            assignments_qs.filter(status__in=used_statuses, used_business_date__isnull=True)
+            .exclude(used_at__isnull=True)
+            .filter(used_at__date__gte=period_start, used_at__date__lte=period_end)
+            .values("used_at__date")
+            .annotate(total=Count("id"))
+        ):
+            row_date = row["used_at__date"]
+            if row_date in daily:
+                daily[row_date]["used_coupons"] += int(row["total"] or 0)
+
+        for row in daily.values():
+            issued = row["issued_coupons"]
+            used = row["used_coupons"]
+            row["usage_rate_percent"] = str(round(used * 100 / issued, 1)).replace(".", ",") if issued else "0,0"
+        return list(daily.values())
+
+    @staticmethod
+    def _resolve_daily_period(*, date_from, date_to):
+        today = timezone.localdate()
+        if date_from and date_to:
+            return date_from, date_to
+        if date_from:
+            return date_from, today
+        if date_to:
+            return date_to - timedelta(days=13), date_to
+        return today - timedelta(days=13), today
+
+    @staticmethod
+    def _iter_dates(start_date, end_date):
+        current_date = start_date
+        while current_date <= end_date:
+            yield current_date
+            current_date += timedelta(days=1)
+
+    @staticmethod
+    def _format_percent(numerator: int, denominator: int) -> str:
+        if not denominator:
+            return "0,0"
+        return str(round(numerator * 100 / denominator, 1)).replace(".", ",")
 
     @staticmethod
     def _assignment_source_ref(assignment_id: int) -> str:
