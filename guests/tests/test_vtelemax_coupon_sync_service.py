@@ -397,6 +397,66 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         self.assertEqual(assignment.run.status, CouponAutoscenarioRun.Status.COMPLETED)
 
     @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_process_batch_completes_autoscenario_run_after_cleanup_ack(self, mocked_client_cls):
+        assignment, assignment_event = self._create_autoscenario_assignment_with_event()
+        assignment_event.delete()
+        assignment.status = CouponAutoscenarioAssignment.Status.CANCELED
+        assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING
+        assignment.vtelemax_synced_at = None
+        assignment.save(
+            update_fields=[
+                "status",
+                "vtelemax_sync_status",
+                "vtelemax_synced_at",
+                "updated_at",
+            ]
+        )
+        cleanup_event = CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            autoscenario_assignment=assignment,
+            payload_json={
+                "source": "autoscenario",
+                "autoscenario_assignment_id": int(assignment.id),
+                "status": CouponAutoscenarioAssignment.Status.CANCELED,
+                "coupon_series": assignment.coupon_series,
+                "coupon_code": assignment.coupon_code,
+                "meta": {
+                    "release_to_pool": True,
+                    "remove_from_guest": True,
+                    "cancel_reason": "test_cleanup",
+                },
+            },
+            status=CouponVtelemaxSyncQueue.Status.PENDING,
+            attempts=0,
+            next_retry_at=self.now - timedelta(seconds=5),
+        )
+        self._mock_vtelemax_response(
+            mocked_client_cls,
+            results=[self._acked_result(cleanup_event)],
+        )
+
+        stats = self._build_service().process_batch(limit=10, now=self.now)
+
+        self.assertEqual(stats.processed, 1)
+        self.assertEqual(stats.acked, 1)
+        self.assertEqual(stats.status_updates_acked, 1)
+        cleanup_event.refresh_from_db()
+        assignment.refresh_from_db()
+        assignment.coupon.refresh_from_db()
+        assignment.run.refresh_from_db()
+        self.assertEqual(cleanup_event.status, CouponVtelemaxSyncQueue.Status.ACKED)
+        self.assertEqual(
+            assignment.vtelemax_sync_status,
+            CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+        )
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.CANCELED)
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.VERIFIED_LOADED)
+        self.assertTrue(assignment.coupon.is_active)
+        self.assertIsNone(assignment.coupon.assigned_at)
+        self.assertEqual(assignment.run.status, CouponAutoscenarioRun.Status.COMPLETED)
+        self.assertEqual(DispatchTask.objects.filter(notification_scenario=assignment.scenario).count(), 0)
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
     def test_process_batch_handles_item_level_partial_ack(self, mocked_client_cls):
         first_assignment, first_event = self._create_assignment_with_event()
         second_assignment, second_event = self._create_assignment_with_event()

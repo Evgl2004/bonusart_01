@@ -565,7 +565,11 @@ class VtelemaxCouponSyncService:
         if status_value != CouponCampaignAssignment.Status.CANCELED or not release_to_pool:
             return
 
+        refresh_autoscenario_run_status = None
         if event.autoscenario_assignment_id:
+            from guests.services.coupon_autoscenarios import _refresh_autoscenario_run_status
+
+            refresh_autoscenario_run_status = _refresh_autoscenario_run_status
             assignment_for_update = (
                 CouponAutoscenarioAssignment.objects.select_for_update()
                 .select_related("coupon")
@@ -593,12 +597,16 @@ class VtelemaxCouponSyncService:
             and coupon.assigned_at is None
         )
         if already_released:
+            if refresh_autoscenario_run_status is not None:
+                refresh_autoscenario_run_status(run_id=getattr(assignment_for_update, "run_id", None))
             return
 
         coupon.is_active = True
         coupon.pool_status = CouponRegistryEntry.PoolStatus.VERIFIED_LOADED
         coupon.assigned_at = None
         coupon.save(update_fields=["is_active", "pool_status", "assigned_at", "updated_at"])
+        if refresh_autoscenario_run_status is not None:
+            refresh_autoscenario_run_status(run_id=getattr(assignment_for_update, "run_id", None))
 
     @staticmethod
     def _mark_assignment_ok(*, event: CouponVtelemaxSyncQueue, synced_at) -> None:
