@@ -9,13 +9,15 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from decimal import Decimal
 from pathlib import Path
 from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.core.management import CommandError, call_command
 from django.core.paginator import Paginator
-from django.db.models import Prefetch, Q
+from django.db.models import Count, Prefetch, Q, Sum
 from django.http import FileResponse, HttpResponseRedirect
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -26,10 +28,15 @@ from django.views.generic import TemplateView
 
 from guests.models import (
     CouponAutoscenarioAssignment,
+    CouponAutoscenarioRun,
     CouponCampaignAssignment,
     CouponPoolBatch,
     CouponRegistryEntry,
+    DispatchTask,
     Mailing,
+    NotificationEvent,
+    NotificationScenario,
+    OrderFact,
 )
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
 from guests.services.coupon_pool import CouponPoolGenerationError, CouponPoolService
@@ -59,6 +66,14 @@ def _safe_token(value: str) -> str:
     return token or "NA"
 
 
+def _money(value: Decimal | int | str | None) -> str:
+    """
+    Форматирует денежное значение для отчёта.
+    """
+    amount = Decimal(value or 0)
+    return str(amount.quantize(Decimal("0.01")))
+
+
 def _default_batch_csv_path(batch: CouponPoolBatch) -> Path:
     """
     Возвращает безопасный путь для восстановления CSV партии.
@@ -75,7 +90,8 @@ class ReportsWorkbenchView(TemplateView):
 
     На текущем этапе это компактный хаб с переходами в:
     1. отчёты по купонным кампаниям;
-    2. реестр купонов.
+    2. отчёты по купонным автосценариям;
+    3. реестр купонов.
     """
 
     template_name = "reports/hub.html"
@@ -84,9 +100,14 @@ class ReportsWorkbenchView(TemplateView):
         context = super().get_context_data(**kwargs)
 
         coupon_campaigns_qs = Mailing.objects.exclude(coupon_series__isnull=True).exclude(coupon_series="")
+        coupon_autoscenarios_qs = NotificationScenario.objects.filter(coupon_automation_config__isnull=False)
         context["reports_kpi"] = {
             "coupon_campaigns_total": int(coupon_campaigns_qs.count()),
             "coupon_campaigns_active": int(coupon_campaigns_qs.filter(is_active=True).count()),
+            "coupon_autoscenarios_total": int(coupon_autoscenarios_qs.count()),
+            "coupon_autoscenarios_active": int(
+                coupon_autoscenarios_qs.filter(coupon_automation_config__execution_mode="automatic").count()
+            ),
             "coupon_registry_total": int(CouponRegistryEntry.objects.count()),
             "coupon_registry_available": int(
                 CouponRegistryEntry.objects.filter(
@@ -97,8 +118,257 @@ class ReportsWorkbenchView(TemplateView):
             "coupon_batches_total": int(CouponPoolBatch.objects.count()),
         }
         context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
+        context["coupon_autoscenario_reports_url"] = reverse("reports_coupon_autoscenarios")
         context["coupon_registry_url"] = reverse("coupon_registry")
         return context
+
+
+class CouponAutoscenarioReportsView(TemplateView):
+    """
+    Отчёт по купонным автосценариям.
+
+    В отличие от отчёта по ручным кампаниям, этот экран агрегирует данные по
+    механике целиком: все технические волны, назначения, доставку и применения.
+    """
+
+    template_name = "reports/coupon_autoscenarios.html"
+    runs_limit = 50
+    assignments_limit = 100
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        scenario_code = str(self.request.GET.get("scenario_code") or "").strip()
+        date_from_raw = str(self.request.GET.get("date_from") or "").strip()
+        date_to_raw = str(self.request.GET.get("date_to") or "").strip()
+        date_from = parse_date(date_from_raw) if date_from_raw else None
+        date_to = parse_date(date_to_raw) if date_to_raw else None
+
+        scenarios = list(
+            NotificationScenario.objects.filter(coupon_automation_config__isnull=False)
+            .select_related("template", "coupon_automation_config")
+            .order_by("code")
+        )
+        selected_scenario = None
+        if scenario_code:
+            selected_scenario = next((scenario for scenario in scenarios if scenario.code == scenario_code), None)
+        if selected_scenario is None and scenarios:
+            selected_scenario = scenarios[0]
+
+        report = None
+        if selected_scenario is not None:
+            report = self._build_report(
+                scenario=selected_scenario,
+                date_from=date_from,
+                date_to=date_to,
+            )
+
+        context["scenarios"] = scenarios
+        context["selected_scenario"] = selected_scenario
+        context["autoscenario_report"] = report
+        context["filters"] = {
+            "scenario_code": selected_scenario.code if selected_scenario else scenario_code,
+            "date_from": date_from_raw,
+            "date_to": date_to_raw,
+        }
+        context["back_to_reports_url"] = reverse("reports")
+        context["scenarios_url"] = reverse("mailings_v2_scenarios")
+        return context
+
+    def _build_report(self, *, scenario: NotificationScenario, date_from, date_to) -> dict:
+        runs_qs = (
+            CouponAutoscenarioRun.objects.filter(scenario=scenario)
+            .select_related("scenario", "config")
+            .order_by("-created_at")
+        )
+        assignments_qs = (
+            CouponAutoscenarioAssignment.objects.filter(scenario=scenario)
+            .select_related("run", "guest", "coupon", "coupon_rule")
+            .order_by("-assigned_at", "-id")
+        )
+
+        if date_from:
+            runs_qs = runs_qs.filter(created_at__date__gte=date_from)
+            assignments_qs = assignments_qs.filter(assigned_at__date__gte=date_from)
+        if date_to:
+            runs_qs = runs_qs.filter(created_at__date__lte=date_to)
+            assignments_qs = assignments_qs.filter(assigned_at__date__lte=date_to)
+
+        run_totals = runs_qs.aggregate(
+            scanned_guests=Sum("scanned_guests"),
+            matched_guests=Sum("matched_guests"),
+            sendable_guests=Sum("sendable_guests"),
+            eligible_guests=Sum("eligible_guests"),
+            planned_assignments=Sum("planned_assignments"),
+            created_assignments=Sum("created_assignments"),
+            queue_events_created=Sum("queue_events_created"),
+            coupon_shortage=Sum("coupon_shortage"),
+            blocked_without_channel=Sum("blocked_without_channel"),
+            blocked_existing_active_coupon=Sum("blocked_existing_active_coupon"),
+            blocked_by_cooldown=Sum("blocked_by_cooldown"),
+        )
+        status_counts = {
+            row["status"]: int(row["total"])
+            for row in assignments_qs.values("status").annotate(total=Count("id"))
+        }
+        sync_status_counts = {
+            row["vtelemax_sync_status"]: int(row["total"])
+            for row in assignments_qs.values("vtelemax_sync_status").annotate(total=Count("id"))
+        }
+
+        assignment_ids = list(assignments_qs.values_list("id", flat=True))
+        source_refs = [self._assignment_source_ref(assignment_id) for assignment_id in assignment_ids]
+        events_qs = NotificationEvent.objects.filter(scenario=scenario, source_ref__in=source_refs)
+        tasks_qs = DispatchTask.objects.filter(notification_event__source_ref__in=source_refs)
+        event_rows = list(events_qs.select_related("guest"))
+        task_rows = list(tasks_qs.select_related("notification_event", "guest").order_by("-created_at"))
+
+        event_by_source_ref = {event.source_ref: event for event in event_rows if event.source_ref}
+        latest_task_by_event_id = {}
+        for task in task_rows:
+            if task.notification_event_id and task.notification_event_id not in latest_task_by_event_id:
+                latest_task_by_event_id[task.notification_event_id] = task
+
+        visible_assignments = list(assignments_qs[: self.assignments_limit])
+        for assignment in visible_assignments:
+            event = event_by_source_ref.get(self._assignment_source_ref(assignment.id))
+            assignment.report_event = event
+            assignment.report_task = latest_task_by_event_id.get(event.id) if event else None
+
+        revenue = self._build_revenue_snapshot(assignments_qs=assignments_qs, date_from=date_from, date_to=date_to)
+
+        assignments_total = int(assignments_qs.count())
+        sent_total = status_counts.get(CouponAutoscenarioAssignment.Status.SENT, 0)
+        used_total = status_counts.get(CouponAutoscenarioAssignment.Status.USED, 0)
+        used_after_total = status_counts.get(CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN, 0)
+        delivered_total = int(tasks_qs.filter(status=DispatchTask.Status.DONE).count())
+        delivery_base = sent_total or assignments_total
+        delivery_rate = round(delivered_total * 100 / delivery_base, 2) if delivery_base else 0
+        usage_base = sent_total or assignments_total
+        usage_rate = round((used_total + used_after_total) * 100 / usage_base, 2) if usage_base else 0
+
+        return {
+            "runs_total": int(runs_qs.count()),
+            "runs_rows": list(runs_qs[: self.runs_limit]),
+            "assignments_total": assignments_total,
+            "assignments_rows": visible_assignments,
+            "status_counts": status_counts,
+            "sync_status_counts": sync_status_counts,
+            "events_total": len(event_rows),
+            "dispatch_total": int(tasks_qs.count()),
+            "dispatch_done": delivered_total,
+            "dispatch_failed": int(tasks_qs.filter(status=DispatchTask.Status.FAILED).count()),
+            "dispatch_pending": int(tasks_qs.filter(status=DispatchTask.Status.PENDING).count()),
+            "vtelemax_ok": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK, 0),
+            "vtelemax_pending": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING, 0),
+            "vtelemax_error": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR, 0),
+            "reserved_total": status_counts.get(CouponAutoscenarioAssignment.Status.RESERVED, 0),
+            "sent_total": sent_total,
+            "used_total": used_total,
+            "used_after_total": used_after_total,
+            "expired_total": status_counts.get(CouponAutoscenarioAssignment.Status.EXPIRED, 0),
+            "canceled_total": status_counts.get(CouponAutoscenarioAssignment.Status.CANCELED, 0),
+            "error_total": status_counts.get(CouponAutoscenarioAssignment.Status.ERROR, 0),
+            "usage_rate_percent": usage_rate,
+            "delivery_rate_percent": delivery_rate,
+            "run_totals": {key: int(value or 0) for key, value in run_totals.items()},
+            "revenue": revenue,
+        }
+
+    @staticmethod
+    def _assignment_source_ref(assignment_id: int) -> str:
+        return f"coupon_autoscenario_assignment:{int(assignment_id)}"
+
+    @staticmethod
+    def _build_revenue_snapshot(*, assignments_qs, date_from, date_to) -> dict:
+        used_rows = list(
+            assignments_qs.filter(
+                status__in=[
+                    CouponAutoscenarioAssignment.Status.USED,
+                    CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+                ]
+            ).values(
+                "guest_id",
+                "coupon_series",
+                "coupon_code",
+                "used_order_id",
+                "used_business_date",
+            )
+        )
+        if not used_rows:
+            return {
+                "orders_total": 0,
+                "unique_guests": 0,
+                "revenue_net": _money(0),
+                "avg_check": _money(0),
+                "daily_rows": [],
+            }
+
+        series = sorted({row["coupon_series"] for row in used_rows if row["coupon_series"]})
+        codes = sorted({row["coupon_code"] for row in used_rows if row["coupon_code"]})
+        if not series or not codes:
+            return {
+                "orders_total": 0,
+                "unique_guests": 0,
+                "revenue_net": _money(0),
+                "avg_check": _money(0),
+                "daily_rows": [],
+            }
+
+        specific_keys = set()
+        loose_keys = set()
+        for row in used_rows:
+            base_key = (row["guest_id"], row["coupon_series"], row["coupon_code"])
+            if row["used_order_id"] and row["used_business_date"]:
+                specific_keys.add((*base_key, int(row["used_order_id"]), row["used_business_date"]))
+            else:
+                loose_keys.add(base_key)
+
+        order_facts_qs = OrderFact.objects.filter(
+            coupon_used=True,
+            coupon_series__in=series,
+            coupon_number__in=codes,
+        )
+        if date_from:
+            order_facts_qs = order_facts_qs.filter(business_date__gte=date_from)
+        if date_to:
+            order_facts_qs = order_facts_qs.filter(business_date__lte=date_to)
+
+        revenue_net = Decimal("0")
+        orders_total = 0
+        unique_guests = set()
+        daily = defaultdict(lambda: {"orders_count": 0, "revenue_net": Decimal("0")})
+
+        for fact in order_facts_qs.iterator():
+            base_key = (fact.guest_id, fact.coupon_series, fact.coupon_number)
+            specific_key = (*base_key, int(fact.order_number), fact.business_date)
+            if specific_key not in specific_keys and base_key not in loose_keys:
+                continue
+
+            orders_total += 1
+            unique_guests.add(fact.guest_id)
+            fact_net = fact.net_sum or Decimal("0")
+            revenue_net += fact_net
+            daily_row = daily[fact.business_date]
+            daily_row["orders_count"] += 1
+            daily_row["revenue_net"] += fact_net
+
+        avg_check = revenue_net / orders_total if orders_total else Decimal("0")
+        daily_rows = [
+            {
+                "business_date": business_date.isoformat(),
+                "orders_count": row["orders_count"],
+                "revenue_net": _money(row["revenue_net"]),
+            }
+            for business_date, row in sorted(daily.items())
+        ]
+        return {
+            "orders_total": orders_total,
+            "unique_guests": len(unique_guests),
+            "revenue_net": _money(revenue_net),
+            "avg_check": _money(avg_check),
+            "daily_rows": daily_rows,
+        }
 
 
 class CouponRegistryView(TemplateView):

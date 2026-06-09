@@ -25,6 +25,7 @@ from .views_focus_categories_actions import FocusCategoriesActionsView
 from .views_segments_workbench import SegmentsWorkbenchView
 from .views_virtual_categories_workbench import VirtualCategoriesWorkbenchView
 from .views_reports import (
+    CouponAutoscenarioReportsView,
     CouponCampaignReportsView,
     CouponGenerationView,
     CouponRegistryOpsView,
@@ -68,6 +69,11 @@ urlpatterns = [
         "reports/coupon-campaigns/",
         CouponCampaignReportsView.as_view(),
         name="reports_coupon_campaigns",
+    ),
+    path(
+        "reports/coupon-autoscenarios/",
+        CouponAutoscenarioReportsView.as_view(),
+        name="reports_coupon_autoscenarios",
     ),
     path("reports/coupon-registry/", CouponRegistryView.as_view(), name="coupon_registry"),
     path("reports/coupon-registry/ops/", CouponRegistryOpsView.as_view(), name="coupon_registry_ops"),

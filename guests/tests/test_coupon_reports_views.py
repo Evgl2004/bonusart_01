@@ -15,10 +15,13 @@ from guests.models import (
     CouponCampaignAssignment,
     CouponPoolBatch,
     CouponRegistryEntry,
+    DispatchTask,
     Guest,
     Mailing,
     MessageTemplate,
+    NotificationEvent,
     NotificationScenario,
+    OrderFact,
     TerminalDepartmentMap,
 )
 
@@ -63,6 +66,7 @@ class CouponReportsViewsTests(TestCase):
     def test_reports_hub_opens_and_shows_coupon_links(self):
         response = self.client.get(reverse("reports"), secure=True)
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "reports/coupon-autoscenarios")
         self.assertContains(response, "Купонные кампании")
         self.assertContains(response, "Реестр купонов")
 
@@ -235,6 +239,134 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, f"inactive_30d_coupon, run #{run.id}")
         self.assertContains(response, autoscenario_guest.phone)
         self.assertNotContains(response, campaign_guest.phone)
+
+    def test_coupon_autoscenario_report_shows_delivery_and_order_fact_revenue(self):
+        guest = Guest.objects.create(
+            phone="+79994445566",
+            first_name="Auto",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_REPORT",
+            code="AUTO-0001",
+            venue_code="DEP_1",
+            venue_name="Test venue",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.USED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+            iiko_checked_at=self.now,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_report",
+            name="Inactive 30 report",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            is_active=False,
+            is_system=True,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series=coupon.series,
+            venue_code="DEP_1",
+            venue_name="Test venue",
+            max_recipients_per_run=1,
+            cooldown_days=30,
+        )
+        run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            status=CouponAutoscenarioRun.Status.COMPLETED,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            scanned_guests=10,
+            matched_guests=8,
+            sendable_guests=5,
+            eligible_guests=1,
+            planned_assignments=1,
+            created_assignments=1,
+            queue_events_created=1,
+            coupon_shortage=0,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.create(
+            run=run,
+            scenario=scenario,
+            config=config,
+            guest=guest,
+            coupon=coupon,
+            person_id=uuid4(),
+            phone_e164=guest.phone,
+            coupon_series=coupon.series,
+            coupon_code=coupon.code,
+            venue_code="DEP_1",
+            venue_name="Test venue",
+            assigned_at=self.now,
+            sent_at=self.now,
+            status=CouponAutoscenarioAssignment.Status.USED,
+            used_at=self.now,
+            used_order_id=7001,
+            used_business_date=self.now.date(),
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+        )
+        event = NotificationEvent.objects.create(
+            scenario=scenario,
+            guest=guest,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            source_ref=f"coupon_autoscenario_assignment:{assignment.id}",
+            dedupe_key=f"coupon_autoscenario_assignment:{assignment.id}",
+            status=NotificationEvent.Status.TASK_CREATED,
+            planned_send_at=self.now,
+            coupon_code=coupon.code,
+            coupon_external_id=f"{coupon.series}:{coupon.code}",
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type="telegram",
+            priority=DispatchTask.Priority.NORMAL,
+            status=DispatchTask.Status.DONE,
+            guest=guest,
+            notification_scenario=scenario,
+            notification_event=event,
+            external_chat_id="12345",
+            message_text="test",
+            idempotency_key=f"coupon-autoscenario-test-{assignment.id}",
+            available_at=self.now,
+            scheduled_at=self.now,
+            enqueued_at=self.now,
+            started_at=self.now,
+            finished_at=self.now,
+            attempt=1,
+        )
+        OrderFact.objects.create(
+            guest=guest,
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            department_name="Test venue",
+            order_number=7001,
+            uniq_order_id="auto-report-7001",
+            gross_sum="540.00",
+            net_sum="350.00",
+            discount_sum="190.00",
+            coupon_used=True,
+            coupon_series=coupon.series,
+            coupon_number=coupon.code,
+            first_seen_at=self.now,
+        )
+
+        response = self.client.get(
+            reverse("reports_coupon_autoscenarios"),
+            {"scenario_code": scenario.code},
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, scenario.code)
+        self.assertContains(response, coupon.code)
+        self.assertContains(response, guest.phone)
+        self.assertContains(response, "350.00")
+        self.assertContains(response, "7001")
 
     def test_coupon_generation_form_uses_venue_catalog(self):
         TerminalDepartmentMap.objects.create(

@@ -120,16 +120,22 @@
 
         <a
           href="{% url 'reports' %}"
-          class="{% if current == 'reports' or current == 'reports_coupon_campaigns' %}active{% endif %}"
+          class="{% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'reports_coupon_autoscenarios' %}active{% endif %}"
         >
           Отчёты
         </a>
-        {% if current == 'reports' or current == 'reports_coupon_campaigns' %}
+        {% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'reports_coupon_autoscenarios' %}
           <a
             href="{% url 'reports_coupon_campaigns' %}"
             class="submenu-link {% if current == 'reports_coupon_campaigns' %}active{% endif %}"
           >
             Купонные кампании
+          </a>
+          <a
+            href="{% url 'reports_coupon_autoscenarios' %}"
+            class="submenu-link {% if current == 'reports_coupon_autoscenarios' %}active{% endif %}"
+          >
+            Автосценарии
           </a>
         {% endif %}
 

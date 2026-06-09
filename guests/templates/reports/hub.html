@@ -8,23 +8,33 @@
     <div class="card-body">
       <h1 class="h4 mb-2">Отчёты</h1>
       <p class="text-muted mb-0">
-        Раздел оперативной и итоговой аналитики. На текущем этапе добавлены купонные отчёты и реестр купонов.
+        Раздел операционной и итоговой аналитики по купонам, кампаниям и автосценариям.
       </p>
     </div>
   </div>
 
   <div class="row g-3 mb-3">
-    <div class="col-12 col-lg-4">
+    <div class="col-12 col-lg-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
           <div class="text-secondary small mb-1">Купонные кампании</div>
           <div class="h3 mb-0">{{ reports_kpi.coupon_campaigns_total }}</div>
-          <div class="text-muted small">Всего кампаний с купонами</div>
+          <div class="text-muted small">Разовых кампаний с купонами</div>
           <div class="mt-2 text-muted small">Активных: {{ reports_kpi.coupon_campaigns_active }}</div>
         </div>
       </div>
     </div>
-    <div class="col-12 col-lg-4">
+    <div class="col-12 col-lg-3">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <div class="text-secondary small mb-1">Автосценарии</div>
+          <div class="h3 mb-0">{{ reports_kpi.coupon_autoscenarios_total }}</div>
+          <div class="text-muted small">Постоянных купонных механик</div>
+          <div class="mt-2 text-muted small">Активных: {{ reports_kpi.coupon_autoscenarios_active }}</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-lg-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
           <div class="text-secondary small mb-1">Реестр купонов</div>
@@ -34,7 +44,7 @@
         </div>
       </div>
     </div>
-    <div class="col-12 col-lg-4">
+    <div class="col-12 col-lg-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
           <div class="text-secondary small mb-1">Пулы генерации</div>
@@ -46,23 +56,34 @@
   </div>
 
   <div class="row g-3">
-    <div class="col-12 col-xl-6">
+    <div class="col-12 col-xl-4">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <h2 class="h6 mb-2">Отчёты по купонным кампаниям</h2>
+          <h2 class="h6 mb-2">Купонные кампании</h2>
           <p class="text-muted small mb-3">
-            Выбор кампании и просмотр KPI: отправлено, использовано, конверсия, выручка, возвращаемость и поздние применения.
+            Отчёт по одной разовой кампании: отправлено, применено, конверсия, оплаченная сумма, товары и заказы.
           </p>
-          <a class="btn btn-primary btn-sm" href="{{ coupon_campaign_reports_url }}">Открыть раздел</a>
+          <a class="btn btn-primary btn-sm" href="{{ coupon_campaign_reports_url }}">Открыть отчёт</a>
         </div>
       </div>
     </div>
-    <div class="col-12 col-xl-6">
+    <div class="col-12 col-xl-4">
+      <div class="card border-0 shadow-sm h-100">
+        <div class="card-body">
+          <h2 class="h6 mb-2">Автосценарии</h2>
+          <p class="text-muted small mb-3">
+            Отчёт по постоянной механике: волны запусков, выдачи, доставка сообщений, применения из OLAP и дефицит купонов.
+          </p>
+          <a class="btn btn-primary btn-sm" href="{{ coupon_autoscenario_reports_url }}">Открыть отчёт</a>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-4">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
           <h2 class="h6 mb-2">Реестр купонов</h2>
           <p class="text-muted small mb-3">
-            Таблица купонов с фильтрами по серии, статусам, проверке iikoCard и связям с кампанией/гостем.
+            Таблица купонов с фильтрами по серии, статусам, проверке iikoCard и связи с кампанией или автосценарием.
           </p>
           <a class="btn btn-outline-primary btn-sm" href="{{ coupon_registry_url }}">Открыть реестр</a>
         </div>
