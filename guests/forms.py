@@ -278,7 +278,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
     """
 
     coupon_series = forms.ChoiceField(
-        label="Резервная серия старого режима",
+        label="Резервная серия без правил",
         required=False,
         choices=[],
         widget=forms.Select(attrs={"class": "form-select"}),
@@ -332,12 +332,12 @@ class CouponAutomationConfigForm(forms.ModelForm):
         }
         labels = {
             "execution_mode": "Состояние автосценария",
-            "venue_code": "Резервное заведение старого режима",
+            "venue_code": "Резервное заведение без правил",
             "venue_name": "Название резервного заведения",
             "coupon_validity_days": "Срок действия купона, дней",
             "max_recipients_per_run": "Лимит гостей за проход",
             "cooldown_days": "Пауза перед повтором, дней",
-            "coupon_promo_text_template": "Текст карточки купона во vtelemax",
+            "coupon_promo_text_template": "Текст карточки купона в vtelemax",
             "min_order_amount": "Минимальная сумма заказа в iikoCard",
             "iikocard_action_note": "Что настроено в iikoCard",
         }
@@ -471,15 +471,15 @@ class CouponAutomationRuleForm(forms.ModelForm):
             "coupon_promo_text_template": forms.HiddenInput(),
         }
         labels = {
-            "is_active": "Активно",
+            "is_active": "Использовать",
             "scope_type": "Область",
-            "venue_code": "Заведение / область",
+            "venue_code": "Заведение или вся сеть",
             "coupon_series": "Серия купонов",
             "coupon_validity_days": "Срок, дней",
             "priority": "Приоритет",
             "min_order_amount": "Мин. заказ",
             "iikocard_action_note": "Что настроено в iikoCard",
-            "coupon_promo_text_template": "Текст карточки купона во vtelemax",
+            "coupon_promo_text_template": "Текст карточки купона в vtelemax",
         }
 
     def __init__(self, *args, **kwargs):

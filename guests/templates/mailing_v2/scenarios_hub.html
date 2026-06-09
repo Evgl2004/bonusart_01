@@ -133,7 +133,7 @@
             <tr>
               <th>Сценарий</th>
               <th>Состояние</th>
-              <th>Старый планировщик уведомлений</th>
+              <th>Планировщик уведомлений</th>
               <th>Купоны</th>
               <th>Заведение</th>
               <th>Лимит / пауза</th>
@@ -172,7 +172,9 @@
                   {% endif %}
                 </td>
                 <td>
-                  {% if config.coupon_series %}
+                  {% if config.has_rule_based_coupon_selection %}
+                    правил: {{ config.active_coupon_rules|length }}
+                  {% elif config.coupon_series %}
                     <code>{{ config.coupon_series }}</code>
                   {% else %}
                     <span class="text-muted">серия не задана</span>
@@ -247,7 +249,7 @@
                       </div>
                     {% else %}
                       <div>
-                        <span class="badge text-bg-warning">Резерв старого режима</span>
+                        <span class="badge text-bg-warning">Резерв без правил</span>
                         <code>{{ config.coupon_series|default:"серия не задана" }}</code>
                         <span class="text-muted">{{ config.venue_name|default:config.venue_code|default:"заведение не задано" }}</span>
                       </div>
@@ -481,7 +483,7 @@
                     <td>{{ item.days_without_visits_label|default:item.days_without_visits|default:"—" }}</td>
                     <td><code>{{ item.coupon_series }}:{{ item.coupon_code }}</code></td>
                     <td>
-                      {{ item.coupon_rule_label|default:"старый режим" }}
+                      {{ item.coupon_rule_label|default:"резерв без правил" }}
                       {% if item.coupon_selection_source_display %}
                         <div class="text-muted small">{{ item.coupon_selection_source_display }}</div>
                       {% endif %}

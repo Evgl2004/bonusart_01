@@ -62,6 +62,10 @@
           <div class="text-muted small mb-2">{{ template_technical_name }}</div>
         {% endif %}
         <div class="border rounded bg-light p-2 small" style="white-space: pre-wrap;">{{ message_template.message_text }}</div>
+        <div class="form-text mt-2">
+          Основные переменные: <code>&#123;&#123; first_name &#125;&#125;</code>, <code>&#123;&#123; days_without_visits &#125;&#125;</code>, <code>{coupon_code}</code>.
+          Шаблон сообщения редактируется отдельно, чтобы случайно не изменить его при настройке купонных правил.
+        </div>
       {% else %}
         <div class="text-muted">
           У сценария не выбран шаблон сообщения. Перед пилотом или боевым запуском нужно привязать шаблон в настройках сценария.
@@ -137,7 +141,7 @@
           <thead class="table-light">
             <tr>
               <th style="width: 90px;">Использовать</th>
-              <th style="min-width: 360px;">Заведение / область</th>
+              <th style="min-width: 360px;">Заведение или вся сеть</th>
               <th style="min-width: 320px;">Серия купонов</th>
               <th style="width: 110px;">Удалить</th>
             </tr>
@@ -221,7 +225,8 @@
         </table>
       </div>
       <div class="form-text">
-        Для 3-4 заведений добавьте несколько правил: одно заведение - одна серия купонов. Резервное правило “Вся сеть (global)” можно добавить отдельной строкой.
+        Для нескольких заведений добавьте несколько строк: одно заведение - одна серия купонов.
+        Строка “Вся сеть (global)” работает как запасной вариант, если у гостя нет правила по последнему заведению или там закончились купоны.
       </div>
 
       <template id="coupon-rule-empty-row-template">
@@ -282,8 +287,8 @@
       <details class="border rounded p-3">
         <summary class="fw-semibold">Дополнительно: условия iikoCard и карточка купона</summary>
         <div class="text-muted small mt-2 mb-3">
-          Эти поля нужны для сверки с iikoCard и карточкой купона во vtelemax. Если “Текст карточки купона” оставить пустым,
-          vtelemax получит тот же текст, что и гость в сообщении.
+          Эти поля не влияют на отбор гостей. Они нужны для сверки с iikoCard и карточкой купона в vtelemax.
+          Если “Текст карточки купона” оставить пустым, vtelemax получит тот же текст, что и гость в сообщении.
         </div>
         <div class="row g-3">
           <div class="col-12 col-lg-4">
@@ -304,7 +309,7 @@
           <div class="col-12">
             {{ form.coupon_promo_text_template.label_tag }}
             {{ form.coupon_promo_text_template }}
-            <div class="form-text">Заполняйте только если карточка купона во vtelemax должна отличаться от сообщения гостю.</div>
+            <div class="form-text">Заполняйте только если карточка купона в vtelemax должна отличаться от сообщения гостю.</div>
             {% if form.coupon_promo_text_template.errors %}
               <div class="text-danger small mt-1">{{ form.coupon_promo_text_template.errors|join:", " }}</div>
             {% endif %}
@@ -313,9 +318,9 @@
       </details>
 
       <details class="border rounded p-3 mt-3">
-        <summary class="fw-semibold">Резерв старого режима: одна серия и одно заведение</summary>
+        <summary class="fw-semibold">Резерв без правил: одна серия и одно заведение</summary>
         <div class="text-muted small mt-2 mb-3">
-          Используется только если купонные правила выше не заведены. Для новой настройки используйте таблицу правил.
+          Используется только если таблица купонных правил выше пустая. Для новой настройки используйте правила по заведениям и “Вся сеть (global)”.
         </div>
         <div class="row g-3">
           <div class="col-12 col-lg-6">
