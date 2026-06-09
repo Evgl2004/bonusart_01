@@ -105,6 +105,17 @@ python manage.py execute_coupon_autoscenario_pilot --scenario-code inactive_30d_
 
 Открытый долг: полный E2E применения купона через реальный заказ iiko -> OLAP -> `order_fact` -> `sync_coupon_redemptions` -> `status_update:used` во vtelemax.
 
+Пользовательский отчет:
+
+1. отчет доступен в меню `Отчеты -> Автосценарии`;
+2. боевые KPI считаются только по реальным запускам состояния `Активен`;
+3. пилотные проверки вынесены в отдельный журнал и не влияют на маркетинговую конверсию, выручку, графики и выводы;
+4. если за период были только пилоты, основной отчет должен честно показывать, что боевых данных нет;
+5. дневная динамика показывает аудиторию, достижимых гостей, выдачи и применения по дням; выходные дни выделяются, при наведении на график показывается детализация дня;
+6. применения купонов появляются после реального заказа, загрузки OLAP/order_fact и синхронизации `sync_coupon_redemptions`.
+
+Текущий следующий эксплуатационный шаг: первый контролируемый боевой запуск малым лимитом на отдельной купонной серии, затем сверка отчета, очередей vtelemax, доставки и последующего применения через OLAP.
+
 ## Интеграционные проверки
 Добавлены интеграционные тесты цепочки `Scenario -> Event -> Task`:
 1. создание `NotificationEvent` и `DispatchTask` через `enqueue_notification_event_from_scenario`;
@@ -118,10 +129,16 @@ python manage.py execute_coupon_autoscenario_pilot --scenario-code inactive_30d_
    - `notificationType=1` и `notificationType=5` не создают `DispatchTask`;
    - эти типы выполняют только бизнес-обновления данных (`VisitHistory`/категории).
 
-Запуск:
+Запуск локальных тестов выполняется только через проектный PowerShell-скрипт:
 
 ```bash
-python manage.py test guests.tests.NotificationScenarioIntegrationTests
+powershell -ExecutionPolicy Bypass -File scripts/run_pytest.ps1 guests/tests/test_notification_integration.py
+```
+
+Для полного блока купонных автосценариев:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/run_pytest.ps1 guests/tests/test_coupon_autoscenario_preview.py guests/tests/test_vtelemax_coupon_sync_service.py guests/tests/test_coupon_redemption_sync_service.py guests/tests/test_coupon_reports_views.py guests/tests/test_mailings_v2_views.py
 ```
 
 ## Лимиты отправки по сценарию
