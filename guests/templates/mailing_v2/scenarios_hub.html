@@ -170,6 +170,15 @@
                   {% else %}
                     <span class="badge text-bg-secondary">выключен</span>
                   {% endif %}
+                  <div class="small text-muted mt-1">
+                    отправка: {{ config.scenario.get_distribution_mode_display|default:"—" }}
+                    {% if config.scenario.send_window_begin and config.scenario.send_window_end %}
+                      {{ config.scenario.send_window_begin|time:"H:i" }}-{{ config.scenario.send_window_end|time:"H:i" }}
+                    {% endif %}
+                    {% if config.scenario.timezone %}
+                      {{ config.scenario.timezone }}
+                    {% endif %}
+                  </div>
                 </td>
                 <td>
                   {% if config.has_rule_based_coupon_selection %}

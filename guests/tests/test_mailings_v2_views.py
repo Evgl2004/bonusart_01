@@ -2011,6 +2011,9 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Дополнительно: условия iikoCard и карточка купона")
         self.assertContains(response, "Шаблон сообщения гостю")
         self.assertContains(response, "Редактировать шаблон")
+        self.assertContains(response, "Окно отправки сообщений")
+        self.assertContains(response, "Режим отправки сообщений")
+        self.assertContains(response, "Сразу")
         self.assertContains(response, "Если “Текст карточки купона” оставить пустым")
         self.assertContains(response, "Контрольные телефоны пилота")
 
@@ -2028,6 +2031,10 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "200.00",
                 "iikocard_action_note": "Подарок при заказе от 200 ₽.",
                 "coupon_promo_text_template": "Тестовый купон автосценария.",
+                "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "notification_send_window_begin": "10:00",
+                "notification_send_window_end": "20:00",
+                "notification_timezone": "Asia/Yekaterinburg",
                 "coupon_rules-TOTAL_FORMS": "3",
                 "coupon_rules-INITIAL_FORMS": "0",
                 "coupon_rules-MIN_NUM_FORMS": "0",
@@ -2061,6 +2068,11 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(config.venue_name, "Сами Сусами")
         self.assertEqual(config.settings["pilot_phones"], ["+79129923438"])
         self.assertTrue(config.settings["pilot_include_unmatched"])
+        scenario.refresh_from_db()
+        self.assertEqual(scenario.distribution_mode, NotificationScenario.DistributionMode.UNIFORM)
+        self.assertEqual(scenario.send_window_begin, time(10, 0))
+        self.assertEqual(scenario.send_window_end, time(20, 0))
+        self.assertEqual(scenario.timezone, "Asia/Yekaterinburg")
         rules = list(config.coupon_rules.order_by("priority", "id"))
         self.assertEqual(len(rules), 2)
         self.assertEqual(rules[0].scope_type, CouponAutomationRule.ScopeType.VENUE)
@@ -2075,3 +2087,57 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(rules[1].coupon_series, "AUTO_GLOBAL")
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_coupon_autoscenario_settings_blocks_active_immediate_delivery(self):
+        """
+        Боевой автосценарий нельзя сохранить с отправкой "Сразу": иначе ACK vtelemax
+        мог бы привести к ночной отправке сообщения.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+            settings={},
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+                "coupon_series": "AUTO_30D",
+                "venue_code": "DEP_1",
+                "coupon_validity_days": "14",
+                "max_recipients_per_run": "100",
+                "cooldown_days": "30",
+                "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "notification_timezone": "Asia/Yekaterinburg",
+                "coupon_rules-TOTAL_FORMS": "0",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Для состояния «Активен» выберите «Равномерно в окне»")
+        config.refresh_from_db()
+        scenario.refresh_from_db()
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
+        self.assertEqual(scenario.distribution_mode, NotificationScenario.DistributionMode.IMMEDIATE)

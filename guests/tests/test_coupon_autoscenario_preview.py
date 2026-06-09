@@ -860,6 +860,80 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertIn("45 дней", task.message_text)
         self.assertNotIn("days_without_visits", task.message_text)
 
+    def test_active_dispatch_after_ack_respects_send_window(self):
+        self.template.message_text = "Мы давно не виделись ({{ days_without_visits }} дней). Купон {coupon_code}"
+        self.template.save(update_fields=["message_text", "updated_at"])
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.settings = {"pilot_phones": ["+79990000147"]}
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        current_now = timezone.now()
+        self.scenario.distribution_mode = NotificationScenario.DistributionMode.UNIFORM
+        self.scenario.timezone = "UTC"
+        self.scenario.send_window_begin = (current_now + timedelta(hours=1)).time().replace(microsecond=0)
+        self.scenario.send_window_end = (current_now + timedelta(hours=2)).time().replace(microsecond=0)
+        self.scenario.save(
+            update_fields=[
+                "distribution_mode",
+                "timezone",
+                "send_window_begin",
+                "send_window_end",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000147", first_name="WindowedActive")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        bot = BotProfile.objects.create(
+            code="tg_autoscenario_windowed_active",
+            name="Telegram autoscenario windowed active",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=bot,
+            external_chat_id="windowed-active-chat-147",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        self._available_coupon(code="AUTO-WINDOW")
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=current_now,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        self.config.save(update_fields=["execution_mode", "updated_at"])
+        ack_time = current_now + timedelta(minutes=5)
+        assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = ack_time
+        assignment.save(update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"])
+
+        created_tasks = create_autoscenario_dispatch_after_vtelemax_ack(
+            assignment_id=assignment.id,
+            now=ack_time,
+        )
+
+        self.assertEqual(created_tasks, 1)
+        event = NotificationEvent.objects.get(source_ref=f"coupon_autoscenario_assignment:{assignment.id}")
+        task = DispatchTask.objects.get(notification_event=event)
+        self.assertGreater(event.planned_send_at, ack_time)
+        self.assertEqual(task.available_at, event.planned_send_at)
+        self.assertEqual(task.scheduled_at, event.planned_send_at)
+        self.assertEqual(task.status, DispatchTask.Status.PENDING)
+
     def test_forced_pilot_without_visit_uses_safe_days_value_in_message(self):
         self.template.message_text = "Long time no see ({{ days_without_visits }} days). Coupon {coupon_code}"
         self.template.save(update_fields=["message_text", "updated_at"])

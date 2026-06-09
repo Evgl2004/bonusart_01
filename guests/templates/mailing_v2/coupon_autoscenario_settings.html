@@ -122,6 +122,45 @@
 
       <hr class="my-4">
 
+      <h2 class="h6 mb-3">Окно отправки сообщений</h2>
+      <div class="alert alert-light border small">
+        В пилоте сообщение отправляется сразу после ACK vtelemax, чтобы можно было быстро проверить результат.
+        Для состояния “Активен” используйте режим “Равномерно в окне”, иначе сообщение могло бы уйти сразу после ACK.
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-lg-3">
+          {{ form.notification_distribution_mode.label_tag }}
+          {{ form.notification_distribution_mode }}
+          {% if form.notification_distribution_mode.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_distribution_mode.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-3">
+          {{ form.notification_send_window_begin.label_tag }}
+          {{ form.notification_send_window_begin }}
+          {% if form.notification_send_window_begin.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_send_window_begin.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-3">
+          {{ form.notification_send_window_end.label_tag }}
+          {{ form.notification_send_window_end }}
+          {% if form.notification_send_window_end.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_send_window_end.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-3">
+          {{ form.notification_timezone.label_tag }}
+          {{ form.notification_timezone }}
+          <div class="form-text">Например: Asia/Yekaterinburg.</div>
+          {% if form.notification_timezone.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_timezone.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <hr class="my-4">
+
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
         <div>
           <h2 class="h6 mb-1">Купонные правила</h2>

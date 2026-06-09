@@ -1,7 +1,15 @@
 ﻿from django import forms
 from django.utils import timezone
 
-from .models import BotProfile, Category, CouponAutomationConfig, CouponAutomationRule, Mailing, MessageTemplate
+from .models import (
+    BotProfile,
+    Category,
+    CouponAutomationConfig,
+    CouponAutomationRule,
+    Mailing,
+    MessageTemplate,
+    NotificationScenario,
+)
 from .services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
 from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
@@ -300,6 +308,29 @@ class CouponAutomationConfigForm(forms.ModelForm):
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
         help_text="Полезно для проверки сообщения на своём номере, даже если вы не подходите под условие сегмента.",
     )
+    notification_distribution_mode = forms.ChoiceField(
+        label="Режим отправки сообщений",
+        required=False,
+        choices=NotificationScenario.DistributionMode.choices,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    notification_timezone = forms.CharField(
+        label="Часовой пояс отправки",
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "Asia/Yekaterinburg"}),
+    )
+    notification_send_window_begin = forms.TimeField(
+        label="Начало окна отправки",
+        required=False,
+        input_formats=["%H:%M"],
+        widget=forms.TimeInput(format="%H:%M", attrs={"class": "form-control", "type": "time"}),
+    )
+    notification_send_window_end = forms.TimeField(
+        label="Конец окна отправки",
+        required=False,
+        input_formats=["%H:%M"],
+        widget=forms.TimeInput(format="%H:%M", attrs={"class": "form-control", "type": "time"}),
+    )
 
     class Meta:
         model = CouponAutomationConfig
@@ -370,6 +401,14 @@ class CouponAutomationConfigForm(forms.ModelForm):
             pilot_phones = []
         self.initial["pilot_phones"] = ", ".join(str(phone) for phone in pilot_phones if str(phone).strip())
         self.initial["pilot_include_unmatched"] = bool(settings.get("pilot_include_unmatched"))
+        scenario = getattr(self.instance, "scenario", None)
+        if scenario is not None:
+            self.initial["notification_distribution_mode"] = scenario.distribution_mode
+            self.initial["notification_timezone"] = scenario.timezone or "Asia/Yekaterinburg"
+            if scenario.send_window_begin:
+                self.initial["notification_send_window_begin"] = scenario.send_window_begin.strftime("%H:%M")
+            if scenario.send_window_end:
+                self.initial["notification_send_window_end"] = scenario.send_window_end.strftime("%H:%M")
 
     def clean_pilot_phones(self):
         raw_value = str(self.cleaned_data.get("pilot_phones") or "").strip()
@@ -402,11 +441,31 @@ class CouponAutomationConfigForm(forms.ModelForm):
         execution_mode = cleaned_data.get("execution_mode")
         pilot_phones = cleaned_data.get("pilot_phones") or []
         venue_code = str(cleaned_data.get("venue_code") or "").strip()
+        distribution_mode = (
+            cleaned_data.get("notification_distribution_mode")
+            or getattr(getattr(self.instance, "scenario", None), "distribution_mode", "")
+            or NotificationScenario.DistributionMode.IMMEDIATE
+        )
+        send_window_begin = cleaned_data.get("notification_send_window_begin")
+        send_window_end = cleaned_data.get("notification_send_window_end")
 
         if execution_mode == CouponAutomationConfig.ExecutionMode.PILOT and not pilot_phones:
             self.add_error(
                 "pilot_phones",
                 "Для режима «Пилот» укажите хотя бы один контрольный телефон.",
+            )
+        if distribution_mode == NotificationScenario.DistributionMode.UNIFORM:
+            if not send_window_begin:
+                self.add_error("notification_send_window_begin", "Укажите начало окна отправки.")
+            if not send_window_end:
+                self.add_error("notification_send_window_end", "Укажите конец окна отправки.")
+        if (
+            execution_mode == CouponAutomationConfig.ExecutionMode.AUTOMATIC
+            and distribution_mode == NotificationScenario.DistributionMode.IMMEDIATE
+        ):
+            self.add_error(
+                "notification_distribution_mode",
+                "Для состояния «Активен» выберите «Равномерно в окне», чтобы сообщения не уходили сразу после ACK vtelemax.",
             )
 
         if venue_code and venue_code in getattr(self, "_coupon_venue_map", {}):
@@ -432,6 +491,29 @@ class CouponAutomationConfigForm(forms.ModelForm):
         if commit:
             instance.full_clean()
             instance.save()
+            scenario = getattr(instance, "scenario", None)
+            if scenario is not None:
+                scenario.distribution_mode = (
+                    self.cleaned_data.get("notification_distribution_mode")
+                    or scenario.distribution_mode
+                    or NotificationScenario.DistributionMode.IMMEDIATE
+                )
+                scenario.timezone = (
+                    str(self.cleaned_data.get("notification_timezone") or "").strip()
+                    or scenario.timezone
+                    or "Asia/Yekaterinburg"
+                )
+                scenario.send_window_begin = self.cleaned_data.get("notification_send_window_begin")
+                scenario.send_window_end = self.cleaned_data.get("notification_send_window_end")
+                scenario.save(
+                    update_fields=[
+                        "distribution_mode",
+                        "timezone",
+                        "send_window_begin",
+                        "send_window_end",
+                        "updated_at",
+                    ]
+                )
         return instance
 
 
