@@ -394,9 +394,9 @@
                   <td class="text-muted">Защита от повторной выдачи той же серии.</td>
                 </tr>
                 <tr>
-                  <td>Уже был этот trigger</td>
+                  <td>Уже получал купон ко дню рождения</td>
                   <td>{{ coupon_plan.blocked_existing_trigger|default:0 }}</td>
-                  <td class="text-muted">Защита от повторной выдачи birthday-купона за тот же год.</td>
+                  <td class="text-muted">Гость уже получал купон ко дню рождения за этот же год.</td>
                 </tr>
                 <tr>
                   <td>Пауза перед повтором</td>
@@ -502,7 +502,7 @@
                         <div class="text-muted small">{{ item.days_until_birthday_label }} дн.</div>
                       {% endif %}
                       {% if item.trigger_key %}
-                        <div class="text-muted small"><code>{{ item.trigger_key }}</code></div>
+                        <div class="text-muted small">Год дня рождения: {{ item.trigger_key|cut:"birthday:" }}</div>
                       {% endif %}
                     </td>
                     <td><code>{{ item.coupon_series }}:{{ item.coupon_code }}</code></td>

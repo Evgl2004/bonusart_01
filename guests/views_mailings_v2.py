@@ -122,7 +122,13 @@ def _coupon_autoscenario_policy_rows(
                 f"сегодня..+{int(birthday_window_days or 0)} дн. включительно",
             ),
         )
-        rows.insert(4, ("Годовой повтор", "trigger_key birthday:<год>"))
+        rows.insert(
+            4,
+            (
+                "Повтор ко дню рождения",
+                "не больше одного купона гостю за один год дня рождения",
+            ),
+        )
     return rows
 
 
