@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, datetime, timedelta
 from io import StringIO
 from uuid import uuid4
 
@@ -37,7 +37,10 @@ from guests.services.coupon_autoscenarios import (
     execute_coupon_autoscenario_pilot,
     preview_coupon_autoscenario_audience,
 )
-from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
+from guests.services.notification_registry import (
+    SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_INACTIVE_30D_COUPON,
+)
 
 
 class CouponAutoscenarioPreviewTests(TestCase):
@@ -99,11 +102,83 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
         return scenario
 
-    def _guest(self, *, phone: str, first_name: str) -> Guest:
+    def _prepare_birthday_autoscenario(self) -> tuple[NotificationScenario, CouponAutomationConfig]:
+        scenario, _ = NotificationScenario.objects.get_or_create(
+            code=SCENARIO_CODE_BIRTHDAY_COUPON,
+            defaults={
+                "name": "День рождения + купон",
+                "description": "",
+                "is_active": True,
+                "is_system": True,
+                "trigger_type": NotificationScenario.TriggerType.SCHEDULE,
+                "template": self.template,
+                "priority": NotificationScenario.Priority.BULK,
+                "target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "timezone": "Asia/Yekaterinburg",
+                "settings": {"coupon_required": True},
+            },
+        )
+        scenario.is_active = True
+        scenario.trigger_type = NotificationScenario.TriggerType.SCHEDULE
+        scenario.template = self.template
+        scenario.settings = {"coupon_required": True}
+        scenario.timezone = "Asia/Yekaterinburg"
+        scenario.save(
+            update_fields=[
+                "is_active",
+                "trigger_type",
+                "template",
+                "settings",
+                "timezone",
+                "updated_at",
+            ]
+        )
+        config, _ = CouponAutomationConfig.objects.get_or_create(
+            scenario=scenario,
+            defaults={
+                "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "coupon_series": "AUTO_BIRTHDAY",
+                "venue_code": "__global__",
+                "venue_name": "Вся сеть",
+                "coupon_validity_days": 14,
+                "max_recipients_per_run": 10,
+                "max_active_coupons_per_guest": 1,
+                "cooldown_days": 365,
+                "settings": {"birthday_preparation_window_days": 7},
+            },
+        )
+        config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
+        config.coupon_series = "AUTO_BIRTHDAY"
+        config.venue_code = "__global__"
+        config.venue_name = "Вся сеть"
+        config.coupon_validity_days = 14
+        config.max_recipients_per_run = 10
+        config.max_active_coupons_per_guest = 1
+        config.cooldown_days = 365
+        config.settings = {"birthday_preparation_window_days": 7}
+        config.save(
+            update_fields=[
+                "execution_mode",
+                "coupon_series",
+                "venue_code",
+                "venue_name",
+                "coupon_validity_days",
+                "max_recipients_per_run",
+                "max_active_coupons_per_guest",
+                "cooldown_days",
+                "settings",
+                "updated_at",
+            ]
+        )
+        return scenario, config
+
+    def _guest(self, *, phone: str, first_name: str, birthdate: date | None = None) -> Guest:
         return Guest.objects.create(
             phone=phone,
             first_name=first_name,
             last_name="Тестовый",
+            birthdate=birthdate,
             created_at=self.now,
             updated_at=self.now,
         )
@@ -133,11 +208,14 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
 
     def _available_coupon(self, *, code: str) -> CouponRegistryEntry:
+        return self._available_coupon_for_config(config=self.config, code=code)
+
+    def _available_coupon_for_config(self, *, config: CouponAutomationConfig, code: str) -> CouponRegistryEntry:
         return CouponRegistryEntry.objects.create(
-            series=self.config.coupon_series,
+            series=config.coupon_series,
             code=code,
-            venue_code=self.config.venue_code,
-            venue_name=self.config.venue_name,
+            venue_code=config.venue_code,
+            venue_name=config.venue_name,
             is_active=True,
             pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
             iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
@@ -1045,6 +1123,160 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertIn("queue_events_created=0", output)
         self.assertIn("guest_messages_created=0", output)
         self.assertEqual(self._side_effect_counts(), before_counts)
+
+    def test_birthday_preview_selects_rolling_window_and_calculates_trigger(self):
+        birthday_scenario, birthday_config = self._prepare_birthday_autoscenario()
+        current_now = timezone.make_aware(datetime(2026, 6, 10, 10, 0))
+        today_guest = self._guest(
+            phone="+79990000201",
+            first_name="Today",
+            birthdate=date(1991, 6, 10),
+        )
+        soon_guest = self._guest(
+            phone="+79990000202",
+            first_name="Soon",
+            birthdate=date(1992, 6, 17),
+        )
+        outside_guest = self._guest(
+            phone="+79990000203",
+            first_name="Outside",
+            birthdate=date(1993, 6, 18),
+        )
+        for guest in [today_guest, soon_guest, outside_guest]:
+            self._sendable_channel(guest=guest)
+        self._available_coupon_for_config(config=birthday_config, code="BDAY-1")
+        self._available_coupon_for_config(config=birthday_config, code="BDAY-2")
+
+        preview = preview_coupon_autoscenario_audience(
+            scenario_code=birthday_scenario.code,
+            scan_limit=20,
+            now=current_now,
+        )
+
+        self.assertEqual(preview.inactive_days_threshold, 0)
+        self.assertEqual(preview.birthday_preparation_window_days, 7)
+        self.assertEqual(preview.scanned_guests, 2)
+        self.assertEqual(preview.matched_guests, 2)
+        self.assertEqual(preview.sendable_guests, 2)
+        rows_by_guest = {row.guest_id: row for row in preview.sample_rows}
+        self.assertEqual(rows_by_guest[today_guest.id].days_until_birthday, 0)
+        self.assertEqual(rows_by_guest[today_guest.id].birthday_date, date(2026, 6, 10))
+        self.assertEqual(rows_by_guest[today_guest.id].trigger_key, "birthday:2026")
+        self.assertEqual(rows_by_guest[soon_guest.id].days_until_birthday, 7)
+        self.assertEqual(rows_by_guest[soon_guest.id].birthday_date, date(2026, 6, 17))
+        self.assertNotIn(outside_guest.id, rows_by_guest)
+
+    def test_birthday_plan_blocks_existing_assignment_for_same_birthday_year(self):
+        birthday_scenario, birthday_config = self._prepare_birthday_autoscenario()
+        birthday_config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        birthday_config.cooldown_days = 0
+        birthday_config.save(update_fields=["execution_mode", "cooldown_days", "updated_at"])
+        current_now = timezone.make_aware(datetime(2026, 6, 10, 10, 0))
+        guest = self._guest(
+            phone="+79990000211",
+            first_name="Birthday",
+            birthdate=date(1991, 6, 17),
+        )
+        self._sendable_channel(guest=guest)
+        coupon = self._available_coupon_for_config(config=birthday_config, code="BDAY-PLAN")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=birthday_scenario.code,
+            scan_limit=20,
+            now=current_now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, guest.id)
+        self.assertEqual(plan.plan_items[0].coupon_id, coupon.id)
+        self.assertEqual(plan.plan_items[0].days_until_birthday, 7)
+        self.assertEqual(plan.plan_items[0].trigger_key, "birthday:2026")
+        self.assertEqual(plan.plan_items[0].trigger_date, date(2026, 6, 17))
+
+        existing_run = CouponAutoscenarioRun.objects.create(
+            scenario=birthday_scenario,
+            config=birthday_config,
+            status=CouponAutoscenarioRun.Status.COMPLETED,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+        )
+        existing_coupon = self._available_coupon_for_config(config=birthday_config, code="BDAY-OLD")
+        CouponAutoscenarioAssignment.objects.create(
+            run=existing_run,
+            scenario=birthday_scenario,
+            config=birthday_config,
+            guest=guest,
+            coupon=existing_coupon,
+            phone_e164=guest.phone,
+            coupon_series=existing_coupon.series,
+            coupon_code=existing_coupon.code,
+            venue_code=existing_coupon.venue_code,
+            venue_name=existing_coupon.venue_name,
+            trigger_key="birthday:2026",
+            trigger_date=date(2026, 6, 17),
+            assigned_at=current_now - timedelta(days=1),
+            lifetime_expires_at=current_now + timedelta(days=14),
+            status=CouponAutoscenarioAssignment.Status.USED,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+        )
+
+        repeated_plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=birthday_scenario.code,
+            scan_limit=20,
+            now=current_now,
+        )
+
+        self.assertFalse(repeated_plan.can_execute)
+        self.assertEqual(repeated_plan.blocked_existing_trigger, 1)
+        self.assertEqual(repeated_plan.eligible_guests, 0)
+        self.assertEqual(repeated_plan.planned_assignments, 0)
+
+    def test_birthday_forced_pilot_uses_explicit_days_until_birthday(self):
+        birthday_scenario, birthday_config = self._prepare_birthday_autoscenario()
+        birthday_config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        birthday_config.max_recipients_per_run = 1
+        birthday_config.settings = {
+            "birthday_preparation_window_days": 7,
+            "pilot_phones": ["+79990000221"],
+            "pilot_include_unmatched": True,
+            "pilot_days_until_birthday": 5,
+        }
+        birthday_config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        self.template.message_text = "До дня рождения {{ days_until_birthday }} дн. Купон {coupon_code}"
+        self.template.save(update_fields=["message_text", "updated_at"])
+        current_now = timezone.make_aware(datetime(2026, 6, 10, 10, 0))
+        pilot_guest = self._guest(phone="+79990000221", first_name="PilotBirthday")
+        self._sendable_channel(guest=pilot_guest)
+        self._available_coupon_for_config(config=birthday_config, code="BDAY-PILOT")
+
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=birthday_scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=current_now,
+        )
+
+        self.assertTrue(result.confirmed)
+        self.assertEqual(result.created_assignments, 1)
+        self.assertEqual(result.plan.pilot_forced_guests, 1)
+        self.assertEqual(result.plan.plan_items[0].days_until_birthday, 5)
+        self.assertTrue(result.plan.plan_items[0].is_pilot_forced)
+
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        self.assertEqual(assignment.trigger_key, "birthday:2026")
+        self.assertEqual(assignment.trigger_date, date(2026, 6, 15))
+        self.assertIn("5 дн.", assignment.promo_text)
+        queue_event = CouponVtelemaxSyncQueue.objects.get(autoscenario_assignment=assignment)
+        self.assertEqual(queue_event.payload_json["days_until_birthday"], 5)
+        self.assertEqual(queue_event.payload_json["trigger_key"], "birthday:2026")
+        self.assertEqual(queue_event.payload_json["trigger_date"], "2026-06-15")
 
     @staticmethod
     def _side_effect_counts() -> dict[str, int]:
