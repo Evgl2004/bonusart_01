@@ -55,6 +55,8 @@ def render_message_for_guest(message_text, guest, extra_context: dict[str, Any] 
         "birthdate": "дата рождения не указана",
         "age": "возраст не указан",
         "days_without_visits": "нет данных",
+        "days_until_birthday": "нет данных",
+        "birthday_date": "дата не указана",
     }
     for key, fallback_value in text_fallbacks.items():
         current_value = str(normalized_context.get(key) or "").strip()

@@ -25,15 +25,22 @@ from guests.models import (
 )
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon_global_venue
 from guests.services.notification_events import ScenarioNotConfiguredError, create_notification_event
-from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
+from guests.services.notification_registry import (
+    SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_INACTIVE_30D_COUPON,
+)
 from guests.services.notification_scenarios import _extract_inactive_days
 from guests.services.guest_resolution import normalize_phone_e164
 from guests.services.template_render import render_message_for_guest
 
 
-SUPPORTED_COUPON_AUTOSCENARIOS = {SCENARIO_CODE_INACTIVE_30D_COUPON}
+SUPPORTED_COUPON_AUTOSCENARIOS = {
+    SCENARIO_CODE_INACTIVE_30D_COUPON,
+    SCENARIO_CODE_BIRTHDAY_COUPON,
+}
 DEFAULT_PREVIEW_SCAN_LIMIT = 5000
 DEFAULT_PILOT_PHONE_E164 = "+79129923438"
+DEFAULT_BIRTHDAY_PREPARATION_WINDOW_DAYS = 7
 PILOT_PHONE_SETTINGS_KEYS = ("pilot_phone_e164", "pilot_phone", "pilot_phones", "pilot_phone_e164s")
 PILOT_GUEST_ID_SETTINGS_KEYS = ("pilot_guest_id", "pilot_guest_ids")
 PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS = (
@@ -44,6 +51,15 @@ PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS = (
 PILOT_DAYS_WITHOUT_VISITS_SETTINGS_KEYS = (
     "pilot_days_without_visits",
     "test_days_without_visits",
+)
+BIRTHDAY_PREPARATION_WINDOW_SETTINGS_KEYS = (
+    "birthday_preparation_window_days",
+    "birthday_window_days",
+    "preparation_window_days",
+)
+PILOT_DAYS_UNTIL_BIRTHDAY_SETTINGS_KEYS = (
+    "pilot_days_until_birthday",
+    "test_days_until_birthday",
 )
 
 
@@ -60,6 +76,10 @@ class CouponAutoscenarioAudienceRow:
     last_visit_at: datetime | None
     sendable_channels: tuple[str, ...] = field(default_factory=tuple)
     is_pilot_forced: bool = False
+    days_until_birthday: int | None = None
+    birthday_date: date | None = None
+    trigger_key: str = ""
+    trigger_date: date | None = None
 
     @property
     def has_sendable_channel(self) -> bool:
@@ -75,6 +95,10 @@ class CouponAutoscenarioAudienceRow:
             "sendable_channels": list(self.sendable_channels),
             "has_sendable_channel": self.has_sendable_channel,
             "is_pilot_forced": self.is_pilot_forced,
+            "days_until_birthday": self.days_until_birthday,
+            "birthday_date": self.birthday_date.isoformat() if self.birthday_date else None,
+            "trigger_key": self.trigger_key,
+            "trigger_date": self.trigger_date.isoformat() if self.trigger_date else None,
         }
 
 
@@ -87,6 +111,7 @@ class CouponAutoscenarioPreview:
     venue_code: str
     venue_name: str
     inactive_days_threshold: int
+    birthday_preparation_window_days: int
     max_recipients_per_run: int
     scan_limit: int
     scanned_guests: int
@@ -110,6 +135,7 @@ class CouponAutoscenarioPreview:
             "venue_code": self.venue_code,
             "venue_name": self.venue_name,
             "inactive_days_threshold": self.inactive_days_threshold,
+            "birthday_preparation_window_days": self.birthday_preparation_window_days,
             "max_recipients_per_run": self.max_recipients_per_run,
             "scan_limit": self.scan_limit,
             "scanned_guests": self.scanned_guests,
@@ -141,6 +167,10 @@ class CouponAutoscenarioPlanItem:
     valid_until: datetime
     last_visit_at: datetime | None = None
     days_without_visits: int | None = None
+    days_until_birthday: int | None = None
+    birthday_date: date | None = None
+    trigger_key: str = ""
+    trigger_date: date | None = None
     is_pilot_forced: bool = False
     coupon_rule_id: int | None = None
     coupon_rule_label: str = ""
@@ -180,6 +210,19 @@ class CouponAutoscenarioPlanItem:
             "last_visit_at_display": last_visit_local.strftime("%d.%m.%Y %H:%M") if last_visit_local else "—",
             "days_without_visits": self.days_without_visits,
             "days_without_visits_label": days_without_visits_label,
+            "days_until_birthday": self.days_until_birthday,
+            "days_until_birthday_label": (
+                f"{self.days_until_birthday} (пилотное значение)"
+                if self.days_until_birthday is not None and self.is_pilot_forced
+                else str(self.days_until_birthday)
+                if self.days_until_birthday is not None
+                else "—"
+            ),
+            "birthday_date": self.birthday_date.isoformat() if self.birthday_date else None,
+            "birthday_date_display": self.birthday_date.strftime("%d.%m.%Y") if self.birthday_date else "—",
+            "trigger_key": self.trigger_key,
+            "trigger_date": self.trigger_date.isoformat() if self.trigger_date else None,
+            "trigger_date_display": self.trigger_date.strftime("%d.%m.%Y") if self.trigger_date else "—",
             "is_pilot_forced": self.is_pilot_forced,
             "coupon_rule_id": self.coupon_rule_id,
             "coupon_rule_label": self.coupon_rule_label,
@@ -202,6 +245,7 @@ class CouponAutoscenarioExecutionPlan:
     venue_code: str
     venue_name: str
     inactive_days_threshold: int
+    birthday_preparation_window_days: int
     max_recipients_per_run: int
     scan_limit: int
     scanned_guests: int
@@ -209,6 +253,7 @@ class CouponAutoscenarioExecutionPlan:
     sendable_guests: int
     blocked_without_channel: int
     blocked_existing_active_coupon: int
+    blocked_existing_trigger: int
     blocked_by_cooldown: int
     blocked_by_pilot_filter: int
     pilot_phone_filters: tuple[str, ...]
@@ -233,6 +278,7 @@ class CouponAutoscenarioExecutionPlan:
             "venue_code": self.venue_code,
             "venue_name": self.venue_name,
             "inactive_days_threshold": self.inactive_days_threshold,
+            "birthday_preparation_window_days": self.birthday_preparation_window_days,
             "max_recipients_per_run": self.max_recipients_per_run,
             "scan_limit": self.scan_limit,
             "scanned_guests": self.scanned_guests,
@@ -241,6 +287,7 @@ class CouponAutoscenarioExecutionPlan:
             "sendable_guests": self.sendable_guests,
             "blocked_without_channel": self.blocked_without_channel,
             "blocked_existing_active_coupon": self.blocked_existing_active_coupon,
+            "blocked_existing_trigger": self.blocked_existing_trigger,
             "blocked_by_cooldown": self.blocked_by_cooldown,
             "blocked_by_pilot_filter": self.blocked_by_pilot_filter,
             "pilot_phone_filters": list(self.pilot_phone_filters),
@@ -375,14 +422,14 @@ def preview_coupon_autoscenario_audience(
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
         warnings.append("Купонная настройка в режиме 'Пауза'.")
 
-    inactive_days = _extract_inactive_days(scenario)
     safe_limit = max(1, int(limit or config.max_recipients_per_run or 100))
     safe_scan_limit = _resolve_preview_scan_limit(scan_limit=scan_limit, run_limit=safe_limit)
     safe_sample_limit = max(0, int(sample_limit))
     current_now = now or timezone.now()
 
-    scanned_guests, matched_rows = _build_candidate_rows(
-        inactive_days=inactive_days,
+    inactive_days, birthday_window_days, scanned_guests, matched_rows = _build_autoscenario_candidate_rows(
+        scenario=scenario,
+        config=config,
         scan_limit=safe_scan_limit,
         now=current_now,
     )
@@ -422,6 +469,7 @@ def preview_coupon_autoscenario_audience(
         venue_code=str(config.venue_code or "").strip(),
         venue_name=str(config.venue_name or "").strip(),
         inactive_days_threshold=inactive_days,
+        birthday_preparation_window_days=birthday_window_days,
         max_recipients_per_run=safe_limit,
         scan_limit=safe_scan_limit,
         scanned_guests=scanned_guests,
@@ -454,7 +502,6 @@ def build_coupon_autoscenario_execution_plan(
     плана.
     """
     scenario, config = _load_coupon_autoscenario_context(scenario_code=scenario_code)
-    inactive_days = _extract_inactive_days(scenario)
     safe_limit = max(1, int(limit or config.max_recipients_per_run or 100))
     safe_scan_limit = _resolve_preview_scan_limit(scan_limit=scan_limit, run_limit=safe_limit)
     current_now = now or timezone.now()
@@ -487,8 +534,9 @@ def build_coupon_autoscenario_execution_plan(
     if not coupon_rules:
         blockers.append("Не настроено ни одно купонное правило.")
 
-    scanned_guests, matched_rows = _build_candidate_rows(
-        inactive_days=inactive_days,
+    inactive_days, birthday_window_days, scanned_guests, matched_rows = _build_autoscenario_candidate_rows(
+        scenario=scenario,
+        config=config,
         scan_limit=safe_scan_limit,
         now=current_now,
     )
@@ -497,9 +545,15 @@ def build_coupon_autoscenario_execution_plan(
         matched_rows=matched_rows,
         config=config,
         pilot_filter=pilot_filter,
+        scenario_code=scenario.code,
+        now=current_now,
     )
     sendable_rows = [row for row in matched_rows if row.has_sendable_channel]
     blocked_without_channel = len(matched_rows) - len(sendable_rows)
+    existing_trigger_pairs = _existing_trigger_assignment_pairs(
+        scenario=scenario,
+        rows=sendable_rows,
+    )
 
     active_assignment_guest_ids = _active_assignment_guest_ids(
         guest_ids=[row.guest_id for row in sendable_rows],
@@ -525,9 +579,13 @@ def build_coupon_autoscenario_execution_plan(
 
     eligible_rows: list[CouponAutoscenarioAudienceRow] = []
     blocked_existing_active_coupon = 0
+    blocked_existing_trigger = 0
     blocked_by_cooldown = 0
     blocked_by_pilot_filter = 0
     for row in sendable_rows:
+        if row.trigger_key and (row.guest_id, row.trigger_key) in existing_trigger_pairs:
+            blocked_existing_trigger += 1
+            continue
         if row.guest_id in active_assignment_guest_ids:
             blocked_existing_active_coupon += 1
             continue
@@ -585,6 +643,10 @@ def build_coupon_autoscenario_execution_plan(
                 valid_until=valid_until,
                 last_visit_at=row.last_visit_at,
                 days_without_visits=days_without_visits,
+                days_until_birthday=row.days_until_birthday,
+                birthday_date=row.birthday_date,
+                trigger_key=row.trigger_key,
+                trigger_date=row.trigger_date,
                 is_pilot_forced=row.is_pilot_forced,
                 coupon_rule_id=rule.rule_id,
                 coupon_rule_label=rule.label,
@@ -616,6 +678,7 @@ def build_coupon_autoscenario_execution_plan(
         venue_code=str(config.venue_code or "").strip(),
         venue_name=str(config.venue_name or "").strip(),
         inactive_days_threshold=inactive_days,
+        birthday_preparation_window_days=birthday_window_days,
         max_recipients_per_run=safe_limit,
         scan_limit=safe_scan_limit,
         scanned_guests=scanned_guests,
@@ -623,6 +686,7 @@ def build_coupon_autoscenario_execution_plan(
         sendable_guests=len(sendable_rows),
         blocked_without_channel=blocked_without_channel,
         blocked_existing_active_coupon=blocked_existing_active_coupon,
+        blocked_existing_trigger=blocked_existing_trigger,
         blocked_by_cooldown=blocked_by_cooldown,
         blocked_by_pilot_filter=blocked_by_pilot_filter,
         pilot_phone_filters=pilot_filter.phones,
@@ -693,6 +757,7 @@ def execute_coupon_autoscenario_pilot(
             sendable_guests=plan.sendable_guests,
             blocked_without_channel=plan.blocked_without_channel,
             blocked_existing_active_coupon=plan.blocked_existing_active_coupon,
+            blocked_existing_trigger=plan.blocked_existing_trigger,
             blocked_by_cooldown=plan.blocked_by_cooldown,
             eligible_guests=plan.eligible_guests,
             planned_assignments=plan.planned_assignments,
@@ -740,6 +805,8 @@ def execute_coupon_autoscenario_pilot(
                 valid_until=item.valid_until,
                 now=current_now,
                 days_without_visits=item.days_without_visits,
+                days_until_birthday=item.days_until_birthday,
+                birthday_date=item.birthday_date,
             )
             assignment = CouponAutoscenarioAssignment.objects.create(
                 run=run,
@@ -755,6 +822,8 @@ def execute_coupon_autoscenario_pilot(
                 coupon_selection_source=item.coupon_selection_source or None,
                 venue_code=item.venue_code or None,
                 venue_name=item.venue_name or None,
+                trigger_key=item.trigger_key or None,
+                trigger_date=item.trigger_date,
                 promo_text=rendered_promo_text or None,
                 assigned_at=current_now,
                 lifetime_expires_at=item.valid_until,
@@ -775,6 +844,7 @@ def execute_coupon_autoscenario_pilot(
                     run=run,
                     assignment=assignment,
                     days_without_visits=item.days_without_visits,
+                    days_until_birthday=item.days_until_birthday,
                 ),
                 status=CouponVtelemaxSyncQueue.Status.PENDING,
                 next_retry_at=current_now,
@@ -991,6 +1061,11 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
                     now=current_now,
                 )
             ),
+            days_until_birthday=_days_until_date(
+                target_date=assignment.trigger_date,
+                now=current_now,
+            ),
+            birthday_date=assignment.trigger_date,
         )
         is_pilot_execution = assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
         try:
@@ -1177,6 +1252,8 @@ def _append_unmatched_pilot_rows_if_requested(
     matched_rows: list[CouponAutoscenarioAudienceRow],
     config: CouponAutomationConfig,
     pilot_filter: PilotRecipientFilter,
+    scenario_code: str,
+    now: datetime,
 ) -> tuple[list[CouponAutoscenarioAudienceRow], int]:
     if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
         return matched_rows, 0
@@ -1199,6 +1276,11 @@ def _append_unmatched_pilot_rows_if_requested(
     channels_map = _build_sendable_channels_map(guest_ids=guest_ids)
     last_order_venues = _last_order_venue_map(guest_ids=guest_ids)
     last_order_visits = _last_order_visit_at_map(guest_ids=guest_ids)
+    birthday_pilot_context = _build_forced_pilot_birthday_context(
+        scenario_code=scenario_code,
+        config=config,
+        now=now,
+    )
 
     extra_rows: list[CouponAutoscenarioAudienceRow] = []
     for guest in guests:
@@ -1216,6 +1298,10 @@ def _append_unmatched_pilot_rows_if_requested(
                 or (last_order_venue.last_visit_at if last_order_venue else None),
                 sendable_channels=tuple(channels_map.get(guest_id, ())),
                 is_pilot_forced=True,
+                days_until_birthday=birthday_pilot_context["days_until_birthday"],
+                birthday_date=birthday_pilot_context["birthday_date"],
+                trigger_key=birthday_pilot_context["trigger_key"],
+                trigger_date=birthday_pilot_context["trigger_date"],
             )
         )
         existing_guest_ids.add(guest_id)
@@ -1241,6 +1327,31 @@ def _settings_bool(settings, keys: tuple[str, ...]) -> bool:
         if normalized in {"0", "false", "no", "n", "off", "нет"}:
             return False
     return False
+
+
+def _build_autoscenario_candidate_rows(
+    *,
+    scenario: NotificationScenario,
+    config: CouponAutomationConfig,
+    scan_limit: int,
+    now: datetime,
+) -> tuple[int, int, int, list[CouponAutoscenarioAudienceRow]]:
+    if scenario.code == SCENARIO_CODE_BIRTHDAY_COUPON:
+        birthday_window_days = _resolve_birthday_preparation_window_days(config=config)
+        scanned_guests, matched_rows = _build_birthday_candidate_rows(
+            window_days=birthday_window_days,
+            scan_limit=scan_limit,
+            now=now,
+        )
+        return 0, birthday_window_days, scanned_guests, matched_rows
+
+    inactive_days = _extract_inactive_days(scenario)
+    scanned_guests, matched_rows = _build_candidate_rows(
+        inactive_days=inactive_days,
+        scan_limit=scan_limit,
+        now=now,
+    )
+    return inactive_days, 0, scanned_guests, matched_rows
 
 
 def _build_candidate_rows(
@@ -1286,6 +1397,122 @@ def _build_candidate_rows(
             )
         )
     return scanned_guests, matched_rows
+
+
+def _build_birthday_candidate_rows(
+    *,
+    window_days: int,
+    scan_limit: int,
+    now: datetime,
+) -> tuple[int, list[CouponAutoscenarioAudienceRow]]:
+    local_today = timezone.localtime(now).date()
+    safe_window_days = max(0, int(window_days))
+    candidates = list(
+        Guest.objects.filter(birthdate__isnull=False)
+        .filter(_birthday_window_birthdate_filter(window_start=local_today, window_days=safe_window_days))
+        .order_by("id")[: max(1, int(scan_limit))]
+    )
+    channels_map = _build_sendable_channels_map(guest_ids=[candidate.id for candidate in candidates])
+    last_order_visits = _last_order_visit_at_map(guest_ids=[candidate.id for candidate in candidates])
+
+    matched_rows: list[CouponAutoscenarioAudienceRow] = []
+    scanned_guests = 0
+    for guest in candidates:
+        scanned_guests += 1
+        birthday_date = _nearest_birthday_in_window(
+            birthdate=guest.birthdate,
+            window_start=local_today,
+            window_days=safe_window_days,
+        )
+        if birthday_date is None:
+            continue
+        days_until_birthday = max(0, int((birthday_date - local_today).days))
+        matched_rows.append(
+            CouponAutoscenarioAudienceRow(
+                guest_id=int(guest.id),
+                phone=str(guest.phone or ""),
+                first_name=str(guest.first_name or ""),
+                last_name=str(guest.last_name or ""),
+                last_visit_at=last_order_visits.get(int(guest.id)),
+                sendable_channels=tuple(channels_map.get(guest.id, ())),
+                days_until_birthday=days_until_birthday,
+                birthday_date=birthday_date,
+                trigger_key=_birthday_trigger_key(trigger_date=birthday_date),
+                trigger_date=birthday_date,
+            )
+        )
+    return scanned_guests, matched_rows
+
+
+def _nearest_birthday_in_window(
+    *,
+    birthdate: date | None,
+    window_start: date,
+    window_days: int,
+) -> date | None:
+    if birthdate is None:
+        return None
+    window_end = window_start + timedelta(days=max(0, int(window_days)))
+    for birthday_year in range(window_start.year, window_end.year + 1):
+        birthday_date = _birthday_date_for_year(birthdate=birthdate, year=birthday_year)
+        if window_start <= birthday_date <= window_end:
+            return birthday_date
+    return None
+
+
+def _birthday_date_for_year(*, birthdate: date, year: int) -> date:
+    try:
+        return date(int(year), int(birthdate.month), int(birthdate.day))
+    except ValueError:
+        return date(int(year), 2, 28)
+
+
+def _birthday_window_birthdate_filter(*, window_start: date, window_days: int) -> Q:
+    birthday_filter = Q()
+    for offset in range(max(0, int(window_days)) + 1):
+        candidate_date = window_start + timedelta(days=offset)
+        birthday_filter |= Q(birthdate__month=candidate_date.month, birthdate__day=candidate_date.day)
+        if candidate_date.month == 2 and candidate_date.day == 28 and not _is_leap_year(candidate_date.year):
+            birthday_filter |= Q(birthdate__month=2, birthdate__day=29)
+    return birthday_filter
+
+
+def _is_leap_year(year: int) -> bool:
+    safe_year = int(year)
+    return safe_year % 4 == 0 and (safe_year % 100 != 0 or safe_year % 400 == 0)
+
+
+def _birthday_trigger_key(*, trigger_date: date | None) -> str:
+    if trigger_date is None:
+        return ""
+    return f"birthday:{int(trigger_date.year)}"
+
+
+def _build_forced_pilot_birthday_context(
+    *,
+    scenario_code: str,
+    config: CouponAutomationConfig,
+    now: datetime,
+) -> dict[str, int | str | date | None]:
+    if scenario_code != SCENARIO_CODE_BIRTHDAY_COUPON:
+        return {
+            "days_until_birthday": None,
+            "birthday_date": None,
+            "trigger_key": "",
+            "trigger_date": None,
+        }
+    local_today = timezone.localtime(now).date()
+    days_until_birthday = _resolve_pilot_days_until_birthday(
+        config=config,
+        default_days=_resolve_birthday_preparation_window_days(config=config),
+    )
+    trigger_date = local_today + timedelta(days=days_until_birthday)
+    return {
+        "days_until_birthday": days_until_birthday,
+        "birthday_date": trigger_date,
+        "trigger_key": _birthday_trigger_key(trigger_date=trigger_date),
+        "trigger_date": trigger_date,
+    }
 
 
 def _resolve_preview_scan_limit(*, scan_limit: int | None, run_limit: int) -> int:
@@ -1590,6 +1817,8 @@ def _render_autoscenario_coupon_text(
     valid_until: datetime,
     now: datetime | None = None,
     days_without_visits: int | None = None,
+    days_until_birthday: int | None = None,
+    birthday_date: date | None = None,
 ) -> str:
     template_text = str(config.coupon_promo_text_template or "").strip()
     if not template_text:
@@ -1614,6 +1843,8 @@ def _render_autoscenario_coupon_text(
                     now=current_now,
                 )
             ),
+            days_until_birthday=days_until_birthday,
+            birthday_date=birthday_date,
         ),
     )
 
@@ -1644,6 +1875,34 @@ def _resolve_pilot_days_without_visits(
     return max(0, int(default_days or 0))
 
 
+def _resolve_birthday_preparation_window_days(*, config: CouponAutomationConfig) -> int:
+    payload = config.settings if isinstance(config.settings, dict) else {}
+    for key in BIRTHDAY_PREPARATION_WINDOW_SETTINGS_KEYS:
+        if key not in payload:
+            continue
+        try:
+            return max(0, int(payload.get(key)))
+        except (TypeError, ValueError):
+            continue
+    return DEFAULT_BIRTHDAY_PREPARATION_WINDOW_DAYS
+
+
+def _resolve_pilot_days_until_birthday(
+    *,
+    config: CouponAutomationConfig,
+    default_days: int,
+) -> int:
+    payload = config.settings if isinstance(config.settings, dict) else {}
+    for key in PILOT_DAYS_UNTIL_BIRTHDAY_SETTINGS_KEYS:
+        if key not in payload:
+            continue
+        try:
+            return max(0, int(payload.get(key)))
+        except (TypeError, ValueError):
+            continue
+    return max(0, int(default_days or 0))
+
+
 def _calculate_days_without_visits(*, guest_id: int | None, now: datetime | None = None) -> int | None:
     if not guest_id:
         return None
@@ -1654,6 +1913,13 @@ def _calculate_days_without_visits(*, guest_id: int | None, now: datetime | None
     return max(0, int((current_now - last_visit_at).days))
 
 
+def _days_until_date(*, target_date: date | None, now: datetime | None = None) -> int | None:
+    if target_date is None:
+        return None
+    current_date = timezone.localtime(now or timezone.now()).date()
+    return max(0, int((target_date - current_date).days))
+
+
 def _build_autoscenario_template_context(
     *,
     coupon_code: str,
@@ -1662,6 +1928,8 @@ def _build_autoscenario_template_context(
     venue_name: str,
     valid_until: datetime | None,
     days_without_visits: int | None = None,
+    days_until_birthday: int | None = None,
+    birthday_date: date | None = None,
 ) -> dict[str, str]:
     return {
         "coupon_code": str(coupon_code or "").strip(),
@@ -1671,6 +1939,8 @@ def _build_autoscenario_template_context(
         "coupon_expires_at": timezone.localtime(valid_until).strftime("%d.%m.%Y") if valid_until else "",
         "valid_until": _format_valid_until(valid_until) or "",
         "days_without_visits": str(days_without_visits) if days_without_visits is not None else "",
+        "days_until_birthday": str(days_until_birthday) if days_until_birthday is not None else "",
+        "birthday_date": birthday_date.strftime("%d.%m.%Y") if birthday_date else "",
     }
 
 
@@ -1703,6 +1973,8 @@ def _build_autoscenario_dispatch_payload(*, assignment: CouponAutoscenarioAssign
         "coupon_venue_code": assignment.venue_code,
         "coupon_venue_name": assignment.venue_name,
         "coupon_valid_until": _format_valid_until(assignment.lifetime_expires_at),
+        "trigger_key": assignment.trigger_key,
+        "trigger_date": assignment.trigger_date.isoformat() if assignment.trigger_date else None,
     }
 
 
@@ -1762,6 +2034,7 @@ def _build_autoscenario_assignment_payload(
     run: CouponAutoscenarioRun,
     assignment: CouponAutoscenarioAssignment,
     days_without_visits: int | None = None,
+    days_until_birthday: int | None = None,
 ) -> dict:
     return {
         "source": "autoscenario",
@@ -1779,6 +2052,9 @@ def _build_autoscenario_assignment_payload(
         "venue_name": assignment.venue_name,
         "promo_text": assignment.promo_text,
         "days_without_visits": days_without_visits,
+        "days_until_birthday": days_until_birthday,
+        "trigger_key": assignment.trigger_key,
+        "trigger_date": assignment.trigger_date.isoformat() if assignment.trigger_date else None,
         "status": assignment.status,
         "vtelemax_sync_status": assignment.vtelemax_sync_status,
     }
@@ -1806,6 +2082,8 @@ def _build_autoscenario_status_update_payload(
         "venue_code": assignment.venue_code,
         "venue_name": assignment.venue_name,
         "promo_text": assignment.promo_text,
+        "trigger_key": assignment.trigger_key,
+        "trigger_date": assignment.trigger_date.isoformat() if assignment.trigger_date else None,
         "status": status,
         "status_at": timezone.localtime(now).isoformat(timespec="seconds"),
         "meta": meta,
@@ -1834,6 +2112,37 @@ def _normalize_coupon_series_filter(coupon_series: str | tuple[str, ...] | list[
     else:
         values = list(coupon_series or [])
     return tuple(dict.fromkeys(str(value or "").strip() for value in values if str(value or "").strip()))
+
+
+def _existing_trigger_assignment_pairs(
+    *,
+    scenario: NotificationScenario,
+    rows: list[CouponAutoscenarioAudienceRow],
+) -> set[tuple[int, str]]:
+    candidate_pairs = {
+        (int(row.guest_id), str(row.trigger_key or "").strip())
+        for row in rows
+        if row.guest_id and str(row.trigger_key or "").strip()
+    }
+    if not candidate_pairs:
+        return set()
+
+    guest_ids = [guest_id for guest_id, _ in candidate_pairs]
+    trigger_keys = [trigger_key for _, trigger_key in candidate_pairs]
+    existing_rows = (
+        CouponAutoscenarioAssignment.objects.filter(
+            scenario=scenario,
+            guest_id__in=guest_ids,
+            trigger_key__in=trigger_keys,
+        )
+        .exclude(status=CouponAutoscenarioAssignment.Status.CANCELED)
+        .values_list("guest_id", "trigger_key")
+    )
+    return {
+        (int(guest_id), str(trigger_key or "").strip())
+        for guest_id, trigger_key in existing_rows
+        if guest_id and str(trigger_key or "").strip()
+    }
 
 
 def _active_assignment_guest_ids(

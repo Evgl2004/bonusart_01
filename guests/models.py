@@ -2818,6 +2818,7 @@ class CouponAutoscenarioRun(models.Model):
     sendable_guests = models.PositiveIntegerField(default=0)
     blocked_without_channel = models.PositiveIntegerField(default=0)
     blocked_existing_active_coupon = models.PositiveIntegerField(default=0)
+    blocked_existing_trigger = models.PositiveIntegerField(default=0)
     blocked_by_cooldown = models.PositiveIntegerField(default=0)
     eligible_guests = models.PositiveIntegerField(default=0)
     planned_assignments = models.PositiveIntegerField(default=0)
@@ -2905,6 +2906,8 @@ class CouponAutoscenarioAssignment(models.Model):
     venue_code = models.CharField(max_length=64, blank=True, null=True, db_index=True)
     venue_name = models.CharField(max_length=255, blank=True, null=True)
     coupon_selection_source = models.CharField(max_length=32, blank=True, null=True, db_index=True)
+    trigger_key = models.CharField(max_length=120, blank=True, null=True, db_index=True)
+    trigger_date = models.DateField(blank=True, null=True, db_index=True)
     promo_text = models.TextField(blank=True, null=True)
     assigned_at = models.DateTimeField(default=timezone.now, db_index=True)
     sent_at = models.DateTimeField(blank=True, null=True)
@@ -2947,11 +2950,17 @@ class CouponAutoscenarioAssignment(models.Model):
                 condition=models.Q(person_id__isnull=False),
                 name="cautoass_run_person_uniq",
             ),
+            models.UniqueConstraint(
+                fields=["scenario", "guest", "trigger_key"],
+                condition=models.Q(trigger_key__isnull=False) & ~models.Q(status="canceled"),
+                name="cautoass_scen_guest_trigger_uniq",
+            ),
         ]
         indexes = [
             models.Index(fields=["scenario", "status"], name="cautoass_scen_status_idx"),
             models.Index(fields=["status", "vtelemax_sync_status"], name="cautoass_sync_status_idx"),
             models.Index(fields=["coupon_series", "status"], name="cautoass_series_status_idx"),
+            models.Index(fields=["scenario", "trigger_key"], name="cautoass_scen_trigger_idx"),
         ]
 
     def __str__(self):
