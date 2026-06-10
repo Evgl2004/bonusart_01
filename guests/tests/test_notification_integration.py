@@ -141,6 +141,52 @@ class NotificationScenarioIntegrationTests(TestCase):
         self.assertEqual(task.provider_type, BotProfile.ProviderType.TELEGRAM)
         self.assertEqual(task.external_chat_id, self.binding.external_chat_id)
 
+    def test_create_notification_event_uses_guest_name_when_context_omits_it(self):
+        self.template.message_text = "{{ first_name }}, скоро день рождения. Купон {coupon_code}"
+        self.template.save(update_fields=["message_text", "updated_at"])
+        scenario = self._create_scenario(code="test_guest_name_context_fallback")
+
+        created_tasks = create_notification_event(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="birthday:guest-name",
+            source_ref="birthday:guest-name",
+            event_source_type=NotificationEvent.SourceType.SCHEDULE,
+            task_source_type=DispatchTask.SourceType.SYSTEM,
+            template_context={"coupon_code": "BDAY-1"},
+            fallback_message_text="Скоро день рождения. Купон BDAY-1",
+        )
+
+        self.assertEqual(created_tasks, 1)
+        task = DispatchTask.objects.get(notification_scenario=scenario)
+        self.assertEqual(
+            task.message_text,
+            f"{self.guest.first_name}, скоро день рождения. Купон BDAY-1",
+        )
+
+    def test_create_notification_event_uses_safe_guest_name_when_guest_name_is_empty(self):
+        self.guest.first_name = ""
+        self.guest.save(update_fields=["first_name", "updated_at"])
+        self.template.message_text = "{{ first_name }}, скоро день рождения. Купон {coupon_code}"
+        self.template.save(update_fields=["message_text", "updated_at"])
+        scenario = self._create_scenario(code="test_empty_guest_name_context_fallback")
+
+        created_tasks = create_notification_event(
+            scenario_code=scenario.code,
+            guest=self.guest,
+            dedupe_key="birthday:empty-guest-name",
+            source_ref="birthday:empty-guest-name",
+            event_source_type=NotificationEvent.SourceType.SCHEDULE,
+            task_source_type=DispatchTask.SourceType.SYSTEM,
+            template_context={"coupon_code": "BDAY-2"},
+            fallback_message_text="Скоро день рождения. Купон BDAY-2",
+        )
+
+        self.assertEqual(created_tasks, 1)
+        task = DispatchTask.objects.get(notification_scenario=scenario)
+        self.assertEqual(task.message_text, "гость, скоро день рождения. Купон BDAY-2")
+        self.assertFalse(task.message_text.startswith(","))
+
     def test_enqueue_notification_event_deduplicates_by_scenario_and_key(self):
         """
         Проверяет дедупликацию: повтор не создаёт новую задачу доставки.

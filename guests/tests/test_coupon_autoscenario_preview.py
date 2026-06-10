@@ -1079,6 +1079,48 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertIn("45 дней", task.message_text)
         self.assertNotIn("days_without_visits", task.message_text)
 
+    def test_autoscenario_dispatch_after_ack_uses_guest_name_from_card(self):
+        self.template.message_text = "{{ first_name }}: скоро день рождения. Купон {coupon_code}"
+        self.template.save(update_fields=["message_text", "updated_at"])
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.settings = {"pilot_phones": ["+79990000148"]}
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000148", first_name="Андрей")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._available_coupon(code="AUTO-NAME-CARD")
+
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=self.now,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        ack_time = self.now + timedelta(minutes=5)
+        assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = ack_time
+        assignment.save(update_fields=["vtelemax_sync_status", "vtelemax_synced_at", "updated_at"])
+
+        created_tasks = create_autoscenario_dispatch_after_vtelemax_ack(
+            assignment_id=assignment.id,
+            now=ack_time,
+        )
+
+        self.assertEqual(created_tasks, 1)
+        event = NotificationEvent.objects.get(source_ref=f"coupon_autoscenario_assignment:{assignment.id}")
+        task = DispatchTask.objects.get(notification_event=event)
+        self.assertEqual(task.message_text, "Андрей: скоро день рождения. Купон AUTO-NAME-CARD")
+        self.assertNotIn("first_name", task.message_text)
+
     def test_active_dispatch_after_ack_respects_send_window(self):
         self.template.message_text = "Мы давно не виделись ({{ days_without_visits }} дней). Купон {coupon_code}"
         self.template.save(update_fields=["message_text", "updated_at"])

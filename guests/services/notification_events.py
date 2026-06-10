@@ -26,6 +26,7 @@ from guests.services.notification_registry import (
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
 )
+from guests.services.template_render import render_message_for_guest
 from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,7 @@ def _calculate_planned_send_at(
 def _render_scenario_message(
     *,
     scenario: NotificationScenario,
+    guest: Guest,
     template_context: Optional[Dict[str, Any]],
     fallback_message_text: str,
 ) -> str:
@@ -128,6 +130,20 @@ def _render_scenario_message(
     template_text = str(getattr(scenario.template, "message_text", "") or "").strip()
     if not template_text:
         return str(fallback_message_text or "").strip()
+
+    try:
+        rendered = render_message_for_guest(
+            template_text,
+            guest,
+            extra_context=template_context,
+        ).strip()
+        if rendered:
+            return rendered
+    except Exception:
+        logger.exception(
+            "Notification template render failed with guest context for scenario_code=%s. Falling back to legacy render.",
+            scenario.code,
+        )
 
     raw_context = template_context or {}
     safe_context = _SafeTemplateContext(raw_context)
@@ -515,6 +531,7 @@ def create_notification_event(
 
     message_text = _render_scenario_message(
         scenario=scenario,
+        guest=guest,
         template_context=template_context,
         fallback_message_text=fallback_message_text,
     )
