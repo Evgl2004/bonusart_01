@@ -59,7 +59,7 @@
       <a class="btn btn-outline-secondary btn-sm" href="/admin/guests/couponautomationconfig/">Настройки в админке</a>
     </div>
     <div class="card-body">
-      <form method="get" class="row g-2 align-items-end mb-3">
+      <form method="get" class="row g-2 align-items-end mb-3" id="coupon-autoscenario-form">
         <input type="hidden" name="coupon_check" value="1">
         <input type="hidden" name="q" value="{{ query }}">
         <input type="hidden" name="trigger_type" value="{{ selected_trigger_type }}">
@@ -68,7 +68,7 @@
         {% if with_errors %}<input type="hidden" name="with_errors" value="1">{% endif %}
         <div class="col-12 col-lg-5">
           <label class="form-label mb-1">Купонный автосценарий</label>
-          <select class="form-select" name="coupon_scenario_code">
+          <select class="form-select" name="coupon_scenario_code" id="coupon-autoscenario-select">
             {% for config in coupon_autoscenario_configs %}
               <option value="{{ config.scenario.code }}" {% if selected_coupon_scenario_code == config.scenario.code %}selected{% endif %}>
                 {{ config.scenario.name }} ({{ config.scenario.code }})
@@ -745,4 +745,24 @@
     </div>
   </details>
 </div>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    var form = document.getElementById("coupon-autoscenario-form");
+    var scenarioSelect = document.getElementById("coupon-autoscenario-select");
+    if (!form || !scenarioSelect) {
+      return;
+    }
+
+    scenarioSelect.addEventListener("change", function () {
+      if (!scenarioSelect.value) {
+        return;
+      }
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+    });
+  });
+</script>
 {% endblock %}
