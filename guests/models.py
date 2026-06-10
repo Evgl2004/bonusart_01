@@ -1929,9 +1929,9 @@ class CouponAutomationConfig(models.Model):
     """
 
     class ExecutionMode(models.TextChoices):
-        REPORT_ONLY = "report_only", "Только отчёт"
+        REPORT_ONLY = "report_only", "Черновик"
         PILOT = "pilot", "Пилот"
-        AUTOMATIC = "automatic", "Автоматически"
+        AUTOMATIC = "automatic", "Активен"
         PAUSED = "paused", "Пауза"
 
     scenario = models.OneToOneField(

@@ -541,7 +541,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
 
         self.assertFalse(plan.can_execute)
         self.assertEqual(plan.planned_assignments, 1)
-        self.assertTrue(any("Только отч" in blocker for blocker in plan.blockers))
+        self.assertTrue(any("Черновик" in blocker for blocker in plan.blockers))
 
     def test_execution_plan_uses_default_pilot_phone_when_allowlist_is_empty(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT

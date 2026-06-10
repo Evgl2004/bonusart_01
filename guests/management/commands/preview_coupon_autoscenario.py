@@ -5,6 +5,7 @@ from django.core.management.base import BaseCommand, CommandError
 from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreview,
     CouponAutoscenarioPreviewError,
+    format_coupon_autoscenario_execution_mode,
     preview_coupon_autoscenario_audience,
 )
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
@@ -62,7 +63,10 @@ class Command(BaseCommand):
         self.stdout.write("=== Черновой расчёт купонного автосценария ===")
         self.stdout.write(f"scenario_id={preview.scenario_id}")
         self.stdout.write(f"scenario_code={preview.scenario_code}")
-        self.stdout.write(f"execution_mode={preview.execution_mode}")
+        self.stdout.write(
+            "Состояние автосценария="
+            f"{format_coupon_autoscenario_execution_mode(preview.execution_mode)}"
+        )
         self.stdout.write(f"coupon_series={preview.coupon_series or '-'}")
         self.stdout.write(f"venue_code={preview.venue_code or '-'}")
         self.stdout.write(f"venue_name={preview.venue_name or '-'}")

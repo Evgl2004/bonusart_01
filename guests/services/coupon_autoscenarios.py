@@ -61,10 +61,24 @@ PILOT_DAYS_UNTIL_BIRTHDAY_SETTINGS_KEYS = (
     "pilot_days_until_birthday",
     "test_days_until_birthday",
 )
+COUPON_AUTOSCENARIO_EXECUTION_MODE_LABELS = {
+    CouponAutomationConfig.ExecutionMode.REPORT_ONLY: "Черновик",
+    CouponAutomationConfig.ExecutionMode.PILOT: "Пилот",
+    CouponAutomationConfig.ExecutionMode.AUTOMATIC: "Активен",
+    CouponAutomationConfig.ExecutionMode.PAUSED: "Пауза",
+}
 
 
 class CouponAutoscenarioPreviewError(ValueError):
     """Ошибка подготовки безопасного расчёта купонного автосценария."""
+
+
+def format_coupon_autoscenario_execution_mode(value: str | None) -> str:
+    """
+    Возвращает русское название состояния купонного автосценария.
+    """
+    safe_value = str(value or "").strip()
+    return COUPON_AUTOSCENARIO_EXECUTION_MODE_LABELS.get(safe_value, safe_value or "—")
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,9 +432,9 @@ def preview_coupon_autoscenario_audience(
     if scenario.trigger_type != NotificationScenario.TriggerType.SCHEDULE:
         warnings.append("Сценарий не относится к планировщику; автоматический запуск невозможен без смены trigger_type.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.REPORT_ONLY:
-        warnings.append("Купонная настройка в режиме 'Только отчёт'; автоматическая выдача купонов не должна запускаться.")
+        warnings.append("Автосценарий в состоянии «Черновик»; выдача купонов отключена.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
-        warnings.append("Купонная настройка в режиме 'Пауза'.")
+        warnings.append("Автосценарий в состоянии «Пауза»; выдача купонов отключена.")
 
     safe_limit = max(1, int(limit or config.max_recipients_per_run or 100))
     safe_scan_limit = _resolve_preview_scan_limit(scan_limit=scan_limit, run_limit=safe_limit)
@@ -520,9 +534,9 @@ def build_coupon_autoscenario_execution_plan(
     if scenario.trigger_type != NotificationScenario.TriggerType.SCHEDULE:
         blockers.append("Сценарий не относится к планировщику.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.REPORT_ONLY:
-        blockers.append("Купонная настройка находится в режиме 'Только отчёт'.")
+        blockers.append("Автосценарий находится в состоянии «Черновик», выдача купонов отключена.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
-        blockers.append("Купонная настройка находится в режиме 'Пауза'.")
+        blockers.append("Автосценарий находится в состоянии «Пауза», выдача купонов отключена.")
     if config.execution_mode not in {
         CouponAutomationConfig.ExecutionMode.PILOT,
         CouponAutomationConfig.ExecutionMode.AUTOMATIC,

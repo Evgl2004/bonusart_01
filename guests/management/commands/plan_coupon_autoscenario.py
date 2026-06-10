@@ -6,6 +6,7 @@ from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioExecutionPlan,
     CouponAutoscenarioPreviewError,
     build_coupon_autoscenario_execution_plan,
+    format_coupon_autoscenario_execution_mode,
 )
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
 
@@ -64,7 +65,10 @@ class Command(BaseCommand):
         self.stdout.write("=== Coupon autoscenario execution plan ===")
         self.stdout.write(f"scenario_id={plan.scenario_id}")
         self.stdout.write(f"scenario_code={plan.scenario_code}")
-        self.stdout.write(f"execution_mode={plan.execution_mode}")
+        self.stdout.write(
+            "Состояние автосценария="
+            f"{format_coupon_autoscenario_execution_mode(plan.execution_mode)}"
+        )
         self.stdout.write(f"can_execute={plan.can_execute}")
         self.stdout.write(f"coupon_series={plan.coupon_series or '-'}")
         self.stdout.write(f"venue_code={plan.venue_code or '-'}")
