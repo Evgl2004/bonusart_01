@@ -297,14 +297,14 @@
 
           <div class="row g-2 mb-3">
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">С выбранным ботом</div>
+              <div class="text-muted small">{{ coupon_plan.bot_bound_guests_label|default:"Гостей в новых ботах" }}</div>
               <div class="h5 mb-0">{{ coupon_plan.bot_bound_guests|default:0 }}</div>
-              <div class="text-muted small">Телеграм/ВК/Макс</div>
+              <div class="text-muted small">{{ coupon_plan.bot_bound_guests_hint|default:"Телеграм, ВК, Макс" }}</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Есть согласие на сообщения</div>
+              <div class="text-muted small">{{ coupon_plan.message_target_guests_label|default:"С согласием на рассылку" }}</div>
               <div class="h5 mb-0">{% firstof coupon_plan.message_target_guests coupon_plan.sendable_guests 0 %}</div>
-              <div class="text-muted small">бот + разрешение</div>
+              <div class="text-muted small">{{ coupon_plan.message_target_guests_hint|default:"можно отправить сообщение" }}</div>
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">К выдаче сейчас</div>
@@ -350,14 +350,14 @@
               </thead>
               <tbody>
                 <tr>
-                  <td>Нет выбранного бота</td>
+                  <td>Нет привязки к новым ботам</td>
                   <td>{{ coupon_plan.blocked_without_bot_binding|default:0 }}</td>
-                  <td class="text-muted">Нет активной привязки к выбранному боту Телеграм/ВК/Макс.</td>
+                  <td class="text-muted">Нет активной привязки к ботам Телеграм/ВК/Макс.</td>
                 </tr>
                 <tr>
-                  <td>Нет согласия или канала для сообщения</td>
+                  <td>Нет согласия на рассылку</td>
                   <td>{{ coupon_plan.blocked_without_message_permission|default:0 }}</td>
-                  <td class="text-muted">Есть выбранный бот, но нет разрешения на сообщения или данных для отправки.</td>
+                  <td class="text-muted">Есть привязка к боту, но нет разрешения на сообщения или данных для отправки.</td>
                 </tr>
                 <tr>
                   <td>Уже есть активный купон</td>

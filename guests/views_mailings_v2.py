@@ -1905,20 +1905,31 @@ class MailingsV2ScenariosView(TemplateView):
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
                 )
                 if selected_coupon_scenario_code == SCENARIO_CODE_BIRTHDAY_COUPON:
+                    coupon_plan["bot_bound_guests_label"] = "Именинников в новых ботах"
+                    coupon_plan["bot_bound_guests_hint"] = "день рождения в периоде"
+                    coupon_plan["message_target_guests_label"] = "С согласием на рассылку"
+                    coupon_plan["message_target_guests_hint"] = "можно отправить сообщение"
                     coupon_plan["audience_source_label"] = (
-                        "Для результата на экране показываются только прикладные ступени: гости с привязкой к выбранным "
-                        "ботам и гости, которым можно отправить сообщение с учётом согласия."
+                        "Показаны только гости из новых ботов Телеграм/ВК/Макс, у которых заполнена дата рождения "
+                        "и день рождения попадает в период автосценария."
+                    )
+                    coupon_plan["sendable_channel_label"] = (
+                        "«Именинников в новых ботах» — гости с активной привязкой к новым ботам и днём рождения "
+                        "в периоде. «С согласием на рассылку» — те, кому дополнительно можно отправить сообщение."
                     )
                 else:
+                    coupon_plan["bot_bound_guests_label"] = "Гостей в новых ботах"
+                    coupon_plan["bot_bound_guests_hint"] = "Телеграм, ВК, Макс"
+                    coupon_plan["message_target_guests_label"] = "С согласием на рассылку"
+                    coupon_plan["message_target_guests_hint"] = "можно отправить сообщение"
                     coupon_plan["audience_source_label"] = (
                         "Выборка строится по истории заказов: берутся гости, у которых последний заказ был "
                         f"не позднее даты отсечения «сегодня минус {coupon_plan.get('inactive_days_threshold', 0)} дн.»."
                     )
-                coupon_plan["sendable_channel_label"] = (
-                    "«С выбранным ботом» — гости, у которых есть активная привязка к выбранному боту Телеграм/ВК/Макс. "
-                    "«Есть согласие на сообщения» — гости, у которых дополнительно разрешены уведомления и есть "
-                    "идентификатор для отправки."
-                )
+                    coupon_plan["sendable_channel_label"] = (
+                        "«Гостей в новых ботах» — гости с активной привязкой к новым ботам Телеграм/ВК/Макс. "
+                        "«С согласием на рассылку» — те, кому дополнительно можно отправить сообщение."
+                    )
                 coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
                     :coupon_sample_limit
                 ]
