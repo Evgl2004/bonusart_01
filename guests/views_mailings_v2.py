@@ -1836,7 +1836,7 @@ class MailingsV2ScenariosView(TemplateView):
                     for bot in selected_bots
                 )
                 if selected_bots
-                else "все активные боты"
+                else "боты не выбраны"
             )
 
         selected_coupon_config = next(

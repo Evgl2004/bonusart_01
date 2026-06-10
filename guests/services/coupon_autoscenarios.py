@@ -617,7 +617,7 @@ def build_coupon_autoscenario_execution_plan(
         )
     if blocked_without_message_target > 0:
         warnings.append(
-            "Есть гости с разрешённым каналом vtelemax, но без действующей привязки к выбранному боту: "
+            "Есть гости с разрешённым каналом vtelemax, но без действующей привязки к разрешённым ботам автосценария: "
             f"{blocked_without_message_target}."
         )
 
@@ -1622,12 +1622,13 @@ def _message_binding_guest_ids(
     selected_bot_ids = list(
         scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True)
     )
+    if not selected_bot_ids:
+        return set()
+
     query = (
         GuestBotBinding.objects.filter(
             guest_id__in=guest_ids,
             is_active=True,
-            is_opt_in=True,
-            is_stop_sending=False,
             bot__is_active=True,
             bot__provider_type__in=["telegram", "max", "vk"],
         )
@@ -1639,8 +1640,7 @@ def _message_binding_guest_ids(
             is_opt_in=True,
             is_stop_sending=False,
         )
-    if selected_bot_ids:
-        query = query.filter(bot_id__in=selected_bot_ids)
+    query = query.filter(bot_id__in=selected_bot_ids)
     if scenario.target_mode == NotificationScenario.TargetMode.PRIMARY_ONLY:
         query = query.filter(is_primary=True)
     return {int(guest_id) for guest_id in query.values_list("guest_id", flat=True).distinct()}

@@ -2192,6 +2192,62 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
 
+    def test_coupon_autoscenario_settings_requires_notification_bot(self):
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+            settings={},
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "coupon_series": "AUTO_30D",
+                "venue_code": "DEP_1",
+                "coupon_validity_days": "14",
+                "max_recipients_per_run": "10",
+                "cooldown_days": "30",
+                "pilot_phones": "",
+                "min_order_amount": "",
+                "iikocard_action_note": "",
+                "coupon_promo_text_template": "",
+                "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "notification_send_window_begin": "",
+                "notification_send_window_end": "",
+                "notification_timezone": "Asia/Yekaterinburg",
+                "coupon_rules-TOTAL_FORMS": "0",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Выберите хотя бы один бот для отправки сообщений.")
+        scenario.refresh_from_db()
+        self.assertEqual(list(scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])
+
     def test_coupon_autoscenario_settings_blocks_active_immediate_delivery(self):
         """
         Боевой автосценарий нельзя сохранить с отправкой "Сразу": иначе ACK vtelemax

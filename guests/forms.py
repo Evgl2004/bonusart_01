@@ -332,10 +332,13 @@ class CouponAutomationConfigForm(forms.ModelForm):
     )
     notification_bot_profiles = forms.ModelMultipleChoiceField(
         label="Разрешённые боты",
-        required=False,
+        required=True,
         queryset=BotProfile.objects.none(),
         widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
-        help_text="Если ничего не выбрать, автосценарий сможет использовать все активные боты.",
+        help_text="Выберите хотя бы один активный бот для отправки сообщений.",
+        error_messages={
+            "required": "Выберите хотя бы один бот для отправки сообщений.",
+        },
     )
     notification_timezone = forms.CharField(
         label="Часовой пояс отправки",

@@ -87,6 +87,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
                 is_active=True,
             ),
         }
+        self.scenario.bot_profiles.set(list(self.bots_by_platform.values()))
 
     def _prepare_scenario(self) -> NotificationScenario:
         scenario, _ = NotificationScenario.objects.get_or_create(
@@ -191,6 +192,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
                 "updated_at",
             ]
         )
+        scenario.bot_profiles.set(list(self.bots_by_platform.values()))
         return scenario, config
 
     def _guest(self, *, phone: str, first_name: str, birthdate: date | None = None) -> Guest:
@@ -221,6 +223,8 @@ class CouponAutoscenarioPreviewTests(TestCase):
         guest: Guest,
         platform: str = VtelemaxRecipientChannel.Platform.TELEGRAM,
         with_binding: bool = True,
+        binding_opt_in: bool = True,
+        binding_stop_sending: bool = False,
     ) -> None:
         VtelemaxRecipientChannel.objects.create(
             person_id=uuid4(),
@@ -243,8 +247,8 @@ class CouponAutoscenarioPreviewTests(TestCase):
                 "external_chat_id": f"chat-{platform}-{guest.id}",
                 "is_primary": not GuestBotBinding.objects.filter(guest=guest, is_primary=True).exists(),
                 "is_active": True,
-                "is_opt_in": True,
-                "is_stop_sending": False,
+                "is_opt_in": binding_opt_in,
+                "is_stop_sending": binding_stop_sending,
             },
         )
 
@@ -495,6 +499,72 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(plan.blocked_without_message_permission, 0)
         self.assertEqual(plan.eligible_guests, 0)
         self.assertEqual(plan.planned_assignments, 0)
+
+    def test_execution_plan_requires_selected_notification_bot(self):
+        self.scenario.bot_profiles.clear()
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.settings = {"pilot_phones": ["+79990000110"]}
+        self.config.save(update_fields=["execution_mode", "settings", "updated_at"])
+        guest = self._guest(phone="+79990000110", first_name="NoSelectedBot")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._available_coupon(code="AUTO-NO-SELECTED-BOT")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertFalse(plan.can_execute)
+        self.assertEqual(plan.matched_guests, 1)
+        self.assertEqual(plan.bot_bound_guests, 0)
+        self.assertEqual(plan.blocked_without_bot_binding, 1)
+        self.assertEqual(plan.sendable_guests, 1)
+        self.assertEqual(plan.message_target_guests, 0)
+        self.assertEqual(plan.blocked_without_message_target, 1)
+        self.assertEqual(plan.blocked_without_message_permission, 0)
+        self.assertEqual(plan.eligible_guests, 0)
+        self.assertEqual(plan.planned_assignments, 0)
+
+    def test_execution_plan_separates_bot_binding_from_message_permission(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.settings = {"pilot_phones": ["+79990000111", "+79990000112"]}
+        self.config.max_recipients_per_run = 10
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "settings",
+                "max_recipients_per_run",
+                "updated_at",
+            ]
+        )
+        allowed = self._guest(phone="+79990000111", first_name="Allowed")
+        blocked = self._guest(phone="+79990000112", first_name="Blocked")
+        for guest in [allowed, blocked]:
+            self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=allowed)
+        self._sendable_channel(guest=blocked, binding_opt_in=False)
+        coupon = self._available_coupon(code="AUTO-ALLOWED")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.matched_guests, 2)
+        self.assertEqual(plan.bot_bound_guests, 2)
+        self.assertEqual(plan.blocked_without_bot_binding, 0)
+        self.assertEqual(plan.sendable_guests, 2)
+        self.assertEqual(plan.message_target_guests, 1)
+        self.assertEqual(plan.blocked_without_message_target, 1)
+        self.assertEqual(plan.blocked_without_message_permission, 1)
+        self.assertEqual(plan.eligible_guests, 1)
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, allowed.id)
+        self.assertEqual(plan.plan_items[0].coupon_id, coupon.id)
 
     def test_execution_plan_selects_coupon_rule_by_latest_order_fact_with_global_fallback(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
@@ -971,6 +1041,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             provider_type=BotProfile.ProviderType.TELEGRAM,
             is_active=True,
         )
+        self.scenario.bot_profiles.add(bot)
         GuestBotBinding.objects.create(
             guest=guest,
             bot=bot,
@@ -1045,6 +1116,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             provider_type=BotProfile.ProviderType.TELEGRAM,
             is_active=True,
         )
+        self.scenario.bot_profiles.add(bot)
         GuestBotBinding.objects.create(
             guest=guest,
             bot=bot,
@@ -1107,6 +1179,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             provider_type=BotProfile.ProviderType.TELEGRAM,
             is_active=True,
         )
+        self.scenario.bot_profiles.add(bot)
         GuestBotBinding.objects.create(
             guest=guest,
             bot=bot,
