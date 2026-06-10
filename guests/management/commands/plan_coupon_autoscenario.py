@@ -70,6 +70,7 @@ class Command(BaseCommand):
         self.stdout.write(f"venue_code={plan.venue_code or '-'}")
         self.stdout.write(f"venue_name={plan.venue_name or '-'}")
         self.stdout.write(f"inactive_days_threshold={plan.inactive_days_threshold}")
+        self.stdout.write(f"birthday_preparation_window_days={plan.birthday_preparation_window_days}")
         self.stdout.write(f"max_recipients_per_run={plan.max_recipients_per_run}")
         self.stdout.write(f"scan_limit={plan.scan_limit}")
 
@@ -80,6 +81,7 @@ class Command(BaseCommand):
         self.stdout.write(f"sendable_guests={plan.sendable_guests}")
         self.stdout.write(f"blocked_without_channel={plan.blocked_without_channel}")
         self.stdout.write(f"blocked_existing_active_coupon={plan.blocked_existing_active_coupon}")
+        self.stdout.write(f"blocked_existing_trigger={plan.blocked_existing_trigger}")
         self.stdout.write(f"blocked_by_cooldown={plan.blocked_by_cooldown}")
         self.stdout.write(f"blocked_by_pilot_filter={plan.blocked_by_pilot_filter}")
         self.stdout.write(
@@ -130,5 +132,8 @@ class Command(BaseCommand):
                 f"venue={item.venue_name or item.venue_code or '-'} "
                 f"rule={coupon_rule} selection={selection_source} "
                 f"last_order_venue={last_order_venue} "
+                f"birthday_date={item.birthday_date.isoformat() if item.birthday_date else '-'} "
+                f"days_until_birthday={item.days_until_birthday if item.days_until_birthday is not None else '-'} "
+                f"trigger_key={item.trigger_key or '-'} "
                 f"valid_until={item.valid_until.isoformat()} channels={channels}"
             )

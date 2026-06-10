@@ -394,6 +394,11 @@
                   <td class="text-muted">Защита от повторной выдачи той же серии.</td>
                 </tr>
                 <tr>
+                  <td>Уже был этот trigger</td>
+                  <td>{{ coupon_plan.blocked_existing_trigger|default:0 }}</td>
+                  <td class="text-muted">Защита от повторной выдачи birthday-купона за тот же год.</td>
+                </tr>
+                <tr>
                   <td>Пауза перед повтором</td>
                   <td>{{ coupon_plan.blocked_by_cooldown }}</td>
                   <td class="text-muted">Гость уже получал купон этой серии недавно.</td>
@@ -471,6 +476,7 @@
                   <th>Каналы</th>
                   <th>Последний визит</th>
                   <th>Дней без визитов</th>
+                  <th>День рождения</th>
                   <th>Купон</th>
                   <th>Правило</th>
                   <th>Последнее заведение</th>
@@ -490,6 +496,15 @@
                       {% endif %}
                     </td>
                     <td>{{ item.days_without_visits_label|default:item.days_without_visits|default:"—" }}</td>
+                    <td>
+                      {{ item.birthday_date_display|default:"—" }}
+                      {% if item.days_until_birthday_label and item.days_until_birthday_label != "—" %}
+                        <div class="text-muted small">{{ item.days_until_birthday_label }} дн.</div>
+                      {% endif %}
+                      {% if item.trigger_key %}
+                        <div class="text-muted small"><code>{{ item.trigger_key }}</code></div>
+                      {% endif %}
+                    </td>
                     <td><code>{{ item.coupon_series }}:{{ item.coupon_code }}</code></td>
                     <td>
                       {{ item.coupon_rule_label|default:"резерв без правил" }}
@@ -502,7 +517,7 @@
                   </tr>
                 {% empty %}
                   <tr>
-                    <td colspan="9" class="text-center text-muted py-3">Плановых пар нет.</td>
+                    <td colspan="10" class="text-center text-muted py-3">Плановых пар нет.</td>
                   </tr>
                 {% endfor %}
               </tbody>

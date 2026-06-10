@@ -59,6 +59,7 @@ from guests.services.coupon_autoscenarios import (
     cleanup_coupon_autoscenario_pilot_assignment,
     execute_coupon_autoscenario_pilot,
 )
+from guests.services.notification_registry import SCENARIO_CODE_BIRTHDAY_COUPON
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
 logger = logging.getLogger(__name__)
@@ -96,18 +97,33 @@ def _coupon_autoscenario_policy_label() -> str:
     )
 
 
-def _coupon_autoscenario_policy_rows(*, cooldown_days: int | None) -> list[tuple[str, str]]:
+def _coupon_autoscenario_policy_rows(
+    *,
+    cooldown_days: int | None,
+    scenario_code: str = "",
+    birthday_window_days: int | None = None,
+) -> list[tuple[str, str]]:
     """
     Возвращает человекочитаемые правила, которые должны быть видны на экранах автосценариев.
     """
     cooldown_label = f"не чаще 1 раза в {int(cooldown_days or 0)} дн."
-    return [
+    rows = [
         ("Стратегия", "последнее заведение гостя -> Вся сеть (global)"),
         ("Источник последнего заведения", "order_fact"),
         ("Ограничение", "не больше 1 купона гостю за проход"),
         ("Повтор", cooldown_label),
         ("Если нет купонов", "гость пропускается и попадает в дефицит купонов"),
     ]
+    if str(scenario_code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON:
+        rows.insert(
+            2,
+            (
+                "Birthday-окно",
+                f"сегодня..+{int(birthday_window_days or 0)} дн. включительно",
+            ),
+        )
+        rows.insert(4, ("Годовой повтор", "trigger_key birthday:<год>"))
+    return rows
 
 
 class MailingsV2CampaignsHubView(TemplateView):
@@ -1801,6 +1817,8 @@ class MailingsV2ScenariosView(TemplateView):
             config.coupon_selection_policy_label = _coupon_autoscenario_policy_label()
             config.coupon_selection_policy_rows = _coupon_autoscenario_policy_rows(
                 cooldown_days=config.cooldown_days,
+                scenario_code=config.scenario.code,
+                birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
             )
 
         coupon_recent_assignments = list(
@@ -1845,6 +1863,8 @@ class MailingsV2ScenariosView(TemplateView):
                 coupon_plan["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label()
                 coupon_plan["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
                     cooldown_days=getattr(selected_config, "cooldown_days", None),
+                    scenario_code=selected_coupon_scenario_code,
+                    birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
                 )
                 coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
                     :coupon_sample_limit
@@ -1977,6 +1997,8 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         context["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label()
         context["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
             cooldown_days=self.object.cooldown_days,
+            scenario_code=scenario_code,
+            birthday_window_days=(self.object.settings or {}).get("birthday_preparation_window_days"),
         )
         template_obj = getattr(self.object.scenario, "template", None)
         template_display_name, template_technical_name = _resolve_template_title(template_obj)
@@ -2005,6 +2027,7 @@ SYSTEM_TEMPLATE_NAME_MAP = {
     "SYSTEM_BALANCE_CHANGED_TEMPLATE": "Системный шаблон: изменение баланса",
     "SYSTEM_INACTIVE_7D_TEMPLATE": "Системный шаблон: неактивные 7 дней",
     "SYSTEM_INACTIVE_30D_COUPON_TEMPLATE": "Системный шаблон: неактивные 30 дней + купон",
+    "SYSTEM_BIRTHDAY_COUPON_TEMPLATE": "Системный шаблон: день рождения + купон",
     "SYSTEM_MEAT_LOVER_30D_TEMPLATE": "Системный шаблон: любитель мяса 30 дней",
 }
 

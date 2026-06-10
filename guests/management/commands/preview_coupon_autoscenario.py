@@ -67,6 +67,7 @@ class Command(BaseCommand):
         self.stdout.write(f"venue_code={preview.venue_code or '-'}")
         self.stdout.write(f"venue_name={preview.venue_name or '-'}")
         self.stdout.write(f"inactive_days_threshold={preview.inactive_days_threshold}")
+        self.stdout.write(f"birthday_preparation_window_days={preview.birthday_preparation_window_days}")
         self.stdout.write(f"max_recipients_per_run={preview.max_recipients_per_run}")
         self.stdout.write(f"scan_limit={preview.scan_limit}")
         self.stdout.write("")
@@ -105,8 +106,11 @@ class Command(BaseCommand):
         for row in rows:
             channels = ", ".join(row.sendable_channels) if row.sendable_channels else "-"
             last_visit = row.last_visit_at.isoformat() if row.last_visit_at else "-"
+            birthday = row.birthday_date.isoformat() if row.birthday_date else "-"
             self.stdout.write(
                 f"guest_id={row.guest_id} phone={row.phone or '-'} "
                 f"name={(row.first_name + ' ' + row.last_name).strip() or '-'} "
-                f"last_visit_at={last_visit} channels={channels}"
+                f"last_visit_at={last_visit} birthday_date={birthday} "
+                f"days_until_birthday={row.days_until_birthday if row.days_until_birthday is not None else '-'} "
+                f"trigger_key={row.trigger_key or '-'} channels={channels}"
             )

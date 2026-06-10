@@ -14,6 +14,7 @@ from .services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GL
 from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
 from .services.guest_resolution import normalize_phone_e164
+from .services.notification_registry import SCENARIO_CODE_BIRTHDAY_COUPON
 
 
 COUPON_AUTOSCENARIO_STATE_CHOICES = [
@@ -308,6 +309,14 @@ class CouponAutomationConfigForm(forms.ModelForm):
         widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
         help_text="Полезно для проверки сообщения на своём номере, даже если вы не подходите под условие сегмента.",
     )
+    birthday_preparation_window_days = forms.IntegerField(
+        label="Окно подготовки ко дню рождения, дней",
+        required=False,
+        min_value=0,
+        initial=7,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+        help_text="Сценарий ищет гостей с днём рождения в окне от сегодня до указанного числа дней включительно.",
+    )
     notification_distribution_mode = forms.ChoiceField(
         label="Режим отправки сообщений",
         required=False,
@@ -347,6 +356,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "iikocard_action_note",
             "pilot_phones",
             "pilot_include_unmatched",
+            "birthday_preparation_window_days",
         ]
         widgets = {
             "execution_mode": forms.Select(attrs={"class": "form-select"}),
@@ -402,6 +412,20 @@ class CouponAutomationConfigForm(forms.ModelForm):
         self.initial["pilot_phones"] = ", ".join(str(phone) for phone in pilot_phones if str(phone).strip())
         self.initial["pilot_include_unmatched"] = bool(settings.get("pilot_include_unmatched"))
         scenario = getattr(self.instance, "scenario", None)
+        is_birthday_scenario = (
+            scenario is not None and str(scenario.code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON
+        )
+        self.fields["birthday_preparation_window_days"].required = is_birthday_scenario
+        if is_birthday_scenario:
+            try:
+                self.initial["birthday_preparation_window_days"] = max(
+                    0,
+                    int(settings.get("birthday_preparation_window_days") or 7),
+                )
+            except (TypeError, ValueError):
+                self.initial["birthday_preparation_window_days"] = 7
+        else:
+            self.fields["birthday_preparation_window_days"].widget = forms.HiddenInput()
         if scenario is not None:
             self.initial["notification_distribution_mode"] = scenario.distribution_mode
             self.initial["notification_timezone"] = scenario.timezone or "Asia/Yekaterinburg"
@@ -441,6 +465,10 @@ class CouponAutomationConfigForm(forms.ModelForm):
         execution_mode = cleaned_data.get("execution_mode")
         pilot_phones = cleaned_data.get("pilot_phones") or []
         venue_code = str(cleaned_data.get("venue_code") or "").strip()
+        scenario = getattr(self.instance, "scenario", None)
+        is_birthday_scenario = (
+            scenario is not None and str(scenario.code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON
+        )
         distribution_mode = (
             cleaned_data.get("notification_distribution_mode")
             or getattr(getattr(self.instance, "scenario", None), "distribution_mode", "")
@@ -453,6 +481,11 @@ class CouponAutomationConfigForm(forms.ModelForm):
             self.add_error(
                 "pilot_phones",
                 "Для режима «Пилот» укажите хотя бы один контрольный телефон.",
+            )
+        if is_birthday_scenario and cleaned_data.get("birthday_preparation_window_days") is None:
+            self.add_error(
+                "birthday_preparation_window_days",
+                "Укажите окно подготовки ко дню рождения.",
             )
         if distribution_mode == NotificationScenario.DistributionMode.UNIFORM:
             if not send_window_begin:
@@ -486,6 +519,11 @@ class CouponAutomationConfigForm(forms.ModelForm):
         settings["pilot_include_unmatched"] = bool(
             self.cleaned_data.get("pilot_include_unmatched")
         )
+        scenario = getattr(instance, "scenario", None)
+        if scenario is not None and str(scenario.code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON:
+            settings["birthday_preparation_window_days"] = int(
+                self.cleaned_data.get("birthday_preparation_window_days") or 0
+            )
         instance.settings = settings
 
         if commit:

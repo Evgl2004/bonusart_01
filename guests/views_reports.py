@@ -247,6 +247,7 @@ class CouponAutoscenarioReportsView(TemplateView):
             coupon_shortage=Sum("coupon_shortage"),
             blocked_without_channel=Sum("blocked_without_channel"),
             blocked_existing_active_coupon=Sum("blocked_existing_active_coupon"),
+            blocked_existing_trigger=Sum("blocked_existing_trigger"),
             blocked_by_cooldown=Sum("blocked_by_cooldown"),
         )
         status_counts = {

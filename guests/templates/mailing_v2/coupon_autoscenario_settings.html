@@ -96,7 +96,7 @@
         {% endif %}
         <div class="border rounded bg-light p-2 small" style="white-space: pre-wrap;">{{ message_template.message_text }}</div>
         <div class="form-text mt-2">
-          Основные переменные: <code>&#123;&#123; first_name &#125;&#125;</code>, <code>&#123;&#123; days_without_visits &#125;&#125;</code>, <code>{coupon_code}</code>.
+          Основные переменные: <code>&#123;&#123; first_name &#125;&#125;</code>, <code>&#123;&#123; days_without_visits &#125;&#125;</code>, <code>&#123;&#123; days_until_birthday &#125;&#125;</code>, <code>{coupon_code}</code>.
           Шаблон сообщения редактируется отдельно, чтобы случайно не изменить его при настройке купонных правил.
         </div>
       {% else %}
@@ -152,6 +152,20 @@
           {% endif %}
         </div>
       </div>
+      {% if not form.birthday_preparation_window_days.is_hidden %}
+        <div class="row g-3 mt-1">
+          <div class="col-12 col-lg-3">
+            {{ form.birthday_preparation_window_days.label_tag }}
+            {{ form.birthday_preparation_window_days }}
+            {% if form.birthday_preparation_window_days.help_text %}
+              <div class="form-text">{{ form.birthday_preparation_window_days.help_text }}</div>
+            {% endif %}
+            {% if form.birthday_preparation_window_days.errors %}
+              <div class="text-danger small mt-1">{{ form.birthday_preparation_window_days.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
 
       <hr class="my-4">
 
