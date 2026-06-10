@@ -1879,6 +1879,19 @@ class MailingsV2ScenariosView(TemplateView):
                 coupon_plan = plan.as_dict()
                 coupon_plan.setdefault("message_target_guests", coupon_plan.get("sendable_guests", 0))
                 coupon_plan.setdefault("blocked_without_message_target", 0)
+                coupon_plan.setdefault(
+                    "bot_bound_guests",
+                    coupon_plan.get("message_target_guests", 0),
+                )
+                coupon_plan.setdefault("blocked_without_bot_binding", 0)
+                coupon_plan.setdefault(
+                    "blocked_without_message_permission",
+                    max(
+                        int(coupon_plan.get("bot_bound_guests") or 0)
+                        - int(coupon_plan.get("message_target_guests") or 0),
+                        0,
+                    ),
+                )
                 coupon_plan["execution_state_label"] = _coupon_autoscenario_state_label(
                     coupon_plan.get("execution_mode", "")
                 )
@@ -1892,28 +1905,19 @@ class MailingsV2ScenariosView(TemplateView):
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
                 )
                 if selected_coupon_scenario_code == SCENARIO_CODE_BIRTHDAY_COUPON:
-                    coupon_plan["candidate_count_label"] = "В базе с днём рождения в окне"
-                    coupon_plan["candidate_count_hint"] = "техническая проверка общей базы гостей"
-                    coupon_plan["matched_count_label"] = "После проверки канала"
-                    coupon_plan["matched_count_hint"] = "регистрация и согласие на сообщения"
                     coupon_plan["audience_source_label"] = (
-                        "Число гостей с днём рождения в окне — это техническая проверка всей гостевой базы, "
-                        "а не количество получателей. Для выдачи купона дальше остаются только гости с разрешённым каналом "
-                        "и действующей привязкой к выбранному боту."
+                        "Для результата на экране показываются только прикладные ступени: гости с привязкой к выбранным "
+                        "ботам и гости, которым можно отправить сообщение с учётом согласия."
                     )
                 else:
-                    coupon_plan["candidate_count_label"] = "Просмотрено кандидатов"
-                    coupon_plan["candidate_count_hint"] = "не больше заданного предела"
-                    coupon_plan["matched_count_label"] = "Прошли условие сценария"
-                    coupon_plan["matched_count_hint"] = ""
                     coupon_plan["audience_source_label"] = (
                         "Выборка строится по истории заказов: берутся гости, у которых последний заказ был "
                         f"не позднее даты отсечения «сегодня минус {coupon_plan.get('inactive_days_threshold', 0)} дн.»."
                     )
                 coupon_plan["sendable_channel_label"] = (
-                    "В расчёте канал отправки считается подходящим, если в данных vtelemax гость зарегистрирован, "
-                    "уведомления разрешены и заполнен внешний идентификатор чата/пользователя. "
-                    "После этого дополнительно проверяется действующая привязка гостя к выбранному боту."
+                    "«С выбранным ботом» — гости, у которых есть активная привязка к выбранному боту Телеграм/ВК/Макс. "
+                    "«Есть согласие на сообщения» — гости, у которых дополнительно разрешены уведомления и есть "
+                    "идентификатор для отправки."
                 )
                 coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
                     :coupon_sample_limit
@@ -2071,6 +2075,9 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             if self.object.pk
             else "/admin/guests/couponautomationconfig/"
         )
+        active_bot_profiles_qs = BotProfile.objects.filter(is_active=True)
+        context["has_active_bot_profiles"] = active_bot_profiles_qs.exists()
+        context["bot_profiles_admin_url"] = "/admin/guests/botprofile/"
         return context
 
 

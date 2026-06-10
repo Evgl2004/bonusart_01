@@ -197,8 +197,8 @@
             </table>
           </div>
 
-          <div class="border rounded p-3 mb-3 bg-light">
-            <div class="fw-semibold mb-1">Как выбирается купон</div>
+          <details class="border rounded p-3 mb-3 bg-light">
+            <summary class="fw-semibold" style="cursor: pointer;">Как выбирается купон</summary>
             <div class="text-muted small mb-2">{{ config.coupon_selection_policy_label }}</div>
             <div class="row g-2 small mb-2">
               {% for label, value in config.coupon_selection_policy_rows %}
@@ -236,7 +236,7 @@
                 <span class="text-muted">{{ config.venue_name|default:config.venue_code|default:"заведение не задано" }}</span>
               </div>
             {% endif %}
-          </div>
+          </details>
         {% endwith %}
       {% else %}
         <div class="alert alert-secondary mb-3">Купонные автосценарии пока не настроены.</div>
@@ -297,26 +297,14 @@
 
           <div class="row g-2 mb-3">
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">{{ coupon_plan.candidate_count_label|default:"Просмотрено кандидатов" }}</div>
-              <div class="h5 mb-0">{{ coupon_plan.scanned_guests }}</div>
-              {% if coupon_plan.candidate_count_hint %}
-                <div class="text-muted small">{{ coupon_plan.candidate_count_hint }}</div>
-              {% endif %}
+              <div class="text-muted small">С выбранным ботом</div>
+              <div class="h5 mb-0">{{ coupon_plan.bot_bound_guests|default:0 }}</div>
+              <div class="text-muted small">Телеграм/ВК/Макс</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">{{ coupon_plan.matched_count_label|default:"Прошли условие сценария" }}</div>
-              <div class="h5 mb-0">{{ coupon_plan.segment_matched_guests }}</div>
-              {% if coupon_plan.matched_count_hint %}
-                <div class="text-muted small">{{ coupon_plan.matched_count_hint }}</div>
-              {% endif %}
-              {% if coupon_plan.pilot_forced_guests %}
-                <div class="text-muted small">+{{ coupon_plan.pilot_forced_guests }} добавлено пилотом</div>
-              {% endif %}
-            </div>
-            <div class="col-6 col-lg-2">
-              <div class="text-muted small">Можно отправить сообщение</div>
+              <div class="text-muted small">Есть согласие на сообщения</div>
               <div class="h5 mb-0">{% firstof coupon_plan.message_target_guests coupon_plan.sendable_guests 0 %}</div>
-              <div class="text-muted small">канал + выбранный бот</div>
+              <div class="text-muted small">бот + разрешение</div>
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">К выдаче сейчас</div>
@@ -333,14 +321,14 @@
             </div>
           </div>
 
-          <div class="alert alert-light border small">
-            <div class="fw-semibold mb-1">Как получены эти числа</div>
-            <div>{{ coupon_plan.audience_source_label }}</div>
-            <div class="mt-1">{{ coupon_plan.sendable_channel_label }}</div>
-          </div>
+          <details class="border rounded p-2 mb-3 bg-light">
+            <summary class="fw-semibold small" style="cursor: pointer;">Как получены эти числа</summary>
+            <div class="small text-muted mt-2">{{ coupon_plan.audience_source_label }}</div>
+            <div class="small text-muted mt-1">{{ coupon_plan.sendable_channel_label }}</div>
+          </details>
 
-          <div class="border rounded p-2 mb-3 bg-light">
-            <div class="fw-semibold small mb-1">Как выбирается купон</div>
+          <details class="border rounded p-2 mb-3 bg-light">
+            <summary class="fw-semibold small" style="cursor: pointer;">Как выбирается купон</summary>
             <div class="small text-muted mb-2">{{ coupon_plan.coupon_selection_policy_label }}</div>
             <div class="row g-2 small">
               {% for label, value in coupon_plan.coupon_selection_policy_rows %}
@@ -349,7 +337,7 @@
                 </div>
               {% endfor %}
             </div>
-          </div>
+          </details>
 
           <div class="table-responsive mb-3">
             <table class="table table-sm mb-0">
@@ -362,14 +350,14 @@
               </thead>
               <tbody>
                 <tr>
-                  <td>Нет канала для отправки</td>
-                  <td>{{ coupon_plan.blocked_without_channel }}</td>
-                  <td class="text-muted">Нет регистрации с разрешёнными уведомлениями и внешним идентификатором чата/пользователя в vtelemax.</td>
+                  <td>Нет выбранного бота</td>
+                  <td>{{ coupon_plan.blocked_without_bot_binding|default:0 }}</td>
+                  <td class="text-muted">Нет активной привязки к выбранному боту Телеграм/ВК/Макс.</td>
                 </tr>
                 <tr>
-                  <td>Нет привязки к выбранному боту</td>
-                  <td>{{ coupon_plan.blocked_without_message_target|default:0 }}</td>
-                  <td class="text-muted">Есть канал vtelemax, но нет активной привязки гостя к боту, через который разрешена отправка.</td>
+                  <td>Нет согласия или канала для сообщения</td>
+                  <td>{{ coupon_plan.blocked_without_message_permission|default:0 }}</td>
+                  <td class="text-muted">Есть выбранный бот, но нет разрешения на сообщения или данных для отправки.</td>
                 </tr>
                 <tr>
                   <td>Уже есть активный купон</td>

@@ -282,6 +282,9 @@ class CouponAutoscenarioExecutionPlan:
     available_coupons: int
     coupon_shortage: int
     can_execute: bool
+    bot_bound_guests: int = 0
+    blocked_without_bot_binding: int = 0
+    blocked_without_message_permission: int = 0
     blockers: tuple[str, ...] = field(default_factory=tuple)
     warnings: tuple[str, ...] = field(default_factory=tuple)
     plan_items: tuple[CouponAutoscenarioPlanItem, ...] = field(default_factory=tuple)
@@ -303,8 +306,11 @@ class CouponAutoscenarioExecutionPlan:
             "matched_guests": self.matched_guests,
             "sendable_guests": self.sendable_guests,
             "blocked_without_channel": self.blocked_without_channel,
+            "bot_bound_guests": self.bot_bound_guests,
+            "blocked_without_bot_binding": self.blocked_without_bot_binding,
             "message_target_guests": self.message_target_guests,
             "blocked_without_message_target": self.blocked_without_message_target,
+            "blocked_without_message_permission": self.blocked_without_message_permission,
             "blocked_existing_active_coupon": self.blocked_existing_active_coupon,
             "blocked_existing_trigger": self.blocked_existing_trigger,
             "blocked_by_cooldown": self.blocked_by_cooldown,
@@ -567,6 +573,13 @@ def build_coupon_autoscenario_execution_plan(
         scenario_code=scenario.code,
         now=current_now,
     )
+    bot_bound_guest_ids = _message_binding_guest_ids(
+        scenario=scenario,
+        guest_ids=[row.guest_id for row in matched_rows],
+        require_sending_allowed=False,
+    )
+    bot_bound_guests = len(bot_bound_guest_ids)
+    blocked_without_bot_binding = len(matched_rows) - bot_bound_guests
     sendable_rows = [row for row in matched_rows if row.has_sendable_channel]
     blocked_without_channel = len(matched_rows) - len(sendable_rows)
     message_target_guest_ids = _message_target_guest_ids(
@@ -575,6 +588,7 @@ def build_coupon_autoscenario_execution_plan(
     )
     message_target_rows = [row for row in sendable_rows if row.guest_id in message_target_guest_ids]
     blocked_without_message_target = len(sendable_rows) - len(message_target_rows)
+    blocked_without_message_permission = max(bot_bound_guests - len(message_target_rows), 0)
     existing_trigger_pairs = _existing_trigger_assignment_pairs(
         scenario=scenario,
         rows=message_target_rows,
@@ -715,8 +729,11 @@ def build_coupon_autoscenario_execution_plan(
         matched_guests=len(matched_rows),
         sendable_guests=len(sendable_rows),
         blocked_without_channel=blocked_without_channel,
+        bot_bound_guests=bot_bound_guests,
+        blocked_without_bot_binding=blocked_without_bot_binding,
         message_target_guests=len(message_target_rows),
         blocked_without_message_target=blocked_without_message_target,
+        blocked_without_message_permission=blocked_without_message_permission,
         blocked_existing_active_coupon=blocked_existing_active_coupon,
         blocked_existing_trigger=blocked_existing_trigger,
         blocked_by_cooldown=blocked_by_cooldown,
@@ -1586,6 +1603,19 @@ def _message_target_guest_ids(
     scenario: NotificationScenario,
     guest_ids: list[int],
 ) -> set[int]:
+    return _message_binding_guest_ids(
+        scenario=scenario,
+        guest_ids=guest_ids,
+        require_sending_allowed=True,
+    )
+
+
+def _message_binding_guest_ids(
+    *,
+    scenario: NotificationScenario,
+    guest_ids: list[int],
+    require_sending_allowed: bool,
+) -> set[int]:
     if not guest_ids:
         return set()
 
@@ -1604,6 +1634,11 @@ def _message_target_guest_ids(
         .exclude(external_chat_id__isnull=True)
         .exclude(external_chat_id="")
     )
+    if require_sending_allowed:
+        query = query.filter(
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
     if selected_bot_ids:
         query = query.filter(bot_id__in=selected_bot_ids)
     if scenario.target_mode == NotificationScenario.TargetMode.PRIMARY_ONLY:

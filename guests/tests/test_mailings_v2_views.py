@@ -1809,10 +1809,13 @@ class MailingsV2ViewsTests(TestCase):
                     "scanned_guests": 5000,
                     "segment_matched_guests": 99,
                     "matched_guests": 100,
+                    "bot_bound_guests": 12,
+                    "blocked_without_bot_binding": 88,
                     "sendable_guests": 10,
                     "blocked_without_channel": 90,
                     "message_target_guests": 8,
                     "blocked_without_message_target": 2,
+                    "blocked_without_message_permission": 4,
                     "blocked_existing_active_coupon": 0,
                     "blocked_by_cooldown": 0,
                     "blocked_by_pilot_filter": 9,
@@ -1870,13 +1873,14 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Вся сеть")
         self.assertContains(response, "Источник последнего заведения")
         self.assertContains(response, "история заказов")
-        self.assertContains(response, "Прошли условие сценария")
-        self.assertContains(response, "Можно отправить сообщение")
-        self.assertContains(response, "канал + выбранный бот")
-        self.assertContains(response, "Нет привязки к выбранному боту")
+        self.assertContains(response, "С выбранным ботом")
+        self.assertContains(response, "Есть согласие на сообщения")
+        self.assertContains(response, "бот + разрешение")
+        self.assertContains(response, "Нет выбранного бота")
+        self.assertContains(response, "Нет согласия или канала для сообщения")
         self.assertContains(response, "Как получены эти числа")
         self.assertContains(response, "последний заказ был")
-        self.assertContains(response, "+1 добавлено пилотом")
+        self.assertContains(response, "Добавлено вне основного сегмента: 1")
         self.assertContains(response, "К выдаче сейчас")
         self.assertContains(response, "30 (пилотное значение)")
         self.assertContains(response, "контрольный гость пилота")
@@ -1922,10 +1926,13 @@ class MailingsV2ViewsTests(TestCase):
                     "scanned_guests": 1711,
                     "segment_matched_guests": 1711,
                     "matched_guests": 1711,
+                    "bot_bound_guests": 24,
+                    "blocked_without_bot_binding": 1687,
                     "sendable_guests": 24,
                     "blocked_without_channel": 1687,
                     "message_target_guests": 24,
                     "blocked_without_message_target": 0,
+                    "blocked_without_message_permission": 0,
                     "blocked_existing_active_coupon": 0,
                     "blocked_existing_trigger": 0,
                     "blocked_by_cooldown": 0,
@@ -1954,11 +1961,12 @@ class MailingsV2ViewsTests(TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "В базе с днём рождения в окне")
-        self.assertContains(response, "техническая проверка общей базы гостей")
-        self.assertContains(response, "После проверки канала")
-        self.assertContains(response, "канал + выбранный бот")
-        self.assertContains(response, "это техническая проверка всей гостевой базы")
+        self.assertContains(response, "С выбранным ботом")
+        self.assertContains(response, "Есть согласие на сообщения")
+        self.assertContains(response, "бот + разрешение")
+        self.assertNotContains(response, "В базе с днём рождения в окне")
+        self.assertNotContains(response, "После проверки канала")
+        self.assertNotContains(response, "1711")
         self.assertEqual(response.context["coupon_plan"]["message_target_guests"], 24)
 
     def test_scenarios_hub_runs_coupon_autoscenario_pilot(self):

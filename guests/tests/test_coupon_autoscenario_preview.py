@@ -457,8 +457,12 @@ class CouponAutoscenarioPreviewTests(TestCase):
 
         self.assertTrue(plan.can_execute)
         self.assertEqual(plan.matched_guests, 4)
+        self.assertEqual(plan.bot_bound_guests, 3)
+        self.assertEqual(plan.blocked_without_bot_binding, 1)
         self.assertEqual(plan.sendable_guests, 3)
         self.assertEqual(plan.blocked_without_channel, 1)
+        self.assertEqual(plan.message_target_guests, 3)
+        self.assertEqual(plan.blocked_without_message_permission, 0)
         self.assertEqual(plan.blocked_existing_active_coupon, 1)
         self.assertEqual(plan.blocked_by_cooldown, 1)
         self.assertEqual(plan.eligible_guests, 1)
@@ -483,9 +487,12 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
 
         self.assertFalse(plan.can_execute)
+        self.assertEqual(plan.bot_bound_guests, 0)
+        self.assertEqual(plan.blocked_without_bot_binding, 1)
         self.assertEqual(plan.sendable_guests, 1)
         self.assertEqual(plan.message_target_guests, 0)
         self.assertEqual(plan.blocked_without_message_target, 1)
+        self.assertEqual(plan.blocked_without_message_permission, 0)
         self.assertEqual(plan.eligible_guests, 0)
         self.assertEqual(plan.planned_assignments, 0)
 

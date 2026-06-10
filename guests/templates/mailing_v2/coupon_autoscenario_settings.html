@@ -3,6 +3,49 @@
 {% block title %}Автосценарий: настройки купонов{% endblock %}
 
 {% block content %}
+<style>
+  .mail-help-btn {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    line-height: 1;
+    padding: 0;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mail-label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .mail-bot-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.65rem;
+  }
+
+  .mail-bot-choice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .mail-bot-choice-list .form-check {
+    margin: 0;
+    padding: 0.45rem 0.55rem 0.45rem 2rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    background: #f8fafc;
+    width: 100%;
+  }
+</style>
+
 <div class="container-fluid">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
@@ -17,10 +60,13 @@
     </div>
   </div>
 
-  <div class="alert alert-info">
-    Эта страница меняет только настройки автосценария. Купоны не резервируются, события vtelemax не создаются,
-    сообщения гостям не отправляются. Перед выдачей купонов проверьте расчёт на экране автосценариев.
-  </div>
+  <details class="alert alert-info">
+    <summary class="fw-semibold" style="cursor: pointer;">Что делает эта страница</summary>
+    <div class="mt-2">
+      Эта страница меняет только настройки автосценария. Купоны не резервируются, события vtelemax не создаются,
+      сообщения гостям не отправляются. Перед выдачей купонов проверьте расчёт на экране автосценариев.
+    </div>
+  </details>
 
   {% if form.errors or rule_formset.errors or rule_formset.non_form_errors %}
     <div class="alert alert-danger" role="alert">
@@ -55,11 +101,11 @@
     </div>
   {% endif %}
 
-  <div class="card border-0 shadow-sm mb-3">
-    <div class="card-header bg-white">
+  <details class="card border-0 shadow-sm mb-3">
+    <summary class="card-header bg-white" style="cursor: pointer;">
       <strong>Как выбирается купон</strong>
       <div class="text-muted small">{{ coupon_selection_policy_label }}</div>
-    </div>
+    </summary>
     <div class="card-body">
       <div class="row g-2 small">
         {% for label, value in coupon_selection_policy_rows %}
@@ -69,13 +115,13 @@
         {% endfor %}
       </div>
     </div>
-  </div>
+  </details>
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
       <div>
         <strong>Шаблон сообщения гостю</strong>
-        <div class="text-muted small">Этот текст гость получит в Telegram/VK/MAX.</div>
+        <div class="text-muted small">Этот текст гость получит в Телеграм/ВК/Макс.</div>
       </div>
       {% if message_template %}
         <div class="d-flex gap-2 flex-wrap">
@@ -170,10 +216,13 @@
       <hr class="my-4">
 
       <h2 class="h6 mb-3">Окно отправки сообщений</h2>
-      <div class="alert alert-light border small">
-        В пилоте сообщение отправляется сразу после подтверждения vtelemax, чтобы можно было быстро проверить результат.
-        Для состояния “Активен” используйте режим “Равномерно в окне”, иначе сообщение могло бы уйти сразу после подтверждения.
-      </div>
+      <details class="alert alert-light border small">
+        <summary class="fw-semibold" style="cursor: pointer;">Как работает окно отправки</summary>
+        <div class="mt-2">
+          В пилоте сообщение отправляется сразу после подтверждения vtelemax, чтобы можно было быстро проверить результат.
+          Для состояния «Активен» используйте режим «Равномерно в окне», иначе сообщение могло бы уйти сразу после подтверждения.
+        </div>
+      </details>
       <div class="row g-3">
         <div class="col-12 col-lg-3">
           {{ form.notification_distribution_mode.label_tag }}
@@ -209,34 +258,70 @@
       <hr class="my-4">
 
       <h2 class="h6 mb-3">Каналы отправки сообщений</h2>
-      <div class="alert alert-light border small">
-        Здесь задаётся, в какой бот будет поставлена отправка после подтверждения купона в vtelemax.
-        В режиме «Только основной бот» гость получит одно сообщение. В режиме «Все активные боты» сообщение будет поставлено во все выбранные боты, где у гостя есть активная привязка и согласие на уведомления.
-      </div>
       <div class="row g-3">
         <div class="col-12 col-lg-4">
-          {{ form.notification_target_mode.label_tag }}
+          <div class="mail-label-row">
+            {{ form.notification_target_mode.label_tag }}
+            <button
+              type="button"
+              class="btn btn-outline-secondary mail-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Как выбирать чат гостя: только основной бот или все активные привязки."
+            >?</button>
+          </div>
           {{ form.notification_target_mode }}
-          {% if form.notification_target_mode.help_text %}
-            <div class="form-text">{{ form.notification_target_mode.help_text }}</div>
-          {% endif %}
           {% if form.notification_target_mode.errors %}
             <div class="text-danger small mt-1">{{ form.notification_target_mode.errors|join:", " }}</div>
           {% endif %}
         </div>
         <div class="col-12 col-lg-8">
-          <label class="form-label mb-1">{{ form.notification_bot_profiles.label }}</label>
-          <div class="border rounded p-2">
-            {{ form.notification_bot_profiles }}
+          <div class="mail-label-row">
+            <label class="form-label mb-0">{{ form.notification_bot_profiles.label }}</label>
+            <button
+              type="button"
+              class="btn btn-outline-secondary mail-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Через какие активные профили ботов отправлять сообщения этого автосценария."
+            >?</button>
           </div>
-          {% if form.notification_bot_profiles.help_text %}
-            <div class="form-text">{{ form.notification_bot_profiles.help_text }}</div>
+          <div class="border rounded p-3">
+            <div class="mail-bot-actions">
+              <button type="button" class="btn btn-outline-primary btn-sm" id="coupon-bot-select-all">Выбрать всё</button>
+              <button type="button" class="btn btn-outline-secondary btn-sm" id="coupon-bot-clear-all">Снять всё</button>
+            </div>
+            <div class="mail-bot-choice-list" id="coupon-bot-choice-list">
+              {% for checkbox in form.notification_bot_profiles %}
+                <div class="form-check">
+                  {{ checkbox.tag }}
+                  <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% if has_active_bot_profiles %}
+            <small class="text-muted">
+              Выберите конкретных активных ботов, через которых должен работать этот автосценарий.
+            </small>
+          {% else %}
+            <small class="text-danger d-block">
+              Нет активных ботов. Добавьте и активируйте профиль бота в
+              <a href="{{ bot_profiles_admin_url }}">админке</a>, затем обновите страницу.
+            </small>
           {% endif %}
           {% if form.notification_bot_profiles.errors %}
             <div class="text-danger small mt-1">{{ form.notification_bot_profiles.errors|join:", " }}</div>
           {% endif %}
         </div>
       </div>
+      <details class="border rounded p-3 mt-3">
+        <summary class="fw-semibold">Как работает отправка через ботов</summary>
+        <div class="text-muted small mt-2">
+          В режиме «Только основной бот» создаётся одна отправка гостю. В режиме «Все активные боты» отправка создаётся
+          в каждый выбранный бот, где у гостя есть активная привязка и разрешение на сообщения.
+        </div>
+      </details>
 
       <hr class="my-4">
 
@@ -500,6 +585,36 @@
         row.remove();
       }
     });
+
+    var botChoiceList = document.getElementById("coupon-bot-choice-list");
+    var selectAllButton = document.getElementById("coupon-bot-select-all");
+    var clearAllButton = document.getElementById("coupon-bot-clear-all");
+
+    if (botChoiceList && selectAllButton && clearAllButton) {
+      var setBotSelection = function (checked) {
+        var inputs = botChoiceList.querySelectorAll('input[type="checkbox"][name="notification_bot_profiles"]');
+        inputs.forEach(function (input) {
+          input.checked = checked;
+        });
+      };
+
+      selectAllButton.addEventListener("click", function () {
+        setBotSelection(true);
+      });
+
+      clearAllButton.addEventListener("click", function () {
+        setBotSelection(false);
+      });
+    }
+
+    if (window.bootstrap && window.bootstrap.Tooltip) {
+      var tooltipNodes = document.querySelectorAll('[data-bs-toggle="tooltip"]');
+      tooltipNodes.forEach(function (node) {
+        if (!window.bootstrap.Tooltip.getInstance(node)) {
+          new window.bootstrap.Tooltip(node);
+        }
+      });
+    }
   });
 </script>
 {% endblock %}
