@@ -7,51 +7,13 @@
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
     <div>
       <h1 class="h4 mb-1">Автосценарии рассылок</h1>
-      <p class="text-muted mb-0">Операционный экран сценарных отправок и ручного разового запуска.</p>
+      <p class="text-muted mb-0">Рабочий экран проверки и настройки купонных автосценариев.</p>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 flex-wrap">
       <a class="btn btn-outline-primary" href="/admin/guests/notificationscenario/">Открыть админку сценариев</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад к рассылкам</a>
     </div>
   </div>
-
-  <form method="get" class="card border-0 shadow-sm mb-3">
-    <div class="card-body">
-      <div class="row g-2 align-items-end">
-        <div class="col-12 col-md-4">
-          <label class="form-label mb-1">Поиск</label>
-          <input type="text" class="form-control" name="q" value="{{ query }}" placeholder="Код/название/описание">
-        </div>
-        <div class="col-12 col-md-3">
-          <label class="form-label mb-1">Триггер</label>
-          <select class="form-select" name="trigger_type">
-            <option value="">Все триггеры</option>
-            {% for value, label in trigger_type_choices %}
-              <option value="{{ value }}" {% if selected_trigger_type == value %}selected{% endif %}>{{ label }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="col-12 col-md-5 d-flex flex-wrap gap-3">
-          <div class="form-check mt-4">
-            <input class="form-check-input" type="checkbox" value="1" id="showInactive" name="show_inactive" {% if show_inactive %}checked{% endif %}>
-            <label class="form-check-label" for="showInactive">Показывать неактивные</label>
-          </div>
-          <div class="form-check mt-4">
-            <input class="form-check-input" type="checkbox" value="1" id="onlySystem" name="only_system" {% if only_system %}checked{% endif %}>
-            <label class="form-check-label" for="onlySystem">Только системные</label>
-          </div>
-          <div class="form-check mt-4">
-            <input class="form-check-input" type="checkbox" value="1" id="withErrors" name="with_errors" {% if with_errors %}checked{% endif %}>
-            <label class="form-check-label" for="withErrors">Только с ошибками за 24ч</label>
-          </div>
-        </div>
-      </div>
-      <div class="d-flex gap-2 mt-3">
-        <button class="btn btn-outline-primary" type="submit">Применить</button>
-        <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_scenarios' %}">Сбросить</a>
-      </div>
-    </div>
-  </form>
 
   <div class="row g-3 mb-3">
     <div class="col-12 col-md-3">
@@ -81,7 +43,7 @@
     <div class="col-12 col-md-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Ошибок Dispatch за 24ч</div>
+          <div class="text-muted small">Ошибок задач доставки за 24ч</div>
           <div class="h3 mb-0">{{ tasks_failed_24h_total }}</div>
         </div>
       </div>
@@ -91,26 +53,28 @@
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
       <div>
-        <h2 class="h6 mb-0">Купонные автосценарии</h2>
-        <div class="text-muted small">Безопасный предпросмотр: без резервирования купонов, очереди vtelemax и отправки сообщений.</div>
+        <h2 class="h6 mb-0">Купонный автосценарий</h2>
+        <div class="text-muted small">Выберите один автосценарий и проверьте расчёт без резервирования купонов и отправки сообщений.</div>
       </div>
       <a class="btn btn-outline-secondary btn-sm" href="/admin/guests/couponautomationconfig/">Настройки в админке</a>
     </div>
     <div class="card-body">
       <form method="get" class="row g-2 align-items-end mb-3">
+        <input type="hidden" name="coupon_check" value="1">
         <input type="hidden" name="q" value="{{ query }}">
         <input type="hidden" name="trigger_type" value="{{ selected_trigger_type }}">
         {% if show_inactive %}<input type="hidden" name="show_inactive" value="1">{% endif %}
         {% if only_system %}<input type="hidden" name="only_system" value="1">{% endif %}
         {% if with_errors %}<input type="hidden" name="with_errors" value="1">{% endif %}
         <div class="col-12 col-lg-5">
-          <label class="form-label mb-1">Автосценарий</label>
+          <label class="form-label mb-1">Купонный автосценарий</label>
           <select class="form-select" name="coupon_scenario_code">
-            <option value="">Выберите купонный автосценарий</option>
             {% for config in coupon_autoscenario_configs %}
               <option value="{{ config.scenario.code }}" {% if selected_coupon_scenario_code == config.scenario.code %}selected{% endif %}>
-                {{ config.scenario.code }} · {{ config.scenario.name }}
+                {{ config.scenario.name }} ({{ config.scenario.code }})
               </option>
+            {% empty %}
+              <option value="">Купонные автосценарии не настроены</option>
             {% endfor %}
           </select>
         </div>
@@ -123,188 +87,185 @@
           <input class="form-control" type="number" name="coupon_sample_limit" min="1" max="100" value="{{ coupon_sample_limit }}">
         </div>
         <div class="col-12 col-lg-3">
-          <button class="btn btn-primary w-100" type="submit">Предпросмотр</button>
+          <button class="btn btn-primary w-100" type="submit">Проверить расчёт</button>
         </div>
       </form>
 
-      <div class="table-responsive mb-3">
-        <table class="table table-sm align-middle mb-0">
-          <thead class="table-light">
-            <tr>
-              <th>Сценарий</th>
-              <th>Состояние</th>
-              <th>Планировщик уведомлений</th>
-              <th>Купоны</th>
-              <th>Заведение</th>
-              <th>Лимит / пауза</th>
-              <th>Запуски</th>
-              <th>Назначения</th>
-              <th>Шаблон</th>
-              <th>Действия</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for config in coupon_autoscenario_configs %}
-              <tr>
-                <td>
-                  <code>{{ config.scenario.code }}</code>
-                  <div class="small text-muted">{{ config.scenario.name }}</div>
-                </td>
-                <td>
-                  {% if config.execution_mode == "pilot" %}
-                    <span class="badge text-bg-info">{{ config.execution_state_label }}</span>
-                  {% elif config.execution_mode == "automatic" %}
-                    <span class="badge text-bg-success">{{ config.execution_state_label }}</span>
-                  {% elif config.execution_mode == "paused" %}
-                    <span class="badge text-bg-secondary">{{ config.execution_state_label }}</span>
-                  {% else %}
-                    <span class="badge text-bg-light text-dark">{{ config.execution_state_label }}</span>
-                  {% endif %}
-                  {% if config.execution_state_hint %}
-                    <div class="small text-muted">{{ config.execution_state_hint }}</div>
-                  {% endif %}
-                </td>
-                <td>
-                  {% if config.scenario.is_active %}
-                    <span class="badge text-bg-success">включён</span>
-                  {% else %}
-                    <span class="badge text-bg-secondary">выключен</span>
-                  {% endif %}
-                  <div class="small text-muted mt-1">
-                    отправка: {{ config.scenario.get_distribution_mode_display|default:"—" }}
-                    {% if config.scenario.send_window_begin and config.scenario.send_window_end %}
-                      {{ config.scenario.send_window_begin|time:"H:i" }}-{{ config.scenario.send_window_end|time:"H:i" }}
-                    {% endif %}
-                    {% if config.scenario.timezone %}
-                      {{ config.scenario.timezone }}
-                    {% endif %}
-                  </div>
-                </td>
-                <td>
-                  {% if config.has_rule_based_coupon_selection %}
-                    правил: {{ config.active_coupon_rules|length }}
-                  {% elif config.coupon_series %}
-                    <code>{{ config.coupon_series }}</code>
-                  {% else %}
-                    <span class="text-muted">серия не задана</span>
-                  {% endif %}
-                  <div class="small text-muted">срок: {{ config.coupon_validity_days }} дн.</div>
-                </td>
-                <td>{{ config.venue_name|default:config.venue_code|default:"—" }}</td>
-                <td>
-                  {{ config.max_recipients_per_run }} за проход
-                  <div class="small text-muted">повтор через {{ config.cooldown_days }} дн.</div>
-                </td>
-                <td>
-                  {{ config.runs_total }}
-                  <div class="small text-muted">{{ config.last_run_at|date:"Y-m-d H:i"|default:"ещё не было" }}</div>
-                </td>
-                <td>
-                  всего {{ config.assignments_total }}
-                  <div class="small text-muted">отправлено {{ config.assignments_sent }}, использовано {{ config.assignments_used }}, ошибок {{ config.assignments_error }}</div>
-                </td>
-                <td>
-                  {% if config.scenario.template %}
-                    {{ config.template_display_name|default:config.scenario.template.name }}
-                    {% if config.template_technical_name %}
-                      <div class="small text-muted">{{ config.template_technical_name }}</div>
-                    {% endif %}
-                  {% else %}
-                    <span class="text-muted">—</span>
-                  {% endif %}
-                </td>
-                <td>
-                  <a
-                    class="btn btn-outline-primary btn-sm"
-                    href="{% url 'mailings_v2_coupon_autoscenario_settings' config.id %}"
-                  >
-                    Настройки
-                  </a>
-                </td>
-              </tr>
-              <tr class="table-light">
-                <td colspan="10">
-                  <div class="small">
-                    <div class="fw-semibold mb-1">Правило выбора купона</div>
-                    <div class="text-muted mb-2">{{ config.coupon_selection_policy_label }}</div>
-                    <div class="row g-2 mb-2">
-                      {% for label, value in config.coupon_selection_policy_rows %}
-                        <div class="col-12 col-lg-4">
-                          <span class="text-muted">{{ label }}:</span> {{ value }}
-                        </div>
-                      {% endfor %}
-                    </div>
-                    {% if config.has_rule_based_coupon_selection %}
-                      <div class="d-flex flex-column gap-1">
-                        {% for rule in config.active_coupon_rules %}
-                          <div>
-                            {% if rule.scope_type == "global" %}
-                              <span class="badge text-bg-secondary">Вся сеть (global)</span>
-                            {% else %}
-                              <span class="badge text-bg-light text-dark">Заведение</span>
-                            {% endif %}
-                            <code>{{ rule.coupon_series }}</code>
-                            {% if rule.scope_type == "global" %}
-                              <span class="text-muted">для любого заведения</span>
-                            {% else %}
-                              <span class="text-muted">{{ rule.venue_name|default:rule.venue_code }}</span>
-                            {% endif %}
-                            <span class="text-muted">приоритет {{ rule.priority }}</span>
-                            {% if rule.coupon_validity_days %}
-                              <span class="text-muted">срок {{ rule.coupon_validity_days }} дн.</span>
-                            {% endif %}
-                          </div>
-                        {% endfor %}
-                      </div>
+      {% if selected_coupon_config %}
+        {% with config=selected_coupon_config %}
+          <div class="table-responsive mb-3">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Автосценарий</th>
+                  <th>Состояние</th>
+                  <th>Планировщик уведомлений</th>
+                  <th>Купоны</th>
+                  <th>Заведение</th>
+                  <th>Лимит / пауза</th>
+                  <th>Запуски</th>
+                  <th>Назначения</th>
+                  <th>Шаблон</th>
+                  <th class="text-end">Действие</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>
+                    <code>{{ config.scenario.code }}</code>
+                    <div class="small text-muted">{{ config.scenario.name }}</div>
+                  </td>
+                  <td>
+                    {% if config.execution_mode == "pilot" %}
+                      <span class="badge text-bg-info">{{ config.execution_state_label }}</span>
+                    {% elif config.execution_mode == "automatic" %}
+                      <span class="badge text-bg-success">{{ config.execution_state_label }}</span>
+                    {% elif config.execution_mode == "paused" %}
+                      <span class="badge text-bg-secondary">{{ config.execution_state_label }}</span>
                     {% else %}
-                      <div>
-                        <span class="badge text-bg-warning">Резерв без правил</span>
-                        <code>{{ config.coupon_series|default:"серия не задана" }}</code>
-                        <span class="text-muted">{{ config.venue_name|default:config.venue_code|default:"заведение не задано" }}</span>
-                      </div>
+                      <span class="badge text-bg-light text-dark">{{ config.execution_state_label }}</span>
+                    {% endif %}
+                    {% if config.execution_state_hint %}
+                      <div class="small text-muted">{{ config.execution_state_hint }}</div>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if config.scenario.is_active %}
+                      <span class="badge text-bg-success">включён</span>
+                    {% else %}
+                      <span class="badge text-bg-secondary">выключен</span>
+                    {% endif %}
+                    <div class="small text-muted mt-1">
+                      отправка: {{ config.scenario.get_distribution_mode_display|default:"—" }}
+                      {% if config.scenario.send_window_begin and config.scenario.send_window_end %}
+                        {{ config.scenario.send_window_begin|time:"H:i" }}-{{ config.scenario.send_window_end|time:"H:i" }}
+                      {% endif %}
+                      {% if config.scenario.timezone %}
+                        {{ config.scenario.timezone }}
+                      {% endif %}
+                    </div>
+                  </td>
+                  <td>
+                    {% if config.has_rule_based_coupon_selection %}
+                      правил: {{ config.active_coupon_rules|length }}
+                    {% elif config.coupon_series %}
+                      <code>{{ config.coupon_series }}</code>
+                    {% else %}
+                      <span class="text-muted">серия не задана</span>
+                    {% endif %}
+                    <div class="small text-muted">срок: {{ config.coupon_validity_days }} дн.</div>
+                  </td>
+                  <td>{{ config.venue_name|default:config.venue_code|default:"—" }}</td>
+                  <td>
+                    {{ config.max_recipients_per_run }} за проход
+                    <div class="small text-muted">повтор через {{ config.cooldown_days }} дн.</div>
+                  </td>
+                  <td>
+                    {{ config.runs_total }}
+                    <div class="small text-muted">{{ config.last_run_at|date:"Y-m-d H:i"|default:"ещё не было" }}</div>
+                  </td>
+                  <td>
+                    всего {{ config.assignments_total }}
+                    <div class="small text-muted">отправлено {{ config.assignments_sent }}, использовано {{ config.assignments_used }}, ошибок {{ config.assignments_error }}</div>
+                  </td>
+                  <td>
+                    {% if config.scenario.template %}
+                      {{ config.template_display_name|default:config.scenario.template.name }}
+                      {% if config.template_technical_name %}
+                        <div class="small text-muted">{{ config.template_technical_name }}</div>
+                      {% endif %}
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    <a
+                      class="btn btn-outline-primary btn-sm"
+                      href="{% url 'mailings_v2_coupon_autoscenario_settings' config.id %}"
+                    >
+                      Настройки
+                    </a>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="border rounded p-3 mb-3 bg-light">
+            <div class="fw-semibold mb-1">Как выбирается купон</div>
+            <div class="text-muted small mb-2">{{ config.coupon_selection_policy_label }}</div>
+            <div class="row g-2 small mb-2">
+              {% for label, value in config.coupon_selection_policy_rows %}
+                <div class="col-12 col-lg-4">
+                  <span class="text-muted">{{ label }}:</span> {{ value }}
+                </div>
+              {% endfor %}
+            </div>
+            {% if config.has_rule_based_coupon_selection %}
+              <div class="d-flex flex-column gap-1 small">
+                {% for rule in config.active_coupon_rules %}
+                  <div>
+                    {% if rule.scope_type == "global" %}
+                      <span class="badge text-bg-secondary">Вся сеть</span>
+                    {% else %}
+                      <span class="badge text-bg-light text-dark">Заведение</span>
+                    {% endif %}
+                    <code>{{ rule.coupon_series }}</code>
+                    {% if rule.scope_type == "global" %}
+                      <span class="text-muted">для любого заведения</span>
+                    {% else %}
+                      <span class="text-muted">{{ rule.venue_name|default:rule.venue_code }}</span>
+                    {% endif %}
+                    <span class="text-muted">приоритет {{ rule.priority }}</span>
+                    {% if rule.coupon_validity_days %}
+                      <span class="text-muted">срок {{ rule.coupon_validity_days }} дн.</span>
                     {% endif %}
                   </div>
-                </td>
-              </tr>
-            {% empty %}
-              <tr>
-                <td colspan="10" class="text-center text-muted py-3">Купонные автосценарии пока не настроены.</td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div class="small">
+                <span class="badge text-bg-warning">Серия без правил</span>
+                <code>{{ config.coupon_series|default:"серия не задана" }}</code>
+                <span class="text-muted">{{ config.venue_name|default:config.venue_code|default:"заведение не задано" }}</span>
+              </div>
+            {% endif %}
+          </div>
+        {% endwith %}
+      {% else %}
+        <div class="alert alert-secondary mb-3">Купонные автосценарии пока не настроены.</div>
+      {% endif %}
 
       {% if coupon_plan_error %}
-        <div class="alert alert-danger mb-0">{{ coupon_plan_error }}</div>
+        <div class="alert alert-danger">{{ coupon_plan_error }}</div>
       {% endif %}
 
       {% if coupon_pilot_report %}
         <div class="alert alert-success">
           <div class="fw-semibold mb-1">Пробный запуск создан</div>
           <div>
-            Сценарий: <code>{{ coupon_pilot_report.scenario_code }}</code>,
-            run_id: <strong>{{ coupon_pilot_report.run_id }}</strong>,
+            Автосценарий: <code>{{ coupon_pilot_report.scenario_code }}</code>,
+            номер запуска: <strong>{{ coupon_pilot_report.run_id }}</strong>,
             назначений: <strong>{{ coupon_pilot_report.created_assignments }}</strong>,
             событий vtelemax: <strong>{{ coupon_pilot_report.queue_events_created }}</strong>.
           </div>
           <div class="small mt-1">
-            Сообщение гостю будет создано только после ACK vtelemax по assignment-событию.
-            Если плановая доставка купонной очереди выключена, обработайте очередь отдельным worker.
+            Сообщение гостю будет создано только после подтверждения vtelemax по событию назначения купона.
+            Если плановая доставка купонной очереди выключена, обработайте очередь отдельным обработчиком.
           </div>
         </div>
       {% endif %}
 
       {% if coupon_cleanup_report %}
         <div class="alert alert-success">
-          <div class="fw-semibold mb-1">Cleanup поставлен в очередь</div>
+          <div class="fw-semibold mb-1">Отмена пилотного купона поставлена в очередь</div>
           <div>
             Назначение: <strong>#{{ coupon_cleanup_report.assignment_id }}</strong>,
             событие vtelemax: <strong>#{{ coupon_cleanup_report.queue_event_id }}</strong>,
             купон: <code>{{ coupon_cleanup_report.coupon_series }}:{{ coupon_cleanup_report.coupon_code }}</code>.
           </div>
           <div class="small mt-1">
-            Купон вернётся в пул только после ACK vtelemax по этому `status_update:canceled`.
+            Купон вернётся в пул только после подтверждения vtelemax по событию отмены.
           </div>
         </div>
       {% endif %}
@@ -313,7 +274,7 @@
         <div class="border rounded p-3">
           <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
             <div>
-              <h3 class="h6 mb-1">Предпросмотр: <code>{{ coupon_plan.scenario_code }}</code></h3>
+              <h3 class="h6 mb-1">Результат проверки выбранного автосценария: <code>{{ coupon_plan.scenario_code }}</code></h3>
               <div class="text-muted small">
                 Состояние: {{ coupon_plan.execution_state_label }} · серия: {{ coupon_plan.coupon_series|default:"—" }} · заведение: {{ coupon_plan.venue_name|default:coupon_plan.venue_code|default:"—" }}
               </div>
@@ -332,31 +293,31 @@
             <div class="col-6 col-lg-2">
               <div class="text-muted small">Проверено гостей</div>
               <div class="h5 mb-0">{{ coupon_plan.scanned_guests }}</div>
-              <div class="text-muted small">лимит предпросмотра</div>
+              <div class="text-muted small">по заданному лимиту</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Основной сегмент</div>
+              <div class="text-muted small">Подошли под условия</div>
               <div class="h5 mb-0">{{ coupon_plan.segment_matched_guests }}</div>
               {% if coupon_plan.pilot_forced_guests %}
                 <div class="text-muted small">+{{ coupon_plan.pilot_forced_guests }} добавлено пилотом</div>
               {% endif %}
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Достижимы</div>
+              <div class="text-muted small">Есть канал связи</div>
               <div class="h5 mb-0">{{ coupon_plan.sendable_guests }}</div>
-              <div class="text-muted small">есть Telegram/VK/MAX</div>
+              <div class="text-muted small">Telegram/VK/MAX</div>
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">К выдаче сейчас</div>
               <div class="h5 mb-0">{{ coupon_plan.planned_assignments }}</div>
-              <div class="text-muted small">после всех фильтров</div>
+              <div class="text-muted small">после всех проверок</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Купонов доступно</div>
+              <div class="text-muted small">Свободных купонов</div>
               <div class="h5 mb-0">{{ coupon_plan.available_coupons }}</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Дефицит купонов</div>
+              <div class="text-muted small">Не хватает купонов</div>
               <div class="h5 mb-0">{{ coupon_plan.coupon_shortage }}</div>
             </div>
           </div>
@@ -377,7 +338,7 @@
             <table class="table table-sm mb-0">
               <thead class="table-light">
                 <tr>
-                  <th>Фильтр</th>
+                  <th>Проверка</th>
                   <th>Количество</th>
                   <th>Пояснение</th>
                 </tr>
@@ -404,9 +365,9 @@
                   <td class="text-muted">Гость уже получал купон этой серии недавно.</td>
                 </tr>
                 <tr>
-                  <td>Пилотный фильтр</td>
+                  <td>Пилотное ограничение</td>
                   <td>{{ coupon_plan.blocked_by_pilot_filter }}</td>
-                  <td class="text-muted">В пилоте к выдаче допускаются только контрольные телефоны или guest_id.</td>
+                  <td class="text-muted">В пилоте к выдаче допускаются только контрольные телефоны или выбранные ID гостей.</td>
                 </tr>
               </tbody>
             </table>
@@ -414,9 +375,9 @@
 
           {% if coupon_plan.pilot_phone_filters or coupon_plan.pilot_guest_id_filters %}
             <div class="small text-muted mb-2">
-              Пилотные телефоны:
+              Контрольные телефоны:
               {% if coupon_plan.pilot_phone_filters %}{{ coupon_plan.pilot_phone_filters|join:", " }}{% else %}—{% endif %};
-              guest_id:
+              ID гостей:
               {% if coupon_plan.pilot_guest_id_filters %}{{ coupon_plan.pilot_guest_id_filters|join:", " }}{% else %}—{% endif %}.
               {% if coupon_plan.used_default_pilot_phone %}Используется безопасная заглушка.{% endif %}
               {% if coupon_plan.pilot_forced_guests %}
@@ -458,8 +419,8 @@
                 <div>
                   <div class="fw-semibold">Пробный запуск</div>
                   <div class="small text-muted">
-                    Будут зарезервированы купоны и созданы assignment-события vtelemax.
-                    Сообщения гостям появятся только после ACK vtelemax.
+                    Будут зарезервированы купоны и созданы события назначения в vtelemax.
+                    Сообщения гостям появятся только после подтверждения vtelemax.
                   </div>
                 </div>
                 <button type="submit" class="btn btn-warning">Создать пробную волну</button>
@@ -507,7 +468,7 @@
                     </td>
                     <td><code>{{ item.coupon_series }}:{{ item.coupon_code }}</code></td>
                     <td>
-                      {{ item.coupon_rule_label|default:"резерв без правил" }}
+                      {{ item.coupon_rule_label|default:"серия без правил" }}
                       {% if item.coupon_selection_source_display %}
                         <div class="text-muted small">{{ item.coupon_selection_source_display }}</div>
                       {% endif %}
@@ -517,81 +478,93 @@
                   </tr>
                 {% empty %}
                   <tr>
-                    <td colspan="10" class="text-center text-muted py-3">Плановых пар нет.</td>
+                    <td colspan="10" class="text-center text-muted py-3">Подходящих гостей и купонов для примера нет.</td>
                   </tr>
                 {% endfor %}
               </tbody>
             </table>
           </div>
         </div>
+      {% elif selected_coupon_config and not coupon_check_requested %}
+        <div class="alert alert-light border mb-0">
+          Для выбранного автосценария показаны текущие настройки. Чтобы увидеть гостей, блокировки и дефицит купонов,
+          нажмите «Проверить расчёт».
+        </div>
       {% endif %}
-
-      <div class="border rounded p-3 mt-3">
-        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-          <h3 class="h6 mb-0">Последние назначения автосценариев</h3>
-          <span class="text-muted small">Показаны последние 20 технических назначений.</span>
-        </div>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle mb-0">
-            <thead class="table-light">
-              <tr>
-                <th>ID</th>
-                <th>Сценарий</th>
-                <th>Гость</th>
-                <th>Купон</th>
-                <th>Статус</th>
-                <th>vtelemax</th>
-                <th>Создано</th>
-                <th class="text-end">Действие</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for assignment in coupon_recent_assignments %}
-                <tr>
-                  <td>#{{ assignment.id }}</td>
-                  <td><code>{{ assignment.scenario.code }}</code></td>
-                  <td>
-                    {% if assignment.guest_id %}
-                      #{{ assignment.guest_id }} {{ assignment.phone_e164|default:"" }}
-                    {% else %}
-                      {{ assignment.phone_e164|default:"—" }}
-                    {% endif %}
-                  </td>
-                  <td><code>{{ assignment.coupon_series }}:{{ assignment.coupon_code }}</code></td>
-                  <td>{{ assignment.get_status_display }}</td>
-                  <td>{{ assignment.get_vtelemax_sync_status_display }}</td>
-                  <td>{{ assignment.created_at|date:"Y-m-d H:i" }}</td>
-                  <td class="text-end">
-                    {% if assignment.can_cleanup_from_ui %}
-                      <form method="post" class="d-inline">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="cleanup_coupon_pilot">
-                        <input type="hidden" name="assignment_id" value="{{ assignment.id }}">
-                        <input type="hidden" name="return_query" value="{{ return_query }}">
-                        <button type="submit" class="btn btn-sm btn-outline-danger">Очистить пилот</button>
-                      </form>
-                    {% else %}
-                      <span class="text-muted small">—</span>
-                    {% endif %}
-                  </td>
-                </tr>
-              {% empty %}
-                <tr>
-                  <td colspan="8" class="text-center text-muted py-3">Назначений автосценариев пока нет.</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   </div>
 
-  <div class="card border-0 shadow-sm mb-3">
-    <div class="card-header bg-white">
-      <h2 class="h6 mb-0">Ручной запуск плановых сценариев</h2>
-    </div>
+  <details class="card border-0 shadow-sm mb-3">
+    <summary class="card-header bg-white fw-semibold" style="cursor: pointer;">
+      Последние назначения автосценариев
+      <span class="text-muted small fw-normal ms-2">последние 20 назначений</span>
+    </summary>
     <div class="card-body">
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>Номер</th>
+              <th>Сценарий</th>
+              <th>Гость</th>
+              <th>Купон</th>
+              <th>Статус</th>
+              <th>vtelemax</th>
+              <th>Создано</th>
+              <th class="text-end">Действие</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for assignment in coupon_recent_assignments %}
+              <tr>
+                <td>#{{ assignment.id }}</td>
+                <td><code>{{ assignment.scenario.code }}</code></td>
+                <td>
+                  {% if assignment.guest_id %}
+                    #{{ assignment.guest_id }} {{ assignment.phone_e164|default:"" }}
+                  {% else %}
+                    {{ assignment.phone_e164|default:"—" }}
+                  {% endif %}
+                </td>
+                <td><code>{{ assignment.coupon_series }}:{{ assignment.coupon_code }}</code></td>
+                <td>{{ assignment.get_status_display }}</td>
+                <td>{{ assignment.get_vtelemax_sync_status_display }}</td>
+                <td>{{ assignment.created_at|date:"Y-m-d H:i" }}</td>
+                <td class="text-end">
+                  {% if assignment.can_cleanup_from_ui %}
+                    <form method="post" class="d-inline">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="cleanup_coupon_pilot">
+                      <input type="hidden" name="assignment_id" value="{{ assignment.id }}">
+                      <input type="hidden" name="return_query" value="{{ return_query }}">
+                      <button type="submit" class="btn btn-sm btn-outline-danger">Отменить пилотный купон</button>
+                    </form>
+                  {% else %}
+                    <span class="text-muted small">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="8" class="text-center text-muted py-3">Назначений автосценариев пока нет.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </details>
+
+  <details class="card border-0 shadow-sm mb-3">
+    <summary class="card-header bg-white fw-semibold" style="cursor: pointer;">
+      Ручной запуск плановых сценариев
+      <span class="text-muted small fw-normal ms-2">сервисный инструмент</span>
+    </summary>
+    <div class="card-body">
+      <div class="alert alert-light border small">
+        Этот блок нужен для разового запуска плановых сценариев, если нужно проверить обработчик после изменения настроек
+        или вручную догнать планировщик. Для обычной настройки купонного автосценария этот блок не требуется.
+      </div>
       <form method="post" class="row g-2 align-items-end">
         {% csrf_token %}
         <input type="hidden" name="action" value="run_schedule_once">
@@ -614,7 +587,7 @@
         </div>
       </form>
     </div>
-  </div>
+  </details>
 
   {% if scenarios_run_report %}
     <div class="card border-0 shadow-sm mb-3">
@@ -651,7 +624,7 @@
                 </tr>
               {% empty %}
                 <tr>
-                  <td colspan="6" class="text-center text-muted py-3">Отчет пуст.</td>
+                  <td colspan="6" class="text-center text-muted py-3">Отчёт пуст.</td>
                 </tr>
               {% endfor %}
             </tbody>
@@ -661,25 +634,61 @@
     </div>
   {% endif %}
 
-  <div class="card border-0 shadow-sm">
-    <div class="card-header bg-white d-flex justify-content-between align-items-center">
-      <h2 class="h6 mb-0">Список сценариев</h2>
-      <span class="text-muted small">Показано: {{ scenarios|length }}</span>
-    </div>
-    <div class="card-body p-0">
+  <details class="card border-0 shadow-sm">
+    <summary class="card-header bg-white fw-semibold" style="cursor: pointer;">
+      Дополнительно: все сценарии уведомлений
+      <span class="text-muted small fw-normal ms-2">показано {{ scenarios|length }}</span>
+    </summary>
+    <div class="card-body">
+      <form method="get" class="border rounded p-3 mb-3">
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-md-4">
+            <label class="form-label mb-1">Поиск</label>
+            <input type="text" class="form-control" name="q" value="{{ query }}" placeholder="Код, название или описание">
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label mb-1">Тип запуска</label>
+            <select class="form-select" name="trigger_type">
+              <option value="">Все типы запуска</option>
+              {% for value, label in trigger_type_choices %}
+                <option value="{{ value }}" {% if selected_trigger_type == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-md-5 d-flex flex-wrap gap-3">
+            <div class="form-check mt-4">
+              <input class="form-check-input" type="checkbox" value="1" id="showInactive" name="show_inactive" {% if show_inactive %}checked{% endif %}>
+              <label class="form-check-label" for="showInactive">Показывать неактивные</label>
+            </div>
+            <div class="form-check mt-4">
+              <input class="form-check-input" type="checkbox" value="1" id="onlySystem" name="only_system" {% if only_system %}checked{% endif %}>
+              <label class="form-check-label" for="onlySystem">Только системные</label>
+            </div>
+            <div class="form-check mt-4">
+              <input class="form-check-input" type="checkbox" value="1" id="withErrors" name="with_errors" {% if with_errors %}checked{% endif %}>
+              <label class="form-check-label" for="withErrors">Только с ошибками за 24ч</label>
+            </div>
+          </div>
+        </div>
+        <div class="d-flex gap-2 mt-3">
+          <button class="btn btn-outline-primary" type="submit">Применить</button>
+          <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_scenarios' %}">Сбросить</a>
+        </div>
+      </form>
+
       <div class="table-responsive">
         <table class="table table-sm align-middle mb-0">
           <thead class="table-light">
             <tr>
               <th>Код</th>
               <th>Название</th>
-              <th>Триггер</th>
+              <th>Тип запуска</th>
               <th>Шаблон</th>
               <th>Активен</th>
               <th>События 24ч</th>
-              <th>Dispatch 24ч / ошибки</th>
+              <th>Задачи доставки за 24ч / ошибки</th>
               <th>Последнее событие</th>
-              <th>Обновлен</th>
+              <th>Обновлён</th>
               <th class="text-end"></th>
             </tr>
           </thead>
@@ -734,6 +743,6 @@
         </table>
       </div>
     </div>
-  </div>
+  </details>
 </div>
 {% endblock %}

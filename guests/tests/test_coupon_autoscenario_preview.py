@@ -649,7 +649,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(plan.plan_items[0].guest_id, pilot_guest.id)
         self.assertEqual(plan.plan_items[0].coupon_id, pilot_coupon.id)
         self.assertTrue(
-            any("старого планировщика" in warning for warning in plan.warnings)
+            any("только через явный запуск" in warning for warning in plan.warnings)
         )
 
     def test_plan_command_prints_safe_summary(self):

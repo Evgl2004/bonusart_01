@@ -72,7 +72,7 @@ COUPON_AUTOSCENARIO_STATE_LABELS = {
 }
 
 COUPON_AUTOSCENARIO_STATE_HINTS = {
-    CouponAutomationConfig.ExecutionMode.REPORT_ONLY: "Можно смотреть предпросмотр, купоны не выдаются.",
+    CouponAutomationConfig.ExecutionMode.REPORT_ONLY: "Можно смотреть расчёт, купоны не выдаются.",
     CouponAutomationConfig.ExecutionMode.PILOT: "Пробный запуск разрешён только для контрольных телефонов.",
     CouponAutomationConfig.ExecutionMode.AUTOMATIC: "Готов к боевому запуску после включения расписания.",
     CouponAutomationConfig.ExecutionMode.PAUSED: "Автосценарий временно остановлен.",
@@ -92,8 +92,8 @@ def _coupon_autoscenario_policy_label() -> str:
     Кратко описывает принятую стратегию выбора купона для маркетолога.
     """
     return (
-        "Сначала правило по последнему заведению гостя из order_fact; "
-        "если подходящего правила или свободного купона нет, используется правило Вся сеть (global)."
+        "Сначала используется правило по последнему заведению гостя из истории заказов; "
+        "если подходящего правила или свободного купона нет, используется правило «Вся сеть»."
     )
 
 
@@ -108,8 +108,8 @@ def _coupon_autoscenario_policy_rows(
     """
     cooldown_label = f"не чаще 1 раза в {int(cooldown_days or 0)} дн."
     rows = [
-        ("Стратегия", "последнее заведение гостя -> Вся сеть (global)"),
-        ("Источник последнего заведения", "order_fact"),
+        ("Стратегия", "последнее заведение гостя, затем Вся сеть"),
+        ("Источник последнего заведения", "история заказов"),
         ("Ограничение", "не больше 1 купона гостю за проход"),
         ("Повтор", cooldown_label),
         ("Если нет купонов", "гость пропускается и попадает в дефицит купонов"),
@@ -118,8 +118,8 @@ def _coupon_autoscenario_policy_rows(
         rows.insert(
             2,
             (
-                "Birthday-окно",
-                f"сегодня..+{int(birthday_window_days or 0)} дн. включительно",
+                "Окно дня рождения",
+                f"сегодня + {int(birthday_window_days or 0)} дн. включительно",
             ),
         )
         rows.insert(
@@ -549,9 +549,9 @@ class MailingsV2CampaignOpsView(View):
                 attempt=0,
             )
             if updated > 0:
-                messages.success(request, f"Dispatch-задач переведено в pending: {updated}.")
+                messages.success(request, f"Задач доставки возвращено в ожидание: {updated}.")
             else:
-                messages.info(request, "Dispatch-задач со статусом failed не найдено.")
+                messages.info(request, "Задач доставки с ошибкой не найдено.")
             return redirect(self._resolve_next_url(request, status_url))
 
         if action == "dry_run_campaign":
@@ -1605,7 +1605,7 @@ class MailingsV2ScenariosView(TemplateView):
                 request,
                 (
                     "Пробный запуск купонного автосценария создан: "
-                    f"run_id={result.run_id}, назначений={result.created_assignments}, "
+                    f"номер запуска={result.run_id}, назначений={result.created_assignments}, "
                     f"событий vtelemax={result.queue_events_created}."
                 ),
             )
@@ -1632,8 +1632,8 @@ class MailingsV2ScenariosView(TemplateView):
             messages.success(
                 request,
                 (
-                    "Cleanup пилотного купона поставлен в очередь vtelemax: "
-                    f"assignment_id={result.assignment_id}, event_id={result.queue_event_id}."
+                    "Пилотный купон поставлен в очередь на отмену vtelemax: "
+                    f"назначение #{result.assignment_id}, событие #{result.queue_event_id}."
                 ),
             )
             return redirect(redirect_url)
@@ -1706,6 +1706,7 @@ class MailingsV2ScenariosView(TemplateView):
         selected_coupon_scenario_code = str(
             self.request.GET.get("coupon_scenario_code") or ""
         ).strip()
+        coupon_check_requested = bool(self.request.GET.get("coupon_check"))
         coupon_scan_limit = self._parse_positive_int(
             self.request.GET.get("coupon_scan_limit"),
             default=5000,
@@ -1827,6 +1828,19 @@ class MailingsV2ScenariosView(TemplateView):
                 birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
             )
 
+        selected_coupon_config = next(
+            (
+                config
+                for config in coupon_configs
+                if config.scenario.code == selected_coupon_scenario_code
+            ),
+            None,
+        )
+        if selected_coupon_config is None and coupon_configs:
+            selected_coupon_config = coupon_configs[0]
+        if selected_coupon_config is not None:
+            selected_coupon_scenario_code = selected_coupon_config.scenario.code
+
         coupon_recent_assignments = list(
             CouponAutoscenarioAssignment.objects.select_related("scenario", "config", "guest", "run")
             .order_by("-created_at", "-id")[:20]
@@ -1845,21 +1859,13 @@ class MailingsV2ScenariosView(TemplateView):
 
         coupon_plan = None
         coupon_plan_error = ""
-        if selected_coupon_scenario_code:
+        if coupon_check_requested and selected_coupon_scenario_code:
             try:
                 plan = build_coupon_autoscenario_execution_plan(
                     scenario_code=selected_coupon_scenario_code,
                     scan_limit=coupon_scan_limit,
                 )
                 coupon_plan = plan.as_dict()
-                selected_config = next(
-                    (
-                        config
-                        for config in coupon_configs
-                        if config.scenario.code == selected_coupon_scenario_code
-                    ),
-                    None,
-                )
                 coupon_plan["execution_state_label"] = _coupon_autoscenario_state_label(
                     coupon_plan.get("execution_mode", "")
                 )
@@ -1868,7 +1874,7 @@ class MailingsV2ScenariosView(TemplateView):
                 )
                 coupon_plan["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label()
                 coupon_plan["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
-                    cooldown_days=getattr(selected_config, "cooldown_days", None),
+                    cooldown_days=getattr(selected_coupon_config, "cooldown_days", None),
                     scenario_code=selected_coupon_scenario_code,
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
                 )
@@ -1885,8 +1891,10 @@ class MailingsV2ScenariosView(TemplateView):
 
         context["scenarios"] = scenarios
         context["coupon_autoscenario_configs"] = coupon_configs
+        context["selected_coupon_config"] = selected_coupon_config
         context["coupon_execution_mode_choices"] = list(CouponAutomationConfig.ExecutionMode.choices)
         context["selected_coupon_scenario_code"] = selected_coupon_scenario_code
+        context["coupon_check_requested"] = coupon_check_requested
         context["coupon_scan_limit"] = coupon_scan_limit
         context["coupon_sample_limit"] = coupon_sample_limit
         context["coupon_plan"] = coupon_plan
@@ -1986,7 +1994,7 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         context["scenarios_url"] = reverse("mailings_v2_scenarios")
         scenario_code = self.object.scenario.code if self.object and self.object.scenario_id else ""
         context["preview_url"] = (
-            f"{reverse('mailings_v2_scenarios')}?{urlencode({'coupon_scenario_code': scenario_code})}"
+            f"{reverse('mailings_v2_scenarios')}?{urlencode({'coupon_scenario_code': scenario_code, 'coupon_check': '1'})}"
             if scenario_code
             else reverse("mailings_v2_scenarios")
         )

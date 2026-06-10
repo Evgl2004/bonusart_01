@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 COUPON_VENUE_GLOBAL_CODE = "__global__"
-COUPON_VENUE_GLOBAL_NAME = "Общий"
+COUPON_VENUE_GLOBAL_NAME = "Вся сеть"
 COUPON_MESSAGE_FOOTER = 'Доступные вам купоны можно посмотреть в меню "Купоны" раздела "Профиль".'
 
 

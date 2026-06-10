@@ -498,7 +498,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
         ):
             self.add_error(
                 "notification_distribution_mode",
-                "Для состояния «Активен» выберите «Равномерно в окне», чтобы сообщения не уходили сразу после ACK vtelemax.",
+                "Для состояния «Активен» выберите «Равномерно в окне», чтобы сообщения не уходили сразу после подтверждения vtelemax.",
             )
 
         if venue_code and venue_code in getattr(self, "_coupon_venue_map", {}):
@@ -681,7 +681,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
             cleaned_data["venue_name"] = COUPON_VENUE_GLOBAL_NAME
         else:
             if not venue_code:
-                self.add_error("venue_code", "Выберите заведение или вариант «Вся сеть (global)».")
+                self.add_error("venue_code", "Выберите заведение или вариант «Вся сеть».")
             elif venue_code not in self._coupon_venue_map:
                 self.add_error("venue_code", "Выбранное заведение не найдено в справочнике.")
             else:

@@ -203,7 +203,7 @@ class CouponAutoscenarioPlanItem:
             days_without_visits_label = str(self.days_without_visits)
         selection_source_labels = {
             "last_order_department": "по последнему заведению",
-            "global_fallback": "резерв: Вся сеть (global)",
+            "global_fallback": "резерв: Вся сеть",
             "legacy_config": "старый режим настройки",
             "pilot_rule_fallback": "пилотный резерв",
         }
@@ -379,7 +379,7 @@ class CouponRuleOption:
     @property
     def label(self) -> str:
         if self.is_global:
-            return "Вся сеть (global)"
+            return "Вся сеть"
         return self.venue_name or self.venue_code or "-"
 
 
@@ -430,7 +430,7 @@ def preview_coupon_autoscenario_audience(
     if not scenario.is_active:
         warnings.append("Сценарий сейчас выключен; расчёт выполнен как черновик.")
     if scenario.trigger_type != NotificationScenario.TriggerType.SCHEDULE:
-        warnings.append("Сценарий не относится к планировщику; автоматический запуск невозможен без смены trigger_type.")
+        warnings.append("Сценарий не относится к планировщику; автоматический запуск невозможен без смены типа запуска.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.REPORT_ONLY:
         warnings.append("Автосценарий в состоянии «Черновик»; выдача купонов отключена.")
     if config.execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
@@ -526,8 +526,8 @@ def build_coupon_autoscenario_execution_plan(
     if not scenario.is_active:
         if config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT:
             warnings.append(
-                "NotificationScenario выключен; пилотный купонный автосценарий будет выполнен "
-                "только через явный запуск, без старого планировщика уведомлений."
+                "Планировщик уведомлений выключен; пилотный купонный автосценарий будет выполнен "
+                "только через явный запуск."
             )
         else:
             blockers.append("Сценарий выключен.")
@@ -731,7 +731,7 @@ def execute_coupon_autoscenario_pilot(
 
     Без `confirm=True` команда работает как сухой прогон: строит план и ничего
     не меняет в базе. При подтверждении создаёт техническую волну, резервирует
-    купоны и ставит assignment-события в очередь vtelemax. Сообщения гостям на
+    купоны и ставит события назначения в очередь vtelemax. Сообщения гостям на
     этом шаге не создаются и не отправляются.
     """
     current_now = now or timezone.now()
@@ -752,7 +752,7 @@ def execute_coupon_autoscenario_pilot(
 
     if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
         raise CouponAutoscenarioPreviewError(
-            "Фактический пробный запуск разрешён только для режима 'Пилот'."
+            "Фактический пробный запуск разрешён только для состояния «Пилот»."
         )
     if not plan.can_execute:
         blockers = "; ".join(plan.blockers) or "план не готов к запуску"
@@ -890,14 +890,14 @@ def cleanup_coupon_autoscenario_pilot_assignment(
 
     Функция не возвращает купон в пул мгновенно. Она создаёт
     `status_update:canceled` с `release_to_pool=true`; фактический release
-    выполняется общим post-ACK механизмом после подтверждения vtelemax.
+    выполняется общим механизмом после подтверждения vtelemax.
     """
     try:
         safe_assignment_id = int(assignment_id)
     except (TypeError, ValueError) as exc:
-        raise CouponAutoscenarioPreviewError("Некорректный id назначения автосценария.") from exc
+        raise CouponAutoscenarioPreviewError("Некорректный ID назначения автосценария.") from exc
     if safe_assignment_id <= 0:
-        raise CouponAutoscenarioPreviewError("Некорректный id назначения автосценария.")
+        raise CouponAutoscenarioPreviewError("Некорректный ID назначения автосценария.")
 
     current_now = now or timezone.now()
     with transaction.atomic():
@@ -913,7 +913,7 @@ def cleanup_coupon_autoscenario_pilot_assignment(
             )
         if assignment.config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
             raise CouponAutoscenarioPreviewError(
-                "Очистка из UI разрешена только для автосценариев в режиме 'Пилот'."
+                "Отмена через интерфейс разрешена только для автосценариев в состоянии «Пилот»."
             )
         if assignment.status in {
             CouponAutoscenarioAssignment.Status.USED,
@@ -935,7 +935,7 @@ def cleanup_coupon_autoscenario_pilot_assignment(
             and assignment.vtelemax_sync_status != CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
         ):
             raise CouponAutoscenarioPreviewError(
-                "Нельзя очистить пилот: assignment-событие ещё не подтверждено vtelemax."
+                "Нельзя отменить пилот: событие назначения купона ещё не подтверждено vtelemax."
             )
 
         if assignment.status != CouponAutoscenarioAssignment.Status.CANCELED:
@@ -1015,9 +1015,9 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
     days_without_visits: int | None = None,
 ) -> int:
     """
-    Создаёт задачу отправки гостю после ACK assignment-события во vtelemax.
+    Создаёт задачу отправки гостю после подтверждения события назначения во vtelemax.
 
-    До ACK купон уже зарезервирован в SAGUR, но сообщение гостю не ставится в
+    До подтверждения купон уже зарезервирован в SAGUR, но сообщение гостю не ставится в
     очередь. Эта функция является вторым шагом: vtelemax подтвердил карточку
     купона, значит гостю можно отправлять уведомление.
     """
@@ -1121,7 +1121,7 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             ).first()
             error_text = (
                 getattr(event, "error_text", None)
-                or "Не удалось поставить задачу отправки после ACK vtelemax."
+                or "Не удалось поставить задачу отправки после подтверждения vtelemax."
             )
             _mark_autoscenario_assignment_dispatch_error(
                 assignment=assignment,

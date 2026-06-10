@@ -1848,6 +1848,7 @@ class MailingsV2ViewsTests(TestCase):
                 reverse("mailings_v2_scenarios"),
                 {
                     "coupon_scenario_code": scenario.code,
+                    "coupon_check": "1",
                     "coupon_scan_limit": "5000",
                     "coupon_sample_limit": "5",
                 },
@@ -1856,18 +1857,18 @@ class MailingsV2ViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         plan_mock.assert_called_once_with(scenario_code=scenario.code, scan_limit=5000)
-        self.assertContains(response, "Купонные автосценарии")
-        self.assertContains(response, "Безопасный предпросмотр")
+        self.assertContains(response, "Купонный автосценарий")
+        self.assertContains(response, "Проверить расчёт")
         self.assertContains(response, "AUTO_30D")
         self.assertContains(response, "REL-1")
         self.assertContains(response, "Состояние")
         self.assertContains(response, "Пилот")
-        self.assertContains(response, "Правило выбора купона")
+        self.assertContains(response, "Как выбирается купон")
         self.assertContains(response, "последнее заведение гостя")
-        self.assertContains(response, "Вся сеть (global)")
+        self.assertContains(response, "Вся сеть")
         self.assertContains(response, "Источник последнего заведения")
-        self.assertContains(response, "order_fact")
-        self.assertContains(response, "Основной сегмент")
+        self.assertContains(response, "история заказов")
+        self.assertContains(response, "Подошли под условия")
         self.assertContains(response, "+1 добавлено пилотом")
         self.assertContains(response, "К выдаче сейчас")
         self.assertContains(response, "30 (пилотное значение)")
@@ -1932,7 +1933,7 @@ class MailingsV2ViewsTests(TestCase):
             confirm=True,
         )
         self.assertContains(response, "Пробный запуск создан")
-        self.assertContains(response, "run_id")
+        self.assertContains(response, "номер запуска")
         self.assertEqual(response.context["coupon_pilot_report"]["run_id"], 7)
 
     def test_scenarios_hub_cleans_coupon_autoscenario_pilot(self):
@@ -1962,7 +1963,7 @@ class MailingsV2ViewsTests(TestCase):
             assignment_id=15,
             reason="pilot_cleanup_from_ui",
         )
-        self.assertContains(response, "Cleanup поставлен в очередь")
+        self.assertContains(response, "Отмена пилотного купона поставлена в очередь")
         self.assertContains(response, "AUTO_30D:REL-1")
         self.assertEqual(response.context["coupon_cleanup_report"]["queue_event_id"], 21)
 
@@ -2004,7 +2005,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Укажите, какую серию купонов выдавать для каждого заведения")
         self.assertContains(response, "Добавить правило")
         self.assertContains(response, "Заведение или вся сеть")
-        self.assertContains(response, "Вся сеть (global)")
+        self.assertContains(response, "Вся сеть")
         self.assertNotContains(response, "Для кого действует")
         self.assertContains(response, "последнее заведение гостя")
         self.assertContains(response, "Резерв без правил")
@@ -2083,7 +2084,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertIsNone(rules[0].min_order_amount)
         self.assertEqual(rules[1].scope_type, CouponAutomationRule.ScopeType.GLOBAL)
         self.assertEqual(rules[1].venue_code, "__global__")
-        self.assertEqual(rules[1].venue_name, "Общий")
+        self.assertEqual(rules[1].venue_name, "Вся сеть")
         self.assertEqual(rules[1].coupon_series, "AUTO_GLOBAL")
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
