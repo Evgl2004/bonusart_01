@@ -84,6 +84,8 @@ class Command(BaseCommand):
         self.stdout.write(f"matched_guests={plan.matched_guests}")
         self.stdout.write(f"sendable_guests={plan.sendable_guests}")
         self.stdout.write(f"blocked_without_channel={plan.blocked_without_channel}")
+        self.stdout.write(f"message_target_guests={plan.message_target_guests}")
+        self.stdout.write(f"blocked_without_message_target={plan.blocked_without_message_target}")
         self.stdout.write(f"blocked_existing_active_coupon={plan.blocked_existing_active_coupon}")
         self.stdout.write(f"blocked_existing_trigger={plan.blocked_existing_trigger}")
         self.stdout.write(f"blocked_by_cooldown={plan.blocked_by_cooldown}")

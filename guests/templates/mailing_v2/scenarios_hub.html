@@ -296,21 +296,26 @@
 
           <div class="row g-2 mb-3">
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Просмотрено кандидатов</div>
+              <div class="text-muted small">{{ coupon_plan.candidate_count_label|default:"Просмотрено кандидатов" }}</div>
               <div class="h5 mb-0">{{ coupon_plan.scanned_guests }}</div>
-              <div class="text-muted small">не больше заданного предела</div>
+              {% if coupon_plan.candidate_count_hint %}
+                <div class="text-muted small">{{ coupon_plan.candidate_count_hint }}</div>
+              {% endif %}
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Прошли условие сценария</div>
+              <div class="text-muted small">{{ coupon_plan.matched_count_label|default:"Прошли условие сценария" }}</div>
               <div class="h5 mb-0">{{ coupon_plan.segment_matched_guests }}</div>
+              {% if coupon_plan.matched_count_hint %}
+                <div class="text-muted small">{{ coupon_plan.matched_count_hint }}</div>
+              {% endif %}
               {% if coupon_plan.pilot_forced_guests %}
                 <div class="text-muted small">+{{ coupon_plan.pilot_forced_guests }} добавлено пилотом</div>
               {% endif %}
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">Можно отправить сообщение</div>
-              <div class="h5 mb-0">{{ coupon_plan.sendable_guests }}</div>
-              <div class="text-muted small">регистрация + согласие</div>
+              <div class="h5 mb-0">{% firstof coupon_plan.message_target_guests coupon_plan.sendable_guests 0 %}</div>
+              <div class="text-muted small">канал + выбранный бот</div>
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">К выдаче сейчас</div>
@@ -359,6 +364,11 @@
                   <td>Нет канала для отправки</td>
                   <td>{{ coupon_plan.blocked_without_channel }}</td>
                   <td class="text-muted">Нет регистрации с разрешёнными уведомлениями и внешним идентификатором чата/пользователя в vtelemax.</td>
+                </tr>
+                <tr>
+                  <td>Нет привязки к выбранному боту</td>
+                  <td>{{ coupon_plan.blocked_without_message_target|default:0 }}</td>
+                  <td class="text-muted">Есть канал vtelemax, но нет активной привязки гостя к боту, через который разрешена отправка.</td>
                 </tr>
                 <tr>
                   <td>Уже есть активный купон</td>

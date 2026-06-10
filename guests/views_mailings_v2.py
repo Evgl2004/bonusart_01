@@ -1877,6 +1877,8 @@ class MailingsV2ScenariosView(TemplateView):
                     scan_limit=coupon_scan_limit,
                 )
                 coupon_plan = plan.as_dict()
+                coupon_plan.setdefault("message_target_guests", coupon_plan.get("sendable_guests", 0))
+                coupon_plan.setdefault("blocked_without_message_target", 0)
                 coupon_plan["execution_state_label"] = _coupon_autoscenario_state_label(
                     coupon_plan.get("execution_mode", "")
                 )
@@ -1890,12 +1892,20 @@ class MailingsV2ScenariosView(TemplateView):
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
                 )
                 if selected_coupon_scenario_code == SCENARIO_CODE_BIRTHDAY_COUPON:
+                    coupon_plan["candidate_count_label"] = "В базе с днём рождения в окне"
+                    coupon_plan["candidate_count_hint"] = "техническая проверка общей базы гостей"
+                    coupon_plan["matched_count_label"] = "После проверки канала"
+                    coupon_plan["matched_count_hint"] = "регистрация и согласие на сообщения"
                     coupon_plan["audience_source_label"] = (
-                        "Выборка строится по дате рождения: берутся гости с заполненной датой рождения, "
-                        f"у которых день и месяц попадают в окно от сегодня до +{coupon_plan.get('birthday_preparation_window_days', 0)} дн. включительно. "
-                        "Год рождения в этом отборе не участвует."
+                        "Число гостей с днём рождения в окне — это техническая проверка всей гостевой базы, "
+                        "а не количество получателей. Для выдачи купона дальше остаются только гости с разрешённым каналом "
+                        "и действующей привязкой к выбранному боту."
                     )
                 else:
+                    coupon_plan["candidate_count_label"] = "Просмотрено кандидатов"
+                    coupon_plan["candidate_count_hint"] = "не больше заданного предела"
+                    coupon_plan["matched_count_label"] = "Прошли условие сценария"
+                    coupon_plan["matched_count_hint"] = ""
                     coupon_plan["audience_source_label"] = (
                         "Выборка строится по истории заказов: берутся гости, у которых последний заказ был "
                         f"не позднее даты отсечения «сегодня минус {coupon_plan.get('inactive_days_threshold', 0)} дн.»."
@@ -1903,7 +1913,7 @@ class MailingsV2ScenariosView(TemplateView):
                 coupon_plan["sendable_channel_label"] = (
                     "В расчёте канал отправки считается подходящим, если в данных vtelemax гость зарегистрирован, "
                     "уведомления разрешены и заполнен внешний идентификатор чата/пользователя. "
-                    "Фактическая задача отправки затем создаётся по активной привязке гостя к выбранному боту."
+                    "После этого дополнительно проверяется действующая привязка гостя к выбранному боту."
                 )
                 coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
                     :coupon_sample_limit

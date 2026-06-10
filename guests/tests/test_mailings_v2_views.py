@@ -1811,6 +1811,8 @@ class MailingsV2ViewsTests(TestCase):
                     "matched_guests": 100,
                     "sendable_guests": 10,
                     "blocked_without_channel": 90,
+                    "message_target_guests": 8,
+                    "blocked_without_message_target": 2,
                     "blocked_existing_active_coupon": 0,
                     "blocked_by_cooldown": 0,
                     "blocked_by_pilot_filter": 9,
@@ -1870,6 +1872,8 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "история заказов")
         self.assertContains(response, "Прошли условие сценария")
         self.assertContains(response, "Можно отправить сообщение")
+        self.assertContains(response, "канал + выбранный бот")
+        self.assertContains(response, "Нет привязки к выбранному боту")
         self.assertContains(response, "Как получены эти числа")
         self.assertContains(response, "последний заказ был")
         self.assertContains(response, "+1 добавлено пилотом")
@@ -1879,6 +1883,83 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "22.06.2026 05:00")
         self.assertEqual(response.context["coupon_plan"]["planned_assignments"], 1)
         self.assertEqual(response.context["coupon_plan"]["sample_plan_items"][0]["days_without_visits"], 30)
+
+    def test_scenarios_hub_birthday_plan_separates_database_count_from_recipients(self):
+        scenario = NotificationScenario.objects.create(
+            code="birthday_coupon",
+            name="День рождения + купон",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="BDAY",
+            venue_code="__global__",
+            venue_name="Вся сеть",
+            coupon_validity_days=14,
+            max_recipients_per_run=100,
+            cooldown_days=365,
+            settings={"birthday_preparation_window_days": 7},
+        )
+
+        with patch("guests.views_mailings_v2.build_coupon_autoscenario_execution_plan") as plan_mock:
+            plan_mock.return_value = SimpleNamespace(
+                as_dict=lambda: {
+                    "scenario_code": scenario.code,
+                    "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                    "can_execute": False,
+                    "coupon_series": "BDAY",
+                    "venue_code": "__global__",
+                    "venue_name": "Вся сеть",
+                    "inactive_days_threshold": 0,
+                    "birthday_preparation_window_days": 7,
+                    "scanned_guests": 1711,
+                    "segment_matched_guests": 1711,
+                    "matched_guests": 1711,
+                    "sendable_guests": 24,
+                    "blocked_without_channel": 1687,
+                    "message_target_guests": 24,
+                    "blocked_without_message_target": 0,
+                    "blocked_existing_active_coupon": 0,
+                    "blocked_existing_trigger": 0,
+                    "blocked_by_cooldown": 0,
+                    "blocked_by_pilot_filter": 0,
+                    "pilot_phone_filters": [],
+                    "pilot_guest_id_filters": [],
+                    "used_default_pilot_phone": False,
+                    "pilot_forced_guests": 0,
+                    "eligible_guests": 24,
+                    "planned_assignments": 0,
+                    "available_coupons": 0,
+                    "coupon_shortage": 24,
+                    "blockers": ["Черновик."],
+                    "warnings": [],
+                    "plan_items": [],
+                }
+            )
+            response = self.client.get(
+                reverse("mailings_v2_scenarios"),
+                {
+                    "coupon_check": "1",
+                    "coupon_scenario_code": scenario.code,
+                    "coupon_scan_limit": "5000",
+                },
+                secure=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "В базе с днём рождения в окне")
+        self.assertContains(response, "техническая проверка общей базы гостей")
+        self.assertContains(response, "После проверки канала")
+        self.assertContains(response, "канал + выбранный бот")
+        self.assertContains(response, "это техническая проверка всей гостевой базы")
+        self.assertEqual(response.context["coupon_plan"]["message_target_guests"], 24)
 
     def test_scenarios_hub_runs_coupon_autoscenario_pilot(self):
         """

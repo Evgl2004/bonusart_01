@@ -67,6 +67,26 @@ class CouponAutoscenarioPreviewTests(TestCase):
             cooldown_days=30,
         )
         self.restaurant = Restaurant.objects.create(iiko_id="DEP_1", name="Тестовое заведение")
+        self.bots_by_platform = {
+            VtelemaxRecipientChannel.Platform.TELEGRAM: BotProfile.objects.create(
+                code="test_coupon_autoscenario_telegram",
+                name="Telegram test bot",
+                provider_type=BotProfile.ProviderType.TELEGRAM,
+                is_active=True,
+            ),
+            VtelemaxRecipientChannel.Platform.MAX: BotProfile.objects.create(
+                code="test_coupon_autoscenario_max",
+                name="MAX test bot",
+                provider_type=BotProfile.ProviderType.MAX,
+                is_active=True,
+            ),
+            VtelemaxRecipientChannel.Platform.VK: BotProfile.objects.create(
+                code="test_coupon_autoscenario_vk",
+                name="VK test bot",
+                provider_type=BotProfile.ProviderType.VK,
+                is_active=True,
+            ),
+        }
 
     def _prepare_scenario(self) -> NotificationScenario:
         scenario, _ = NotificationScenario.objects.get_or_create(
@@ -195,7 +215,13 @@ class CouponAutoscenarioPreviewTests(TestCase):
             first_seen_at=self.now - timedelta(days=days_ago),
         )
 
-    def _sendable_channel(self, *, guest: Guest, platform: str = VtelemaxRecipientChannel.Platform.TELEGRAM) -> None:
+    def _sendable_channel(
+        self,
+        *,
+        guest: Guest,
+        platform: str = VtelemaxRecipientChannel.Platform.TELEGRAM,
+        with_binding: bool = True,
+    ) -> None:
         VtelemaxRecipientChannel.objects.create(
             person_id=uuid4(),
             platform=platform,
@@ -205,6 +231,21 @@ class CouponAutoscenarioPreviewTests(TestCase):
             notifications_allowed=True,
             is_registered=True,
             guest=guest,
+        )
+        if not with_binding:
+            return
+
+        bot = self.bots_by_platform[platform]
+        GuestBotBinding.objects.get_or_create(
+            guest=guest,
+            bot=bot,
+            defaults={
+                "external_chat_id": f"chat-{platform}-{guest.id}",
+                "is_primary": not GuestBotBinding.objects.filter(guest=guest, is_primary=True).exists(),
+                "is_active": True,
+                "is_opt_in": True,
+                "is_stop_sending": False,
+            },
         )
 
     def _available_coupon(self, *, code: str) -> CouponRegistryEntry:
@@ -425,6 +466,28 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(plan.plan_items[0].guest_id, eligible.id)
         self.assertEqual(plan.plan_items[0].coupon_id, available_coupon.id)
         self.assertEqual(self._side_effect_counts(), before_counts)
+
+    def test_execution_plan_requires_message_target_before_coupon_assignment(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.settings = {"pilot_phones": ["+79990000109"]}
+        self.config.save(update_fields=["execution_mode", "settings", "updated_at"])
+        guest = self._guest(phone="+79990000109", first_name="NoBinding")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest, with_binding=False)
+        self._available_coupon(code="AUTO-NO-BINDING")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertFalse(plan.can_execute)
+        self.assertEqual(plan.sendable_guests, 1)
+        self.assertEqual(plan.message_target_guests, 0)
+        self.assertEqual(plan.blocked_without_message_target, 1)
+        self.assertEqual(plan.eligible_guests, 0)
+        self.assertEqual(plan.planned_assignments, 0)
 
     def test_execution_plan_selects_coupon_rule_by_latest_order_fact_with_global_fallback(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
@@ -894,7 +957,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
         guest = self._guest(phone="+79990000145", first_name="ImmediatePilot")
         self._visit(guest=guest, days_ago=45)
-        self._sendable_channel(guest=guest)
+        self._sendable_channel(guest=guest, with_binding=False)
         bot = BotProfile.objects.create(
             code="tg_autoscenario_pilot_immediate",
             name="Telegram autoscenario pilot immediate",
@@ -968,7 +1031,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
         )
         guest = self._guest(phone="+79990000147", first_name="WindowedActive")
         self._visit(guest=guest, days_ago=45)
-        self._sendable_channel(guest=guest)
+        self._sendable_channel(guest=guest, with_binding=False)
         bot = BotProfile.objects.create(
             code="tg_autoscenario_windowed_active",
             name="Telegram autoscenario windowed active",
@@ -1030,7 +1093,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             ]
         )
         guest = self._guest(phone="+79990000146", first_name="ForcedPilot")
-        self._sendable_channel(guest=guest)
+        self._sendable_channel(guest=guest, with_binding=False)
         bot = BotProfile.objects.create(
             code="tg_autoscenario_forced_pilot",
             name="Telegram autoscenario forced pilot",

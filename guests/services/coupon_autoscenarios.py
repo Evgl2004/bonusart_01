@@ -18,6 +18,7 @@ from guests.models import (
     CouponVtelemaxSyncQueue,
     DispatchTask,
     Guest,
+    GuestBotBinding,
     NotificationEvent,
     NotificationScenario,
     OrderFact,
@@ -266,6 +267,8 @@ class CouponAutoscenarioExecutionPlan:
     matched_guests: int
     sendable_guests: int
     blocked_without_channel: int
+    message_target_guests: int
+    blocked_without_message_target: int
     blocked_existing_active_coupon: int
     blocked_existing_trigger: int
     blocked_by_cooldown: int
@@ -300,6 +303,8 @@ class CouponAutoscenarioExecutionPlan:
             "matched_guests": self.matched_guests,
             "sendable_guests": self.sendable_guests,
             "blocked_without_channel": self.blocked_without_channel,
+            "message_target_guests": self.message_target_guests,
+            "blocked_without_message_target": self.blocked_without_message_target,
             "blocked_existing_active_coupon": self.blocked_existing_active_coupon,
             "blocked_existing_trigger": self.blocked_existing_trigger,
             "blocked_by_cooldown": self.blocked_by_cooldown,
@@ -564,17 +569,23 @@ def build_coupon_autoscenario_execution_plan(
     )
     sendable_rows = [row for row in matched_rows if row.has_sendable_channel]
     blocked_without_channel = len(matched_rows) - len(sendable_rows)
+    message_target_guest_ids = _message_target_guest_ids(
+        scenario=scenario,
+        guest_ids=[row.guest_id for row in sendable_rows],
+    )
+    message_target_rows = [row for row in sendable_rows if row.guest_id in message_target_guest_ids]
+    blocked_without_message_target = len(sendable_rows) - len(message_target_rows)
     existing_trigger_pairs = _existing_trigger_assignment_pairs(
         scenario=scenario,
-        rows=sendable_rows,
+        rows=message_target_rows,
     )
 
     active_assignment_guest_ids = _active_assignment_guest_ids(
-        guest_ids=[row.guest_id for row in sendable_rows],
+        guest_ids=[row.guest_id for row in message_target_rows],
         coupon_series=coupon_series_values,
     )
     cooldown_guest_ids = _cooldown_guest_ids(
-        guest_ids=[row.guest_id for row in sendable_rows],
+        guest_ids=[row.guest_id for row in message_target_rows],
         coupon_series=coupon_series_values,
         cooldown_days=int(config.cooldown_days or 0),
         now=current_now,
@@ -590,13 +601,18 @@ def build_coupon_autoscenario_execution_plan(
         warnings.append(
             f"Для пилотной проверки дополнительно включено гостей вне основного сегмента: {pilot_forced_guests}."
         )
+    if blocked_without_message_target > 0:
+        warnings.append(
+            "Есть гости с разрешённым каналом vtelemax, но без действующей привязки к выбранному боту: "
+            f"{blocked_without_message_target}."
+        )
 
     eligible_rows: list[CouponAutoscenarioAudienceRow] = []
     blocked_existing_active_coupon = 0
     blocked_existing_trigger = 0
     blocked_by_cooldown = 0
     blocked_by_pilot_filter = 0
-    for row in sendable_rows:
+    for row in message_target_rows:
         if row.trigger_key and (row.guest_id, row.trigger_key) in existing_trigger_pairs:
             blocked_existing_trigger += 1
             continue
@@ -699,6 +715,8 @@ def build_coupon_autoscenario_execution_plan(
         matched_guests=len(matched_rows),
         sendable_guests=len(sendable_rows),
         blocked_without_channel=blocked_without_channel,
+        message_target_guests=len(message_target_rows),
+        blocked_without_message_target=blocked_without_message_target,
         blocked_existing_active_coupon=blocked_existing_active_coupon,
         blocked_existing_trigger=blocked_existing_trigger,
         blocked_by_cooldown=blocked_by_cooldown,
@@ -1561,6 +1579,36 @@ def _is_channel_sendable(channel: VtelemaxRecipientChannel | None) -> bool:
     if not str(channel.external_id or "").strip():
         return False
     return True
+
+
+def _message_target_guest_ids(
+    *,
+    scenario: NotificationScenario,
+    guest_ids: list[int],
+) -> set[int]:
+    if not guest_ids:
+        return set()
+
+    selected_bot_ids = list(
+        scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+    )
+    query = (
+        GuestBotBinding.objects.filter(
+            guest_id__in=guest_ids,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+            bot__is_active=True,
+            bot__provider_type__in=["telegram", "max", "vk"],
+        )
+        .exclude(external_chat_id__isnull=True)
+        .exclude(external_chat_id="")
+    )
+    if selected_bot_ids:
+        query = query.filter(bot_id__in=selected_bot_ids)
+    if scenario.target_mode == NotificationScenario.TargetMode.PRIMARY_ONLY:
+        query = query.filter(is_primary=True)
+    return {int(guest_id) for guest_id in query.values_list("guest_id", flat=True).distinct()}
 
 
 def _effective_coupon_rules(*, config: CouponAutomationConfig) -> tuple[CouponRuleOption, ...]:
