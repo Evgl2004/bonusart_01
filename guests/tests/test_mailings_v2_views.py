@@ -1868,7 +1868,10 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Вся сеть")
         self.assertContains(response, "Источник последнего заведения")
         self.assertContains(response, "история заказов")
-        self.assertContains(response, "Подошли под условия")
+        self.assertContains(response, "Прошли условие сценария")
+        self.assertContains(response, "Можно отправить сообщение")
+        self.assertContains(response, "Как получены эти числа")
+        self.assertContains(response, "последний заказ был")
         self.assertContains(response, "+1 добавлено пилотом")
         self.assertContains(response, "К выдаче сейчас")
         self.assertContains(response, "30 (пилотное значение)")
@@ -2014,6 +2017,10 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Редактировать шаблон")
         self.assertContains(response, "Окно отправки сообщений")
         self.assertContains(response, "Режим отправки сообщений")
+        self.assertContains(response, "Каналы отправки сообщений")
+        self.assertContains(response, "Куда отправлять сообщение")
+        self.assertContains(response, "Разрешённые боты")
+        self.assertContains(response, "Telegram main")
         self.assertContains(response, "Сразу")
         self.assertContains(response, "Если “Текст карточки купона” оставить пустым")
         self.assertContains(response, "Контрольные телефоны пилота")
@@ -2033,6 +2040,8 @@ class MailingsV2ViewsTests(TestCase):
                 "iikocard_action_note": "Подарок при заказе от 200 ₽.",
                 "coupon_promo_text_template": "Тестовый купон автосценария.",
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "notification_target_mode": NotificationScenario.TargetMode.ALL_BOTS,
+                "notification_bot_profiles": [str(self.bot.id)],
                 "notification_send_window_begin": "10:00",
                 "notification_send_window_end": "20:00",
                 "notification_timezone": "Asia/Yekaterinburg",
@@ -2071,6 +2080,8 @@ class MailingsV2ViewsTests(TestCase):
         self.assertTrue(config.settings["pilot_include_unmatched"])
         scenario.refresh_from_db()
         self.assertEqual(scenario.distribution_mode, NotificationScenario.DistributionMode.UNIFORM)
+        self.assertEqual(scenario.target_mode, NotificationScenario.TargetMode.ALL_BOTS)
+        self.assertEqual(list(scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])
         self.assertEqual(scenario.send_window_begin, time(10, 0))
         self.assertEqual(scenario.send_window_end, time(20, 0))
         self.assertEqual(scenario.timezone, "Asia/Yekaterinburg")

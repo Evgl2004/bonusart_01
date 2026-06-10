@@ -79,11 +79,12 @@
           </select>
         </div>
         <div class="col-6 col-lg-2">
-          <label class="form-label mb-1">Проверить гостей</label>
+          <label class="form-label mb-1">Кандидатов для расчёта</label>
           <input class="form-control" type="number" name="coupon_scan_limit" min="1" max="100000" value="{{ coupon_scan_limit }}">
+          <div class="form-text">Верхний предел просмотра, не число получателей.</div>
         </div>
         <div class="col-6 col-lg-2">
-          <label class="form-label mb-1">Строк примера</label>
+          <label class="form-label mb-1">Строк в примере</label>
           <input class="form-control" type="number" name="coupon_sample_limit" min="1" max="100" value="{{ coupon_sample_limit }}">
         </div>
         <div class="col-12 col-lg-3">
@@ -143,6 +144,10 @@
                       {% if config.scenario.timezone %}
                         {{ config.scenario.timezone }}
                       {% endif %}
+                    </div>
+                    <div class="small text-muted">
+                      канал: {{ config.notification_target_mode_label|default:"—" }};
+                      {{ config.notification_bot_profiles_summary|default:"все активные боты" }}
                     </div>
                   </td>
                   <td>
@@ -291,21 +296,21 @@
 
           <div class="row g-2 mb-3">
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Проверено гостей</div>
+              <div class="text-muted small">Просмотрено кандидатов</div>
               <div class="h5 mb-0">{{ coupon_plan.scanned_guests }}</div>
-              <div class="text-muted small">по заданному лимиту</div>
+              <div class="text-muted small">не больше заданного предела</div>
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Подошли под условия</div>
+              <div class="text-muted small">Прошли условие сценария</div>
               <div class="h5 mb-0">{{ coupon_plan.segment_matched_guests }}</div>
               {% if coupon_plan.pilot_forced_guests %}
                 <div class="text-muted small">+{{ coupon_plan.pilot_forced_guests }} добавлено пилотом</div>
               {% endif %}
             </div>
             <div class="col-6 col-lg-2">
-              <div class="text-muted small">Есть канал связи</div>
+              <div class="text-muted small">Можно отправить сообщение</div>
               <div class="h5 mb-0">{{ coupon_plan.sendable_guests }}</div>
-              <div class="text-muted small">Telegram/VK/MAX</div>
+              <div class="text-muted small">регистрация + согласие</div>
             </div>
             <div class="col-6 col-lg-2">
               <div class="text-muted small">К выдаче сейчас</div>
@@ -320,6 +325,12 @@
               <div class="text-muted small">Не хватает купонов</div>
               <div class="h5 mb-0">{{ coupon_plan.coupon_shortage }}</div>
             </div>
+          </div>
+
+          <div class="alert alert-light border small">
+            <div class="fw-semibold mb-1">Как получены эти числа</div>
+            <div>{{ coupon_plan.audience_source_label }}</div>
+            <div class="mt-1">{{ coupon_plan.sendable_channel_label }}</div>
           </div>
 
           <div class="border rounded p-2 mb-3 bg-light">
@@ -345,9 +356,9 @@
               </thead>
               <tbody>
                 <tr>
-                  <td>Без доступного канала</td>
+                  <td>Нет канала для отправки</td>
                   <td>{{ coupon_plan.blocked_without_channel }}</td>
-                  <td class="text-muted">Нет подтверждённого Telegram/VK/MAX канала для отправки.</td>
+                  <td class="text-muted">Нет регистрации с разрешёнными уведомлениями и внешним идентификатором чата/пользователя в vtelemax.</td>
                 </tr>
                 <tr>
                   <td>Уже есть активный купон</td>

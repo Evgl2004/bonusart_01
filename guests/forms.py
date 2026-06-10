@@ -323,6 +323,20 @@ class CouponAutomationConfigForm(forms.ModelForm):
         choices=NotificationScenario.DistributionMode.choices,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+    notification_target_mode = forms.ChoiceField(
+        label="Куда отправлять сообщение",
+        required=False,
+        choices=NotificationScenario.TargetMode.choices,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="«Только основной бот» создаёт одну отправку гостю. «Все активные боты» создаёт отправку в каждый подходящий бот гостя.",
+    )
+    notification_bot_profiles = forms.ModelMultipleChoiceField(
+        label="Разрешённые боты",
+        required=False,
+        queryset=BotProfile.objects.none(),
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
+        help_text="Если ничего не выбрать, автосценарий сможет использовать все активные боты.",
+    )
     notification_timezone = forms.CharField(
         label="Часовой пояс отправки",
         required=False,
@@ -428,11 +442,20 @@ class CouponAutomationConfigForm(forms.ModelForm):
             self.fields["birthday_preparation_window_days"].widget = forms.HiddenInput()
         if scenario is not None:
             self.initial["notification_distribution_mode"] = scenario.distribution_mode
+            self.initial["notification_target_mode"] = scenario.target_mode
+            self.initial["notification_bot_profiles"] = list(
+                scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+            )
             self.initial["notification_timezone"] = scenario.timezone or "Asia/Yekaterinburg"
             if scenario.send_window_begin:
                 self.initial["notification_send_window_begin"] = scenario.send_window_begin.strftime("%H:%M")
             if scenario.send_window_end:
                 self.initial["notification_send_window_end"] = scenario.send_window_end.strftime("%H:%M")
+        self.fields["notification_bot_profiles"].queryset = BotProfile.objects.filter(is_active=True).order_by(
+            "provider_type",
+            "name",
+            "id",
+        )
 
     def clean_pilot_phones(self):
         raw_value = str(self.cleaned_data.get("pilot_phones") or "").strip()
@@ -536,6 +559,11 @@ class CouponAutomationConfigForm(forms.ModelForm):
                     or scenario.distribution_mode
                     or NotificationScenario.DistributionMode.IMMEDIATE
                 )
+                scenario.target_mode = (
+                    self.cleaned_data.get("notification_target_mode")
+                    or scenario.target_mode
+                    or NotificationScenario.TargetMode.PRIMARY_ONLY
+                )
                 scenario.timezone = (
                     str(self.cleaned_data.get("notification_timezone") or "").strip()
                     or scenario.timezone
@@ -546,12 +574,14 @@ class CouponAutomationConfigForm(forms.ModelForm):
                 scenario.save(
                     update_fields=[
                         "distribution_mode",
+                        "target_mode",
                         "timezone",
                         "send_window_begin",
                         "send_window_end",
                         "updated_at",
                     ]
                 )
+                scenario.bot_profiles.set(self.cleaned_data.get("notification_bot_profiles") or [])
         return instance
 
 

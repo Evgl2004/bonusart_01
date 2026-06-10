@@ -1781,7 +1781,8 @@ class MailingsV2ScenariosView(TemplateView):
                 Prefetch(
                     "coupon_rules",
                     queryset=CouponAutomationRule.objects.order_by("priority", "id"),
-                )
+                ),
+                "scenario__bot_profiles",
             )
             .annotate(
                 runs_total=Count("runs", distinct=True),
@@ -1826,6 +1827,16 @@ class MailingsV2ScenariosView(TemplateView):
                 cooldown_days=config.cooldown_days,
                 scenario_code=config.scenario.code,
                 birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
+            )
+            selected_bots = list(config.scenario.bot_profiles.all())
+            config.notification_target_mode_label = config.scenario.get_target_mode_display()
+            config.notification_bot_profiles_summary = (
+                ", ".join(
+                    f"{bot.name} ({bot.get_provider_type_display()})"
+                    for bot in selected_bots
+                )
+                if selected_bots
+                else "все активные боты"
             )
 
         selected_coupon_config = next(
@@ -1877,6 +1888,22 @@ class MailingsV2ScenariosView(TemplateView):
                     cooldown_days=getattr(selected_coupon_config, "cooldown_days", None),
                     scenario_code=selected_coupon_scenario_code,
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
+                )
+                if selected_coupon_scenario_code == SCENARIO_CODE_BIRTHDAY_COUPON:
+                    coupon_plan["audience_source_label"] = (
+                        "Выборка строится по дате рождения: берутся гости с заполненной датой рождения, "
+                        f"у которых день и месяц попадают в окно от сегодня до +{coupon_plan.get('birthday_preparation_window_days', 0)} дн. включительно. "
+                        "Год рождения в этом отборе не участвует."
+                    )
+                else:
+                    coupon_plan["audience_source_label"] = (
+                        "Выборка строится по истории заказов: берутся гости, у которых последний заказ был "
+                        f"не позднее даты отсечения «сегодня минус {coupon_plan.get('inactive_days_threshold', 0)} дн.»."
+                    )
+                coupon_plan["sendable_channel_label"] = (
+                    "В расчёте канал отправки считается подходящим, если в данных vtelemax гость зарегистрирован, "
+                    "уведомления разрешены и заполнен внешний идентификатор чата/пользователя. "
+                    "Фактическая задача отправки затем создаётся по активной привязке гостя к выбранному боту."
                 )
                 coupon_plan["sample_plan_items"] = coupon_plan.get("plan_items", [])[
                     :coupon_sample_limit

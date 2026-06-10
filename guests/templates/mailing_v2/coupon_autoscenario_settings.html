@@ -208,6 +208,38 @@
 
       <hr class="my-4">
 
+      <h2 class="h6 mb-3">Каналы отправки сообщений</h2>
+      <div class="alert alert-light border small">
+        Здесь задаётся, в какой бот будет поставлена отправка после подтверждения купона в vtelemax.
+        В режиме «Только основной бот» гость получит одно сообщение. В режиме «Все активные боты» сообщение будет поставлено во все выбранные боты, где у гостя есть активная привязка и согласие на уведомления.
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          {{ form.notification_target_mode.label_tag }}
+          {{ form.notification_target_mode }}
+          {% if form.notification_target_mode.help_text %}
+            <div class="form-text">{{ form.notification_target_mode.help_text }}</div>
+          {% endif %}
+          {% if form.notification_target_mode.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_target_mode.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-8">
+          <label class="form-label mb-1">{{ form.notification_bot_profiles.label }}</label>
+          <div class="border rounded p-2">
+            {{ form.notification_bot_profiles }}
+          </div>
+          {% if form.notification_bot_profiles.help_text %}
+            <div class="form-text">{{ form.notification_bot_profiles.help_text }}</div>
+          {% endif %}
+          {% if form.notification_bot_profiles.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_bot_profiles.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <hr class="my-4">
+
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
         <div>
           <h2 class="h6 mb-1">Купонные правила</h2>
