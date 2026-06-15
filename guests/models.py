@@ -1934,6 +1934,11 @@ class CouponAutomationConfig(models.Model):
         AUTOMATIC = "automatic", "Активен"
         PAUSED = "paused", "Пауза"
 
+    class VenueSelectionMode(models.TextChoices):
+        LAST_ORDER = "last_order", "Последнее заведение"
+        ALL_VISITED = "all_visited", "Все посещённые заведения"
+        FAVORITE = "favorite", "Любимое заведение"
+
     scenario = models.OneToOneField(
         "NotificationScenario",
         on_delete=models.CASCADE,
@@ -1946,6 +1951,13 @@ class CouponAutomationConfig(models.Model):
         default=ExecutionMode.REPORT_ONLY,
         db_index=True,
         help_text="Режим работы купонного автосценария.",
+    )
+    venue_selection_mode = models.CharField(
+        max_length=24,
+        choices=VenueSelectionMode.choices,
+        default=VenueSelectionMode.LAST_ORDER,
+        db_index=True,
+        help_text="Как выбирать заведения гостя для правил купонного автосценария.",
     )
     coupon_series = models.CharField(
         max_length=120,
@@ -2021,6 +2033,12 @@ class CouponAutomationConfig(models.Model):
                 name="cauto_execution_mode_chk",
             ),
             models.CheckConstraint(
+                condition=models.Q(
+                    venue_selection_mode__in=["last_order", "all_visited", "favorite"]
+                ),
+                name="cauto_venue_mode_chk",
+            ),
+            models.CheckConstraint(
                 condition=models.Q(coupon_validity_days__gte=1),
                 name="cauto_validity_days_gte_1",
             ),
@@ -2039,6 +2057,7 @@ class CouponAutomationConfig(models.Model):
         ]
         indexes = [
             models.Index(fields=["execution_mode"], name="cauto_mode_idx"),
+            models.Index(fields=["venue_selection_mode"], name="cauto_venue_mode_idx"),
             models.Index(fields=["coupon_series"], name="cauto_series_idx"),
             models.Index(fields=["venue_code"], name="cauto_venue_idx"),
         ]
@@ -2055,6 +2074,12 @@ class CouponAutomationConfig(models.Model):
 
         errors = {}
 
+        if self.venue_selection_mode not in {
+            self.VenueSelectionMode.LAST_ORDER,
+            self.VenueSelectionMode.ALL_VISITED,
+            self.VenueSelectionMode.FAVORITE,
+        }:
+            errors["venue_selection_mode"] = "Выберите способ выбора заведений."
         if self.coupon_validity_days is not None and self.coupon_validity_days < 1:
             errors["coupon_validity_days"] = "Срок действия купона должен быть не меньше 1 дня."
         if self.max_recipients_per_run is not None and self.max_recipients_per_run < 1:

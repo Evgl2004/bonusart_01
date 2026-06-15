@@ -2096,7 +2096,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Настройки купонного автосценария")
         self.assertContains(response, "Состояние автосценария")
         self.assertContains(response, "Черновик")
-        self.assertContains(response, "Купонные правила")
+        self.assertContains(response, "Заведения и серии купонов")
         self.assertContains(response, "Укажите, какую серию купонов выдавать для каждого заведения")
         self.assertContains(response, "Добавить правило")
         self.assertContains(response, "Заведение или вся сеть")
@@ -2121,6 +2121,7 @@ class MailingsV2ViewsTests(TestCase):
             url,
             {
                 "execution_mode": CouponAutomationConfig.ExecutionMode.PILOT,
+                "venue_selection_mode": CouponAutomationConfig.VenueSelectionMode.ALL_VISITED,
                 "coupon_series": "AUTO_30D",
                 "venue_code": "DEP_1",
                 "coupon_validity_days": "21",
@@ -2164,6 +2165,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         config.refresh_from_db()
         self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.PILOT)
+        self.assertEqual(config.venue_selection_mode, CouponAutomationConfig.VenueSelectionMode.ALL_VISITED)
         self.assertEqual(config.coupon_validity_days, 21)
         self.assertEqual(config.max_recipients_per_run, 1)
         self.assertEqual(config.cooldown_days, 45)

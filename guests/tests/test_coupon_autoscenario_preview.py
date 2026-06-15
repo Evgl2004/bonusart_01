@@ -20,6 +20,7 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestBotBinding,
+    GuestRestaurantDailyOrderFact,
     Mailing,
     MessageTemplate,
     NotificationEvent,
@@ -315,6 +316,21 @@ class CouponAutoscenarioPreviewTests(TestCase):
             lifetime_expires_at=self.now + timedelta(days=14),
             status=status,
             vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+        )
+
+    def _daily_guest_venue_fact(
+        self,
+        *,
+        guest: Guest,
+        venue_code: str,
+        days_ago: int,
+        orders_count: int,
+    ) -> None:
+        GuestRestaurantDailyOrderFact.objects.create(
+            guest=guest,
+            business_date=(self.now - timedelta(days=days_ago)).date(),
+            department_id=venue_code,
+            orders_count=orders_count,
         )
 
     def test_preview_counts_audience_channels_and_coupons_without_side_effects(self):
@@ -670,6 +686,151 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(items_by_guest[global_guest.id].coupon_id, global_coupon.id)
         self.assertEqual(items_by_guest[global_guest.id].coupon_selection_source, "global_fallback")
         self.assertEqual(self._side_effect_counts(), before_counts)
+
+    def test_execution_plan_selects_all_visited_venue_rules_for_one_guest(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        self.config.venue_selection_mode = CouponAutomationConfig.VenueSelectionMode.ALL_VISITED
+        self.config.coupon_series = ""
+        self.config.venue_code = ""
+        self.config.venue_name = ""
+        self.config.max_recipients_per_run = 10
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "venue_selection_mode",
+                "coupon_series",
+                "venue_code",
+                "venue_name",
+                "max_recipients_per_run",
+                "updated_at",
+            ]
+        )
+        CouponAutomationRule.objects.create(
+            config=self.config,
+            scope_type=CouponAutomationRule.ScopeType.VENUE,
+            coupon_series="AUTO_DEP_A",
+            venue_code="DEP_A",
+            venue_name="Заведение А",
+            priority=10,
+        )
+        CouponAutomationRule.objects.create(
+            config=self.config,
+            scope_type=CouponAutomationRule.ScopeType.VENUE,
+            coupon_series="AUTO_DEP_B",
+            venue_code="DEP_B",
+            venue_name="Заведение Б",
+            priority=20,
+        )
+        guest = self._guest(phone="+79990000131", first_name="MultiVenue")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._daily_guest_venue_fact(guest=guest, venue_code="DEP_A", days_ago=90, orders_count=1)
+        self._daily_guest_venue_fact(guest=guest, venue_code="DEP_B", days_ago=70, orders_count=2)
+        coupon_a = CouponRegistryEntry.objects.create(
+            series="AUTO_DEP_A",
+            code="DEP-A-COUPON",
+            venue_code="DEP_A",
+            venue_name="Заведение А",
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+        coupon_b = CouponRegistryEntry.objects.create(
+            series="AUTO_DEP_B",
+            code="DEP-B-COUPON",
+            venue_code="DEP_B",
+            venue_name="Заведение Б",
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.venue_selection_mode, CouponAutomationConfig.VenueSelectionMode.ALL_VISITED)
+        self.assertEqual(plan.eligible_guests, 1)
+        self.assertEqual(plan.planned_assignments, 2)
+        self.assertEqual({item.coupon_id for item in plan.plan_items}, {coupon_a.id, coupon_b.id})
+        self.assertEqual(
+            {item.coupon_selection_source for item in plan.plan_items},
+            {"visited_department"},
+        )
+
+    def test_execution_plan_selects_favorite_venue_rule_by_orders_count(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        self.config.venue_selection_mode = CouponAutomationConfig.VenueSelectionMode.FAVORITE
+        self.config.coupon_series = ""
+        self.config.venue_code = ""
+        self.config.venue_name = ""
+        self.config.max_recipients_per_run = 10
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "venue_selection_mode",
+                "coupon_series",
+                "venue_code",
+                "venue_name",
+                "max_recipients_per_run",
+                "updated_at",
+            ]
+        )
+        CouponAutomationRule.objects.create(
+            config=self.config,
+            scope_type=CouponAutomationRule.ScopeType.VENUE,
+            coupon_series="AUTO_FAV_A",
+            venue_code="DEP_FAV_A",
+            venue_name="Редкое заведение",
+            priority=10,
+        )
+        CouponAutomationRule.objects.create(
+            config=self.config,
+            scope_type=CouponAutomationRule.ScopeType.VENUE,
+            coupon_series="AUTO_FAV_B",
+            venue_code="DEP_FAV_B",
+            venue_name="Любимое заведение",
+            priority=20,
+        )
+        guest = self._guest(phone="+79990000132", first_name="Favorite")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        self._daily_guest_venue_fact(guest=guest, venue_code="DEP_FAV_A", days_ago=80, orders_count=1)
+        self._daily_guest_venue_fact(guest=guest, venue_code="DEP_FAV_B", days_ago=60, orders_count=4)
+        CouponRegistryEntry.objects.create(
+            series="AUTO_FAV_A",
+            code="FAV-A-COUPON",
+            venue_code="DEP_FAV_A",
+            venue_name="Редкое заведение",
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+        favorite_coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_FAV_B",
+            code="FAV-B-COUPON",
+            venue_code="DEP_FAV_B",
+            venue_name="Любимое заведение",
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.venue_selection_mode, CouponAutomationConfig.VenueSelectionMode.FAVORITE)
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertEqual(plan.plan_items[0].coupon_id, favorite_coupon.id)
+        self.assertEqual(plan.plan_items[0].coupon_selection_source, "favorite_department")
+        self.assertEqual(plan.plan_items[0].venue_code, "DEP_FAV_B")
 
     def test_execution_plan_blocks_report_only_mode(self):
         guest = self._guest(phone="+79990000111", first_name="ReportOnly")

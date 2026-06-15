@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
 
 from django.db import transaction
-from django.db.models import F, OuterRef, Q, QuerySet, Subquery, Window
+from django.db.models import Count, F, Max, OuterRef, Q, QuerySet, Subquery, Sum, Window
 from django.db.models.functions import RowNumber
 from django.utils import timezone
 
@@ -19,6 +19,7 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestBotBinding,
+    GuestRestaurantDailyOrderFact,
     NotificationEvent,
     NotificationScenario,
     OrderFact,
@@ -204,6 +205,8 @@ class CouponAutoscenarioPlanItem:
             days_without_visits_label = str(self.days_without_visits)
         selection_source_labels = {
             "last_order_department": "по последнему заведению",
+            "visited_department": "по посещённому заведению",
+            "favorite_department": "по любимому заведению",
             "global_fallback": "резерв: Вся сеть",
             "legacy_config": "старый режим настройки",
             "pilot_rule_fallback": "пилотный резерв",
@@ -256,6 +259,7 @@ class CouponAutoscenarioExecutionPlan:
     scenario_id: int
     scenario_code: str
     execution_mode: str
+    venue_selection_mode: str
     coupon_series: str
     venue_code: str
     venue_name: str
@@ -294,6 +298,7 @@ class CouponAutoscenarioExecutionPlan:
             "scenario_id": self.scenario_id,
             "scenario_code": self.scenario_code,
             "execution_mode": self.execution_mode,
+            "venue_selection_mode": self.venue_selection_mode,
             "coupon_series": self.coupon_series,
             "venue_code": self.venue_code,
             "venue_name": self.venue_name,
@@ -401,6 +406,22 @@ class GuestLastOrderVenue:
     business_date: date | None = None
     first_seen_at: datetime | None = None
     last_visit_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GuestVenueAffinity:
+    department_id: str
+    department_name: str
+    orders_count: int
+    last_visit_date: date | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CouponRuleSelectionOption:
+    rule: CouponRuleOption
+    selection_source: str
+    department_id: str = ""
+    department_name: str = ""
 
 
 def preview_coupon_autoscenario_audience(
@@ -530,6 +551,7 @@ def build_coupon_autoscenario_execution_plan(
     safe_limit = max(1, int(limit or config.max_recipients_per_run or 100))
     safe_scan_limit = _resolve_preview_scan_limit(scan_limit=scan_limit, run_limit=safe_limit)
     current_now = now or timezone.now()
+    venue_selection_mode = _venue_selection_mode(config=config)
 
     blockers: list[str] = []
     warnings: list[str] = []
@@ -589,20 +611,34 @@ def build_coupon_autoscenario_execution_plan(
     message_target_rows = [row for row in sendable_rows if row.guest_id in message_target_guest_ids]
     blocked_without_message_target = len(sendable_rows) - len(message_target_rows)
     blocked_without_message_permission = max(bot_bound_guests - len(message_target_rows), 0)
-    existing_trigger_pairs = _existing_trigger_assignment_pairs(
-        scenario=scenario,
-        rows=message_target_rows,
+    use_guest_level_coupon_protection = (
+        venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
     )
-
-    active_assignment_guest_ids = _active_assignment_guest_ids(
-        guest_ids=[row.guest_id for row in message_target_rows],
-        coupon_series=coupon_series_values,
+    existing_trigger_pairs = (
+        _existing_trigger_assignment_pairs(
+            scenario=scenario,
+            rows=message_target_rows,
+        )
+        if use_guest_level_coupon_protection
+        else set()
     )
-    cooldown_guest_ids = _cooldown_guest_ids(
-        guest_ids=[row.guest_id for row in message_target_rows],
-        coupon_series=coupon_series_values,
-        cooldown_days=int(config.cooldown_days or 0),
-        now=current_now,
+    active_assignment_guest_ids = (
+        _active_assignment_guest_ids(
+            guest_ids=[row.guest_id for row in message_target_rows],
+            coupon_series=coupon_series_values,
+        )
+        if use_guest_level_coupon_protection
+        else set()
+    )
+    cooldown_guest_ids = (
+        _cooldown_guest_ids(
+            guest_ids=[row.guest_id for row in message_target_rows],
+            coupon_series=coupon_series_values,
+            cooldown_days=int(config.cooldown_days or 0),
+            now=current_now,
+        )
+        if use_guest_level_coupon_protection
+        else set()
     )
     if (
         config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
@@ -627,13 +663,17 @@ def build_coupon_autoscenario_execution_plan(
     blocked_by_cooldown = 0
     blocked_by_pilot_filter = 0
     for row in message_target_rows:
-        if row.trigger_key and (row.guest_id, row.trigger_key) in existing_trigger_pairs:
+        if (
+            use_guest_level_coupon_protection
+            and row.trigger_key
+            and (row.guest_id, row.trigger_key) in existing_trigger_pairs
+        ):
             blocked_existing_trigger += 1
             continue
-        if row.guest_id in active_assignment_guest_ids:
+        if use_guest_level_coupon_protection and row.guest_id in active_assignment_guest_ids:
             blocked_existing_active_coupon += 1
             continue
-        if row.guest_id in cooldown_guest_ids:
+        if use_guest_level_coupon_protection and row.guest_id in cooldown_guest_ids:
             blocked_by_cooldown += 1
             continue
         if not _is_allowed_by_pilot_filter(
@@ -646,71 +686,147 @@ def build_coupon_autoscenario_execution_plan(
         eligible_rows.append(row)
 
     last_order_venues = _last_order_venue_map(guest_ids=[row.guest_id for row in eligible_rows])
+    guest_venue_affinities = (
+        _guest_venue_affinity_map(
+            guest_ids=[row.guest_id for row in eligible_rows],
+            venue_codes=[rule.venue_code for rule in coupon_rules if not rule.is_global],
+        )
+        if venue_selection_mode
+        in {
+            CouponAutomationConfig.VenueSelectionMode.ALL_VISITED,
+            CouponAutomationConfig.VenueSelectionMode.FAVORITE,
+        }
+        else {}
+    )
     coupons_by_rule = _available_coupons_by_rule(rules=coupon_rules, limit=safe_limit)
     available_coupons_count = sum(len(coupons) for coupons in coupons_by_rule.values())
-    planned_recipients = min(len(eligible_rows), safe_limit)
-    plan_items: list[CouponAutoscenarioPlanItem] = []
-    for row in eligible_rows[:planned_recipients]:
-        rule, coupon, selection_source = _select_coupon_for_row(
-            row=row,
-            rules=coupon_rules,
-            coupons_by_rule=coupons_by_rule,
-            last_order_venues=last_order_venues,
+    existing_item_trigger_pairs = (
+        _existing_trigger_assignment_pairs_for_guests(
+            scenario=scenario,
+            guest_ids=[row.guest_id for row in eligible_rows],
         )
-        if rule is None or coupon is None:
-            continue
-        venue_code = str(coupon.venue_code or rule.venue_code or "").strip()
-        venue_name = str(coupon.venue_name or rule.venue_name or "").strip()
-        validity_days = rule.coupon_validity_days or config.coupon_validity_days or 1
-        valid_until = current_now + timedelta(days=max(1, int(validity_days)))
-        days_without_visits = _days_without_visits_from_last_visit(
-            last_visit_at=row.last_visit_at,
+        if not use_guest_level_coupon_protection
+        else set()
+    )
+    active_assignment_pairs = (
+        _active_assignment_guest_series_pairs(
+            guest_ids=[row.guest_id for row in eligible_rows],
+            coupon_series=coupon_series_values,
+        )
+        if not use_guest_level_coupon_protection
+        else set()
+    )
+    cooldown_pairs = (
+        _cooldown_guest_series_pairs(
+            guest_ids=[row.guest_id for row in eligible_rows],
+            coupon_series=coupon_series_values,
+            cooldown_days=int(config.cooldown_days or 0),
             now=current_now,
         )
-        if days_without_visits is None and config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT:
-            days_without_visits = _resolve_pilot_days_without_visits(
-                config=config,
-                default_days=inactive_days,
-            )
-        plan_items.append(
-            CouponAutoscenarioPlanItem(
-                guest_id=row.guest_id,
-                phone=row.phone,
-                first_name=row.first_name,
-                last_name=row.last_name,
-                sendable_channels=row.sendable_channels,
-                coupon_id=int(coupon.id),
-                coupon_series=str(coupon.series or "").strip(),
-                coupon_code=str(coupon.code or "").strip(),
-                venue_code=venue_code,
-                venue_name=venue_name,
-                valid_until=valid_until,
-                last_visit_at=row.last_visit_at,
-                days_without_visits=days_without_visits,
-                days_until_birthday=row.days_until_birthday,
-                birthday_date=row.birthday_date,
-                trigger_key=row.trigger_key,
-                trigger_date=row.trigger_date,
-                is_pilot_forced=row.is_pilot_forced,
-                coupon_rule_id=rule.rule_id,
-                coupon_rule_label=rule.label,
-                coupon_selection_source=selection_source,
-                last_order_department_id=last_order_venues.get(
-                    row.guest_id,
-                    GuestLastOrderVenue("", ""),
-                ).department_id,
-                last_order_department_name=last_order_venues.get(
-                    row.guest_id,
-                    GuestLastOrderVenue("", ""),
-                ).department_name,
-            )
+        if not use_guest_level_coupon_protection
+        else set()
+    )
+    plan_items: list[CouponAutoscenarioPlanItem] = []
+    coupon_shortage = 0
+    for row in eligible_rows:
+        if len(plan_items) >= safe_limit:
+            break
+        options = _coupon_rule_selection_options_for_row(
+            row=row,
+            rules=coupon_rules,
+            last_order_venues=last_order_venues,
+            guest_venue_affinities=guest_venue_affinities,
+            venue_selection_mode=venue_selection_mode,
         )
+        if not options:
+            if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.LAST_ORDER:
+                coupon_shortage += 1
+            continue
 
-    coupon_shortage = max(planned_recipients - len(plan_items), 0)
+        if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.ALL_VISITED:
+            for option in options:
+                if len(plan_items) >= safe_limit:
+                    break
+                item_trigger_key = _coupon_assignment_trigger_key(
+                    base_trigger_key=row.trigger_key,
+                    rule=option.rule,
+                    venue_selection_mode=venue_selection_mode,
+                )
+                if item_trigger_key and (row.guest_id, item_trigger_key) in existing_item_trigger_pairs:
+                    blocked_existing_trigger += 1
+                    continue
+                if (row.guest_id, option.rule.coupon_series) in active_assignment_pairs:
+                    blocked_existing_active_coupon += 1
+                    continue
+                if (row.guest_id, option.rule.coupon_series) in cooldown_pairs:
+                    blocked_by_cooldown += 1
+                    continue
+                coupons = coupons_by_rule.get(option.rule.key) or []
+                if not coupons:
+                    coupon_shortage += 1
+                    continue
+                plan_items.append(
+                    _build_plan_item_from_coupon_selection(
+                        row=row,
+                        config=config,
+                        inactive_days=inactive_days,
+                        current_now=current_now,
+                        option=option,
+                        coupon=coupons.pop(0),
+                        trigger_key=item_trigger_key,
+                        last_order_venue=last_order_venues.get(row.guest_id),
+                    )
+                )
+            continue
+
+        has_unblocked_option = False
+        was_blocked_by_protection = False
+        created_item = False
+        for option in options:
+            if len(plan_items) >= safe_limit:
+                break
+            item_trigger_key = _coupon_assignment_trigger_key(
+                base_trigger_key=row.trigger_key,
+                rule=option.rule,
+                venue_selection_mode=venue_selection_mode,
+            )
+            if item_trigger_key and (row.guest_id, item_trigger_key) in existing_item_trigger_pairs:
+                blocked_existing_trigger += 1
+                was_blocked_by_protection = True
+                break
+            if (row.guest_id, option.rule.coupon_series) in active_assignment_pairs:
+                blocked_existing_active_coupon += 1
+                was_blocked_by_protection = True
+                break
+            if (row.guest_id, option.rule.coupon_series) in cooldown_pairs:
+                blocked_by_cooldown += 1
+                was_blocked_by_protection = True
+                break
+            has_unblocked_option = True
+            coupons = coupons_by_rule.get(option.rule.key) or []
+            if not coupons:
+                continue
+            plan_items.append(
+                _build_plan_item_from_coupon_selection(
+                    row=row,
+                    config=config,
+                    inactive_days=inactive_days,
+                    current_now=current_now,
+                    option=option,
+                    coupon=coupons.pop(0),
+                    trigger_key=item_trigger_key,
+                    last_order_venue=last_order_venues.get(row.guest_id),
+                )
+            )
+            created_item = True
+            break
+        if has_unblocked_option and not created_item and not was_blocked_by_protection:
+            coupon_shortage += 1
+
     if coupon_shortage > 0:
         blockers.append(f"Не хватает подходящих купонов для ближайшего запуска: {coupon_shortage}.")
 
-    if planned_recipients == 0:
+    if not eligible_rows:
         warnings.append("Нет достижимых гостей для ближайшего запуска после фильтров.")
 
     can_execute = not blockers and bool(plan_items)
@@ -718,6 +834,7 @@ def build_coupon_autoscenario_execution_plan(
         scenario_id=int(scenario.id),
         scenario_code=scenario.code,
         execution_mode=config.execution_mode,
+        venue_selection_mode=venue_selection_mode,
         coupon_series=_format_coupon_series_summary(coupon_rules),
         venue_code=str(config.venue_code or "").strip(),
         venue_name=str(config.venue_name or "").strip(),
@@ -1887,6 +2004,257 @@ def _last_order_visit_at_map(*, guest_ids: list[int]) -> dict[int, datetime]:
     return result
 
 
+def _venue_selection_mode(*, config: CouponAutomationConfig) -> str:
+    value = str(getattr(config, "venue_selection_mode", "") or "").strip()
+    allowed_values = {choice[0] for choice in CouponAutomationConfig.VenueSelectionMode.choices}
+    if value in allowed_values:
+        return value
+    return CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
+
+
+def _guest_venue_affinity_map(
+    *,
+    guest_ids: list[int],
+    venue_codes: list[str],
+) -> dict[int, dict[str, GuestVenueAffinity]]:
+    unique_guest_ids = [int(guest_id) for guest_id in dict.fromkeys(guest_ids) if guest_id]
+    unique_venue_codes = tuple(
+        dict.fromkeys(str(venue_code or "").strip() for venue_code in venue_codes if str(venue_code or "").strip())
+    )
+    if not unique_guest_ids or not unique_venue_codes:
+        return {}
+
+    result: dict[int, dict[str, GuestVenueAffinity]] = {}
+    daily_rows = (
+        GuestRestaurantDailyOrderFact.objects.filter(
+            guest_id__in=unique_guest_ids,
+            department_id__in=unique_venue_codes,
+            orders_count__gt=0,
+        )
+        .values("guest_id", "department_id")
+        .annotate(
+            orders_total=Sum("orders_count"),
+            last_visit_date=Max("business_date"),
+        )
+    )
+    for row in daily_rows:
+        guest_id = int(row["guest_id"])
+        department_id = str(row.get("department_id") or "").strip()
+        if not department_id:
+            continue
+        result.setdefault(guest_id, {})[department_id] = GuestVenueAffinity(
+            department_id=department_id,
+            department_name="",
+            orders_count=int(row.get("orders_total") or 0),
+            last_visit_date=row.get("last_visit_date"),
+        )
+
+    order_fact_rows = (
+        OrderFact.objects.filter(
+            guest_id__in=unique_guest_ids,
+            department_id__in=unique_venue_codes,
+        )
+        .exclude(department_id="")
+        .values("guest_id", "department_id")
+        .annotate(
+            orders_total=Count("id"),
+            last_visit_date=Max("business_date"),
+            department_name=Max("department_name"),
+        )
+    )
+    for row in order_fact_rows:
+        guest_id = int(row["guest_id"])
+        department_id = str(row.get("department_id") or "").strip()
+        if not department_id or department_id in result.get(guest_id, {}):
+            continue
+        result.setdefault(guest_id, {})[department_id] = GuestVenueAffinity(
+            department_id=department_id,
+            department_name=str(row.get("department_name") or "").strip(),
+            orders_count=int(row.get("orders_total") or 0),
+            last_visit_date=row.get("last_visit_date"),
+        )
+    return result
+
+
+def _coupon_rule_selection_options_for_row(
+    *,
+    row: CouponAutoscenarioAudienceRow,
+    rules: tuple[CouponRuleOption, ...],
+    last_order_venues: dict[int, GuestLastOrderVenue],
+    guest_venue_affinities: dict[int, dict[str, GuestVenueAffinity]],
+    venue_selection_mode: str,
+) -> list[CouponRuleSelectionOption]:
+    global_options = [
+        CouponRuleSelectionOption(rule=rule, selection_source="global_fallback")
+        for rule in rules
+        if rule.is_global
+    ]
+    if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.ALL_VISITED:
+        affinities = guest_venue_affinities.get(row.guest_id, {})
+        options = [
+            CouponRuleSelectionOption(
+                rule=rule,
+                selection_source="visited_department",
+                department_id=rule.venue_code,
+                department_name=affinities.get(rule.venue_code).department_name
+                if affinities.get(rule.venue_code)
+                else rule.venue_name,
+            )
+            for rule in rules
+            if not rule.is_global and rule.venue_code in affinities
+        ]
+        if options:
+            return _deduplicate_selection_options(options)
+        if global_options:
+            return global_options
+        if row.is_pilot_forced:
+            return [
+                CouponRuleSelectionOption(rule=rule, selection_source="pilot_rule_fallback")
+                for rule in rules
+                if not rule.is_global
+            ]
+        return []
+
+    if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.FAVORITE:
+        affinities = guest_venue_affinities.get(row.guest_id, {})
+        candidates: list[tuple[CouponRuleOption, GuestVenueAffinity]] = []
+        for rule in rules:
+            if rule.is_global or rule.venue_code not in affinities:
+                continue
+            candidates.append((rule, affinities[rule.venue_code]))
+        if candidates:
+            candidates.sort(
+                key=lambda pair: (
+                    int(pair[1].orders_count or 0),
+                    pair[1].last_visit_date or date.min,
+                    -int(pair[0].priority or 100),
+                ),
+                reverse=True,
+            )
+            rule, affinity = candidates[0]
+            return [
+                CouponRuleSelectionOption(
+                    rule=rule,
+                    selection_source="favorite_department",
+                    department_id=rule.venue_code,
+                    department_name=affinity.department_name or rule.venue_name,
+                )
+            ]
+        if global_options:
+            return global_options
+        if row.is_pilot_forced:
+            return [
+                CouponRuleSelectionOption(rule=rule, selection_source="pilot_rule_fallback")
+                for rule in rules
+                if not rule.is_global
+            ]
+        return []
+
+    last_order_venue = last_order_venues.get(row.guest_id)
+    last_department_id = str(last_order_venue.department_id if last_order_venue else "").strip()
+    options: list[CouponRuleSelectionOption] = []
+    for rule in rules:
+        if rule.is_legacy_fallback:
+            options.append(CouponRuleSelectionOption(rule=rule, selection_source="legacy_config"))
+        elif last_department_id and not rule.is_global and rule.venue_code == last_department_id:
+            options.append(
+                CouponRuleSelectionOption(
+                    rule=rule,
+                    selection_source="last_order_department",
+                    department_id=last_department_id,
+                    department_name=str(last_order_venue.department_name if last_order_venue else "").strip(),
+                )
+            )
+    options.extend(global_options)
+    if row.is_pilot_forced and not options:
+        options.extend(
+            CouponRuleSelectionOption(rule=rule, selection_source="pilot_rule_fallback")
+            for rule in rules
+            if not rule.is_global
+        )
+    return _deduplicate_selection_options(options)
+
+
+def _deduplicate_selection_options(
+    options: list[CouponRuleSelectionOption],
+) -> list[CouponRuleSelectionOption]:
+    result: list[CouponRuleSelectionOption] = []
+    seen_keys: set[str] = set()
+    for option in options:
+        if option.rule.key in seen_keys:
+            continue
+        seen_keys.add(option.rule.key)
+        result.append(option)
+    return result
+
+
+def _coupon_assignment_trigger_key(
+    *,
+    base_trigger_key: str,
+    rule: CouponRuleOption,
+    venue_selection_mode: str,
+) -> str:
+    safe_base = str(base_trigger_key or "").strip()
+    if not safe_base:
+        return ""
+    if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.LAST_ORDER:
+        return safe_base
+    venue_key = str(rule.venue_code or rule.key or "").strip() or "unknown"
+    return f"{safe_base}:venue:{venue_key}"
+
+
+def _build_plan_item_from_coupon_selection(
+    *,
+    row: CouponAutoscenarioAudienceRow,
+    config: CouponAutomationConfig,
+    inactive_days: int,
+    current_now: datetime,
+    option: CouponRuleSelectionOption,
+    coupon: CouponRegistryEntry,
+    trigger_key: str,
+    last_order_venue: GuestLastOrderVenue | None,
+) -> CouponAutoscenarioPlanItem:
+    rule = option.rule
+    venue_code = str(coupon.venue_code or rule.venue_code or "").strip()
+    venue_name = str(coupon.venue_name or rule.venue_name or "").strip()
+    validity_days = rule.coupon_validity_days or config.coupon_validity_days or 1
+    valid_until = current_now + timedelta(days=max(1, int(validity_days)))
+    days_without_visits = _days_without_visits_from_last_visit(
+        last_visit_at=row.last_visit_at,
+        now=current_now,
+    )
+    if days_without_visits is None and config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT:
+        days_without_visits = _resolve_pilot_days_without_visits(
+            config=config,
+            default_days=inactive_days,
+        )
+    return CouponAutoscenarioPlanItem(
+        guest_id=row.guest_id,
+        phone=row.phone,
+        first_name=row.first_name,
+        last_name=row.last_name,
+        sendable_channels=row.sendable_channels,
+        coupon_id=int(coupon.id),
+        coupon_series=str(coupon.series or "").strip(),
+        coupon_code=str(coupon.code or "").strip(),
+        venue_code=venue_code,
+        venue_name=venue_name,
+        valid_until=valid_until,
+        last_visit_at=row.last_visit_at,
+        days_without_visits=days_without_visits,
+        days_until_birthday=row.days_until_birthday,
+        birthday_date=row.birthday_date,
+        trigger_key=trigger_key,
+        trigger_date=row.trigger_date,
+        is_pilot_forced=row.is_pilot_forced,
+        coupon_rule_id=rule.rule_id,
+        coupon_rule_label=rule.label,
+        coupon_selection_source=option.selection_source,
+        last_order_department_id=str(last_order_venue.department_id if last_order_venue else "").strip(),
+        last_order_department_name=str(last_order_venue.department_name if last_order_venue else "").strip(),
+    )
+
+
 def _select_coupon_for_row(
     *,
     row: CouponAutoscenarioAudienceRow,
@@ -2306,6 +2674,32 @@ def _existing_trigger_assignment_pairs(
     }
 
 
+def _existing_trigger_assignment_pairs_for_guests(
+    *,
+    scenario: NotificationScenario,
+    guest_ids: list[int],
+) -> set[tuple[int, str]]:
+    unique_guest_ids = [int(guest_id) for guest_id in dict.fromkeys(guest_ids) if guest_id]
+    if not unique_guest_ids:
+        return set()
+
+    existing_rows = (
+        CouponAutoscenarioAssignment.objects.filter(
+            scenario=scenario,
+            guest_id__in=unique_guest_ids,
+        )
+        .exclude(status=CouponAutoscenarioAssignment.Status.CANCELED)
+        .exclude(trigger_key__isnull=True)
+        .exclude(trigger_key="")
+        .values_list("guest_id", "trigger_key")
+    )
+    return {
+        (int(guest_id), str(trigger_key or "").strip())
+        for guest_id, trigger_key in existing_rows
+        if guest_id and str(trigger_key or "").strip()
+    }
+
+
 def _active_assignment_guest_ids(
     *,
     guest_ids: list[int],
@@ -2335,6 +2729,42 @@ def _active_assignment_guest_ids(
         ).values_list("guest_id", flat=True)
     )
     return campaign_guest_ids | autoscenario_guest_ids
+
+
+def _active_assignment_guest_series_pairs(
+    *,
+    guest_ids: list[int],
+    coupon_series: str | tuple[str, ...] | list[str],
+) -> set[tuple[int, str]]:
+    series_values = _normalize_coupon_series_filter(coupon_series)
+    if not guest_ids or not series_values:
+        return set()
+    unique_guest_ids = [int(guest_id) for guest_id in dict.fromkeys(guest_ids) if guest_id]
+    campaign_pairs = set(
+        CouponCampaignAssignment.objects.filter(
+            guest_id__in=unique_guest_ids,
+            coupon_series__in=series_values,
+            status__in=[
+                CouponCampaignAssignment.Status.RESERVED,
+                CouponCampaignAssignment.Status.SENT,
+            ],
+        ).values_list("guest_id", "coupon_series")
+    )
+    autoscenario_pairs = set(
+        CouponAutoscenarioAssignment.objects.filter(
+            guest_id__in=unique_guest_ids,
+            coupon_series__in=series_values,
+            status__in=[
+                CouponAutoscenarioAssignment.Status.RESERVED,
+                CouponAutoscenarioAssignment.Status.SENT,
+            ],
+        ).values_list("guest_id", "coupon_series")
+    )
+    return {
+        (int(guest_id), str(series or "").strip())
+        for guest_id, series in campaign_pairs | autoscenario_pairs
+        if guest_id and str(series or "").strip()
+    }
 
 
 def _cooldown_guest_ids(
@@ -2375,3 +2805,48 @@ def _cooldown_guest_ids(
         ).values_list("guest_id", flat=True)
     )
     return campaign_guest_ids | autoscenario_guest_ids
+
+
+def _cooldown_guest_series_pairs(
+    *,
+    guest_ids: list[int],
+    coupon_series: str | tuple[str, ...] | list[str],
+    cooldown_days: int,
+    now: datetime,
+) -> set[tuple[int, str]]:
+    series_values = _normalize_coupon_series_filter(coupon_series)
+    if not guest_ids or not series_values or cooldown_days <= 0:
+        return set()
+    unique_guest_ids = [int(guest_id) for guest_id in dict.fromkeys(guest_ids) if guest_id]
+    cutoff = now - timedelta(days=cooldown_days)
+    campaign_pairs = set(
+        CouponCampaignAssignment.objects.filter(
+            guest_id__in=unique_guest_ids,
+            coupon_series__in=series_values,
+            assigned_at__gte=cutoff,
+            status__in=[
+                CouponCampaignAssignment.Status.SENT,
+                CouponCampaignAssignment.Status.USED,
+                CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+                CouponCampaignAssignment.Status.EXPIRED,
+            ],
+        ).values_list("guest_id", "coupon_series")
+    )
+    autoscenario_pairs = set(
+        CouponAutoscenarioAssignment.objects.filter(
+            guest_id__in=unique_guest_ids,
+            coupon_series__in=series_values,
+            assigned_at__gte=cutoff,
+            status__in=[
+                CouponAutoscenarioAssignment.Status.SENT,
+                CouponAutoscenarioAssignment.Status.USED,
+                CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+                CouponAutoscenarioAssignment.Status.EXPIRED,
+            ],
+        ).values_list("guest_id", "coupon_series")
+    )
+    return {
+        (int(guest_id), str(series or "").strip())
+        for guest_id, series in campaign_pairs | autoscenario_pairs
+        if guest_id and str(series or "").strip()
+    }

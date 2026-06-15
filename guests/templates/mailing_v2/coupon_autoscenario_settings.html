@@ -325,12 +325,32 @@
 
       <hr class="my-4">
 
+      <h2 class="h6 mb-3">Выбор заведений для купонов</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          {{ form.venue_selection_mode.label_tag }}
+          {{ form.venue_selection_mode }}
+          {% if form.venue_selection_mode.errors %}
+            <div class="text-danger small mt-1">{{ form.venue_selection_mode.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-8">
+          <div class="alert alert-light border small mb-0">
+            <div><strong>Последнее заведение</strong> - один купон по последнему заведению гостя, затем запасное правило «Вся сеть».</div>
+            <div><strong>Все посещённые заведения</strong> - отдельный купон по каждому заведению из таблицы, где гость уже был хотя бы один раз.</div>
+            <div><strong>Любимое заведение</strong> - один купон по заведению с наибольшим числом заказов; при равенстве выбирается более свежий визит.</div>
+          </div>
+        </div>
+      </div>
+
+      <hr class="my-4">
+
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
         <div>
-          <h2 class="h6 mb-1">Купонные правила</h2>
+          <h2 class="h6 mb-1">Заведения и серии купонов</h2>
           <div class="text-muted small">
-            Укажите, какую серию купонов выдавать для каждого заведения. Если для последнего заведения гостя нет подходящего правила
-            или закончились купоны, система попробует правило <strong>Вся сеть</strong>.
+            Укажите, какую серию купонов выдавать для каждого заведения. Строка <strong>Вся сеть</strong> работает как запасное правило,
+            если по выбранной стратегии не найдено подходящее заведение или подходящий купон.
           </div>
         </div>
         <button class="btn btn-outline-primary btn-sm" type="button" id="coupon-rule-add">
@@ -429,7 +449,7 @@
       </div>
       <div class="form-text">
         Для нескольких заведений добавьте несколько строк: одно заведение - одна серия купонов.
-        Строка “Вся сеть” работает как запасной вариант, если у гостя нет правила по последнему заведению или там закончились купоны.
+        Строка “Вся сеть” работает как запасной вариант, а не как дополнительный купон к заведению.
       </div>
 
       <template id="coupon-rule-empty-row-template">

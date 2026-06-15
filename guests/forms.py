@@ -362,6 +362,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
         model = CouponAutomationConfig
         fields = [
             "execution_mode",
+            "venue_selection_mode",
             "coupon_series",
             "venue_code",
             "venue_name",
@@ -377,6 +378,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
         ]
         widgets = {
             "execution_mode": forms.Select(attrs={"class": "form-select"}),
+            "venue_selection_mode": forms.Select(attrs={"class": "form-select"}),
             "venue_code": forms.Select(attrs={"class": "form-select"}),
             "venue_name": forms.TextInput(attrs={"class": "form-control"}),
             "coupon_validity_days": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
@@ -390,6 +392,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
         }
         labels = {
             "execution_mode": "Состояние автосценария",
+            "venue_selection_mode": "Как выбирать заведения для купонов",
             "venue_code": "Резервное заведение без правил",
             "venue_name": "Название резервного заведения",
             "coupon_validity_days": "Срок действия купона, дней",
@@ -409,6 +412,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "Черновик ничего не запускает. Пилот разрешает только контрольные телефоны. "
             "Активен будет использоваться для боевого расписания после отдельного включения."
         )
+        self.fields["venue_selection_mode"].required = False
 
         self.fields["coupon_series"].choices = build_available_coupon_series_choices(
             existing_series=str(getattr(self.instance, "coupon_series", "") or "").strip()
@@ -526,6 +530,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
                 "notification_distribution_mode",
                 "Для состояния «Активен» выберите «Равномерно в окне», чтобы сообщения не уходили сразу после подтверждения vtelemax.",
             )
+
+        if not cleaned_data.get("venue_selection_mode"):
+            cleaned_data["venue_selection_mode"] = CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
 
         if venue_code and venue_code in getattr(self, "_coupon_venue_map", {}):
             cleaned_data["venue_name"] = self._coupon_venue_map.get(venue_code) or cleaned_data.get("venue_name")

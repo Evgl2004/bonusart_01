@@ -87,10 +87,20 @@ def _coupon_autoscenario_state_hint(mode: str) -> str:
     return COUPON_AUTOSCENARIO_STATE_HINTS.get(str(mode or ""), "")
 
 
-def _coupon_autoscenario_policy_label() -> str:
+def _coupon_autoscenario_policy_label(*, venue_selection_mode: str = "") -> str:
     """
     Кратко описывает принятую стратегию выбора купона для маркетолога.
     """
+    if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.ALL_VISITED:
+        return (
+            "Гость получает отдельный купон по каждому заведению из правил, где он уже был; "
+            "«Вся сеть» используется только как запасное правило."
+        )
+    if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.FAVORITE:
+        return (
+            "Гость получает один купон по любимому заведению: больше заказов, при равенстве более свежий визит; "
+            "если заведение не найдено, используется «Вся сеть»."
+        )
     return (
         "Сначала используется правило по последнему заведению гостя из истории заказов; "
         "если подходящего правила или свободного купона нет, используется правило «Вся сеть»."
@@ -102,15 +112,32 @@ def _coupon_autoscenario_policy_rows(
     cooldown_days: int | None,
     scenario_code: str = "",
     birthday_window_days: int | None = None,
+    venue_selection_mode: str = "",
 ) -> list[tuple[str, str]]:
     """
     Возвращает человекочитаемые правила, которые должны быть видны на экранах автосценариев.
     """
     cooldown_label = f"не чаще 1 раза в {int(cooldown_days or 0)} дн."
+    if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.ALL_VISITED:
+        strategy_label = "все посещённые заведения из таблицы правил"
+        venue_source_label = "история заказов по гостю и заведению"
+        limit_label = "не больше лимита выдач за проход"
+    elif venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.FAVORITE:
+        strategy_label = "любимое заведение, затем Вся сеть"
+        venue_source_label = "число заказов по гостю и заведению; при равенстве свежий визит"
+        venue_source_row_label = "Источник заведений"
+        limit_label = "не больше 1 купона гостю за проход"
+    else:
+        strategy_label = "последнее заведение гостя, затем Вся сеть"
+        venue_source_label = "история заказов"
+        venue_source_row_label = "Источник последнего заведения"
+        limit_label = "не больше 1 купона гостю за проход"
+    if venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.ALL_VISITED:
+        venue_source_row_label = "Источник заведений"
     rows = [
-        ("Стратегия", "последнее заведение гостя, затем Вся сеть"),
-        ("Источник последнего заведения", "история заказов"),
-        ("Ограничение", "не больше 1 купона гостю за проход"),
+        ("Стратегия", strategy_label),
+        (venue_source_row_label, venue_source_label),
+        ("Ограничение", limit_label),
         ("Повтор", cooldown_label),
         ("Если нет купонов", "гость пропускается и попадает в дефицит купонов"),
     ]
@@ -1822,11 +1849,14 @@ class MailingsV2ScenariosView(TemplateView):
                 rule for rule in config.coupon_rules.all() if rule.is_active
             ]
             config.has_rule_based_coupon_selection = bool(config.active_coupon_rules)
-            config.coupon_selection_policy_label = _coupon_autoscenario_policy_label()
+            config.coupon_selection_policy_label = _coupon_autoscenario_policy_label(
+                venue_selection_mode=config.venue_selection_mode
+            )
             config.coupon_selection_policy_rows = _coupon_autoscenario_policy_rows(
                 cooldown_days=config.cooldown_days,
                 scenario_code=config.scenario.code,
                 birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
+                venue_selection_mode=config.venue_selection_mode,
             )
             selected_bots = list(config.scenario.bot_profiles.all())
             config.notification_target_mode_label = config.scenario.get_target_mode_display()
@@ -1898,11 +1928,14 @@ class MailingsV2ScenariosView(TemplateView):
                 coupon_plan["execution_state_hint"] = _coupon_autoscenario_state_hint(
                     coupon_plan.get("execution_mode", "")
                 )
-                coupon_plan["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label()
+                coupon_plan["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label(
+                    venue_selection_mode=coupon_plan.get("venue_selection_mode", "")
+                )
                 coupon_plan["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
                     cooldown_days=getattr(selected_coupon_config, "cooldown_days", None),
                     scenario_code=selected_coupon_scenario_code,
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
+                    venue_selection_mode=coupon_plan.get("venue_selection_mode", ""),
                 )
                 if selected_coupon_scenario_code == SCENARIO_CODE_BIRTHDAY_COUPON:
                     coupon_plan["bot_bound_guests_label"] = "Именинников в новых ботах"
@@ -2060,11 +2093,14 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         context["execution_state_hint"] = _coupon_autoscenario_state_hint(
             self.object.execution_mode
         )
-        context["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label()
+        context["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label(
+            venue_selection_mode=self.object.venue_selection_mode
+        )
         context["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
             cooldown_days=self.object.cooldown_days,
             scenario_code=scenario_code,
             birthday_window_days=(self.object.settings or {}).get("birthday_preparation_window_days"),
+            venue_selection_mode=self.object.venue_selection_mode,
         )
         template_obj = getattr(self.object.scenario, "template", None)
         template_display_name, template_technical_name = _resolve_template_title(template_obj)
