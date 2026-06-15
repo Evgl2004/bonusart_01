@@ -20,7 +20,7 @@
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">
       <form method="get" class="row g-3 align-items-end">
-        <div class="col-12 col-xl-5">
+        <div class="col-12 col-xl-4">
           <label class="form-label">Автосценарий</label>
           <select class="form-select" name="scenario_code">
             {% for scenario in scenarios %}
@@ -38,7 +38,23 @@
           <label class="form-label">Период по</label>
           <input class="form-control" type="date" name="date_to" value="{{ filters.date_to }}">
         </div>
-        <div class="col-12 col-xl-3 d-grid">
+        <div class="col-12 col-sm-6 col-xl-2">
+          <label class="form-label">Заведение по заказу</label>
+          <select class="form-select" name="venue_code">
+            <option value="">Все заведения</option>
+            {% if autoscenario_report.revenue.venue_rows %}
+              {% for row in autoscenario_report.revenue.venue_rows %}
+                <option value="{{ row.venue_code }}" {% if filters.venue_code == row.venue_code %}selected{% endif %}>
+                  {{ row.venue_name }}
+                </option>
+              {% endfor %}
+            {% elif filters.venue_code %}
+              <option value="{{ filters.venue_code }}" selected>{{ filters.venue_code }}</option>
+            {% endif %}
+          </select>
+          <div class="form-text">Для выручки, среднего чека и позиций.</div>
+        </div>
+        <div class="col-12 col-sm-6 col-xl-2 d-grid">
           <button class="btn btn-primary" type="submit">Показать</button>
         </div>
       </form>
@@ -304,6 +320,11 @@
     <div class="card border-0 shadow-sm mb-3">
       <div class="card-header bg-white fw-semibold">Деньги и применения из OLAP</div>
       <div class="card-body">
+        {% if autoscenario_report.revenue.selected_venue_code %}
+          <div class="alert alert-secondary py-2 mb-3">
+            Срез по заведению: <b>{{ autoscenario_report.revenue.selected_venue_name }}</b>.
+          </div>
+        {% endif %}
         <div class="row g-3">
           <div class="col-12 col-md-3">
             <div class="text-secondary small">Заказов с купоном</div>
@@ -325,6 +346,80 @@
         {% if autoscenario_report.revenue.orders_total == 0 %}
           <div class="alert alert-info mt-3 mb-0">
             Применения появятся после реального заказа, загрузки OLAP/order_fact и синхронизации статуса купона.
+          </div>
+        {% endif %}
+        {% if autoscenario_report.revenue.venue_rows or autoscenario_report.revenue.product_rank_rows %}
+          <hr>
+          <div class="row g-3">
+            <div class="col-12 col-xl-5">
+              <h3 class="h6 mb-2">По заведениям</h3>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Заведение</th>
+                      <th class="text-end">Заказов</th>
+                      <th class="text-end">Гостей</th>
+                      <th class="text-end">Оплачено</th>
+                      <th class="text-end">Средний чек</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in autoscenario_report.revenue.venue_rows %}
+                      <tr{% if row.is_selected %} class="table-primary"{% endif %}>
+                        <td>
+                          {{ row.venue_name }}
+                          <div class="text-muted small"><code>{{ row.venue_code|default:"—" }}</code></div>
+                        </td>
+                        <td class="text-end">{{ row.orders_count }}</td>
+                        <td class="text-end">{{ row.unique_guests }}</td>
+                        <td class="text-end">{{ row.revenue_net }}</td>
+                        <td class="text-end">{{ row.avg_check }}</td>
+                      </tr>
+                    {% empty %}
+                      <tr>
+                        <td colspan="5" class="text-center text-muted py-3">Заказов с купоном по заведениям пока нет.</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="col-12 col-xl-7">
+              <h3 class="h6 mb-2">
+                Топ 10 позиций{% if autoscenario_report.revenue.selected_venue_code %}: {{ autoscenario_report.revenue.selected_venue_name }}{% endif %}
+              </h3>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Позиция</th>
+                      <th>Код</th>
+                      <th class="text-end">Заказов</th>
+                      <th class="text-end">Кол-во</th>
+                      <th class="text-end">До скидки</th>
+                      <th class="text-end">Оплачено</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in autoscenario_report.revenue.product_rank_rows %}
+                      <tr>
+                        <td>{{ row.dish_name }}</td>
+                        <td><code>{{ row.dish_code|default:"—" }}</code></td>
+                        <td class="text-end">{{ row.orders_count }}</td>
+                        <td class="text-end">{{ row.quantity_total }}</td>
+                        <td class="text-end">{{ row.gross_sum }}</td>
+                        <td class="text-end">{{ row.revenue_net }}</td>
+                      </tr>
+                    {% empty %}
+                      <tr>
+                        <td colspan="6" class="text-center text-muted py-3">Позиции заказов пока не найдены.</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         {% endif %}
       </div>

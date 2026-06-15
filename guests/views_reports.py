@@ -39,6 +39,7 @@ from guests.models import (
     Mailing,
     NotificationEvent,
     NotificationScenario,
+    OlapSalesRawLine,
     OrderFact,
 )
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
@@ -75,6 +76,52 @@ def _money(value: Decimal | int | str | None) -> str:
     """
     amount = Decimal(value or 0)
     return str(amount.quantize(Decimal("0.01")))
+
+
+def _decimal_or_zero(value) -> Decimal:
+    """
+    Безопасно приводит значение из OLAP к Decimal.
+    """
+    if value in (None, ""):
+        return Decimal("0")
+    try:
+        return Decimal(str(value))
+    except Exception:  # noqa: BLE001
+        return Decimal("0")
+
+
+def _normalize_report_text(value) -> str:
+    return str(value or "").strip()
+
+
+def _order_identity(
+    *,
+    business_date,
+    department_id,
+    order_number,
+    uniq_order_id,
+) -> tuple[object, str, int | None, str]:
+    return (
+        business_date,
+        _normalize_report_text(department_id),
+        int(order_number) if order_number is not None else None,
+        _normalize_report_text(uniq_order_id),
+    )
+
+
+def _raw_line_net_sum(row: dict[str, object]) -> Decimal:
+    if row.get("dish_sum_after_discount") in (None, ""):
+        return _raw_line_gross_sum(row)
+    return _decimal_or_zero(row.get("dish_sum_after_discount"))
+
+
+def _raw_line_gross_sum(row: dict[str, object]) -> Decimal:
+    return _decimal_or_zero(row.get("dish_sum_before_discount"))
+
+
+def _raw_line_quantity(row: dict[str, object]) -> Decimal:
+    quantity = _decimal_or_zero(row.get("dish_amount"))
+    return quantity if quantity > 0 else Decimal("1")
 
 
 def _default_batch_csv_path(batch: CouponPoolBatch) -> Path:
@@ -145,6 +192,7 @@ class CouponAutoscenarioReportsView(TemplateView):
         scenario_code = str(self.request.GET.get("scenario_code") or "").strip()
         date_from_raw = str(self.request.GET.get("date_from") or "").strip()
         date_to_raw = str(self.request.GET.get("date_to") or "").strip()
+        venue_code = str(self.request.GET.get("venue_code") or "").strip()
         date_from = parse_date(date_from_raw) if date_from_raw else None
         date_to = parse_date(date_to_raw) if date_to_raw else None
 
@@ -165,6 +213,7 @@ class CouponAutoscenarioReportsView(TemplateView):
                 scenario=selected_scenario,
                 date_from=date_from,
                 date_to=date_to,
+                venue_code=venue_code,
             )
 
         context["scenarios"] = scenarios
@@ -174,17 +223,19 @@ class CouponAutoscenarioReportsView(TemplateView):
             "scenario_code": selected_scenario.code if selected_scenario else scenario_code,
             "date_from": date_from_raw,
             "date_to": date_to_raw,
+            "venue_code": venue_code,
         }
         context["period_presets"] = self._build_period_presets(
             scenario_code=selected_scenario.code if selected_scenario else scenario_code,
             date_from=date_from,
             date_to=date_to,
+            venue_code=venue_code,
         )
         context["back_to_reports_url"] = reverse("reports")
         context["scenarios_url"] = reverse("mailings_v2_scenarios")
         return context
 
-    def _build_period_presets(self, *, scenario_code: str, date_from, date_to) -> list[dict]:
+    def _build_period_presets(self, *, scenario_code: str, date_from, date_to, venue_code: str = "") -> list[dict]:
         today = timezone.localdate()
         presets = [
             ("1 неделя", 7),
@@ -201,6 +252,8 @@ class CouponAutoscenarioReportsView(TemplateView):
                 "date_from": preset_from.isoformat(),
                 "date_to": preset_to.isoformat(),
             }
+            if venue_code:
+                params["venue_code"] = venue_code
             result.append(
                 {
                     "label": label,
@@ -210,7 +263,7 @@ class CouponAutoscenarioReportsView(TemplateView):
             )
         return result
 
-    def _build_report(self, *, scenario: NotificationScenario, date_from, date_to) -> dict:
+    def _build_report(self, *, scenario: NotificationScenario, date_from, date_to, venue_code: str = "") -> dict:
         all_runs_qs = (
             CouponAutoscenarioRun.objects.filter(scenario=scenario)
             .select_related("scenario", "config")
@@ -282,7 +335,12 @@ class CouponAutoscenarioReportsView(TemplateView):
             delivery_context=pilot_delivery_context,
         )
 
-        revenue = self._build_revenue_snapshot(assignments_qs=assignments_qs, date_from=date_from, date_to=date_to)
+        revenue = self._build_revenue_snapshot(
+            assignments_qs=assignments_qs,
+            date_from=date_from,
+            date_to=date_to,
+            venue_code=venue_code,
+        )
         daily_rows = self._build_daily_rows(
             runs_qs=runs_qs,
             assignments_qs=assignments_qs,
@@ -555,7 +613,22 @@ class CouponAutoscenarioReportsView(TemplateView):
         return f"coupon_autoscenario_assignment:{int(assignment_id)}"
 
     @staticmethod
-    def _build_revenue_snapshot(*, assignments_qs, date_from, date_to) -> dict:
+    def _build_empty_revenue_snapshot(*, venue_code: str = "") -> dict:
+        return {
+            "orders_total": 0,
+            "unique_guests": 0,
+            "revenue_net": _money(0),
+            "avg_check": _money(0),
+            "daily_rows": [],
+            "venue_rows": [],
+            "product_rank_rows": [],
+            "selected_venue_code": venue_code,
+            "selected_venue_name": "",
+        }
+
+    @staticmethod
+    def _build_revenue_snapshot(*, assignments_qs, date_from, date_to, venue_code: str = "") -> dict:
+        selected_venue_code = _normalize_report_text(venue_code)
         used_rows = list(
             assignments_qs.filter(
                 status__in=[
@@ -563,6 +636,7 @@ class CouponAutoscenarioReportsView(TemplateView):
                     CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
                 ]
             ).values(
+                "id",
                 "guest_id",
                 "coupon_series",
                 "coupon_code",
@@ -571,29 +645,21 @@ class CouponAutoscenarioReportsView(TemplateView):
             )
         )
         if not used_rows:
-            return {
-                "orders_total": 0,
-                "unique_guests": 0,
-                "revenue_net": _money(0),
-                "avg_check": _money(0),
-                "daily_rows": [],
-            }
+            return CouponAutoscenarioReportsView._build_empty_revenue_snapshot(venue_code=selected_venue_code)
 
-        series = sorted({row["coupon_series"] for row in used_rows if row["coupon_series"]})
-        codes = sorted({row["coupon_code"] for row in used_rows if row["coupon_code"]})
+        series = sorted({_normalize_report_text(row["coupon_series"]) for row in used_rows if row["coupon_series"]})
+        codes = sorted({_normalize_report_text(row["coupon_code"]) for row in used_rows if row["coupon_code"]})
         if not series or not codes:
-            return {
-                "orders_total": 0,
-                "unique_guests": 0,
-                "revenue_net": _money(0),
-                "avg_check": _money(0),
-                "daily_rows": [],
-            }
+            return CouponAutoscenarioReportsView._build_empty_revenue_snapshot(venue_code=selected_venue_code)
 
         specific_keys = set()
         loose_keys = set()
         for row in used_rows:
-            base_key = (row["guest_id"], row["coupon_series"], row["coupon_code"])
+            base_key = (
+                row["guest_id"],
+                _normalize_report_text(row["coupon_series"]),
+                _normalize_report_text(row["coupon_code"]),
+            )
             if row["used_order_id"] and row["used_business_date"]:
                 specific_keys.add((*base_key, int(row["used_order_id"]), row["used_business_date"]))
             else:
@@ -609,24 +675,195 @@ class CouponAutoscenarioReportsView(TemplateView):
         if date_to:
             order_facts_qs = order_facts_qs.filter(business_date__lte=date_to)
 
+        matched_order_rows: list[dict[str, object]] = []
+        counted_order_keys: set[tuple[object, ...]] = set()
+        for fact_row in order_facts_qs.values(
+            "id",
+            "guest_id",
+            "business_date",
+            "department_id",
+            "department_name",
+            "order_number",
+            "uniq_order_id",
+            "coupon_series",
+            "coupon_number",
+            "net_sum",
+            "gross_sum",
+        ).order_by("business_date", "id"):
+            base_key = (
+                fact_row.get("guest_id"),
+                _normalize_report_text(fact_row.get("coupon_series")),
+                _normalize_report_text(fact_row.get("coupon_number")),
+            )
+            specific_key = (
+                *base_key,
+                int(fact_row["order_number"]) if fact_row.get("order_number") is not None else None,
+                fact_row.get("business_date"),
+            )
+            if specific_key not in specific_keys and base_key not in loose_keys:
+                continue
+
+            identity = _order_identity(
+                business_date=fact_row.get("business_date"),
+                department_id=fact_row.get("department_id"),
+                order_number=fact_row.get("order_number"),
+                uniq_order_id=fact_row.get("uniq_order_id"),
+            )
+            order_key = (
+                ("order", *identity)
+                if identity[0] is not None and identity[2] is not None
+                else ("coupon", *base_key)
+            )
+            if order_key in counted_order_keys:
+                continue
+            counted_order_keys.add(order_key)
+            matched_order_rows.append(
+                {
+                    "fact": fact_row,
+                    "base_key": (_normalize_report_text(base_key[1]), _normalize_report_text(base_key[2])),
+                    "identity": identity,
+                    "order_key": order_key,
+                }
+            )
+
+        if not matched_order_rows:
+            return CouponAutoscenarioReportsView._build_empty_revenue_snapshot(venue_code=selected_venue_code)
+
+        order_dates = sorted({item["fact"]["business_date"] for item in matched_order_rows if item["fact"].get("business_date")})
+        order_uniq_ids = sorted({item["identity"][3] for item in matched_order_rows if item["identity"][3]})
+        raw_filter = Q(coupon_series__in=series, coupon_number__in=codes)
+        if order_uniq_ids:
+            raw_filter |= Q(uniq_order_id__in=order_uniq_ids)
+
+        raw_lines_qs = OlapSalesRawLine.objects.filter(raw_filter)
+        if order_dates:
+            raw_lines_qs = raw_lines_qs.filter(business_date__in=order_dates)
+
+        raw_lines_by_identity: dict[tuple[object, str, int | None, str], list[dict[str, object]]] = {}
+        raw_lines_by_coupon_key: dict[tuple[str, str], list[dict[str, object]]] = {}
+        for raw_row in raw_lines_qs.values(
+            "id",
+            "business_date",
+            "department_id",
+            "department_name",
+            "order_number",
+            "uniq_order_id",
+            "dish_code",
+            "dish_name",
+            "dish_amount",
+            "dish_sum_before_discount",
+            "dish_sum_after_discount",
+            "coupon_series",
+            "coupon_number",
+        ).order_by("business_date", "order_number", "id"):
+            raw_identity = _order_identity(
+                business_date=raw_row.get("business_date"),
+                department_id=raw_row.get("department_id"),
+                order_number=raw_row.get("order_number"),
+                uniq_order_id=raw_row.get("uniq_order_id"),
+            )
+            raw_lines_by_identity.setdefault(raw_identity, []).append(raw_row)
+            raw_coupon_key = (
+                _normalize_report_text(raw_row.get("coupon_series")),
+                _normalize_report_text(raw_row.get("coupon_number")),
+            )
+            if raw_coupon_key[0] and raw_coupon_key[1]:
+                raw_lines_by_coupon_key.setdefault(raw_coupon_key, []).append(raw_row)
+
+        for item in matched_order_rows:
+            raw_lines = raw_lines_by_identity.get(item["identity"]) or raw_lines_by_coupon_key.get(item["base_key"], [])
+            item["raw_lines"] = raw_lines
+            if raw_lines:
+                item["order_net_sum"] = sum((_raw_line_net_sum(row) for row in raw_lines), Decimal("0"))
+            else:
+                item["order_net_sum"] = _decimal_or_zero(item["fact"].get("net_sum"))
+
+        venue_stats: dict[str, dict[str, object]] = {}
+        for item in matched_order_rows:
+            fact_row = item["fact"]
+            venue_key = _normalize_report_text(fact_row.get("department_id"))
+            venue_row = venue_stats.setdefault(
+                venue_key,
+                {
+                    "venue_code": venue_key,
+                    "venue_name": _normalize_report_text(fact_row.get("department_name")) or venue_key or "Не указано",
+                    "orders_count": 0,
+                    "guests": set(),
+                    "revenue_net": Decimal("0"),
+                },
+            )
+            venue_row["orders_count"] = int(venue_row["orders_count"]) + 1
+            if fact_row.get("guest_id"):
+                venue_row["guests"].add(int(fact_row["guest_id"]))
+            venue_row["revenue_net"] = venue_row["revenue_net"] + item["order_net_sum"]
+
+        selected_venue_name = ""
+        venue_rows = []
+        for venue_row in sorted(
+            venue_stats.values(),
+            key=lambda row: (-int(row["orders_count"]), str(row["venue_name"])),
+        ):
+            orders_count = int(venue_row["orders_count"])
+            revenue_value = venue_row["revenue_net"]
+            avg_check = revenue_value / Decimal(orders_count) if orders_count else Decimal("0")
+            is_selected = selected_venue_code and selected_venue_code == venue_row["venue_code"]
+            if is_selected:
+                selected_venue_name = str(venue_row["venue_name"])
+            venue_rows.append(
+                {
+                    "venue_code": venue_row["venue_code"],
+                    "venue_name": venue_row["venue_name"],
+                    "orders_count": orders_count,
+                    "unique_guests": len(venue_row["guests"]),
+                    "revenue_net": _money(revenue_value),
+                    "avg_check": _money(avg_check),
+                    "is_selected": bool(is_selected),
+                }
+            )
+        if selected_venue_code and not selected_venue_name:
+            selected_venue_name = selected_venue_code
+
         revenue_net = Decimal("0")
         orders_total = 0
         unique_guests = set()
         daily = defaultdict(lambda: {"orders_count": 0, "revenue_net": Decimal("0")})
+        product_stats: dict[tuple[str, str], dict[str, object]] = {}
 
-        for fact in order_facts_qs.iterator():
-            base_key = (fact.guest_id, fact.coupon_series, fact.coupon_number)
-            specific_key = (*base_key, int(fact.order_number), fact.business_date)
-            if specific_key not in specific_keys and base_key not in loose_keys:
+        for item in matched_order_rows:
+            fact_row = item["fact"]
+            fact_venue_code = _normalize_report_text(fact_row.get("department_id"))
+            if selected_venue_code and fact_venue_code != selected_venue_code:
                 continue
 
             orders_total += 1
-            unique_guests.add(fact.guest_id)
-            fact_net = fact.net_sum or Decimal("0")
+            if fact_row.get("guest_id"):
+                unique_guests.add(int(fact_row["guest_id"]))
+            fact_net = item["order_net_sum"]
             revenue_net += fact_net
-            daily_row = daily[fact.business_date]
+            daily_row = daily[fact_row["business_date"]]
             daily_row["orders_count"] += 1
             daily_row["revenue_net"] += fact_net
+
+            for raw_row in item.get("raw_lines") or []:
+                product_key = (
+                    _normalize_report_text(raw_row.get("dish_code")),
+                    _normalize_report_text(raw_row.get("dish_name")) or "Без названия",
+                )
+                product_row = product_stats.setdefault(
+                    product_key,
+                    {
+                        "dish_code": product_key[0],
+                        "dish_name": product_key[1],
+                        "orders": set(),
+                        "quantity_total": Decimal("0"),
+                        "gross_sum": Decimal("0"),
+                        "revenue_net": Decimal("0"),
+                    },
+                )
+                product_row["orders"].add(item["order_key"])
+                product_row["quantity_total"] = product_row["quantity_total"] + _raw_line_quantity(raw_row)
+                product_row["gross_sum"] = product_row["gross_sum"] + _raw_line_gross_sum(raw_row)
+                product_row["revenue_net"] = product_row["revenue_net"] + _raw_line_net_sum(raw_row)
 
         avg_check = revenue_net / orders_total if orders_total else Decimal("0")
         daily_rows = [
@@ -637,12 +874,34 @@ class CouponAutoscenarioReportsView(TemplateView):
             }
             for business_date, row in sorted(daily.items())
         ]
+        product_rank_rows = sorted(
+            [
+                {
+                    "dish_code": row["dish_code"],
+                    "dish_name": row["dish_name"],
+                    "orders_count": len(row["orders"]),
+                    "quantity_total": str(row["quantity_total"]),
+                    "gross_sum": _money(row["gross_sum"]),
+                    "revenue_net": _money(row["revenue_net"]),
+                }
+                for row in product_stats.values()
+            ],
+            key=lambda row: (
+                -int(row["orders_count"]),
+                -_decimal_or_zero(row["revenue_net"]),
+                str(row["dish_name"]),
+            ),
+        )[:10]
         return {
             "orders_total": orders_total,
             "unique_guests": len(unique_guests),
             "revenue_net": _money(revenue_net),
             "avg_check": _money(avg_check),
             "daily_rows": daily_rows,
+            "venue_rows": venue_rows,
+            "product_rank_rows": product_rank_rows,
+            "selected_venue_code": selected_venue_code,
+            "selected_venue_name": selected_venue_name,
         }
 
 

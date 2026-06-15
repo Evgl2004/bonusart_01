@@ -21,6 +21,8 @@ from guests.models import (
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
+    OlapCheckSyncJournal,
+    OlapSalesRawLine,
     OrderFact,
     TerminalDepartmentMap,
 )
@@ -355,6 +357,58 @@ class CouponReportsViewsTests(TestCase):
             coupon_number=coupon.code,
             first_seen_at=self.now,
         )
+        journal = OlapCheckSyncJournal.objects.create(
+            idempotency_key="auto-report-7001",
+            status=OlapCheckSyncJournal.Status.LOADED,
+            guest=guest,
+            terminal_group_id="TERM_1",
+            order_number=7001,
+            order_external_id="auto-report-7001",
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            department_code="DEP_1",
+            loaded_at=self.now,
+        )
+        OlapSalesRawLine.objects.create(
+            row_fingerprint="auto-report-7001-pizza",
+            sync_journal=journal,
+            guest=guest,
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            department_code="DEP_1",
+            department_name="Test venue",
+            order_number=7001,
+            uniq_order_id="auto-report-7001",
+            dish_code="PIZZA",
+            dish_name="Пицца",
+            dish_amount="1",
+            dish_sum_before_discount="300.00",
+            dish_sum_after_discount="200.00",
+            discount_sum="100.00",
+            bonus_sum="0.00",
+            coupon_series=coupon.series,
+            coupon_number=coupon.code,
+        )
+        OlapSalesRawLine.objects.create(
+            row_fingerprint="auto-report-7001-tea",
+            sync_journal=journal,
+            guest=guest,
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            department_code="DEP_1",
+            department_name="Test venue",
+            order_number=7001,
+            uniq_order_id="auto-report-7001",
+            dish_code="TEA",
+            dish_name="Чай",
+            dish_amount="2",
+            dish_sum_before_discount="240.00",
+            dish_sum_after_discount="150.00",
+            discount_sum="90.00",
+            bonus_sum="0.00",
+            coupon_series=coupon.series,
+            coupon_number=coupon.code,
+        )
 
         response = self.client.get(
             reverse("reports_coupon_autoscenarios"),
@@ -368,11 +422,25 @@ class CouponReportsViewsTests(TestCase):
         self.assertEqual(report_day["weekday_short"], CouponAutoscenarioReportsView.weekday_short_labels[self.now.date().weekday()])
         self.assertEqual(report_day["is_weekend"], self.now.date().weekday() >= 5)
         self.assertIn("\n", report_day["axis_label"])
+        revenue = response.context["autoscenario_report"]["revenue"]
+        self.assertEqual(revenue["orders_total"], 1)
+        self.assertEqual(revenue["revenue_net"], "350.00")
+        self.assertEqual(revenue["avg_check"], "350.00")
+        self.assertEqual(revenue["venue_rows"][0]["venue_code"], "DEP_1")
+        self.assertEqual(revenue["venue_rows"][0]["orders_count"], 1)
+        self.assertEqual(revenue["venue_rows"][0]["unique_guests"], 1)
+        self.assertEqual(revenue["product_rank_rows"][0]["dish_name"], "Пицца")
+        self.assertEqual(revenue["product_rank_rows"][0]["revenue_net"], "200.00")
         self.assertContains(response, scenario.code)
         self.assertContains(response, coupon.code)
         self.assertContains(response, guest.phone)
         self.assertContains(response, "350.00")
         self.assertContains(response, "7001")
+        self.assertContains(response, "По заведениям")
+        self.assertContains(response, "Топ 10 позиций")
+        self.assertContains(response, "Test venue")
+        self.assertContains(response, "Пицца")
+        self.assertContains(response, "Чай")
         self.assertContains(response, "Воронка боевых запусков")
         self.assertContains(response, "Динамика по дням")
         self.assertContains(response, "Попали под сценарий")
@@ -382,6 +450,18 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Выходные дни подсвечены")
         self.assertContains(response, "Применения считаются по дате заказа из OLAP")
         self.assertContains(response, "Журнал пилотов")
+
+        response = self.client.get(
+            reverse("reports_coupon_autoscenarios"),
+            {"scenario_code": scenario.code, "venue_code": "DEP_OTHER"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        revenue = response.context["autoscenario_report"]["revenue"]
+        self.assertEqual(revenue["selected_venue_code"], "DEP_OTHER")
+        self.assertEqual(revenue["orders_total"], 0)
+        self.assertEqual(revenue["product_rank_rows"], [])
+        self.assertContains(response, "Срез по заведению")
 
     def test_coupon_autoscenario_report_keeps_pilot_runs_out_of_marketing_kpi(self):
         guest = Guest.objects.create(
