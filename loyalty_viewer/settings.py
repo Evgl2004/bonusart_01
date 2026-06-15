@@ -571,6 +571,27 @@ VTELEMAX_COUPON_SYNC_SCHEDULE_MINUTES = _env_int(
     min_value=1,
 )
 
+# Плановый запуск купонных автосценариев.
+# По умолчанию выключен: включение требует отдельного env-флага и настроек сценариев в UI.
+COUPON_AUTOSCENARIO_SCHEDULE_ENABLED = _env_bool("COUPON_AUTOSCENARIO_SCHEDULE_ENABLED", False)
+COUPON_AUTOSCENARIO_SCHEDULE_CRON = str(
+    os.getenv("COUPON_AUTOSCENARIO_SCHEDULE_CRON", "0 10 * * *") or "0 10 * * *"
+).strip()
+COUPON_AUTOSCENARIO_SCHEDULE_CODES = _env_text_set(
+    "COUPON_AUTOSCENARIO_SCHEDULE_CODES",
+    "birthday_coupon,inactive_30d_coupon",
+)
+COUPON_AUTOSCENARIO_SCHEDULE_LIMIT = _env_int(
+    "COUPON_AUTOSCENARIO_SCHEDULE_LIMIT",
+    0,
+    min_value=0,
+)
+COUPON_AUTOSCENARIO_SCHEDULE_SCAN_LIMIT = _env_int(
+    "COUPON_AUTOSCENARIO_SCHEDULE_SCAN_LIMIT",
+    0,
+    min_value=0,
+)
+
 # Post-campaign lifecycle купонов (закрытие завершённых купонных кампаний).
 COUPON_CAMPAIGN_CLOSE_ENABLED = _env_bool("COUPON_CAMPAIGN_CLOSE_ENABLED", True)
 COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED = _env_bool("COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED", False)
@@ -622,6 +643,7 @@ DJANGO_Q_SCHEDULE_MANAGED_NAMES = (
     "run_notification_scenarios",
     "run_vtelemax_recipients_delta",
     "run_vtelemax_coupon_sync_queue",
+    "run_coupon_autoscenarios",
     "run_coupon_campaign_close",
     "run_olap_sync_windowed",
     "run_olap_rebuild_nightly",
@@ -1012,6 +1034,15 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_vtelemax_coupon_sync_queue", None)
+
+    if COUPON_AUTOSCENARIO_SCHEDULE_ENABLED:
+        schedule_map["run_coupon_autoscenarios"] = {
+            "func": "guests.tasks.run_coupon_autoscenarios_task",
+            "schedule_type": "C",
+            "cron": COUPON_AUTOSCENARIO_SCHEDULE_CRON,
+        }
+    else:
+        schedule_map.pop("run_coupon_autoscenarios", None)
 
     if COUPON_CAMPAIGN_CLOSE_ENABLED and COUPON_CAMPAIGN_CLOSE_SCHEDULE_ENABLED:
         schedule_map["run_coupon_campaign_close"] = {

@@ -34,6 +34,7 @@ DEFAULT_MANAGED_SCHEDULE_NAMES: tuple[str, ...] = (
     "run_notification_scenarios",
     "run_vtelemax_recipients_delta",
     "run_coupon_campaign_close",
+    "run_coupon_autoscenarios",
     "run_olap_sync_windowed",
     "run_olap_rebuild_nightly",
     "run_order_fact_tail",

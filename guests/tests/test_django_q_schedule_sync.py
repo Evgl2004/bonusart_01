@@ -49,6 +49,29 @@ class DjangoQScheduleSyncTests(TestCase):
     @override_settings(
         Q_CLUSTER={
             "schedule": {
+                "run_coupon_autoscenarios": {
+                    "func": "guests.tasks.run_coupon_autoscenarios_task",
+                    "schedule_type": "C",
+                    "cron": "0 10 * * *",
+                }
+            }
+        },
+        DJANGO_Q_SCHEDULE_MANAGED_NAMES=("run_coupon_autoscenarios",),
+        DJANGO_Q_SCHEDULE_MANAGED_EXTRA_NAMES=set(),
+    )
+    def test_sync_creates_coupon_autoscenario_schedule_as_cron(self):
+        stats = sync_django_q_schedule_from_settings(prune_stale=True, dry_run=False)
+
+        self.assertEqual(stats.created, 1)
+        schedule = Schedule.objects.get(name="run_coupon_autoscenarios")
+        self.assertEqual(schedule.func, "guests.tasks.run_coupon_autoscenarios_task")
+        self.assertEqual(schedule.schedule_type, Schedule.CRON)
+        self.assertEqual(schedule.cron, "0 10 * * *")
+        self.assertIsNone(schedule.minutes)
+
+    @override_settings(
+        Q_CLUSTER={
+            "schedule": {
                 "sync_webhooks_recent": {
                     "func": "guests.tasks.fetch_pending_webhooks",
                     "minutes": 10,

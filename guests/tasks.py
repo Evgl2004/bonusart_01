@@ -120,6 +120,98 @@ def run_vtelemax_coupon_sync_queue_task() -> int:
         return 0
 
 
+def run_coupon_autoscenarios_task() -> int:
+    """
+    Плановый запуск купонных автосценариев через отдельный купонный контур.
+
+    Задача не использует старый планировщик уведомлений. Каждый сценарий
+    выполнится только если он включён и его купонная настройка находится
+    в состоянии «Активен».
+    """
+    if not bool(getattr(settings, "COUPON_AUTOSCENARIO_SCHEDULE_ENABLED", False)):
+        logger.info("Coupon autoscenarios schedule: disabled by COUPON_AUTOSCENARIO_SCHEDULE_ENABLED.")
+        return 0
+
+    from .services.coupon_autoscenarios import (
+        CouponAutoscenarioPreviewError,
+        execute_coupon_autoscenario_automatic,
+    )
+    from .services.notification_registry import (
+        SCENARIO_CODE_BIRTHDAY_COUPON,
+        SCENARIO_CODE_INACTIVE_30D_COUPON,
+    )
+
+    configured_codes = {
+        str(code).strip()
+        for code in (getattr(settings, "COUPON_AUTOSCENARIO_SCHEDULE_CODES", set()) or set())
+        if str(code).strip()
+    }
+    preferred_order = (
+        SCENARIO_CODE_BIRTHDAY_COUPON,
+        SCENARIO_CODE_INACTIVE_30D_COUPON,
+    )
+    scenario_codes = [
+        code for code in preferred_order if code in configured_codes
+    ] + sorted(configured_codes - set(preferred_order))
+    if not scenario_codes:
+        logger.info("Coupon autoscenarios schedule: no scenario codes configured.")
+        return 0
+
+    raw_limit = int(getattr(settings, "COUPON_AUTOSCENARIO_SCHEDULE_LIMIT", 0) or 0)
+    raw_scan_limit = int(getattr(settings, "COUPON_AUTOSCENARIO_SCHEDULE_SCAN_LIMIT", 0) or 0)
+    limit = raw_limit if raw_limit > 0 else None
+    scan_limit = raw_scan_limit if raw_scan_limit > 0 else None
+
+    total_created_assignments = 0
+    total_queue_events = 0
+    for scenario_code in scenario_codes:
+        try:
+            result = execute_coupon_autoscenario_automatic(
+                scenario_code=scenario_code,
+                limit=limit,
+                scan_limit=scan_limit,
+                confirm=True,
+            )
+        except CouponAutoscenarioPreviewError as err:
+            logger.info(
+                "Coupon autoscenario %s skipped: %s",
+                scenario_code,
+                err,
+            )
+            continue
+        except Exception as err:
+            logger.exception(
+                "Coupon autoscenario %s failed unexpectedly: %s",
+                scenario_code,
+                err,
+            )
+            continue
+
+        total_created_assignments += int(result.created_assignments)
+        total_queue_events += int(result.queue_events_created)
+        logger.info(
+            (
+                "Coupon autoscenario %s completed: run_id=%s created_assignments=%s "
+                "queue_events_created=%s scanned=%s matched=%s eligible=%s"
+            ),
+            scenario_code,
+            result.run_id,
+            result.created_assignments,
+            result.queue_events_created,
+            result.plan.scanned_guests,
+            result.plan.matched_guests,
+            result.plan.eligible_guests,
+        )
+
+    logger.info(
+        "Coupon autoscenarios schedule completed: scenarios=%s created_assignments=%s queue_events_created=%s",
+        len(scenario_codes),
+        total_created_assignments,
+        total_queue_events,
+    )
+    return total_created_assignments
+
+
 def run_coupon_campaign_close_task() -> int:
     """
     Плановое post-campaign закрытие купонов.

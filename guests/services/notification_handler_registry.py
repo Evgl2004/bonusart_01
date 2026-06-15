@@ -17,7 +17,6 @@ from typing import Dict, Iterable, Optional
 
 from guests.services.notification_registry import (
     SCENARIO_CODE_BALANCE_CHANGED,
-    SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
     SCENARIO_CODE_MEAT_LOVER_30D,
 )
@@ -33,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 SCHEDULE_SCENARIO_HANDLERS = {
     SCENARIO_CODE_INACTIVE_7D: run_scheduled_inactive_scenario,
-    SCENARIO_CODE_INACTIVE_30D_COUPON: run_scheduled_inactive_scenario,
     SCENARIO_CODE_MEAT_LOVER_30D: run_scheduled_meat_lover_scenario,
 }
 

@@ -769,6 +769,55 @@ def execute_coupon_autoscenario_pilot(
     купоны и ставит события назначения в очередь vtelemax. Сообщения гостям на
     этом шаге не создаются и не отправляются.
     """
+    return _execute_coupon_autoscenario(
+        scenario_code=scenario_code,
+        expected_execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+        mode_error_message="Фактический пробный запуск разрешён только для состояния «Пилот».",
+        blocker_error_prefix="Нельзя выполнить пробный запуск",
+        limit=limit,
+        scan_limit=scan_limit,
+        confirm=confirm,
+        now=now,
+    )
+
+
+def execute_coupon_autoscenario_automatic(
+    *,
+    scenario_code: str,
+    limit: int | None = None,
+    scan_limit: int | None = None,
+    confirm: bool = False,
+    now: datetime | None = None,
+) -> CouponAutoscenarioExecutionResult:
+    """
+    Выполняет автоматический запуск купонного автосценария.
+
+    Запуск разрешён только для включённого сценария и состояния «Активен».
+    Без `confirm=True` функция только строит план и не меняет базу.
+    """
+    return _execute_coupon_autoscenario(
+        scenario_code=scenario_code,
+        expected_execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+        mode_error_message="Автоматический запуск разрешён только для состояния «Активен».",
+        blocker_error_prefix="Нельзя выполнить автоматический запуск",
+        limit=limit,
+        scan_limit=scan_limit,
+        confirm=confirm,
+        now=now,
+    )
+
+
+def _execute_coupon_autoscenario(
+    *,
+    scenario_code: str,
+    expected_execution_mode: str,
+    mode_error_message: str,
+    blocker_error_prefix: str,
+    limit: int | None,
+    scan_limit: int | None,
+    confirm: bool,
+    now: datetime | None,
+) -> CouponAutoscenarioExecutionResult:
     current_now = now or timezone.now()
     scenario, config = _load_coupon_autoscenario_context(scenario_code=scenario_code)
     plan = build_coupon_autoscenario_execution_plan(
@@ -785,14 +834,36 @@ def execute_coupon_autoscenario_pilot(
             confirmed=False,
         )
 
-    if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
-        raise CouponAutoscenarioPreviewError(
-            "Фактический пробный запуск разрешён только для состояния «Пилот»."
-        )
+    if config.execution_mode != expected_execution_mode:
+        raise CouponAutoscenarioPreviewError(mode_error_message)
     if not plan.can_execute:
         blockers = "; ".join(plan.blockers) or "план не готов к запуску"
-        raise CouponAutoscenarioPreviewError(f"Нельзя выполнить пробный запуск: {blockers}.")
+        raise CouponAutoscenarioPreviewError(f"{blocker_error_prefix}: {blockers}.")
 
+    run_id, created_assignments, queue_events_created = _create_coupon_autoscenario_run_from_plan(
+        scenario=scenario,
+        config=config,
+        plan=plan,
+        current_now=current_now,
+    )
+
+    return CouponAutoscenarioExecutionResult(
+        plan=plan,
+        dry_run=False,
+        confirmed=True,
+        run_id=run_id,
+        created_assignments=created_assignments,
+        queue_events_created=queue_events_created,
+    )
+
+
+def _create_coupon_autoscenario_run_from_plan(
+    *,
+    scenario: NotificationScenario,
+    config: CouponAutomationConfig,
+    plan: CouponAutoscenarioExecutionPlan,
+    current_now: datetime,
+) -> tuple[int, int, int]:
     with transaction.atomic():
         run = CouponAutoscenarioRun.objects.create(
             scenario=scenario,
@@ -904,14 +975,7 @@ def execute_coupon_autoscenario_pilot(
         run.queue_events_created = queue_events_created
         run.save(update_fields=["created_assignments", "queue_events_created", "updated_at"])
 
-    return CouponAutoscenarioExecutionResult(
-        plan=plan,
-        dry_run=False,
-        confirmed=True,
-        run_id=int(run.id),
-        created_assignments=created_assignments,
-        queue_events_created=queue_events_created,
-    )
+    return int(run.id), created_assignments, queue_events_created
 
 
 def cleanup_coupon_autoscenario_pilot_assignment(

@@ -5,7 +5,7 @@ from io import StringIO
 from uuid import uuid4
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from guests.models import (
@@ -34,13 +34,16 @@ from guests.services.coupon_autoscenarios import (
     build_coupon_autoscenario_execution_plan,
     cleanup_coupon_autoscenario_pilot_assignment,
     create_autoscenario_dispatch_after_vtelemax_ack,
+    execute_coupon_autoscenario_automatic,
     execute_coupon_autoscenario_pilot,
     preview_coupon_autoscenario_audience,
 )
+from guests.services.notification_handler_registry import get_registered_schedule_scenario_codes
 from guests.services.notification_registry import (
     SCENARIO_CODE_BIRTHDAY_COUPON,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
 )
+from guests.tasks import run_coupon_autoscenarios_task
 
 
 class CouponAutoscenarioPreviewTests(TestCase):
@@ -920,6 +923,163 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(CouponCampaignAssignment.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
         self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_inactive_30d_coupon_is_not_in_legacy_schedule_registry(self):
+        self.assertNotIn(
+            SCENARIO_CODE_INACTIVE_30D_COUPON,
+            get_registered_schedule_scenario_codes(),
+        )
+
+    def test_execute_automatic_inactive_30d_reserves_coupon_and_queues_vtelemax(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        self.config.max_recipients_per_run = 1
+        self.config.save(
+            update_fields=["execution_mode", "max_recipients_per_run", "updated_at"]
+        )
+        guest = self._guest(phone="+79990000145", first_name="AutoInactive")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest)
+        coupon = self._available_coupon(code="AUTO-INACTIVE")
+
+        result = execute_coupon_autoscenario_automatic(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=self.now,
+        )
+
+        self.assertFalse(result.dry_run)
+        self.assertTrue(result.confirmed)
+        self.assertEqual(result.created_assignments, 1)
+        self.assertEqual(result.queue_events_created, 1)
+
+        run = CouponAutoscenarioRun.objects.get(id=result.run_id)
+        self.assertEqual(run.execution_mode, CouponAutomationConfig.ExecutionMode.AUTOMATIC)
+        self.assertEqual(run.status, CouponAutoscenarioRun.Status.SYNC_PENDING)
+
+        assignment = CouponAutoscenarioAssignment.objects.get(run=run)
+        self.assertEqual(assignment.guest_id, guest.id)
+        self.assertEqual(assignment.coupon_id, coupon.id)
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.RESERVED)
+        self.assertEqual(
+            assignment.vtelemax_sync_status,
+            CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+        )
+
+        coupon.refresh_from_db()
+        self.assertFalse(coupon.is_active)
+        self.assertEqual(coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+
+        queue_event = CouponVtelemaxSyncQueue.objects.get(autoscenario_assignment=assignment)
+        self.assertEqual(queue_event.direction, CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS)
+        self.assertEqual(queue_event.status, CouponVtelemaxSyncQueue.Status.PENDING)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_execute_automatic_birthday_reserves_coupon_and_queues_vtelemax(self):
+        birthday_scenario, birthday_config = self._prepare_birthday_autoscenario()
+        birthday_config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        birthday_config.max_recipients_per_run = 1
+        birthday_config.cooldown_days = 0
+        birthday_config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "cooldown_days",
+                "updated_at",
+            ]
+        )
+        current_now = timezone.make_aware(datetime(2026, 6, 10, 10, 0))
+        guest = self._guest(
+            phone="+79990000146",
+            first_name="BirthdayAuto",
+            birthdate=date(1991, 6, 17),
+        )
+        self._sendable_channel(guest=guest)
+        coupon = self._available_coupon_for_config(config=birthday_config, code="BDAY-AUTO")
+
+        result = execute_coupon_autoscenario_automatic(
+            scenario_code=birthday_scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=current_now,
+        )
+
+        self.assertFalse(result.dry_run)
+        self.assertTrue(result.confirmed)
+        self.assertEqual(result.created_assignments, 1)
+        self.assertEqual(result.queue_events_created, 1)
+        self.assertEqual(result.plan.plan_items[0].days_until_birthday, 7)
+        self.assertEqual(result.plan.plan_items[0].trigger_key, "birthday:2026")
+
+        run = CouponAutoscenarioRun.objects.get(id=result.run_id)
+        self.assertEqual(run.execution_mode, CouponAutomationConfig.ExecutionMode.AUTOMATIC)
+
+        assignment = CouponAutoscenarioAssignment.objects.get(run=run)
+        self.assertEqual(assignment.guest_id, guest.id)
+        self.assertEqual(assignment.coupon_id, coupon.id)
+        self.assertEqual(assignment.trigger_key, "birthday:2026")
+        self.assertEqual(assignment.trigger_date, date(2026, 6, 17))
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.RESERVED)
+
+        queue_event = CouponVtelemaxSyncQueue.objects.get(autoscenario_assignment=assignment)
+        self.assertEqual(queue_event.payload_json["scenario_code"], birthday_scenario.code)
+        self.assertEqual(queue_event.payload_json["days_until_birthday"], 7)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+
+    @override_settings(
+        COUPON_AUTOSCENARIO_SCHEDULE_ENABLED=True,
+        COUPON_AUTOSCENARIO_SCHEDULE_CODES={SCENARIO_CODE_BIRTHDAY_COUPON},
+        COUPON_AUTOSCENARIO_SCHEDULE_LIMIT=1,
+        COUPON_AUTOSCENARIO_SCHEDULE_SCAN_LIMIT=20,
+    )
+    def test_schedule_task_runs_automatic_birthday_autoscenario(self):
+        birthday_scenario, birthday_config = self._prepare_birthday_autoscenario()
+        birthday_config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        birthday_config.max_recipients_per_run = 10
+        birthday_config.cooldown_days = 0
+        birthday_config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "cooldown_days",
+                "updated_at",
+            ]
+        )
+        current_now = timezone.localdate()
+        birthday_date = current_now + timedelta(days=1)
+        guest = self._guest(
+            phone="+79990000147",
+            first_name="ScheduleBirthday",
+            birthdate=date(1991, birthday_date.month, birthday_date.day),
+        )
+        self._sendable_channel(guest=guest)
+        self._available_coupon_for_config(config=birthday_config, code="BDAY-SCHEDULE")
+
+        created_assignments = run_coupon_autoscenarios_task()
+
+        self.assertEqual(created_assignments, 1)
+        run = CouponAutoscenarioRun.objects.get(scenario=birthday_scenario)
+        self.assertEqual(run.execution_mode, CouponAutomationConfig.ExecutionMode.AUTOMATIC)
+        assignment = CouponAutoscenarioAssignment.objects.get(run=run)
+        self.assertEqual(assignment.guest_id, guest.id)
+        self.assertEqual(assignment.trigger_key, f"birthday:{current_now.year}")
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.filter(autoscenario_assignment=assignment).count(), 1)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_execute_automatic_requires_active_execution_mode(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.save(update_fields=["execution_mode", "updated_at"])
+
+        with self.assertRaisesMessage(CouponAutoscenarioPreviewError, "Активен"):
+            execute_coupon_autoscenario_automatic(
+                scenario_code=self.scenario.code,
+                scan_limit=20,
+                confirm=True,
+                now=self.now,
+            )
 
     def test_cleanup_pilot_assignment_creates_canceled_release_event(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
