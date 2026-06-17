@@ -5,7 +5,12 @@ from decimal import Decimal
 from django.core.exceptions import ValidationError
 from django.test import TestCase
 
-from guests.models import CouponAutomationConfig, MessageTemplate, NotificationScenario
+from guests.models import (
+    CouponAutomationConfig,
+    CouponAutomationRule,
+    MessageTemplate,
+    NotificationScenario,
+)
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
 
 
@@ -51,26 +56,36 @@ class CouponAutomationConfigModelTests(TestCase):
 
         config.full_clean()
 
-    def test_pilot_requires_coupon_series(self):
+    def test_pilot_allows_coupon_series_in_rules(self):
         config = CouponAutomationConfig(
             scenario=self._scenario(),
             execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
         )
 
-        with self.assertRaises(ValidationError) as raised:
-            config.full_clean()
+        config.full_clean()
 
-        self.assertIn("coupon_series", raised.exception.message_dict)
-
-    def test_automatic_requires_coupon_series(self):
+    def test_automatic_allows_coupon_series_in_rules(self):
         config = CouponAutomationConfig(
             scenario=self._scenario(),
             execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
             coupon_series="",
         )
 
+        config.full_clean()
+
+    def test_rule_requires_coupon_series(self):
+        config = CouponAutomationConfig.objects.create(
+            scenario=self._scenario(),
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+        )
+        rule = CouponAutomationRule(
+            config=config,
+            scope_type=CouponAutomationRule.ScopeType.GLOBAL,
+            coupon_series="",
+        )
+
         with self.assertRaises(ValidationError) as raised:
-            config.full_clean()
+            rule.full_clean()
 
         self.assertIn("coupon_series", raised.exception.message_dict)
 

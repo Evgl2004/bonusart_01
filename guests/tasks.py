@@ -138,6 +138,7 @@ def run_coupon_autoscenarios_task() -> int:
     )
     from .services.notification_registry import (
         SCENARIO_CODE_BIRTHDAY_COUPON,
+        SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
         SCENARIO_CODE_INACTIVE_30D_COUPON,
     )
 
@@ -148,6 +149,7 @@ def run_coupon_autoscenarios_task() -> int:
     }
     preferred_order = (
         SCENARIO_CODE_BIRTHDAY_COUPON,
+        SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
         SCENARIO_CODE_INACTIVE_30D_COUPON,
     )
     scenario_codes = [

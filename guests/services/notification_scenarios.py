@@ -28,10 +28,12 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestRestaurantWindowMetrics,
+    NotificationEvent,
     NotificationScenario,
     VisitHistory,
 )
 from guests.services.notification_registry import (
+    SCENARIO_CODE_FILL_BIRTHDAY_REQUEST,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
     SCENARIO_CODE_MEAT_LOVER_30D,
@@ -45,6 +47,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SCENARIO_CODES = (
     SCENARIO_CODE_INACTIVE_7D,
+    SCENARIO_CODE_FILL_BIRTHDAY_REQUEST,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_MEAT_LOVER_30D,
 )
@@ -235,6 +238,144 @@ def _extract_decimal_setting(settings: dict, key: str, default: float) -> float:
     except (TypeError, ValueError):
         return float(default)
     return value if value >= 0 else float(default)
+
+
+def _collect_fill_birthday_request_guests(
+    *,
+    scenario: NotificationScenario,
+    limit: int,
+) -> list[Guest]:
+    selected_bot_ids = list(
+        scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+    )
+    if not selected_bot_ids:
+        return []
+
+    from guests.models import GuestBotBinding
+
+    binding_query = GuestBotBinding.objects.filter(
+        guest__birthdate__isnull=True,
+        bot_id__in=selected_bot_ids,
+        bot__is_active=True,
+        bot__provider_type__in=["telegram", "max", "vk"],
+        is_active=True,
+        is_opt_in=True,
+        is_stop_sending=False,
+    ).exclude(
+        external_chat_id__isnull=True,
+    ).exclude(
+        external_chat_id="",
+    )
+    if scenario.target_mode == NotificationScenario.TargetMode.PRIMARY_ONLY:
+        binding_query = binding_query.filter(is_primary=True)
+
+    guest_ids = list(
+        binding_query.order_by("guest_id")
+        .values_list("guest_id", flat=True)
+        .distinct()[: max(1, int(limit))]
+    )
+    if not guest_ids:
+        return []
+    guests_by_id = {
+        int(guest.id): guest
+        for guest in Guest.objects.filter(id__in=guest_ids).order_by("id")
+    }
+    return [guests_by_id[int(guest_id)] for guest_id in guest_ids if int(guest_id) in guests_by_id]
+
+
+def run_scheduled_fill_birthday_request_scenario(
+    *,
+    scenario_code: str,
+    limit_per_scenario: int = 1000,
+    coupon_resolver: Optional[CouponResolver] = None,
+    now: Optional[datetime] = None,
+) -> ScenarioRunStat:
+    """
+    Планово просит гостей заполнить дату рождения.
+
+    Купон здесь не выдаётся. Купонный сценарий сработает позже, когда дата рождения
+    действительно появится в карточке гостя после синхронизации vtelemax.
+    """
+    del coupon_resolver
+
+    safe_code = str(scenario_code or "").strip()
+    if not safe_code:
+        return ScenarioRunStat(scenario_code="")
+
+    safe_limit = max(1, int(limit_per_scenario))
+    current_now = now or timezone.now()
+    scenario = (
+        NotificationScenario.objects.select_related("template")
+        .filter(
+            code=safe_code,
+            is_active=True,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+        )
+        .first()
+    )
+    if scenario is None:
+        logger.info(
+            "Сценарий %s не активен, не найден или не относится к планировщику.",
+            safe_code,
+        )
+        return ScenarioRunStat(scenario_code=safe_code)
+
+    stat = ScenarioRunStat(scenario_code=safe_code)
+    guests = _collect_fill_birthday_request_guests(
+        scenario=scenario,
+        limit=safe_limit,
+    )
+    stat.scanned_guests = len(guests)
+    stat.matched_guests = len(guests)
+    repeat_days = _extract_positive_int_setting(scenario.settings or {}, "request_repeat_days", 30)
+    recent_request_after = current_now - timedelta(days=repeat_days)
+    dedupe_bucket = _local_bucket_date_iso(scenario=scenario, now=current_now)
+
+    for guest in guests:
+        if repeat_days > 0 and NotificationEvent.objects.filter(
+            scenario=scenario,
+            guest=guest,
+            created_at__gte=recent_request_after,
+        ).exists():
+            stat.skipped_duplicate_or_no_targets += 1
+            continue
+
+        dedupe_key = f"{scenario.code}:{guest.id}:{dedupe_bucket}" if repeat_days > 0 else f"{scenario.code}:{guest.id}"
+        payload = {
+            "kind": scenario.code,
+            "source": "scheduled_missing_birthdate_scan",
+            "request_repeat_days": repeat_days,
+        }
+        template_context = {
+            "first_name": (guest.first_name or "").strip(),
+        }
+        created_tasks = enqueue_notification_event_from_scenario(
+            scenario_code=scenario.code,
+            guest=guest,
+            dedupe_key=dedupe_key,
+            source_ref=f"scheduled:{scenario.code}",
+            event_source_type=NotificationEvent.SourceType.SCHEDULE,
+            task_source_type=DispatchTask.SourceType.SYSTEM,
+            payload=payload,
+            template_context=template_context,
+            fallback_message_text=(
+                "Укажите дату рождения в боте, чтобы мы могли подготовить персональный подарок."
+            ),
+            event_at=current_now,
+        )
+        if created_tasks > 0:
+            stat.created_tasks += int(created_tasks)
+        else:
+            stat.skipped_duplicate_or_no_targets += 1
+
+    logger.info(
+        "Сценарий %s: missing_birthdate_guests=%s created_tasks=%s skipped=%s",
+        stat.scenario_code,
+        stat.matched_guests,
+        stat.created_tasks,
+        stat.skipped_duplicate_or_no_targets,
+    )
+    return stat
 
 
 def run_scheduled_meat_lover_scenario(

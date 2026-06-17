@@ -14,6 +14,8 @@ SCENARIO_CODE_BALANCE_CHANGED = "balance_changed"
 SCENARIO_CODE_INACTIVE_7D = "inactive_7d"
 SCENARIO_CODE_INACTIVE_30D_COUPON = "inactive_30d_coupon"
 SCENARIO_CODE_BIRTHDAY_COUPON = "birthday_coupon"
+SCENARIO_CODE_FILL_BIRTHDAY_REQUEST = "fill_birthday_request"
+SCENARIO_CODE_FILL_BIRTHDAY_COUPON = "fill_birthday_coupon"
 SCENARIO_CODE_MEAT_LOVER_30D = "meat_lover_30d"
 
 
@@ -22,6 +24,8 @@ REGISTERED_NOTIFICATION_SCENARIOS: tuple[tuple[str, str], ...] = (
     (SCENARIO_CODE_INACTIVE_7D, "Не был 7 дней"),
     (SCENARIO_CODE_INACTIVE_30D_COUPON, "Не был 30 дней + купон"),
     (SCENARIO_CODE_BIRTHDAY_COUPON, "День рождения + купон"),
+    (SCENARIO_CODE_FILL_BIRTHDAY_REQUEST, "Заполнить дату рождения"),
+    (SCENARIO_CODE_FILL_BIRTHDAY_COUPON, "Заполнил дату рождения + купон"),
     (SCENARIO_CODE_MEAT_LOVER_30D, "Любитель мяса 30 дней"),
 )
 

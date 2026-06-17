@@ -2992,6 +2992,92 @@ class CouponAutoscenarioAssignment(models.Model):
         return f"run={self.run_id} coupon={self.coupon_series}:{self.coupon_code} status={self.status}"
 
 
+class GuestProfileCompletionEvent(models.Model):
+    """
+    Факт появления важного поля профиля гостя.
+
+    Нужен для автосценария "Заполни дату рождения": купон выдаётся не всем,
+    у кого дата рождения уже есть в базе, а только гостям, у которых она
+    появилась после запуска механики.
+    """
+
+    class EventType(models.TextChoices):
+        BIRTHDATE_FILLED = "birthdate_filled", "Дата рождения заполнена"
+
+    class Source(models.TextChoices):
+        VTELEMAX = "vtelemax", "vtelemax"
+        IIKO = "iiko", "iiko"
+        MANUAL = "manual", "Ручное изменение"
+
+    class Status(models.TextChoices):
+        NEW = "new", "Ожидает обработки"
+        COUPON_RESERVED = "coupon_reserved", "Купон зарезервирован"
+        SKIPPED = "skipped", "Пропущено"
+        ERROR = "error", "Ошибка"
+
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.CASCADE,
+        related_name="profile_completion_events",
+    )
+    event_type = models.CharField(
+        max_length=32,
+        choices=EventType.choices,
+        db_index=True,
+    )
+    source = models.CharField(
+        max_length=32,
+        choices=Source.choices,
+        default=Source.VTELEMAX,
+        db_index=True,
+    )
+    source_ref = models.CharField(max_length=180, blank=True, null=True, db_index=True)
+    detected_at = models.DateTimeField(default=timezone.now, db_index=True)
+    profile_value = models.JSONField(default=dict, blank=True)
+    request_notification_event = models.ForeignKey(
+        "NotificationEvent",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="profile_completion_request_events",
+    )
+    coupon_assignment = models.OneToOneField(
+        "CouponAutoscenarioAssignment",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="profile_completion_event",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.NEW,
+        db_index=True,
+    )
+    payload = models.JSONField(default=dict, blank=True)
+    error_text = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_profile_completion_events"
+        verbose_name = "Событие заполнения профиля гостя"
+        verbose_name_plural = "События заполнения профилей гостей"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["guest", "event_type"],
+                name="gprofile_event_guest_type_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["event_type", "status", "detected_at"], name="gprofile_event_flow_idx"),
+            models.Index(fields=["source", "source_ref"], name="gprofile_event_source_idx"),
+        ]
+
+    def __str__(self):
+        return f"guest={self.guest_id} event={self.event_type} status={self.status}"
+
+
 class CouponVtelemaxSyncQueue(models.Model):
     """
     Очередь отправки событий по купонам из SAGUR в vtelemax.

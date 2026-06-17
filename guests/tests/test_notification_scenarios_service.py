@@ -11,9 +11,10 @@ from unittest.mock import patch
 from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
-from guests.models import MessageTemplate, NotificationScenario
+from guests.models import BotProfile, Guest, GuestBotBinding, MessageTemplate, NotificationScenario
 from guests.services import notification_scenarios
 from guests.services.notification_registry import (
+    SCENARIO_CODE_FILL_BIRTHDAY_REQUEST,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_INACTIVE_7D,
     SCENARIO_CODE_MEAT_LOVER_30D,
@@ -321,6 +322,62 @@ class NotificationScenarioRunnerBranchesTests(TestCase):
             limit_per_scenario=100,
         )
         self.assertEqual(result, {})
+
+    def test_run_scheduled_fill_birthday_request_scenario_uses_only_sendable_missing_birthdate_guests(self):
+        scenario = self._prepare_schedule_scenario(SCENARIO_CODE_FILL_BIRTHDAY_REQUEST)
+        bot = BotProfile.objects.create(
+            code="birthday-request-tg",
+            name="Birthday request Telegram",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        scenario.bot_profiles.set([bot])
+        guest_without_birthdate = Guest.objects.create(
+            phone="+79990000101",
+            first_name="NoBirthdate",
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        guest_with_birthdate = Guest.objects.create(
+            phone="+79990000102",
+            first_name="HasBirthdate",
+            birthdate=timezone.localdate(),
+            created_at=timezone.now(),
+            updated_at=timezone.now(),
+        )
+        for guest in (guest_without_birthdate, guest_with_birthdate):
+            GuestBotBinding.objects.create(
+                guest=guest,
+                bot=bot,
+                external_chat_id=f"chat-{guest.id}",
+                external_user_id=f"user-{guest.id}",
+                is_active=True,
+                is_opt_in=True,
+                is_stop_sending=False,
+                is_primary=True,
+            )
+
+        current_now = timezone.now()
+        with patch(
+            "guests.services.notification_scenarios.enqueue_notification_event_from_scenario",
+            return_value=1,
+        ) as mocked_enqueue:
+            stat = notification_scenarios.run_scheduled_fill_birthday_request_scenario(
+                scenario_code=scenario.code,
+                limit_per_scenario=100,
+                now=current_now,
+            )
+
+        self.assertEqual(stat.scanned_guests, 1)
+        self.assertEqual(stat.matched_guests, 1)
+        self.assertEqual(stat.created_tasks, 1)
+        mocked_enqueue.assert_called_once()
+        self.assertEqual(mocked_enqueue.call_args.kwargs["guest"], guest_without_birthdate)
+        bucket = notification_scenarios._local_bucket_date_iso(scenario=scenario, now=current_now)
+        self.assertEqual(
+            mocked_enqueue.call_args.kwargs["dedupe_key"],
+            f"{scenario.code}:{guest_without_birthdate.id}:{bucket}",
+        )
 
     def test_run_scheduled_meat_lover_scenario_creates_tasks_from_window_metrics(self):
         """

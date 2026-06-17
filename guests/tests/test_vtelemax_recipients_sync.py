@@ -4,7 +4,13 @@ from datetime import date
 from django.test import TestCase
 from django.utils import timezone
 
-from guests.models import BotProfile, Guest, GuestBotBinding, VtelemaxRecipientChannel
+from guests.models import (
+    BotProfile,
+    Guest,
+    GuestBotBinding,
+    GuestProfileCompletionEvent,
+    VtelemaxRecipientChannel,
+)
 from guests.services.vtelemax_recipients_sync import VtelemaxRecipientsApplyService
 
 
@@ -173,10 +179,23 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         )
 
         self.assertEqual(stats.rows_total, 1)
+        self.assertEqual(stats.rows_birthdate_events_created, 1)
         self.guest.refresh_from_db()
         self.assertEqual(self.guest.birthdate, date(1991, 5, 17))
+        event = GuestProfileCompletionEvent.objects.get(
+            guest=self.guest,
+            event_type=GuestProfileCompletionEvent.EventType.BIRTHDATE_FILLED,
+        )
+        self.assertEqual(event.profile_value, {"birthdate": "1991-05-17"})
 
-    def test_create_missing_guest_uses_birthdate_from_profile_payload(self):
+        second = service.apply_items(
+            items=[self._build_item(birthdate="1991-05-17")],
+            dry_run=False,
+        )
+        self.assertEqual(second.rows_birthdate_events_created, 0)
+        self.assertEqual(GuestProfileCompletionEvent.objects.filter(guest=self.guest).count(), 1)
+
+    def test_create_missing_guest_uses_birthdate_without_completion_event(self):
         service = VtelemaxRecipientsApplyService(
             bot_code_telegram="tg-main",
             create_missing_guests=True,
@@ -195,8 +214,16 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         )
 
         self.assertEqual(stats.rows_total, 1)
+        self.assertEqual(stats.rows_birthdate_events_created, 0)
         guest = Guest.objects.get(phone="+79990000011")
         self.assertEqual(guest.birthdate, date(1988, 9, 3))
+        self.assertEqual(
+            GuestProfileCompletionEvent.objects.filter(
+                guest=guest,
+                event_type=GuestProfileCompletionEvent.EventType.BIRTHDATE_FILLED,
+            ).count(),
+            0,
+        )
 
     def test_create_missing_guest_requires_valid_channel_flags(self):
         service = VtelemaxRecipientsApplyService(

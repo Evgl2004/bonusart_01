@@ -19,6 +19,7 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestBotBinding,
+    GuestProfileCompletionEvent,
     GuestRestaurantDailyOrderFact,
     NotificationEvent,
     NotificationScenario,
@@ -29,6 +30,7 @@ from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon
 from guests.services.notification_events import ScenarioNotConfiguredError, create_notification_event
 from guests.services.notification_registry import (
     SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
 )
 from guests.services.notification_scenarios import _extract_inactive_days
@@ -39,6 +41,7 @@ from guests.services.template_render import render_message_for_guest
 SUPPORTED_COUPON_AUTOSCENARIOS = {
     SCENARIO_CODE_INACTIVE_30D_COUPON,
     SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
 }
 DEFAULT_PREVIEW_SCAN_LIMIT = 5000
 DEFAULT_PILOT_PHONE_E164 = "+79129923438"
@@ -1067,6 +1070,22 @@ def _create_coupon_autoscenario_run_from_plan(
                 status=CouponAutoscenarioAssignment.Status.RESERVED,
                 vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
             )
+            profile_event_id = _profile_completion_event_id_from_trigger_key(item.trigger_key)
+            if profile_event_id is not None:
+                updated_events = GuestProfileCompletionEvent.objects.filter(
+                    id=profile_event_id,
+                    event_type=GuestProfileCompletionEvent.EventType.BIRTHDATE_FILLED,
+                    status=GuestProfileCompletionEvent.Status.NEW,
+                    coupon_assignment__isnull=True,
+                ).update(
+                    coupon_assignment=assignment,
+                    status=GuestProfileCompletionEvent.Status.COUPON_RESERVED,
+                    updated_at=current_now,
+                )
+                if updated_events != 1:
+                    raise CouponAutoscenarioPreviewError(
+                        f"План устарел: событие заполнения профиля #{profile_event_id} уже обработано."
+                    )
             created_assignments += 1
 
             coupon.is_active = False
@@ -1487,6 +1506,8 @@ def _append_unmatched_pilot_rows_if_requested(
 ) -> tuple[list[CouponAutoscenarioAudienceRow], int]:
     if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
         return matched_rows, 0
+    if scenario_code == SCENARIO_CODE_FILL_BIRTHDAY_COUPON:
+        return matched_rows, 0
     if not _settings_bool(config.settings, PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS):
         return matched_rows, 0
     if pilot_filter.is_empty:
@@ -1575,6 +1596,13 @@ def _build_autoscenario_candidate_rows(
         )
         return 0, birthday_window_days, scanned_guests, matched_rows
 
+    if scenario.code == SCENARIO_CODE_FILL_BIRTHDAY_COUPON:
+        scanned_guests, matched_rows = _build_birthdate_completion_candidate_rows(
+            scan_limit=scan_limit,
+            now=now,
+        )
+        return 0, 0, scanned_guests, matched_rows
+
     inactive_days = _extract_inactive_days(scenario)
     scanned_guests, matched_rows = _build_candidate_rows(
         inactive_days=inactive_days,
@@ -1582,6 +1610,61 @@ def _build_autoscenario_candidate_rows(
         now=now,
     )
     return inactive_days, 0, scanned_guests, matched_rows
+
+
+def _build_birthdate_completion_candidate_rows(
+    *,
+    scan_limit: int,
+    now: datetime,
+) -> tuple[int, list[CouponAutoscenarioAudienceRow]]:
+    events = list(
+        GuestProfileCompletionEvent.objects.select_related("guest")
+        .filter(
+            event_type=GuestProfileCompletionEvent.EventType.BIRTHDATE_FILLED,
+            status=GuestProfileCompletionEvent.Status.NEW,
+            coupon_assignment__isnull=True,
+            guest__birthdate__isnull=False,
+        )
+        .order_by("detected_at", "id")[: max(1, int(scan_limit))]
+    )
+    guest_ids = [int(event.guest_id) for event in events if event.guest_id]
+    channels_map = _build_sendable_channels_map(guest_ids=guest_ids)
+    last_order_visits = _last_order_visit_at_map(guest_ids=guest_ids)
+
+    local_today = timezone.localtime(now).date()
+    matched_rows: list[CouponAutoscenarioAudienceRow] = []
+    scanned_guests = 0
+    for event in events:
+        scanned_guests += 1
+        guest = event.guest
+        if guest is None or guest.birthdate is None:
+            continue
+        trigger_date = timezone.localtime(event.detected_at).date()
+        birthday_date = _nearest_birthday_in_window(
+            birthdate=guest.birthdate,
+            window_start=local_today,
+            window_days=366,
+        )
+        days_until_birthday = (
+            max(0, int((birthday_date - local_today).days))
+            if birthday_date is not None
+            else None
+        )
+        matched_rows.append(
+            CouponAutoscenarioAudienceRow(
+                guest_id=int(guest.id),
+                phone=str(guest.phone or ""),
+                first_name=str(guest.first_name or ""),
+                last_name=str(guest.last_name or ""),
+                last_visit_at=last_order_visits.get(int(guest.id)),
+                sendable_channels=tuple(channels_map.get(int(guest.id), ())),
+                days_until_birthday=days_until_birthday,
+                birthday_date=birthday_date,
+                trigger_key=_profile_completion_trigger_key(event_id=int(event.id)),
+                trigger_date=trigger_date,
+            )
+        )
+    return scanned_guests, matched_rows
 
 
 def _build_candidate_rows(
@@ -1716,6 +1799,22 @@ def _birthday_trigger_key(*, trigger_date: date | None) -> str:
     if trigger_date is None:
         return ""
     return f"birthday:{int(trigger_date.year)}"
+
+
+def _profile_completion_trigger_key(*, event_id: int) -> str:
+    return f"profile_event:{int(event_id)}"
+
+
+def _profile_completion_event_id_from_trigger_key(trigger_key: str | None) -> int | None:
+    safe_key = str(trigger_key or "").strip()
+    prefix = "profile_event:"
+    if not safe_key.startswith(prefix):
+        return None
+    try:
+        event_id = int(safe_key[len(prefix) :])
+    except (TypeError, ValueError):
+        return None
+    return event_id if event_id > 0 else None
 
 
 def _build_forced_pilot_birthday_context(

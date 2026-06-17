@@ -151,6 +151,7 @@ class Command(BaseCommand):
                 totals.rows_binding_created += page_stats.rows_binding_created
                 totals.rows_binding_updated += page_stats.rows_binding_updated
                 totals.rows_binding_disabled += page_stats.rows_binding_disabled
+                totals.rows_birthdate_events_created += page_stats.rows_birthdate_events_created
 
                 if page.max_seen_updated_at and (
                     max_seen_updated_at is None or page.max_seen_updated_at > max_seen_updated_at
@@ -215,7 +216,8 @@ class Command(BaseCommand):
                 f"guest_unresolved={totals.rows_guest_unresolved} "
                 f"binding_created={totals.rows_binding_created} "
                 f"binding_updated={totals.rows_binding_updated} "
-                f"binding_disabled={totals.rows_binding_disabled}"
+                f"binding_disabled={totals.rows_binding_disabled} "
+                f"birthdate_events_created={totals.rows_birthdate_events_created}"
             )
         )
         if mode == "delta":

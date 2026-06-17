@@ -17,6 +17,7 @@ from guests.models import (
     VtelemaxRecipientChannel,
 )
 from guests.services.guest_resolution import resolve_or_create_guest
+from guests.services.profile_completion_events import record_birthdate_filled_event
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,7 @@ class VtelemaxApplyStats:
     rows_binding_created: int = 0
     rows_binding_updated: int = 0
     rows_binding_disabled: int = 0
+    rows_birthdate_events_created: int = 0
 
 
 class VtelemaxRecipientsApplyService:
@@ -184,6 +186,7 @@ class VtelemaxRecipientsApplyService:
             stats.rows_binding_created += row_result.rows_binding_created
             stats.rows_binding_updated += row_result.rows_binding_updated
             stats.rows_binding_disabled += row_result.rows_binding_disabled
+            stats.rows_birthdate_events_created += row_result.rows_birthdate_events_created
         return stats
 
     def _apply_one(
@@ -251,7 +254,7 @@ class VtelemaxRecipientsApplyService:
                 default=None,
             )
 
-        guest = self._resolve_guest_by_phone(
+        guest, birthdate_filled_now = self._resolve_guest_by_phone(
             phone_e164=phone_e164,
             first_name=first_name,
             last_name=last_name,
@@ -330,6 +333,27 @@ class VtelemaxRecipientsApplyService:
                 channel.guest = guest
                 channel.guest_binding = binding
                 channel.save(update_fields=["guest", "guest_binding", "last_synced_at"])
+
+            if birthdate_filled_now and guest is not None:
+                _, event_created = record_birthdate_filled_event(
+                    guest=guest,
+                    birthdate=birthdate,
+                    source="vtelemax",
+                    source_ref=f"{person_id}:{platform}",
+                    payload={
+                        "person_id": str(person_id),
+                        "platform": platform,
+                        "phone_e164": phone_e164,
+                        "effective_updated_at": (
+                            effective_updated_at.isoformat()
+                            if effective_updated_at
+                            else None
+                        ),
+                    },
+                    detected_at=dj_timezone.now(),
+                )
+                if event_created:
+                    stats.rows_birthdate_events_created += 1
 
         return stats
 
@@ -437,16 +461,18 @@ class VtelemaxRecipientsApplyService:
         birthdate: date | None,
         allow_guest_create_by_channel: bool,
         dry_run: bool,
-    ) -> Guest | None:
+    ) -> tuple[Guest | None, bool]:
         phone10 = _phone10_from_phone(phone_e164)
         if not phone10:
-            return None
+            return None, False
 
         self._ensure_guest_map()
         guest = self._guest_by_phone10.get(phone10)
         if guest is not None:
+            birthdate_was_empty = guest.birthdate in (None, "")
+            updated_fields: list[str] = []
             if not dry_run:
-                self._fill_guest_profile_if_empty(
+                updated_fields = self._fill_guest_profile_if_empty(
                     guest=guest,
                     first_name=first_name,
                     last_name=last_name,
@@ -454,7 +480,8 @@ class VtelemaxRecipientsApplyService:
                     gender=gender,
                     birthdate=birthdate,
                 )
-            return guest
+            birthdate_filled_now = birthdate_was_empty and "birthdate" in updated_fields
+            return guest, birthdate_filled_now
 
         resolved_existing = resolve_or_create_guest(
             phone=phone_e164,
@@ -468,10 +495,10 @@ class VtelemaxRecipientsApplyService:
         )
         if resolved_existing.guest is not None:
             self._guest_by_phone10[phone10] = resolved_existing.guest
-            return resolved_existing.guest
+            return resolved_existing.guest, False
 
         if not self.create_missing_guests or dry_run or not allow_guest_create_by_channel:
-            return None
+            return None, False
 
         resolved_created = resolve_or_create_guest(
             phone=phone_e164 or phone10,
@@ -485,8 +512,8 @@ class VtelemaxRecipientsApplyService:
         )
         if resolved_created.guest is not None:
             self._guest_by_phone10[phone10] = resolved_created.guest
-            return resolved_created.guest
-        return None
+            return resolved_created.guest, False
+        return None, False
 
     def _ensure_guest_map(self) -> None:
         if self._guest_map_built:
@@ -514,7 +541,7 @@ class VtelemaxRecipientsApplyService:
         email: str | None,
         gender: str | None,
         birthdate: date | None,
-    ) -> None:
+    ) -> list[str]:
         updated_fields: list[str] = []
         candidates = (
             ("first_name", first_name),
@@ -531,7 +558,8 @@ class VtelemaxRecipientsApplyService:
                 updated_fields.append(field_name)
 
         if not updated_fields:
-            return
+            return []
 
         guest.updated_at = dj_timezone.now()
         guest.save(update_fields=updated_fields + ["updated_at"])
+        return updated_fields

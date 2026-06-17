@@ -20,6 +20,7 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestBotBinding,
+    GuestProfileCompletionEvent,
     GuestRestaurantDailyOrderFact,
     Mailing,
     MessageTemplate,
@@ -42,6 +43,7 @@ from guests.services.coupon_autoscenarios import (
 from guests.services.notification_handler_registry import get_registered_schedule_scenario_codes
 from guests.services.notification_registry import (
     SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
 )
 from guests.tasks import run_coupon_autoscenarios_task
@@ -182,6 +184,78 @@ class CouponAutoscenarioPreviewTests(TestCase):
         config.max_active_coupons_per_guest = 1
         config.cooldown_days = 365
         config.settings = {"birthday_preparation_window_days": 7}
+        config.save(
+            update_fields=[
+                "execution_mode",
+                "coupon_series",
+                "venue_code",
+                "venue_name",
+                "coupon_validity_days",
+                "max_recipients_per_run",
+                "max_active_coupons_per_guest",
+                "cooldown_days",
+                "settings",
+                "updated_at",
+            ]
+        )
+        scenario.bot_profiles.set(list(self.bots_by_platform.values()))
+        return scenario, config
+
+    def _prepare_fill_birthday_coupon_autoscenario(self) -> tuple[NotificationScenario, CouponAutomationConfig]:
+        scenario, _ = NotificationScenario.objects.get_or_create(
+            code=SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
+            defaults={
+                "name": "Дата рождения заполнена + купон",
+                "description": "",
+                "is_active": True,
+                "is_system": True,
+                "trigger_type": NotificationScenario.TriggerType.SCHEDULE,
+                "template": self.template,
+                "priority": NotificationScenario.Priority.BULK,
+                "target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "timezone": "Asia/Yekaterinburg",
+                "settings": {"coupon_required": True, "profile_event_type": "birthdate_filled"},
+            },
+        )
+        scenario.is_active = True
+        scenario.trigger_type = NotificationScenario.TriggerType.SCHEDULE
+        scenario.template = self.template
+        scenario.settings = {"coupon_required": True, "profile_event_type": "birthdate_filled"}
+        scenario.timezone = "Asia/Yekaterinburg"
+        scenario.save(
+            update_fields=[
+                "is_active",
+                "trigger_type",
+                "template",
+                "settings",
+                "timezone",
+                "updated_at",
+            ]
+        )
+        config, _ = CouponAutomationConfig.objects.get_or_create(
+            scenario=scenario,
+            defaults={
+                "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "coupon_series": "AUTO_FILL_BIRTHDAY",
+                "venue_code": "__global__",
+                "venue_name": "Вся сеть",
+                "coupon_validity_days": 14,
+                "max_recipients_per_run": 10,
+                "max_active_coupons_per_guest": 1,
+                "cooldown_days": 365,
+                "settings": {"profile_event_type": "birthdate_filled"},
+            },
+        )
+        config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
+        config.coupon_series = "AUTO_FILL_BIRTHDAY"
+        config.venue_code = "__global__"
+        config.venue_name = "Вся сеть"
+        config.coupon_validity_days = 14
+        config.max_recipients_per_run = 10
+        config.max_active_coupons_per_guest = 1
+        config.cooldown_days = 365
+        config.settings = {"profile_event_type": "birthdate_filled"}
         config.save(
             update_fields=[
                 "execution_mode",
@@ -1188,6 +1262,73 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(queue_event.payload_json["days_until_birthday"], 7)
         self.assertEqual(NotificationEvent.objects.count(), 0)
         self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_fill_birthday_coupon_uses_profile_completion_event_once(self):
+        scenario, config = self._prepare_fill_birthday_coupon_autoscenario()
+        config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        config.cooldown_days = 0
+        config.max_recipients_per_run = 1
+        config.save(
+            update_fields=[
+                "execution_mode",
+                "cooldown_days",
+                "max_recipients_per_run",
+                "updated_at",
+            ]
+        )
+        current_now = timezone.make_aware(datetime(2026, 6, 10, 10, 0))
+        guest = self._guest(
+            phone="+79990000148",
+            first_name="FilledBirthdate",
+            birthdate=date(1991, 9, 3),
+        )
+        self._sendable_channel(guest=guest)
+        event = GuestProfileCompletionEvent.objects.create(
+            guest=guest,
+            event_type=GuestProfileCompletionEvent.EventType.BIRTHDATE_FILLED,
+            source=GuestProfileCompletionEvent.Source.VTELEMAX,
+            detected_at=current_now - timedelta(minutes=5),
+            profile_value={"birthdate": "1991-09-03"},
+            status=GuestProfileCompletionEvent.Status.NEW,
+        )
+        coupon = self._available_coupon_for_config(config=config, code="FILL-BDAY-1")
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=scenario.code,
+            scan_limit=20,
+            now=current_now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, guest.id)
+        self.assertEqual(plan.plan_items[0].trigger_key, f"profile_event:{event.id}")
+
+        result = execute_coupon_autoscenario_automatic(
+            scenario_code=scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=current_now,
+        )
+
+        self.assertEqual(result.created_assignments, 1)
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        self.assertEqual(assignment.guest_id, guest.id)
+        self.assertEqual(assignment.coupon_id, coupon.id)
+        self.assertEqual(assignment.trigger_key, f"profile_event:{event.id}")
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.filter(autoscenario_assignment=assignment).count(), 1)
+
+        event.refresh_from_db()
+        self.assertEqual(event.status, GuestProfileCompletionEvent.Status.COUPON_RESERVED)
+        self.assertEqual(event.coupon_assignment_id, assignment.id)
+
+        repeated_plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=scenario.code,
+            scan_limit=20,
+            now=current_now,
+        )
+        self.assertFalse(repeated_plan.can_execute)
+        self.assertEqual(repeated_plan.planned_assignments, 0)
 
     @override_settings(
         COUPON_AUTOSCENARIO_SCHEDULE_ENABLED=True,
