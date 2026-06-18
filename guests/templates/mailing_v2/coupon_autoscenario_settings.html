@@ -68,7 +68,7 @@
     </div>
   </details>
 
-  {% if form.errors or rule_formset.errors or rule_formset.non_form_errors %}
+  {% if form.errors or rule_formset.errors or rule_formset.non_form_errors or fill_birthday_request_form.errors %}
     <div class="alert alert-danger" role="alert">
       <div class="fw-semibold mb-1">Настройки не сохранены.</div>
       <div class="mb-2">
@@ -84,6 +84,16 @@
         {% for error in form.non_field_errors %}
           <li>{{ error }}</li>
         {% endfor %}
+        {% if fill_birthday_request_form %}
+          {% for field in fill_birthday_request_form %}
+            {% for error in field.errors %}
+              <li>Первое сообщение: {{ field.label }}: {{ error }}</li>
+            {% endfor %}
+          {% endfor %}
+          {% for error in fill_birthday_request_form.non_field_errors %}
+            <li>Первое сообщение: {{ error }}</li>
+          {% endfor %}
+        {% endif %}
         {% for error in rule_formset.non_form_errors %}
           <li>{{ error }}</li>
         {% endfor %}
@@ -322,6 +332,117 @@
           в каждый выбранный бот, где у гостя есть активная привязка и разрешение на сообщения.
         </div>
       </details>
+
+      {% if fill_birthday_request_form %}
+        <hr class="my-4">
+
+        <section class="border rounded p-3">
+          <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+            <div>
+              <h2 class="h6 mb-1">Первое сообщение: просьба заполнить дату рождения</h2>
+              <div class="text-muted small">
+                {{ fill_birthday_request_scenario.code }} · {{ fill_birthday_request_scenario.name }}
+              </div>
+            </div>
+            {% if fill_birthday_request_template %}
+              <div class="d-flex gap-2 flex-wrap">
+                <a class="btn btn-outline-secondary btn-sm" href="{{ fill_birthday_request_template_detail_url }}" target="_blank" rel="noopener">
+                  Открыть шаблон
+                </a>
+                <a class="btn btn-outline-primary btn-sm" href="{{ fill_birthday_request_template_edit_url }}" target="_blank" rel="noopener">
+                  Редактировать шаблон
+                </a>
+              </div>
+            {% endif %}
+          </div>
+
+          {% if fill_birthday_request_template %}
+            <div class="mb-3">
+              <div class="fw-semibold">{{ fill_birthday_request_template_display_name|default:fill_birthday_request_template.name }}</div>
+              {% if fill_birthday_request_template_technical_name %}
+                <div class="text-muted small mb-2">{{ fill_birthday_request_template_technical_name }}</div>
+              {% endif %}
+              <div class="border rounded bg-light p-2 small" style="white-space: pre-wrap;">{{ fill_birthday_request_template.message_text }}</div>
+            </div>
+          {% endif %}
+
+          <div class="row g-3">
+            <div class="col-12 col-lg-3">
+              <div class="form-check mt-4">
+                {{ fill_birthday_request_form.is_active }}
+                {{ fill_birthday_request_form.is_active.label_tag }}
+              </div>
+              {% if fill_birthday_request_form.is_active.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.is_active.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-lg-3">
+              {{ fill_birthday_request_form.request_repeat_days.label_tag }}
+              {{ fill_birthday_request_form.request_repeat_days }}
+              {% if fill_birthday_request_form.request_repeat_days.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.request_repeat_days.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-lg-3">
+              {{ fill_birthday_request_form.distribution_mode.label_tag }}
+              {{ fill_birthday_request_form.distribution_mode }}
+              {% if fill_birthday_request_form.distribution_mode.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.distribution_mode.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-lg-3">
+              {{ fill_birthday_request_form.target_mode.label_tag }}
+              {{ fill_birthday_request_form.target_mode }}
+              {% if fill_birthday_request_form.target_mode.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.target_mode.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-lg-3">
+              {{ fill_birthday_request_form.send_window_begin.label_tag }}
+              {{ fill_birthday_request_form.send_window_begin }}
+              {% if fill_birthday_request_form.send_window_begin.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.send_window_begin.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-lg-3">
+              {{ fill_birthday_request_form.send_window_end.label_tag }}
+              {{ fill_birthday_request_form.send_window_end }}
+              {% if fill_birthday_request_form.send_window_end.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.send_window_end.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-lg-3">
+              {{ fill_birthday_request_form.timezone.label_tag }}
+              {{ fill_birthday_request_form.timezone }}
+              {% if fill_birthday_request_form.timezone.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.timezone.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12">
+              <div class="mail-label-row">
+                <label class="form-label mb-0">{{ fill_birthday_request_form.bot_profiles.label }}</label>
+              </div>
+              <div class="border rounded p-3">
+                <div class="mail-bot-actions">
+                  <button type="button" class="btn btn-outline-primary btn-sm" id="request-bot-select-all">Выбрать всё</button>
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="request-bot-clear-all">Снять всё</button>
+                </div>
+                <div class="mail-bot-choice-list" id="request-bot-choice-list">
+                  {% for checkbox in fill_birthday_request_form.bot_profiles %}
+                    <div class="form-check">
+                      {{ checkbox.tag }}
+                      <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+                    </div>
+                  {% endfor %}
+                </div>
+              </div>
+              {% if fill_birthday_request_form.bot_profiles.errors %}
+                <div class="text-danger small mt-1">{{ fill_birthday_request_form.bot_profiles.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </section>
+      {% endif %}
 
       <hr class="my-4">
 
@@ -606,13 +727,17 @@
       }
     });
 
-    var botChoiceList = document.getElementById("coupon-bot-choice-list");
-    var selectAllButton = document.getElementById("coupon-bot-select-all");
-    var clearAllButton = document.getElementById("coupon-bot-clear-all");
+    var connectBotSelectionButtons = function (listId, selectAllId, clearAllId) {
+      var botChoiceList = document.getElementById(listId);
+      var selectAllButton = document.getElementById(selectAllId);
+      var clearAllButton = document.getElementById(clearAllId);
 
-    if (botChoiceList && selectAllButton && clearAllButton) {
+      if (!botChoiceList || !selectAllButton || !clearAllButton) {
+        return;
+      }
+
       var setBotSelection = function (checked) {
-        var inputs = botChoiceList.querySelectorAll('input[type="checkbox"][name="notification_bot_profiles"]');
+        var inputs = botChoiceList.querySelectorAll('input[type="checkbox"]');
         inputs.forEach(function (input) {
           input.checked = checked;
         });
@@ -625,7 +750,10 @@
       clearAllButton.addEventListener("click", function () {
         setBotSelection(false);
       });
-    }
+    };
+
+    connectBotSelectionButtons("coupon-bot-choice-list", "coupon-bot-select-all", "coupon-bot-clear-all");
+    connectBotSelectionButtons("request-bot-choice-list", "request-bot-select-all", "request-bot-clear-all");
 
     if (window.bootstrap && window.bootstrap.Tooltip) {
       var tooltipNodes = document.querySelectorAll('[data-bs-toggle="tooltip"]');

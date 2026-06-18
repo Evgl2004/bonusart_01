@@ -28,6 +28,7 @@ from django.views.generic import CreateView, DetailView, TemplateView, UpdateVie
 from guests.forms import (
     CouponAutomationConfigForm,
     CouponAutomationRuleFormSet,
+    FillBirthdayRequestScenarioForm,
     MailingForm,
     MessageTemplateForm,
 )
@@ -59,7 +60,11 @@ from guests.services.coupon_autoscenarios import (
     cleanup_coupon_autoscenario_pilot_assignment,
     execute_coupon_autoscenario_pilot,
 )
-from guests.services.notification_registry import SCENARIO_CODE_BIRTHDAY_COUPON
+from guests.services.notification_registry import (
+    SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_REQUEST,
+)
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
 logger = logging.getLogger(__name__)
@@ -2040,23 +2045,50 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             prefix="coupon_rules",
         )
 
+    def _get_fill_birthday_request_scenario(self):
+        scenario = getattr(self.object, "scenario", None)
+        if scenario is None or str(scenario.code or "").strip() != SCENARIO_CODE_FILL_BIRTHDAY_COUPON:
+            return None
+        return (
+            NotificationScenario.objects.select_related("template")
+            .prefetch_related("bot_profiles")
+            .filter(code=SCENARIO_CODE_FILL_BIRTHDAY_REQUEST)
+            .first()
+        )
+
+    def _build_fill_birthday_request_form(self, *, data=None):
+        request_scenario = self._get_fill_birthday_request_scenario()
+        if request_scenario is None:
+            return None
+        return FillBirthdayRequestScenarioForm(
+            data=data,
+            instance=request_scenario,
+            prefix="fill_birthday_request",
+        )
+
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
         form = self.get_form()
         rule_formset = self._build_rule_formset(data=request.POST)
-        if form.is_valid() and rule_formset.is_valid():
-            return self.forms_valid(form, rule_formset)
-        return self.forms_invalid(form, rule_formset)
+        fill_birthday_request_form = self._build_fill_birthday_request_form(data=request.POST)
+        request_form_is_valid = (
+            fill_birthday_request_form is None or fill_birthday_request_form.is_valid()
+        )
+        if form.is_valid() and rule_formset.is_valid() and request_form_is_valid:
+            return self.forms_valid(form, rule_formset, fill_birthday_request_form)
+        return self.forms_invalid(form, rule_formset, fill_birthday_request_form)
 
-    def forms_valid(self, form, rule_formset):
+    def forms_valid(self, form, rule_formset, fill_birthday_request_form=None):
         with transaction.atomic():
             self.object = form.save()
             rule_formset.instance = self.object
             rule_formset.save()
+            if fill_birthday_request_form is not None:
+                fill_birthday_request_form.save()
         messages.success(self.request, "Настройки и купонные правила автосценария сохранены.")
         return redirect(self.get_success_url())
 
-    def forms_invalid(self, form, rule_formset):
+    def forms_invalid(self, form, rule_formset, fill_birthday_request_form=None):
         messages.error(
             self.request,
             "Настройки не сохранены. Исправьте ошибки в форме и повторите сохранение.",
@@ -2065,6 +2097,7 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             self.get_context_data(
                 form=form,
                 rule_formset=rule_formset,
+                fill_birthday_request_form=fill_birthday_request_form,
             )
         )
 
@@ -2087,6 +2120,33 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             self.object.coupon_rules.order_by("priority", "id")
         )
         context.setdefault("rule_formset", self._build_rule_formset())
+        fill_birthday_request_form = context.get("fill_birthday_request_form")
+        if fill_birthday_request_form is None:
+            fill_birthday_request_form = self._build_fill_birthday_request_form()
+        context["fill_birthday_request_form"] = fill_birthday_request_form
+        request_scenario = (
+            fill_birthday_request_form.instance
+            if fill_birthday_request_form is not None
+            else None
+        )
+        context["fill_birthday_request_scenario"] = request_scenario
+        request_template = getattr(request_scenario, "template", None)
+        request_template_display_name, request_template_technical_name = _resolve_template_title(
+            request_template
+        )
+        context["fill_birthday_request_template"] = request_template
+        context["fill_birthday_request_template_display_name"] = request_template_display_name
+        context["fill_birthday_request_template_technical_name"] = request_template_technical_name
+        context["fill_birthday_request_template_detail_url"] = (
+            reverse("mailings_v2_templates_detail", kwargs={"pk": request_template.pk})
+            if request_template
+            else ""
+        )
+        context["fill_birthday_request_template_edit_url"] = (
+            reverse("mailings_v2_templates_edit", kwargs={"pk": request_template.pk})
+            if request_template
+            else ""
+        )
         context["execution_state_label"] = _coupon_autoscenario_state_label(
             self.object.execution_mode
         )

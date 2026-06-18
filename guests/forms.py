@@ -595,6 +595,111 @@ class CouponAutomationConfigForm(forms.ModelForm):
         return instance
 
 
+class FillBirthdayRequestScenarioForm(forms.ModelForm):
+    request_repeat_days = forms.IntegerField(
+        label="Пауза перед повторной просьбой, дней",
+        required=True,
+        min_value=1,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+    )
+    bot_profiles = forms.ModelMultipleChoiceField(
+        label="Разрешённые боты",
+        required=False,
+        queryset=BotProfile.objects.none(),
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
+    )
+
+    class Meta:
+        model = NotificationScenario
+        fields = [
+            "is_active",
+            "distribution_mode",
+            "target_mode",
+            "send_window_begin",
+            "send_window_end",
+            "timezone",
+        ]
+        widgets = {
+            "is_active": forms.CheckboxInput(attrs={"class": "form-check-input"}),
+            "distribution_mode": forms.Select(attrs={"class": "form-select"}),
+            "target_mode": forms.Select(attrs={"class": "form-select"}),
+            "send_window_begin": forms.TimeInput(
+                format="%H:%M",
+                attrs={"class": "form-control", "type": "time"},
+            ),
+            "send_window_end": forms.TimeInput(
+                format="%H:%M",
+                attrs={"class": "form-control", "type": "time"},
+            ),
+            "timezone": forms.TextInput(
+                attrs={"class": "form-control", "placeholder": "Asia/Yekaterinburg"}
+            ),
+        }
+        labels = {
+            "is_active": "Включить первое сообщение",
+            "distribution_mode": "Режим отправки сообщений",
+            "target_mode": "Куда отправлять сообщение",
+            "send_window_begin": "Начало окна отправки",
+            "send_window_end": "Конец окна отправки",
+            "timezone": "Часовой пояс отправки",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        settings = self.instance.settings if isinstance(self.instance.settings, dict) else {}
+        self.fields["send_window_begin"].input_formats = ["%H:%M"]
+        self.fields["send_window_end"].input_formats = ["%H:%M"]
+        self.fields["bot_profiles"].queryset = BotProfile.objects.filter(is_active=True).order_by(
+            "provider_type",
+            "name",
+            "id",
+        )
+        try:
+            self.initial["request_repeat_days"] = max(1, int(settings.get("request_repeat_days") or 30))
+        except (TypeError, ValueError):
+            self.initial["request_repeat_days"] = 30
+        self.initial["bot_profiles"] = list(
+            self.instance.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+        )
+        if self.instance.send_window_begin:
+            self.initial["send_window_begin"] = self.instance.send_window_begin.strftime("%H:%M")
+        if self.instance.send_window_end:
+            self.initial["send_window_end"] = self.instance.send_window_end.strftime("%H:%M")
+
+    def clean(self):
+        cleaned_data = super().clean()
+        distribution_mode = (
+            cleaned_data.get("distribution_mode")
+            or self.instance.distribution_mode
+            or NotificationScenario.DistributionMode.IMMEDIATE
+        )
+        if distribution_mode == NotificationScenario.DistributionMode.UNIFORM:
+            if not cleaned_data.get("send_window_begin"):
+                self.add_error("send_window_begin", "Укажите начало окна отправки.")
+            if not cleaned_data.get("send_window_end"):
+                self.add_error("send_window_end", "Укажите конец окна отправки.")
+
+        if cleaned_data.get("is_active") and not cleaned_data.get("bot_profiles"):
+            self.add_error("bot_profiles", "Выберите хотя бы один бот для первого сообщения.")
+
+        if not str(cleaned_data.get("timezone") or "").strip():
+            cleaned_data["timezone"] = "Asia/Yekaterinburg"
+
+        return cleaned_data
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        settings = dict(instance.settings or {})
+        settings["request_repeat_days"] = int(self.cleaned_data.get("request_repeat_days") or 30)
+        instance.settings = settings
+
+        if commit:
+            instance.full_clean()
+            instance.save()
+            instance.bot_profiles.set(self.cleaned_data.get("bot_profiles") or [])
+        return instance
+
+
 class CouponAutomationRuleForm(forms.ModelForm):
     """
     Строка пользовательского правила выбора купонной серии для автосценария.

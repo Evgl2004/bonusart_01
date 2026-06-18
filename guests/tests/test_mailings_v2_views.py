@@ -2112,6 +2112,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Каналы отправки сообщений")
         self.assertContains(response, "Куда отправлять сообщение")
         self.assertContains(response, "Разрешённые боты")
+        self.assertNotContains(response, "Первое сообщение: просьба заполнить дату рождения")
         self.assertContains(response, "Telegram main")
         self.assertContains(response, "Сразу")
         self.assertContains(response, "Если “Текст карточки купона” оставить пустым")
@@ -2191,6 +2192,132 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(rules[1].venue_code, "__global__")
         self.assertEqual(rules[1].venue_name, "Вся сеть")
         self.assertEqual(rules[1].coupon_series, "AUTO_GLOBAL")
+        self.assertEqual(DispatchTask.objects.count(), 0)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_fill_birthday_coupon_settings_updates_request_scenario_block(self):
+        """
+        Для сценария "дата рождения заполнена + купон" та же страница настраивает
+        отдельное первое сообщение с просьбой заполнить дату рождения.
+        """
+        request_template = MessageTemplate.objects.create(
+            name="SYSTEM_FILL_BIRTHDAY_REQUEST_TEMPLATE",
+            description="Запрос даты рождения",
+            message_text="Укажите дату рождения в боте.",
+            is_active=True,
+        )
+        coupon_template = MessageTemplate.objects.create(
+            name="SYSTEM_FILL_BIRTHDAY_COUPON_TEMPLATE",
+            description="Купон за дату рождения",
+            message_text="Спасибо, дарим купон {coupon_code}.",
+            is_active=True,
+        )
+        request_scenario, _ = NotificationScenario.objects.update_or_create(
+            code="fill_birthday_request",
+            defaults={
+                "name": "Системный сценарий: заполнить дату рождения",
+                "template": request_template,
+                "trigger_type": NotificationScenario.TriggerType.SCHEDULE,
+                "priority": NotificationScenario.Priority.NORMAL,
+                "target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "send_window_begin": time(9, 0),
+                "send_window_end": time(21, 0),
+                "timezone": "Asia/Yekaterinburg",
+                "is_active": False,
+                "is_system": True,
+                "settings": {"request_repeat_days": 30},
+            },
+        )
+        request_scenario.bot_profiles.set([])
+        coupon_scenario, _ = NotificationScenario.objects.update_or_create(
+            code="fill_birthday_coupon",
+            defaults={
+                "name": "Системный сценарий: дата рождения заполнена + купон",
+                "template": coupon_template,
+                "trigger_type": NotificationScenario.TriggerType.SCHEDULE,
+                "priority": NotificationScenario.Priority.NORMAL,
+                "target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "send_window_begin": time(9, 0),
+                "send_window_end": time(21, 0),
+                "timezone": "Asia/Yekaterinburg",
+                "is_active": False,
+                "is_system": True,
+            },
+        )
+        coupon_scenario.bot_profiles.add(self.bot)
+        config, _ = CouponAutomationConfig.objects.update_or_create(
+            scenario=coupon_scenario,
+            defaults={
+                "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "coupon_series": "AUTO_FILL_BIRTHDAY",
+                "venue_code": "",
+                "venue_name": "",
+                "coupon_validity_days": 14,
+                "max_recipients_per_run": 100,
+                "cooldown_days": 365,
+                "settings": {},
+            },
+        )
+
+        url = reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk})
+        response = self.client.get(url, secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Первое сообщение: просьба заполнить дату рождения")
+        self.assertContains(response, "Укажите дату рождения в боте.")
+        self.assertContains(response, "Пауза перед повторной просьбой")
+
+        response = self.client.post(
+            url,
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "venue_selection_mode": CouponAutomationConfig.VenueSelectionMode.LAST_ORDER,
+                "coupon_series": "AUTO_FILL_BIRTHDAY",
+                "venue_code": "",
+                "coupon_validity_days": "14",
+                "max_recipients_per_run": "100",
+                "cooldown_days": "365",
+                "pilot_phones": "",
+                "min_order_amount": "",
+                "iikocard_action_note": "",
+                "coupon_promo_text_template": "",
+                "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "notification_bot_profiles": [str(self.bot.id)],
+                "notification_send_window_begin": "10:00",
+                "notification_send_window_end": "20:00",
+                "notification_timezone": "Asia/Yekaterinburg",
+                "fill_birthday_request-is_active": "on",
+                "fill_birthday_request-request_repeat_days": "15",
+                "fill_birthday_request-distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "fill_birthday_request-target_mode": NotificationScenario.TargetMode.ALL_BOTS,
+                "fill_birthday_request-send_window_begin": "11:00",
+                "fill_birthday_request-send_window_end": "18:00",
+                "fill_birthday_request-timezone": "Asia/Yekaterinburg",
+                "fill_birthday_request-bot_profiles": [str(self.bot.id)],
+                "coupon_rules-TOTAL_FORMS": "0",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        coupon_scenario.refresh_from_db()
+        request_scenario.refresh_from_db()
+        self.assertEqual(coupon_scenario.send_window_begin, time(10, 0))
+        self.assertEqual(coupon_scenario.send_window_end, time(20, 0))
+        self.assertFalse(coupon_scenario.is_active)
+        self.assertTrue(request_scenario.is_active)
+        self.assertEqual(request_scenario.distribution_mode, NotificationScenario.DistributionMode.UNIFORM)
+        self.assertEqual(request_scenario.target_mode, NotificationScenario.TargetMode.ALL_BOTS)
+        self.assertEqual(request_scenario.send_window_begin, time(11, 0))
+        self.assertEqual(request_scenario.send_window_end, time(18, 0))
+        self.assertEqual(request_scenario.settings["request_repeat_days"], 15)
+        self.assertEqual(list(request_scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
 
