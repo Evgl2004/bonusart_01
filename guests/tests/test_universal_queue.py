@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import signal
+import uuid
 from datetime import timedelta
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -22,8 +23,18 @@ from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 
-from guests.models import BotProfile, DispatchTask, Guest, GuestBotBinding, Mailing, MailingGuest, MessageTemplate
+from guests.models import (
+    BotProfile,
+    DispatchTask,
+    Guest,
+    GuestBotBinding,
+    Mailing,
+    MailingGuest,
+    MessageTemplate,
+    VtelemaxRecipientChannel,
+)
 from guests.services.universal_queue.dispatcher import UniversalTaskDispatcher
+from guests.services.universal_queue.mailing_producer import enqueue_mailing_rows_as_dispatch_tasks
 from guests.services.universal_queue.maintenance import UniversalQueueMaintenanceService
 from guests.services.universal_queue.provider_clients import (
     MaxAsyncSender,
@@ -576,6 +587,71 @@ class UniversalQueueMaintenanceTests(TestCase):
         self.assertEqual(snapshot.db_status_counts[DispatchTask.Status.PENDING], 1)
         self.assertEqual(snapshot.db_status_counts[DispatchTask.Status.QUEUED], 1)
         self.assertEqual(snapshot.db_status_counts[DispatchTask.Status.DONE], 1)
+
+
+class MailingProducerLegacyTelegramTests(TestCase):
+    """
+    Проверяем постановку обычной рассылки для legacy Telegram-гостей.
+    """
+
+    def test_enqueue_mailing_row_uses_legacy_telegram_channel_without_guest_binding(self):
+        now = timezone.now()
+        guest = Guest.objects.create(phone="+79990007777", first_name="Legacy")
+        bot = BotProfile.objects.create(
+            code="legacy_tg_bot",
+            name="Legacy Telegram",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        VtelemaxRecipientChannel.objects.create(
+            person_id=uuid.uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164=guest.phone,
+            external_id="legacy-chat-7777",
+            is_registered=True,
+            notifications_allowed=True,
+            guest=guest,
+        )
+        template = MessageTemplate.objects.create(
+            name="legacy mailing template",
+            message_text="Тест legacy",
+            is_active=True,
+        )
+        mailing = Mailing.objects.create(
+            name="legacy mailing",
+            template=template,
+            scheduled_date=now.date(),
+            scheduled_time_begin=now,
+            scheduled_time_end=now + timedelta(hours=1),
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            send_window_begin=now.time().replace(second=0, microsecond=0),
+            send_window_end=(now + timedelta(hours=1)).time().replace(second=0, microsecond=0),
+            target_mode=Mailing.TargetMode.PRIMARY_ONLY,
+            queue_priority=Mailing.QueuePriority.BULK,
+        )
+        mailing.bot_profiles.add(bot)
+        row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            text_mailing_list="Сообщение legacy",
+            scheduled_datetime=now,
+            status=MailingGuest.Status.PLANNED,
+            created_at=now,
+        )
+
+        summary = enqueue_mailing_rows_as_dispatch_tasks(mailing, [row], now=now)
+
+        self.assertEqual(summary.rows_queued, 1)
+        self.assertEqual(summary.tasks_created, 1)
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertEqual(task.provider_type, BotProfile.ProviderType.TELEGRAM)
+        self.assertEqual(task.bot_profile_id, bot.id)
+        self.assertEqual(task.guest_binding_id, None)
+        self.assertEqual(task.external_chat_id, "legacy-chat-7777")
+        self.assertEqual(task.payload.get("channel_mode"), "legacy_vtelemax_channel")
 
 
 class RateLimiterSyncTests(SimpleTestCase):

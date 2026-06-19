@@ -1,14 +1,14 @@
 ﻿"""
 Producer для перевода строк массовой рассылки в универсальную очередь DispatchTask.
 
-Важно: здесь оставлена только целевая модель маршрутизации через
-`GuestBotBinding` и выбранные в рассылке `Mailing.bot_profiles`.
-Legacy fallback на `GuestChannelLink` удалён.
+Важно: маршрутизация использует выбранные в рассылке `Mailing.bot_profiles`.
+Основной путь - `GuestBotBinding`; для legacy-гостей без новой регистрации
+поддержан fallback через Telegram-канал из `VtelemaxRecipientChannel`.
 """
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Set
+from typing import Dict, Iterable, List, Set
 
 from django.db import IntegrityError
 from django.utils import timezone
@@ -16,9 +16,12 @@ from django.utils import timezone
 from guests.models import (
     CouponCampaignAssignment,
     DispatchTask,
-    GuestBotBinding,
     Mailing,
     MailingGuest,
+)
+from guests.services.mailing_delivery_targets import (
+    CHANNEL_MODE_BINDING,
+    build_mailing_delivery_targets_map,
 )
 
 logger = logging.getLogger(__name__)
@@ -72,62 +75,6 @@ def _resolve_selected_bot_profiles(mailing: Mailing) -> tuple[Set[int], Set[str]
     selected_bot_ids = {row["id"] for row in selected_rows}
     selected_providers = {str(row["provider_type"]).strip().lower() for row in selected_rows}
     return selected_bot_ids, selected_providers
-
-
-def _build_bindings_map(guest_ids: Iterable[int], selected_bot_ids: Set[int]) -> Dict[int, List[GuestBotBinding]]:
-    """
-    Собирает активные привязки гостей к ботам в словарь `guest_id -> bindings`.
-    """
-    if not selected_bot_ids:
-        return {}
-
-    bindings = (
-        GuestBotBinding.objects.select_related("bot")
-        .filter(
-            guest_id__in=list(guest_ids),
-            bot_id__in=list(selected_bot_ids),
-            is_active=True,
-            is_opt_in=True,
-            is_stop_sending=False,
-            bot__is_active=True,
-        )
-        .exclude(external_chat_id__isnull=True)
-        .exclude(external_chat_id="")
-        .order_by("-is_primary", "id")
-    )
-
-    result: Dict[int, List[GuestBotBinding]] = {}
-    for binding in bindings:
-        result.setdefault(binding.guest_id, []).append(binding)
-    return result
-
-
-def _targets_from_bindings(bindings: List[GuestBotBinding], target_mode: str) -> List[Dict[str, Any]]:
-    """
-    Формирует целевые каналы отправки из новой модели GuestBotBinding.
-    """
-    if not bindings:
-        return []
-
-    if target_mode == "primary_only":
-        primary_bindings = [binding for binding in bindings if binding.is_primary]
-        bindings = primary_bindings if primary_bindings else bindings[:1]
-
-    targets: List[Dict[str, Any]] = []
-    for binding in bindings:
-        provider = binding.bot.provider_type
-        if provider not in ("telegram", "max", "vk"):
-            continue
-        targets.append(
-            {
-                "provider_type": provider,
-                "external_chat_id": str(binding.external_chat_id).strip(),
-                "external_user_id": str(binding.external_user_id or "").strip(),
-                "guest_binding": binding,
-                "bot_profile": binding.bot,
-            }
-        )
-    return targets
 
 
 def _build_coupon_assignments_map(mailing: Mailing, guest_ids: Iterable[int]) -> Dict[int, CouponCampaignAssignment]:
@@ -184,17 +131,24 @@ def enqueue_mailing_rows_as_dispatch_tasks(
         return summary
 
     guest_ids = [row.guest_id for row in rows]
-    bindings_map = _build_bindings_map(guest_ids, selected_bot_ids=selected_bot_ids)
+    targets_map = build_mailing_delivery_targets_map(
+        guest_ids,
+        selected_bot_ids=selected_bot_ids,
+        target_mode=target_mode,
+    )
     coupon_assignments_map = _build_coupon_assignments_map(mailing, guest_ids)
 
     for row in rows:
         assignment = coupon_assignments_map.get(int(row.guest_id)) if row.guest_id else None
-        row_targets = _targets_from_bindings(bindings_map.get(row.guest_id, []), target_mode=target_mode)
+        row_targets = targets_map.get(int(row.guest_id), []) if row.guest_id else []
 
         if not row_targets:
             row.status = MailingGuest.Status.ERROR
             row.delivery_status = "dispatch_no_targets"
-            row.error_description = "Не найдено активных bot-привязок для постановки в универсальную очередь."
+            row.error_description = (
+                "Не найдено новой bot-привязки или доступного legacy Telegram-канала "
+                "для постановки в универсальную очередь."
+            )
             row.save(update_fields=["status", "delivery_status", "error_description"])
             summary.rows_failed += 1
             continue
@@ -212,7 +166,8 @@ def enqueue_mailing_rows_as_dispatch_tasks(
             task_payload = {
                 "mailing_id": mailing.id,
                 "mailing_guest_id": row.id,
-                "channel_mode": "bindings",
+                "channel_mode": target.get("channel_mode") or CHANNEL_MODE_BINDING,
+                "vtelemax_channel_id": target.get("vtelemax_channel_id"),
                 "coupon_series": assignment.coupon_series if assignment else None,
                 "coupon_code": assignment.coupon_code if assignment else None,
                 "coupon_venue_code": assignment.venue_code if assignment else None,
