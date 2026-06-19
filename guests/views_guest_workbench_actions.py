@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.views import View
 
 from guests.models import (
+    BotProfile,
     FocusCategory,
     Guest,
     GuestWorkbenchFilterPreset,
@@ -27,9 +28,11 @@ from guests.models import (
 )
 from guests.services.guest_workbench import (
     build_guest_workbench_payload,
+    normalize_audience_channel_group,
     normalize_segment_code,
     normalize_window_days,
 )
+from guests.services.mailing_delivery_targets import build_mailing_delivery_plan
 from guests.services.template_render import render_message_for_guest
 
 
@@ -67,6 +70,7 @@ class GuestsWorkbenchActionsView(View):
             department_id=filters["department_id"],
             segment_code=filters["segment_code"],
             focus_category_code=filters["focus_category_code"],
+            audience_channel_group=filters["audience_channel_group"],
             complex_filters=filters["complex_filters"],
             show_all_presets=bool(filters["show_all_presets"]),
             selected_guests_limit=filters["audience_limit"] if filters["audience_limit_enabled"] else None,
@@ -91,6 +95,24 @@ class GuestsWorkbenchActionsView(View):
             return redirect(self._build_workbench_redirect_url(request))
 
         selected_guest_ids = [int(item["guest_id"]) for item in selected_rows]
+        active_bot_profiles = list(BotProfile.objects.filter(is_active=True).order_by("provider_type", "name", "id"))
+        delivery_plan = build_mailing_delivery_plan(
+            selected_guest_ids,
+            selected_bot_ids=[bot.id for bot in active_bot_profiles],
+            target_mode=Mailing.TargetMode.PRIMARY_ONLY,
+        )
+        deliverable_guest_ids = set(delivery_plan.deliverable_guest_ids)
+        selected_guest_ids = [guest_id for guest_id in selected_guest_ids if guest_id in deliverable_guest_ids]
+        if not selected_guest_ids:
+            messages.warning(
+                request,
+                (
+                    "Гости по фильтрам найдены, но среди них нет гостей с доступной доставкой "
+                    "через активные боты."
+                ),
+            )
+            return redirect(self._build_workbench_redirect_url(request))
+
         guests_map = {
             int(guest.id): guest
             for guest in Guest.objects.filter(id__in=selected_guest_ids).only(
@@ -124,6 +146,7 @@ class GuestsWorkbenchActionsView(View):
                 target_mode=Mailing.TargetMode.PRIMARY_ONLY,
                 queue_priority=Mailing.QueuePriority.BULK,
             )
+            mailing.bot_profiles.set(active_bot_profiles)
 
             rows = []
             for guest in guests:
@@ -149,6 +172,7 @@ class GuestsWorkbenchActionsView(View):
             payload=payload,
             selected_total=total_selected,
             selected_rows_count=len(selected_rows),
+            delivery_plan=delivery_plan,
         )
 
         messages.success(
@@ -159,6 +183,7 @@ class GuestsWorkbenchActionsView(View):
                 total_selected=total_selected,
                 is_truncated=is_truncated,
                 selected_limit=selected_limit,
+                delivery_plan=delivery_plan,
             ),
         )
         return redirect(reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
@@ -175,6 +200,7 @@ class GuestsWorkbenchActionsView(View):
         window_days = normalize_window_days((request.POST.get("window_days") or "").strip())
         department_id = (request.POST.get("department_id") or "").strip()
         segment_code = normalize_segment_code((request.POST.get("segment_code") or "").strip())
+        audience_channel_group = normalize_audience_channel_group(request.POST.get("audience_channel_group"))
 
         focus_category_code = (request.POST.get("focus_category_code") or "").strip()
         if focus_category_code and not FocusCategory.objects.filter(
@@ -189,6 +215,7 @@ class GuestsWorkbenchActionsView(View):
                 "department_id": department_id,
                 "segment_code": segment_code,
                 "focus_category_code": focus_category_code,
+                "audience_channel_group": audience_channel_group,
                 "is_active": True,
             },
         )
@@ -284,6 +311,9 @@ class GuestsWorkbenchActionsView(View):
             "department_id": (request.POST.get("department_id") or "").strip(),
             "segment_code": (request.POST.get("segment_code") or "").strip(),
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
+            "audience_channel_group": normalize_audience_channel_group(
+                request.POST.get("audience_channel_group")
+            ),
             "complex_filters": _extract_complex_filters_from_post(request),
             "show_all_presets": _to_bool_flag(request.POST.get("show_all_presets")),
             "audience_limit_enabled": _to_bool_flag_with_default(
@@ -304,6 +334,7 @@ class GuestsWorkbenchActionsView(View):
         payload: dict,
         selected_total: int,
         selected_rows_count: int,
+        delivery_plan,
     ) -> None:
         """
         Сохраняет в сессии источник аудитории для созданной кампании.
@@ -314,6 +345,9 @@ class GuestsWorkbenchActionsView(View):
         department_id_value = str(filters.get("department_id") or "").strip()
         segment_code_value = str(filters.get("segment_code") or "").strip()
         focus_category_code_value = str(filters.get("focus_category_code") or "").strip()
+        audience_channel_group_value = normalize_audience_channel_group(
+            str(filters.get("audience_channel_group") or "").strip()
+        )
 
         complex_filters_raw = filters.get("complex_filters") or []
         complex_filters: list[dict[str, str]] = []
@@ -344,11 +378,22 @@ class GuestsWorkbenchActionsView(View):
             "department_id": department_id_value,
             "segment_code": segment_code_value,
             "focus_category_code": focus_category_code_value,
+            "audience_channel_group": audience_channel_group_value,
             "complex_filters": complex_filters,
             "audience_limit_enabled": bool(filters.get("audience_limit_enabled")),
             "audience_limit": int(filters.get("audience_limit") or 0),
             "selected_total": int(selected_total or 0),
             "selected_rows_count": int(selected_rows_count or 0),
+            "delivery_total_guests": int(getattr(delivery_plan, "total_guests", 0) or 0),
+            "delivery_available_guests": int(getattr(delivery_plan, "deliverable_guests", 0) or 0),
+            "delivery_blocked_without_bot_binding": int(
+                getattr(delivery_plan, "blocked_without_bot_binding", 0) or 0
+            ),
+            "delivery_blocked_without_message_permission": int(
+                getattr(delivery_plan, "blocked_without_message_permission", 0) or 0
+            ),
+            "delivery_legacy_telegram_guests": int(getattr(delivery_plan, "legacy_telegram_guests", 0) or 0),
+            "delivery_planned_tasks": int(getattr(delivery_plan, "planned_dispatch_tasks", 0) or 0),
             "source_layer": source_layer,
             "saved_at": timezone.now().isoformat(),
         }
@@ -371,6 +416,9 @@ class GuestsWorkbenchActionsView(View):
             "department_id": (request.POST.get("department_id") or "").strip(),
             "segment_code": (request.POST.get("segment_code") or "").strip(),
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
+            "audience_channel_group": normalize_audience_channel_group(
+                request.POST.get("audience_channel_group")
+            ),
             "show_all_presets": "1" if _to_bool_flag(request.POST.get("show_all_presets")) else "",
         }
         params = {key: value for key, value in params.items() if value}
@@ -453,10 +501,12 @@ def _build_mailing_name(payload: dict) -> str:
     window_days = str(filters.get("window_days") or "")
     segment_code = (filters.get("segment_code") or "").strip() or "all-segments"
     focus_category_code = (filters.get("focus_category_code") or "").strip() or "all-focus"
+    audience_channel_group = (filters.get("audience_channel_group") or "").strip() or "all-audience"
 
     return (
         "Черновик из workbench: "
-        f"as_of={as_of_date}; window={window_days}; segment={segment_code}; focus={focus_category_code}"
+        f"as_of={as_of_date}; window={window_days}; segment={segment_code}; "
+        f"focus={focus_category_code}; audience={audience_channel_group}"
     )[:150]
 
 
@@ -467,14 +517,21 @@ def _build_mailing_created_message(
     total_selected: int,
     is_truncated: bool,
     selected_limit: int,
+    delivery_plan,
 ) -> str:
     """
     Формирует понятное сообщение после создания черновика рассылки.
     """
     base = f"Создан черновик рассылки (ID {mailing_id}) по {guests_count} гостям."
     if is_truncated:
-        return (
+        base = (
             f"{base} Всего по отбору найдено {total_selected}; "
             f"применён лимит {selected_limit}."
         )
+    skipped = int(total_selected or 0) - int(guests_count or 0)
+    if skipped > 0:
+        base = f"{base} Пропущено без доступной доставки: {skipped}."
+    planned_tasks = int(getattr(delivery_plan, "planned_dispatch_tasks", 0) or 0)
+    if planned_tasks:
+        base = f"{base} Задач доставки при запуске: {planned_tasks}."
     return base

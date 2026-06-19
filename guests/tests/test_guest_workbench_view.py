@@ -12,8 +12,10 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from guests.models import (
+    BotProfile,
     FocusCategory,
     Guest,
+    GuestBotBinding,
     GuestWorkbenchFilterPreset,
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantWindowCategoryMetrics,
@@ -35,6 +37,13 @@ class GuestsWorkbenchViewTests(TestCase):
     def setUp(self):
         self.guest_1 = Guest.objects.create(phone="+79990001111", first_name="Анна")
         self.guest_2 = Guest.objects.create(phone="+79990002222", first_name="Иван")
+        self.bot_telegram = BotProfile.objects.create(
+            code="workbench_tg",
+            name="Рабочий Telegram",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        self._create_bot_binding(self.guest_1, external_chat_id="tg-guest-1", is_primary=True)
         self.template = MessageTemplate.objects.create(
             name="Тестовый шаблон",
             message_text="Привет, {{first_name}}",
@@ -207,6 +216,81 @@ class GuestsWorkbenchViewTests(TestCase):
         cooling_wine_cell = row_index["cooling_30_60d"]["cells"][col_index["wine"]]
         self.assertEqual(active_beer_cell["guests_count"], 1)
         self.assertEqual(cooling_wine_cell["guests_count"], 1)
+
+    def test_workbench_filters_guests_with_new_bot_delivery(self):
+        """
+        Фильтр аудитории должен оставлять гостей с рабочей доставкой в новых ботах.
+        """
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "audience_channel_group": "new_bots_sendable",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["audience_channel_group"], "new_bots_sendable")
+        self.assertEqual(payload["cards"]["guests_total"], 1)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_1.phone)
+
+    def test_workbench_filters_legacy_guests_without_new_bot_binding(self):
+        """
+        Фильтр legacy должен оставлять гостей без привязки к новым ботам.
+        """
+        self._legacy_telegram_channel(self.guest_2, external_id="legacy-tg-guest-2")
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "audience_channel_group": "legacy_no_new_bot",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["audience_channel_group"], "legacy_no_new_bot")
+        self.assertEqual(payload["cards"]["guests_total"], 1)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_2.phone)
+
+    def test_workbench_filters_new_bot_guests_blocked_for_messages(self):
+        """
+        Отдельная диагностическая группа не должна смешиваться с legacy.
+        """
+        self._create_bot_binding(
+            self.guest_2,
+            external_chat_id="tg-guest-2",
+            is_primary=False,
+            is_opt_in=False,
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "audience_channel_group": "new_bots_blocked",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["audience_channel_group"], "new_bots_blocked")
+        self.assertEqual(payload["cards"]["guests_total"], 1)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_2.phone)
 
     def test_workbench_filters_by_segment_and_focus_category(self):
         """
@@ -584,11 +668,86 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(snapshot["window_days"], "30")
         self.assertEqual(snapshot["segment_code"], "active_30d")
         self.assertEqual(snapshot["focus_category_code"], "beer_ermolaev")
+        self.assertEqual(snapshot["audience_channel_group"], "all")
         self.assertEqual(snapshot["selected_total"], 1)
+        self.assertEqual(snapshot["delivery_available_guests"], 1)
+        self.assertEqual(snapshot["delivery_planned_tasks"], 1)
 
         rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].guest_id, self.guest_1.id)
+        self.assertEqual(list(mailing.bot_profiles.values_list("id", flat=True)), [self.bot_telegram.id])
+
+    def test_create_mailing_draft_skips_guests_without_delivery(self):
+        """
+        В черновик попадают только гости с доступной доставкой через активные боты.
+        """
+        guest_without_delivery = Guest.objects.create(phone="+79990003333", first_name="Без доставки")
+        GuestRestaurantWindowMetrics.objects.create(
+            as_of_date=self.as_of_date,
+            guest=guest_without_delivery,
+            department_id=self.department_id,
+            window_days=30,
+            orders_count=3,
+            visits_count=2,
+            avg_check_net=Decimal("400.00"),
+            sum_net=Decimal("1200.00"),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal("10.00"),
+            last_visit_at=self.as_of_date,
+        )
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
+        self.assertEqual([row.guest_id for row in rows], [self.guest_1.id])
+
+        snapshot = self.client.session["mailings_v2_workbench_snapshots"][str(mailing.id)]
+        self.assertEqual(snapshot["selected_total"], 2)
+        self.assertEqual(snapshot["delivery_available_guests"], 1)
+        self.assertEqual(snapshot["delivery_blocked_without_bot_binding"], 1)
+
+    def test_create_mailing_draft_includes_legacy_telegram_guest(self):
+        """
+        Черновик обычной рассылки может быть создан для legacy-гостя с Telegram-каналом.
+        """
+        self._legacy_telegram_channel(self.guest_2, external_id="legacy-tg-guest-2")
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "cooling_30_60d",
+                "audience_channel_group": "legacy_no_new_bot",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
+        self.assertEqual([row.guest_id for row in rows], [self.guest_2.id])
+
+        snapshot = self.client.session["mailings_v2_workbench_snapshots"][str(mailing.id)]
+        self.assertEqual(snapshot["audience_channel_group"], "legacy_no_new_bot")
+        self.assertEqual(snapshot["delivery_available_guests"], 1)
+        self.assertEqual(snapshot["delivery_legacy_telegram_guests"], 1)
 
     def test_create_mailing_draft_without_audience_limit_uses_full_selection(self):
         """
@@ -664,6 +823,7 @@ class GuestsWorkbenchViewTests(TestCase):
                 "department_id": self.department_id,
                 "segment_code": "cooling_30_60d",
                 "focus_category_code": "wine",
+                "audience_channel_group": "legacy_no_new_bot",
             },
             secure=True,
         )
@@ -675,6 +835,7 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(preset.department_id, self.department_id)
         self.assertEqual(preset.segment_code, "cooling_30_60d")
         self.assertEqual(preset.focus_category_code, "wine")
+        self.assertEqual(preset.audience_channel_group, "legacy_no_new_bot")
 
     def _create_bulk_window_metrics(self, *, department_id: str, total: int) -> None:
         """
@@ -685,6 +846,7 @@ class GuestsWorkbenchViewTests(TestCase):
                 phone=f"+7999888{idx:04d}",
                 first_name=f"Гость {idx}",
             )
+            self._create_bot_binding(guest, external_chat_id=f"tg-bulk-{idx}", is_primary=True)
             GuestRestaurantWindowMetrics.objects.create(
                 as_of_date=self.as_of_date,
                 guest=guest,
@@ -699,6 +861,36 @@ class GuestsWorkbenchViewTests(TestCase):
                 rating_score=Decimal("1.00"),
                 last_visit_at=self.as_of_date,
             )
+
+    def _create_bot_binding(
+        self,
+        guest: Guest,
+        *,
+        external_chat_id: str,
+        is_primary: bool,
+        is_opt_in: bool = True,
+    ) -> GuestBotBinding:
+        return GuestBotBinding.objects.create(
+            guest=guest,
+            bot=self.bot_telegram,
+            external_chat_id=external_chat_id,
+            is_primary=is_primary,
+            is_active=True,
+            is_opt_in=is_opt_in,
+            is_stop_sending=False,
+        )
+
+    @staticmethod
+    def _legacy_telegram_channel(guest: Guest, *, external_id: str) -> VtelemaxRecipientChannel:
+        return VtelemaxRecipientChannel.objects.create(
+            person_id=uuid.uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164=guest.phone,
+            external_id=external_id,
+            notifications_allowed=True,
+            is_registered=True,
+            guest=guest,
+        )
 
     def test_rename_filter_preset_from_workbench(self):
         """
