@@ -11,7 +11,7 @@
         Показаны первые {{ payload.selected_guests.limit }} записей.
       {% endif %}
     </p>
-    <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3">
+    <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3 js-workbench-mailing-form">
       {% csrf_token %}
       <input type="hidden" name="action" value="create_mailing_draft">
       <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
@@ -79,6 +79,53 @@
           </div>
         </div>
       </div>
+      <div class="border rounded p-3 mb-3 js-workbench-delivery-preview">
+        <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+          <div class="fw-semibold">Проверка перед созданием черновика</div>
+          <span class="badge text-bg-light border">по выбранным ботам и режиму отправки</span>
+        </div>
+        <div class="row g-2 mb-2">
+          <div class="col-6 col-lg-3">
+            <div class="text-muted small">В текущем расчёте</div>
+            <div class="h5 mb-0" data-wb-preview-value="total">0</div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="text-muted small">Можно отправить</div>
+            <div class="h5 mb-0" data-wb-preview-value="deliverable">0</div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="text-muted small">Будет пропущено</div>
+            <div class="h5 mb-0" data-wb-preview-value="skipped">0</div>
+          </div>
+          <div class="col-6 col-lg-3">
+            <div class="text-muted small">Задач доставки</div>
+            <div class="h5 mb-0" data-wb-preview-value="tasks">0</div>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm mb-0">
+            <tbody>
+              <tr>
+                <th class="fw-semibold">Нет привязки к выбранным ботам</th>
+                <td class="text-end" data-wb-preview-value="no_binding">0</td>
+              </tr>
+              <tr>
+                <th class="fw-semibold">Нет согласия на рассылку</th>
+                <td class="text-end" data-wb-preview-value="no_permission">0</td>
+              </tr>
+              <tr>
+                <th class="fw-semibold">Legacy через Telegram</th>
+                <td class="text-end" data-wb-preview-value="legacy">0</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {% if payload.selected_guests.is_truncated %}
+          <div class="text-muted small mt-2">
+            Предварительный расчёт показан по текущему лимиту. Если снять лимит, перед созданием черновика система пересчитает всю выбранную аудиторию.
+          </div>
+        {% endif %}
+      </div>
       <div class="row g-2 align-items-end">
         <div class="col-12 col-lg-3">
           <label class="form-label small mb-1">Ограничение аудитории</label>
@@ -94,6 +141,8 @@
         </div>
         <div class="col-12 col-lg-6">
           <button type="submit" class="btn btn-outline-primary"
+                  data-wb-create-mailing-button
+                  data-wb-base-disabled="{% if payload.selected_guests.total <= 0 or not workbench_message_templates or not workbench_bot_profiles %}1{% else %}0{% endif %}"
                   {% if payload.selected_guests.total <= 0 or not workbench_message_templates or not workbench_bot_profiles %}disabled{% endif %}>
             Создать черновик рассылки по отбору
           </button>

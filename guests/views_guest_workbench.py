@@ -15,6 +15,7 @@ from guests.services.guest_workbench import (
     normalize_window_days,
 )
 from guests.services.guest_venue_selection import normalize_venue_selection_mode
+from guests.services.mailing_delivery_targets import build_mailing_delivery_preview_state
 
 
 class GuestsWorkbenchView(TemplateView):
@@ -78,6 +79,12 @@ class GuestsWorkbenchView(TemplateView):
         context["workbench_queue_priority_options"] = Mailing.QueuePriority.choices
         context["workbench_default_target_mode"] = Mailing.TargetMode.PRIMARY_ONLY
         context["workbench_default_queue_priority"] = Mailing.QueuePriority.BULK
+        selected_guest_ids = [
+            int(row["guest_id"])
+            for row in payload.get("selected_guests", {}).get("rows", [])
+            if row.get("guest_id")
+        ]
+        context["workbench_delivery_preview"] = build_mailing_delivery_preview_state(selected_guest_ids)
         return context
 
 

@@ -166,6 +166,80 @@ def build_mailing_delivery_plan(
     )
 
 
+def build_mailing_delivery_preview_state(
+    guest_ids: Iterable[int],
+    *,
+    selected_bot_ids: Iterable[int] | None = None,
+) -> dict[str, object]:
+    """
+    Готовит безопасные данные для предварительного расчёта доставки на форме.
+    """
+    ordered_guest_ids = _ordered_unique_ints(guest_ids)
+    bots_queryset = BotProfile.objects.filter(is_active=True)
+    if selected_bot_ids is not None:
+        bots_queryset = bots_queryset.filter(id__in=_ordered_unique_ints(selected_bot_ids))
+    active_bots = list(bots_queryset.order_by("provider_type", "name", "id"))
+    active_bot_ids = [int(bot.id) for bot in active_bots]
+
+    if not ordered_guest_ids:
+        return {
+            "guests": [],
+            "bots": [
+                _serialize_preview_bot(bot)
+                for bot in active_bots
+                if str(bot.provider_type or "").strip().lower() in SUPPORTED_PROVIDERS
+            ],
+        }
+    if not active_bot_ids:
+        return {
+            "guests": [
+                {
+                    "guest_id": int(guest_id),
+                    "new_bot_bound": False,
+                    "legacy_telegram_available": False,
+                    "bindings": [],
+                }
+                for guest_id in ordered_guest_ids
+            ],
+            "bots": [],
+        }
+
+    bindings_map = build_guest_bot_bindings_map(
+        ordered_guest_ids,
+        selected_bot_ids=active_bot_ids,
+        require_message_permission=False,
+    )
+    new_bot_bound_guest_ids = _collect_new_bot_bound_guest_ids(ordered_guest_ids)
+    legacy_channels_map = _build_legacy_telegram_channels_map(
+        ordered_guest_ids,
+        exclude_guest_ids=new_bot_bound_guest_ids,
+    )
+
+    return {
+        "guests": [
+            {
+                "guest_id": int(guest_id),
+                "new_bot_bound": int(guest_id) in new_bot_bound_guest_ids,
+                "legacy_telegram_available": int(guest_id) in legacy_channels_map,
+                "bindings": [
+                    {
+                        "bot_profile_id": int(binding.bot_id),
+                        "permitted": bool(binding.is_opt_in) and not bool(binding.is_stop_sending),
+                    }
+                    for binding in bindings_map.get(int(guest_id), [])
+                    if int(binding.bot_id) in active_bot_ids
+                ],
+            }
+            for guest_id in ordered_guest_ids
+        ],
+        "bots": [
+            _serialize_preview_bot(bot)
+            for bot in active_bots
+            if str(bot.provider_type or "").strip().lower() in SUPPORTED_PROVIDERS
+        ],
+    }
+
+
 def build_mailing_delivery_targets_map(
     guest_ids: Iterable[int],
     *,
@@ -314,6 +388,20 @@ def _select_legacy_telegram_bot(active_selected_bots: list[BotProfile]) -> BotPr
         if str(bot.provider_type or "").strip().lower() == BotProfile.ProviderType.TELEGRAM:
             return bot
     return None
+
+
+def _serialize_preview_bot(bot: BotProfile) -> dict[str, object]:
+    """
+    Преобразует бота в формат для клиентского предварительного расчёта.
+    """
+    provider = str(bot.provider_type or "").strip().lower()
+    return {
+        "id": int(bot.id),
+        "provider": provider,
+        "code": str(bot.code or ""),
+        "name": str(bot.name or ""),
+        "is_telegram": provider == BotProfile.ProviderType.TELEGRAM,
+    }
 
 
 def _collect_new_bot_bound_guest_ids(guest_ids: Iterable[int]) -> set[int]:

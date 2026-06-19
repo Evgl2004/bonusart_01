@@ -830,6 +830,7 @@
 </div>
 
 {{ payload|json_script:"guest-workbench-payload" }}
+{{ workbench_delivery_preview|json_script:"guest-workbench-delivery-preview" }}
 {% endblock %}
 
 {% block extra_js %}
@@ -837,6 +838,7 @@
 <script>
   (function() {
     const payloadNode = document.getElementById("guest-workbench-payload");
+    const deliveryPreviewNode = document.getElementById("guest-workbench-delivery-preview");
     const scatterNode = document.getElementById("guests-scatter");
     const heatmapNode = document.getElementById("segment-category-heatmap");
     const filterForm = document.getElementById("wb-filters-form");
@@ -972,6 +974,7 @@
     };
 
     const payload = JSON.parse(payloadNode.textContent || "{}");
+    const deliveryPreview = deliveryPreviewNode ? JSON.parse(deliveryPreviewNode.textContent || "{}") : {};
     const matrix = payload.segment_focus_matrix || {};
     const matrixRows = matrix.rows || [];
     const matrixColumns = matrix.columns || [];
@@ -1094,6 +1097,87 @@
             node.disabled = true;
           });
         });
+      });
+    };
+
+    const initDeliveryPreview = () => {
+      const guests = Array.isArray(deliveryPreview.guests) ? deliveryPreview.guests : [];
+      const bots = Array.isArray(deliveryPreview.bots) ? deliveryPreview.bots : [];
+      const botById = new Map(bots.map((bot) => [Number(bot.id), bot]));
+      const forms = Array.from(document.querySelectorAll(".js-workbench-mailing-form"));
+      if (!forms.length) {
+        return;
+      }
+
+      const setValue = (form, key, value) => {
+        form.querySelectorAll(`[data-wb-preview-value="${key}"]`).forEach((node) => {
+          node.textContent = String(value);
+        });
+      };
+
+      const calculate = (form) => {
+        const selectedBotIds = new Set(
+          Array.from(form.querySelectorAll('input[name="mailing_bot_profile_ids"]:checked'))
+            .map((node) => Number.parseInt(node.value, 10))
+            .filter((value) => Number.isFinite(value))
+        );
+        const targetMode = (form.querySelector('select[name="mailing_target_mode"]')?.value || "primary_only").trim();
+        const telegramSelected = Array.from(selectedBotIds).some((botId) => Boolean(botById.get(botId)?.is_telegram));
+
+        let deliverable = 0;
+        let noBinding = 0;
+        let noPermission = 0;
+        let legacy = 0;
+        let tasks = 0;
+
+        guests.forEach((guest) => {
+          const bindings = Array.isArray(guest.bindings) ? guest.bindings : [];
+          const selectedBindings = bindings.filter((binding) => selectedBotIds.has(Number(binding.bot_profile_id)));
+
+          if (selectedBindings.length > 0) {
+            const permittedBindings = selectedBindings.filter((binding) => Boolean(binding.permitted));
+            if (!permittedBindings.length) {
+              noPermission += 1;
+              return;
+            }
+            deliverable += 1;
+            tasks += targetMode === "all_bots" ? permittedBindings.length : 1;
+            return;
+          }
+
+          if (telegramSelected && !guest.new_bot_bound && guest.legacy_telegram_available) {
+            deliverable += 1;
+            legacy += 1;
+            tasks += 1;
+            return;
+          }
+
+          noBinding += 1;
+        });
+
+        const total = guests.length;
+        const skipped = Math.max(0, total - deliverable);
+        setValue(form, "total", total);
+        setValue(form, "deliverable", deliverable);
+        setValue(form, "skipped", skipped);
+        setValue(form, "tasks", tasks);
+        setValue(form, "no_binding", noBinding);
+        setValue(form, "no_permission", noPermission);
+        setValue(form, "legacy", legacy);
+
+        const createButton = form.querySelector("[data-wb-create-mailing-button]");
+        if (createButton) {
+          const baseDisabled = createButton.dataset.wbBaseDisabled === "1";
+          createButton.disabled = baseDisabled || deliverable <= 0 || selectedBotIds.size <= 0;
+        }
+      };
+
+      forms.forEach((form) => {
+        const recalculate = () => calculate(form);
+        form.querySelectorAll('input[name="mailing_bot_profile_ids"], select[name="mailing_target_mode"]').forEach((node) => {
+          node.addEventListener("change", recalculate);
+        });
+        recalculate();
       });
     };
 
@@ -1277,6 +1361,7 @@
     initTooltips();
     const maybeAutoSubmit = initFiltersAutoApply();
     initComplexFilters(maybeAutoSubmit);
+    initDeliveryPreview();
     initScatter();
 
     // Если открыли страницу с якорем списка гостей, переключаем на вкладку "Гости".

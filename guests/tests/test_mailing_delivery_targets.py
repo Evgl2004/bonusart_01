@@ -11,7 +11,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.models import BotProfile, Guest, GuestBotBinding, Mailing, VtelemaxRecipientChannel
-from guests.services.mailing_delivery_targets import build_mailing_delivery_plan
+from guests.services.mailing_delivery_targets import build_mailing_delivery_plan, build_mailing_delivery_preview_state
 
 
 class MailingDeliveryTargetsTests(TestCase):
@@ -216,6 +216,36 @@ class MailingDeliveryTargetsTests(TestCase):
         self.assertEqual(plan.deliverable_guests, 0)
         self.assertEqual(plan.legacy_telegram_guests, 0)
         self.assertEqual(plan.blocked_without_message_permission, 1)
+
+    def test_preview_state_contains_bindings_permissions_and_legacy_channel(self):
+        """
+        Предварительный расчёт получает те же исходные признаки, что и серверный план доставки.
+        """
+        deliverable = Guest.objects.create(phone="+79990000012")
+        without_permission = Guest.objects.create(phone="+79990000013")
+        legacy = Guest.objects.create(phone="+79990000014")
+
+        self._binding(deliverable, self.bot_telegram, external_chat_id="tg-12", is_primary=True)
+        self._binding(
+            without_permission,
+            self.bot_telegram,
+            external_chat_id="tg-13",
+            is_primary=True,
+            is_opt_in=False,
+        )
+        self._legacy_telegram_channel(legacy, external_id="legacy-tg-14")
+
+        preview = build_mailing_delivery_preview_state(
+            [deliverable.id, without_permission.id, legacy.id],
+            selected_bot_ids=[self.bot_telegram.id],
+        )
+
+        rows_by_guest = {row["guest_id"]: row for row in preview["guests"]}
+        self.assertEqual(preview["bots"][0]["id"], self.bot_telegram.id)
+        self.assertTrue(rows_by_guest[deliverable.id]["bindings"][0]["permitted"])
+        self.assertFalse(rows_by_guest[without_permission.id]["bindings"][0]["permitted"])
+        self.assertTrue(rows_by_guest[without_permission.id]["new_bot_bound"])
+        self.assertTrue(rows_by_guest[legacy.id]["legacy_telegram_available"])
 
     def _binding(
         self,

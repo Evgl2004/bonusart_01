@@ -206,6 +206,15 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertIn(self.template, list(response.context["workbench_message_templates"]))
         self.assertIn(self.bot_telegram, list(response.context["workbench_bot_profiles"]))
 
+        delivery_preview = response.context["workbench_delivery_preview"]
+        self.assertEqual(len(delivery_preview["guests"]), 2)
+        self.assertEqual(delivery_preview["bots"][0]["id"], self.bot_telegram.id)
+        guest_1_preview = next(
+            item for item in delivery_preview["guests"] if item["guest_id"] == self.guest_1.id
+        )
+        self.assertEqual(guest_1_preview["bindings"][0]["bot_profile_id"], self.bot_telegram.id)
+        self.assertTrue(guest_1_preview["bindings"][0]["permitted"])
+
         matrix = payload["segment_focus_matrix"]
         col_index = {col["focus_category_code"]: idx for idx, col in enumerate(matrix["columns"])}
         row_index = {row["segment_code"]: row for row in matrix["rows"]}
