@@ -27,6 +27,58 @@
         <input type="hidden" name="cf_op" value="{{ rule.operator }}">
         <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
       {% endfor %}
+      <div class="border rounded bg-light p-3 mb-3">
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-lg-4">
+            <label class="form-label small mb-1">Шаблон сообщения</label>
+            <select class="form-select form-select-sm" name="mailing_template_id" {% if not workbench_message_templates %}disabled{% endif %}>
+              {% for template in workbench_message_templates %}
+                <option value="{{ template.id }}" {% if forloop.first %}selected{% endif %}>{{ template.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-lg-3">
+            <label class="form-label small mb-1">Куда отправлять</label>
+            <select class="form-select form-select-sm" name="mailing_target_mode">
+              {% for value, label in workbench_target_mode_options %}
+                <option value="{{ value }}" {% if value == workbench_default_target_mode %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-lg-2">
+            <label class="form-label small mb-1">Начало окна</label>
+            <input type="time" class="form-control form-control-sm" name="mailing_send_window_begin" value="11:00">
+          </div>
+          <div class="col-12 col-lg-2">
+            <label class="form-label small mb-1">Конец окна</label>
+            <input type="time" class="form-control form-control-sm" name="mailing_send_window_end" value="23:00">
+          </div>
+          <div class="col-12 col-lg-1">
+            <label class="form-label small mb-1">Очередь</label>
+            <select class="form-select form-select-sm" name="mailing_queue_priority">
+              {% for value, label in workbench_queue_priority_options %}
+                <option value="{{ value }}" {% if value == workbench_default_queue_priority %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="mt-3">
+          <div class="small fw-semibold mb-2">Боты для отправки</div>
+          <input type="hidden" name="mailing_bot_profile_ids_present" value="1">
+          <div class="row g-2">
+            {% for bot in workbench_bot_profiles %}
+              <div class="col-12 col-lg-4">
+                <label class="form-check border rounded bg-white px-2 py-2 mb-0">
+                  <input class="form-check-input ms-0 me-2" type="checkbox" name="mailing_bot_profile_ids" value="{{ bot.id }}" checked>
+                  <span class="form-check-label">{{ bot.get_provider_type_display }} ({{ bot.code }})</span>
+                </label>
+              </div>
+            {% empty %}
+              <div class="col-12 text-muted small">Нет активных ботов для рассылки.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
       <div class="row g-2 align-items-end">
         <div class="col-12 col-lg-3">
           <label class="form-label small mb-1">Ограничение аудитории</label>
@@ -42,7 +94,7 @@
         </div>
         <div class="col-12 col-lg-6">
           <button type="submit" class="btn btn-outline-primary"
-                  {% if payload.selected_guests.total <= 0 %}disabled{% endif %}>
+                  {% if payload.selected_guests.total <= 0 or not workbench_message_templates or not workbench_bot_profiles %}disabled{% endif %}>
             Создать черновик рассылки по отбору
           </button>
           {% if payload.selected_guests.is_truncated %}

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from urllib.parse import urlencode
 
 from django.contrib import messages
@@ -33,8 +33,12 @@ from guests.services.guest_workbench import (
     normalize_window_days,
 )
 from guests.services.guest_venue_selection import normalize_venue_selection_mode
-from guests.services.mailing_delivery_targets import build_mailing_delivery_plan
+from guests.services.mailing_delivery_targets import build_mailing_delivery_plan, normalize_mailing_target_mode
 from guests.services.template_render import render_message_for_guest
+
+
+DEFAULT_MAILING_SEND_WINDOW_BEGIN = time(11, 0)
+DEFAULT_MAILING_SEND_WINDOW_END = time(23, 0)
 
 
 class GuestsWorkbenchActionsView(View):
@@ -88,20 +92,29 @@ class GuestsWorkbenchActionsView(View):
             messages.warning(request, "Для выбранных фильтров не найдено гостей.")
             return redirect(self._build_workbench_redirect_url(request))
 
-        template = MessageTemplate.objects.filter(is_active=True).order_by("-created_at").first()
+        mailing_settings = self._extract_mailing_settings(request)
+        template = _get_active_message_template(mailing_settings["template_id"])
         if template is None:
             messages.error(
                 request,
-                "Нет активного шаблона сообщения. Создайте/включите шаблон и повторите.",
+                "Не найден активный шаблон сообщения. Выберите другой шаблон или включите его в настройках.",
             )
             return redirect(self._build_workbench_redirect_url(request))
 
+        selected_bot_profiles = _get_selected_bot_profiles(mailing_settings["bot_profile_ids"])
+        if not selected_bot_profiles:
+            messages.error(request, "Выберите хотя бы один активный бот для рассылки.")
+            return redirect(self._build_workbench_redirect_url(request))
+
+        if mailing_settings["send_window_begin"] >= mailing_settings["send_window_end"]:
+            messages.error(request, "Начало окна отправки должно быть раньше конца окна отправки.")
+            return redirect(self._build_workbench_redirect_url(request))
+
         selected_guest_ids = [int(item["guest_id"]) for item in selected_rows]
-        active_bot_profiles = list(BotProfile.objects.filter(is_active=True).order_by("provider_type", "name", "id"))
         delivery_plan = build_mailing_delivery_plan(
             selected_guest_ids,
-            selected_bot_ids=[bot.id for bot in active_bot_profiles],
-            target_mode=Mailing.TargetMode.PRIMARY_ONLY,
+            selected_bot_ids=[bot.id for bot in selected_bot_profiles],
+            target_mode=mailing_settings["target_mode"],
         )
         deliverable_guest_ids = set(delivery_plan.deliverable_guest_ids)
         selected_guest_ids = [guest_id for guest_id in selected_guest_ids if guest_id in deliverable_guest_ids]
@@ -143,12 +156,12 @@ class GuestsWorkbenchActionsView(View):
                 is_active=False,
                 created_at=now,
                 updated_at=now,
-                send_window_begin=datetime.strptime("11:00", "%H:%M").time(),
-                send_window_end=datetime.strptime("23:00", "%H:%M").time(),
-                target_mode=Mailing.TargetMode.PRIMARY_ONLY,
-                queue_priority=Mailing.QueuePriority.BULK,
+                send_window_begin=mailing_settings["send_window_begin"],
+                send_window_end=mailing_settings["send_window_end"],
+                target_mode=mailing_settings["target_mode"],
+                queue_priority=mailing_settings["queue_priority"],
             )
-            mailing.bot_profiles.set(active_bot_profiles)
+            mailing.bot_profiles.set(selected_bot_profiles)
 
             rows = []
             for guest in guests:
@@ -175,6 +188,9 @@ class GuestsWorkbenchActionsView(View):
             selected_total=total_selected,
             selected_rows_count=len(selected_rows),
             delivery_plan=delivery_plan,
+            mailing_settings=mailing_settings,
+            template=template,
+            bot_profiles=selected_bot_profiles,
         )
 
         messages.success(
@@ -334,6 +350,26 @@ class GuestsWorkbenchActionsView(View):
         }
 
     @staticmethod
+    def _extract_mailing_settings(request) -> dict[str, object]:
+        """
+        Извлекает параметры создаваемого черновика рассылки.
+        """
+        return {
+            "template_id": _parse_optional_int(request.POST.get("mailing_template_id")),
+            "bot_profile_ids": _extract_selected_bot_ids(request),
+            "target_mode": normalize_mailing_target_mode(request.POST.get("mailing_target_mode")),
+            "queue_priority": _normalize_queue_priority(request.POST.get("mailing_queue_priority")),
+            "send_window_begin": _parse_time_value(
+                request.POST.get("mailing_send_window_begin"),
+                default=DEFAULT_MAILING_SEND_WINDOW_BEGIN,
+            ),
+            "send_window_end": _parse_time_value(
+                request.POST.get("mailing_send_window_end"),
+                default=DEFAULT_MAILING_SEND_WINDOW_END,
+            ),
+        }
+
+    @staticmethod
     def _store_workbench_snapshot_for_mailing(
         request,
         mailing_id: int,
@@ -342,6 +378,9 @@ class GuestsWorkbenchActionsView(View):
         selected_total: int,
         selected_rows_count: int,
         delivery_plan,
+        mailing_settings: dict[str, object],
+        template: MessageTemplate,
+        bot_profiles: list[BotProfile],
     ) -> None:
         """
         Сохраняет в сессии источник аудитории для созданной кампании.
@@ -405,6 +444,16 @@ class GuestsWorkbenchActionsView(View):
             ),
             "delivery_legacy_telegram_guests": int(getattr(delivery_plan, "legacy_telegram_guests", 0) or 0),
             "delivery_planned_tasks": int(getattr(delivery_plan, "planned_dispatch_tasks", 0) or 0),
+            "mailing_template_id": int(template.id),
+            "mailing_template_name": str(template.name),
+            "mailing_target_mode": str(mailing_settings.get("target_mode") or ""),
+            "mailing_queue_priority": str(mailing_settings.get("queue_priority") or ""),
+            "mailing_send_window_begin": _format_time_value(mailing_settings.get("send_window_begin")),
+            "mailing_send_window_end": _format_time_value(mailing_settings.get("send_window_end")),
+            "mailing_bot_profile_ids": [int(bot.id) for bot in bot_profiles],
+            "mailing_bot_profiles": [
+                f"{bot.get_provider_type_display()} ({bot.code})" for bot in bot_profiles
+            ],
             "source_layer": source_layer,
             "saved_at": timezone.now().isoformat(),
         }
@@ -484,6 +533,105 @@ def _parse_positive_int(raw_value: str | None, *, default: int) -> int:
     except (TypeError, ValueError):
         return int(default)
     return value if value > 0 else int(default)
+
+
+def _parse_optional_int(raw_value: str | None) -> int | None:
+    """
+    Безопасно читает необязательный идентификатор из формы.
+    """
+    try:
+        value = int(str(raw_value or "").strip())
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _parse_int_list(raw_values: list[str]) -> list[int]:
+    """
+    Безопасно читает список идентификаторов из повторяемых полей формы.
+    """
+    result: list[int] = []
+    seen: set[int] = set()
+    for raw_value in raw_values:
+        value = _parse_optional_int(raw_value)
+        if value is None or value in seen:
+            continue
+        result.append(value)
+        seen.add(value)
+    return result
+
+
+def _parse_time_value(raw_value: str | None, *, default: time) -> time:
+    """
+    Безопасно читает время в формате HH:MM.
+    """
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return default
+    try:
+        return datetime.strptime(raw, "%H:%M").time()
+    except ValueError:
+        return default
+
+
+def _format_time_value(value: object) -> str:
+    """
+    Форматирует время для снимка источника аудитории.
+    """
+    if isinstance(value, time):
+        return value.strftime("%H:%M")
+    return ""
+
+
+def _normalize_queue_priority(raw_value: str | None) -> str:
+    """
+    Нормализует приоритет очереди обычной рассылки.
+    """
+    normalized = str(raw_value or "").strip().lower()
+    allowed_values = {choice[0] for choice in Mailing.QueuePriority.choices}
+    if normalized in allowed_values:
+        return normalized
+    return Mailing.QueuePriority.BULK
+
+
+def _extract_selected_bot_ids(request) -> list[int]:
+    """
+    Возвращает выбранные боты. Старые POST-запросы без поля получают все активные боты.
+    """
+    marker_present = _to_bool_flag(request.POST.get("mailing_bot_profile_ids_present"))
+    if marker_present:
+        return _parse_int_list(request.POST.getlist("mailing_bot_profile_ids"))
+    return list(
+        BotProfile.objects.filter(is_active=True)
+        .order_by("provider_type", "name", "id")
+        .values_list("id", flat=True)
+    )
+
+
+def _get_active_message_template(template_id: int | None) -> MessageTemplate | None:
+    """
+    Возвращает выбранный активный шаблон или прежний шаблон по умолчанию.
+    """
+    queryset = MessageTemplate.objects.filter(is_active=True)
+    if template_id is not None:
+        try:
+            return queryset.get(pk=template_id)
+        except MessageTemplate.DoesNotExist:
+            return None
+    return queryset.order_by("-created_at", "name", "id").first()
+
+
+def _get_selected_bot_profiles(bot_profile_ids: list[int]) -> list[BotProfile]:
+    """
+    Возвращает активные боты в порядке выбора из формы.
+    """
+    if not bot_profile_ids:
+        return []
+    bots_by_id = {
+        int(bot.id): bot
+        for bot in BotProfile.objects.filter(id__in=bot_profile_ids, is_active=True)
+    }
+    return [bots_by_id[bot_id] for bot_id in bot_profile_ids if bot_id in bots_by_id]
 
 
 def _extract_complex_filters_from_post(request) -> list[dict[str, str]]:

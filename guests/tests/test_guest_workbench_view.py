@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, time
 from decimal import Decimal
 
 from django.test import TestCase, override_settings
@@ -203,6 +203,8 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["cards"]["guests_total"], 2)
         self.assertEqual(payload["selected_guests"]["total"], 2)
         self.assertIn("saved_presets", payload["filters"])
+        self.assertIn(self.template, list(response.context["workbench_message_templates"]))
+        self.assertIn(self.bot_telegram, list(response.context["workbench_bot_profiles"]))
 
         matrix = payload["segment_focus_matrix"]
         col_index = {col["focus_category_code"]: idx for idx, col in enumerate(matrix["columns"])}
@@ -734,6 +736,57 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].guest_id, self.guest_1.id)
         self.assertEqual(list(mailing.bot_profiles.values_list("id", flat=True)), [self.bot_telegram.id])
+
+    def test_create_mailing_draft_uses_selected_mailing_settings(self):
+        """
+        Черновик должен учитывать выбранные на workbench параметры рассылки.
+        """
+        custom_template = MessageTemplate.objects.create(
+            name="Ручной шаблон workbench",
+            message_text="Спецтекст для {{ first_name }}",
+            created_by="tests",
+            is_active=True,
+        )
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "active_30d",
+                "mailing_template_id": str(custom_template.id),
+                "mailing_bot_profile_ids_present": "1",
+                "mailing_bot_profile_ids": [str(self.bot_telegram.id)],
+                "mailing_target_mode": Mailing.TargetMode.ALL_BOTS,
+                "mailing_queue_priority": Mailing.QueuePriority.HIGH,
+                "mailing_send_window_begin": "10:00",
+                "mailing_send_window_end": "18:30",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        self.assertEqual(mailing.template_id, custom_template.id)
+        self.assertEqual(mailing.target_mode, Mailing.TargetMode.ALL_BOTS)
+        self.assertEqual(mailing.queue_priority, Mailing.QueuePriority.HIGH)
+        self.assertEqual(mailing.send_window_begin, time(10, 0))
+        self.assertEqual(mailing.send_window_end, time(18, 30))
+        self.assertEqual(list(mailing.bot_profiles.values_list("id", flat=True)), [self.bot_telegram.id])
+
+        row = MailingGuest.objects.get(mailing=mailing)
+        self.assertEqual(row.text_mailing_list, "Спецтекст для Анна")
+
+        snapshot = self.client.session["mailings_v2_workbench_snapshots"][str(mailing.id)]
+        self.assertEqual(snapshot["mailing_template_id"], custom_template.id)
+        self.assertEqual(snapshot["mailing_template_name"], custom_template.name)
+        self.assertEqual(snapshot["mailing_target_mode"], Mailing.TargetMode.ALL_BOTS)
+        self.assertEqual(snapshot["mailing_queue_priority"], Mailing.QueuePriority.HIGH)
+        self.assertEqual(snapshot["mailing_send_window_begin"], "10:00")
+        self.assertEqual(snapshot["mailing_send_window_end"], "18:30")
+        self.assertEqual(snapshot["mailing_bot_profile_ids"], [self.bot_telegram.id])
 
     def test_create_mailing_draft_skips_guests_without_delivery(self):
         """

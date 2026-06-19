@@ -8,6 +8,7 @@ from datetime import date
 
 from django.views.generic import TemplateView
 
+from guests.models import BotProfile, Mailing, MessageTemplate
 from guests.services.guest_workbench import (
     build_guest_workbench_payload,
     normalize_audience_channel_group,
@@ -67,6 +68,16 @@ class GuestsWorkbenchView(TemplateView):
         context["selected_focus_category_code"] = payload["filters"]["focus_category_code"]
         context["selected_audience_channel_group"] = payload["filters"]["audience_channel_group"]
         context["selected_show_all_presets"] = bool(payload["filters"].get("show_all_presets"))
+        context["workbench_message_templates"] = MessageTemplate.objects.filter(is_active=True).order_by(
+            "-created_at", "name", "id"
+        )
+        context["workbench_bot_profiles"] = BotProfile.objects.filter(is_active=True).order_by(
+            "provider_type", "name", "id"
+        )
+        context["workbench_target_mode_options"] = Mailing.TargetMode.choices
+        context["workbench_queue_priority_options"] = Mailing.QueuePriority.choices
+        context["workbench_default_target_mode"] = Mailing.TargetMode.PRIMARY_ONLY
+        context["workbench_default_queue_priority"] = Mailing.QueuePriority.BULK
         return context
 
 
