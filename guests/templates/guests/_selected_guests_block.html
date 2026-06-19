@@ -25,10 +25,31 @@
         <input type="hidden" name="cf_op" value="{{ rule.operator }}">
         <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
       {% endfor %}
-      <button type="submit" class="btn btn-outline-primary"
-              {% if payload.selected_guests.total <= 0 or payload.selected_guests.is_truncated %}disabled{% endif %}>
-        Создать черновик рассылки по отбору
-      </button>
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-lg-3">
+          <label class="form-label small mb-1">Ограничение аудитории</label>
+          <input type="hidden" name="audience_limit_enabled" value="0">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="audience_limit_enabled" value="1" checked>
+            <label class="form-check-label">Использовать лимит</label>
+          </div>
+        </div>
+        <div class="col-12 col-lg-3">
+          <label class="form-label small mb-1">Гостей в черновике</label>
+          <input type="number" class="form-control form-control-sm" name="audience_limit" value="200" min="1" step="1">
+        </div>
+        <div class="col-12 col-lg-6">
+          <button type="submit" class="btn btn-outline-primary"
+                  {% if payload.selected_guests.total <= 0 %}disabled{% endif %}>
+            Создать черновик рассылки по отбору
+          </button>
+          {% if payload.selected_guests.is_truncated %}
+            <div class="text-muted small mt-1">
+              Сейчас показаны первые {{ payload.selected_guests.limit }} гостей. Для полной выборки снимите ограничение аудитории.
+            </div>
+          {% endif %}
+        </div>
+      </div>
     </form>
     <div class="wb-table-wrap">
       <table class="table table-sm align-middle mb-0">

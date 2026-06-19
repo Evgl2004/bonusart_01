@@ -69,6 +69,7 @@ class GuestsWorkbenchActionsView(View):
             focus_category_code=filters["focus_category_code"],
             complex_filters=filters["complex_filters"],
             show_all_presets=bool(filters["show_all_presets"]),
+            selected_guests_limit=filters["audience_limit"] if filters["audience_limit_enabled"] else None,
         )
 
         selected_guests = payload.get("selected_guests", {})
@@ -79,17 +80,6 @@ class GuestsWorkbenchActionsView(View):
 
         if total_selected <= 0 or not selected_rows:
             messages.warning(request, "Для выбранных фильтров не найдено гостей.")
-            return redirect(self._build_workbench_redirect_url(request))
-
-        if is_truncated:
-            messages.error(
-                request,
-                (
-                    "Выборка слишком большая для быстрого действия "
-                    f"(найдено {total_selected}, показывается {selected_limit}). "
-                    "Сузьте фильтры и повторите."
-                ),
-            )
             return redirect(self._build_workbench_redirect_url(request))
 
         template = MessageTemplate.objects.filter(is_active=True).order_by("-created_at").first()
@@ -163,7 +153,13 @@ class GuestsWorkbenchActionsView(View):
 
         messages.success(
             request,
-            f"Создан черновик рассылки (ID {mailing.id}) по {len(guests)} гостям.",
+            _build_mailing_created_message(
+                mailing_id=mailing.id,
+                guests_count=len(guests),
+                total_selected=total_selected,
+                is_truncated=is_truncated,
+                selected_limit=selected_limit,
+            ),
         )
         return redirect(reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}))
 
@@ -290,6 +286,14 @@ class GuestsWorkbenchActionsView(View):
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
             "complex_filters": _extract_complex_filters_from_post(request),
             "show_all_presets": _to_bool_flag(request.POST.get("show_all_presets")),
+            "audience_limit_enabled": _to_bool_flag_with_default(
+                request.POST.get("audience_limit_enabled"),
+                default=True,
+            ),
+            "audience_limit": _parse_positive_int(
+                request.POST.get("audience_limit"),
+                default=200,
+            ),
         }
 
     @staticmethod
@@ -341,6 +345,8 @@ class GuestsWorkbenchActionsView(View):
             "segment_code": segment_code_value,
             "focus_category_code": focus_category_code_value,
             "complex_filters": complex_filters,
+            "audience_limit_enabled": bool(filters.get("audience_limit_enabled")),
+            "audience_limit": int(filters.get("audience_limit") or 0),
             "selected_total": int(selected_total or 0),
             "selected_rows_count": int(selected_rows_count or 0),
             "source_layer": source_layer,
@@ -398,6 +404,26 @@ def _to_bool_flag(raw_value: str | None) -> bool:
     return (raw_value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _to_bool_flag_with_default(raw_value: str | None, *, default: bool) -> bool:
+    """
+    Нормализует флаг, у которого есть поведение по умолчанию.
+    """
+    if raw_value is None:
+        return bool(default)
+    return _to_bool_flag(raw_value)
+
+
+def _parse_positive_int(raw_value: str | None, *, default: int) -> int:
+    """
+    Безопасно читает положительное целое число из формы.
+    """
+    try:
+        value = int(str(raw_value or "").strip())
+    except (TypeError, ValueError):
+        return int(default)
+    return value if value > 0 else int(default)
+
+
 def _extract_complex_filters_from_post(request) -> list[dict[str, str]]:
     """
     Извлекает сложные условия фильтра из POST (повторяемые cf_* параметры).
@@ -432,3 +458,23 @@ def _build_mailing_name(payload: dict) -> str:
         "Черновик из workbench: "
         f"as_of={as_of_date}; window={window_days}; segment={segment_code}; focus={focus_category_code}"
     )[:150]
+
+
+def _build_mailing_created_message(
+    *,
+    mailing_id: int,
+    guests_count: int,
+    total_selected: int,
+    is_truncated: bool,
+    selected_limit: int,
+) -> str:
+    """
+    Формирует понятное сообщение после создания черновика рассылки.
+    """
+    base = f"Создан черновик рассылки (ID {mailing_id}) по {guests_count} гостям."
+    if is_truncated:
+        return (
+            f"{base} Всего по отбору найдено {total_selected}; "
+            f"применён лимит {selected_limit}."
+        )
+    return base

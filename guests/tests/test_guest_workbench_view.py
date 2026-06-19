@@ -590,6 +590,66 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].guest_id, self.guest_1.id)
 
+    def test_create_mailing_draft_without_audience_limit_uses_full_selection(self):
+        """
+        При отключенном лимите черновик должен создаваться по всей выборке.
+        """
+        department_id = "bulk-dep-full"
+        self._create_bulk_window_metrics(department_id=department_id, total=205)
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": department_id,
+                "audience_limit_enabled": "0",
+                "audience_limit": "200",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        self.assertEqual(MailingGuest.objects.filter(mailing=mailing).count(), 205)
+
+        snapshot = self.client.session["mailings_v2_workbench_snapshots"][str(mailing.id)]
+        self.assertFalse(snapshot["audience_limit_enabled"])
+        self.assertEqual(snapshot["audience_limit"], 200)
+        self.assertEqual(snapshot["selected_total"], 205)
+        self.assertEqual(snapshot["selected_rows_count"], 205)
+
+    def test_create_mailing_draft_with_audience_limit_uses_limit_value(self):
+        """
+        При включенном лимите черновик создается только на указанное число гостей.
+        """
+        department_id = "bulk-dep-limited"
+        self._create_bulk_window_metrics(department_id=department_id, total=7)
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": department_id,
+                "audience_limit_enabled": "1",
+                "audience_limit": "3",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        self.assertEqual(MailingGuest.objects.filter(mailing=mailing).count(), 3)
+
+        snapshot = self.client.session["mailings_v2_workbench_snapshots"][str(mailing.id)]
+        self.assertTrue(snapshot["audience_limit_enabled"])
+        self.assertEqual(snapshot["audience_limit"], 3)
+        self.assertEqual(snapshot["selected_total"], 7)
+        self.assertEqual(snapshot["selected_rows_count"], 3)
+
     def test_save_filter_preset_from_workbench(self):
         """
         Быстрое действие должно сохранять пресет текущих фильтров.
@@ -615,6 +675,30 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(preset.department_id, self.department_id)
         self.assertEqual(preset.segment_code, "cooling_30_60d")
         self.assertEqual(preset.focus_category_code, "wine")
+
+    def _create_bulk_window_metrics(self, *, department_id: str, total: int) -> None:
+        """
+        Создает набор гостей для проверки массового действия workbench.
+        """
+        for idx in range(total):
+            guest = Guest.objects.create(
+                phone=f"+7999888{idx:04d}",
+                first_name=f"Гость {idx}",
+            )
+            GuestRestaurantWindowMetrics.objects.create(
+                as_of_date=self.as_of_date,
+                guest=guest,
+                department_id=department_id,
+                window_days=30,
+                orders_count=1,
+                visits_count=1,
+                avg_check_net=Decimal("100.00"),
+                sum_net=Decimal("100.00"),
+                bonus_in_sum=Decimal("0.00"),
+                bonus_out_sum=Decimal("0.00"),
+                rating_score=Decimal("1.00"),
+                last_visit_at=self.as_of_date,
+            )
 
     def test_rename_filter_preset_from_workbench(self):
         """

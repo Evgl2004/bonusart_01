@@ -335,6 +335,7 @@ def build_guest_workbench_payload(
     focus_category_code: str | None = None,
     complex_filters: list[dict[str, str]] | None = None,
     show_all_presets: bool = False,
+    selected_guests_limit: int | None = SELECTED_GUESTS_LIMIT,
 ) -> dict[str, Any]:
     """
     Формирует payload для страницы `guests/workbench`.
@@ -364,6 +365,7 @@ def build_guest_workbench_payload(
             complex_filter_options=complex_filter_options,
             show_all_presets=show_all_presets,
             saved_presets=saved_presets,
+            selected_guests_limit=selected_guests_limit,
         )
 
     base_scope = GuestRestaurantWindowMetrics.objects.filter(as_of_date=target_as_of)
@@ -488,7 +490,7 @@ def build_guest_workbench_payload(
         segment_code=selected_segment_code,
         focus_category_code=selected_focus_category_code,
         allowed_guest_keys=allowed_guest_keys,
-        limit=SELECTED_GUESTS_LIMIT,
+        limit=selected_guests_limit,
         selected_guest_rows=selected_guest_rows,
     )
 
@@ -624,6 +626,7 @@ def _build_empty_payload(
     complex_filter_options: dict[str, list[dict[str, str]]],
     show_all_presets: bool,
     saved_presets: list[dict[str, Any]],
+    selected_guests_limit: int | None = SELECTED_GUESTS_LIMIT,
 ) -> dict[str, Any]:
     """
     Строит пустой payload, если оконных данных еще нет.
@@ -680,7 +683,7 @@ def _build_empty_payload(
         "anti_rating": [],
         "selected_guests": {
             "total": 0,
-            "limit": SELECTED_GUESTS_LIMIT,
+            "limit": int(selected_guests_limit or 0),
             "is_truncated": False,
             "rows": [],
         },
@@ -1166,7 +1169,7 @@ def _build_selected_guests_rows(
     segment_code: str,
     focus_category_code: str,
     allowed_guest_keys: set[tuple[int, str]] | None = None,
-    limit: int,
+    limit: int | None,
     selected_guest_rows: list[tuple[Any, str]] | None = None,
 ) -> dict[str, Any]:
     """
@@ -1186,8 +1189,9 @@ def _build_selected_guests_rows(
         )
 
     total = len(selected_rows)
+    effective_limit = int(limit) if limit is not None and int(limit) > 0 else None
     for row, row_segment_code in selected_rows:
-        if len(rows) < limit:
+        if effective_limit is None or len(rows) < effective_limit:
             item = _serialize_metric_row(row)
             item["segment_code"] = row_segment_code
             item["segment_name"] = SEGMENT_NAMES_MAP.get(row_segment_code, "Вне сегмента")
@@ -1196,8 +1200,8 @@ def _build_selected_guests_rows(
 
     return {
         "total": total,
-        "limit": limit,
-        "is_truncated": total > limit,
+        "limit": effective_limit or total,
+        "is_truncated": effective_limit is not None and total > effective_limit,
         "rows": rows,
     }
 
