@@ -184,6 +184,7 @@ class CouponAutoscenarioReportsView(TemplateView):
     template_name = "reports/coupon_autoscenarios.html"
     runs_limit = 50
     assignments_limit = 100
+    followup_window_days = 30
     weekday_short_labels = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
 
     def get_context_data(self, **kwargs):
@@ -341,6 +342,10 @@ class CouponAutoscenarioReportsView(TemplateView):
             date_to=date_to,
             venue_code=venue_code,
         )
+        followup = self._build_followup_snapshot(
+            assignments_qs=assignments_qs,
+            venue_code=venue_code,
+        )
         daily_rows = self._build_daily_rows(
             runs_qs=runs_qs,
             assignments_qs=assignments_qs,
@@ -470,6 +475,7 @@ class CouponAutoscenarioReportsView(TemplateView):
                 "tone": conclusion_tone,
             },
             "revenue": revenue,
+            "followup": followup,
             "daily_rows": daily_rows,
             "daily_has_data": any(
                 row["matched_guests"]
@@ -611,6 +617,297 @@ class CouponAutoscenarioReportsView(TemplateView):
     @staticmethod
     def _assignment_source_ref(assignment_id: int) -> str:
         return f"coupon_autoscenario_assignment:{int(assignment_id)}"
+
+    @classmethod
+    def _build_empty_followup_snapshot(cls, *, venue_code: str = "") -> dict:
+        return {
+            "window_days": cls.followup_window_days,
+            "assignments_total": 0,
+            "unique_guests": 0,
+            "observation_complete": 0,
+            "observation_pending": 0,
+            "returned_after_assignment_guests": 0,
+            "returned_after_assignment_rate": "0,0",
+            "used_unique_guests": 0,
+            "used_observation_complete": 0,
+            "used_observation_pending": 0,
+            "returned_after_use_guests": 0,
+            "returned_after_use_rate": "0,0",
+            "orders_after_use": 0,
+            "revenue_after_use": _money(0),
+            "avg_check_after_use": _money(0),
+            "venue_rows": [],
+            "product_rank_rows": [],
+            "selected_venue_code": venue_code,
+            "selected_venue_name": "",
+        }
+
+    @classmethod
+    def _build_followup_snapshot(cls, *, assignments_qs, venue_code: str = "") -> dict:
+        selected_venue_code = _normalize_report_text(venue_code)
+        snapshot = cls._build_empty_followup_snapshot(venue_code=selected_venue_code)
+        window_days = int(cls.followup_window_days)
+        today = timezone.localdate()
+
+        def _local_date(value):
+            return value.date() if value else None
+
+        used_statuses = {
+            CouponAutoscenarioAssignment.Status.USED,
+            CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+        }
+        assignment_rows = list(
+            assignments_qs.exclude(guest_id__isnull=True).values(
+                "id",
+                "guest_id",
+                "assigned_at",
+                "status",
+                "used_at",
+                "used_business_date",
+                "venue_code",
+                "venue_name",
+            )
+        )
+        prepared_rows: list[dict[str, object]] = []
+        used_rows: list[dict[str, object]] = []
+        for row in assignment_rows:
+            assigned_date = _local_date(row.get("assigned_at"))
+            if assigned_date is None:
+                continue
+            row["_assigned_date"] = assigned_date
+            used_date = row.get("used_business_date") or _local_date(row.get("used_at"))
+            if row.get("status") in used_statuses and used_date is not None:
+                row["_used_date"] = used_date
+                used_rows.append(row)
+            prepared_rows.append(row)
+
+        if not prepared_rows:
+            return snapshot
+
+        guest_ids = sorted({int(row["guest_id"]) for row in prepared_rows if row.get("guest_id")})
+        used_guest_ids = sorted({int(row["guest_id"]) for row in used_rows if row.get("guest_id")})
+        snapshot["assignments_total"] = len(prepared_rows)
+        snapshot["unique_guests"] = len(guest_ids)
+        snapshot["observation_complete"] = sum(
+            1 for row in prepared_rows if row["_assigned_date"] + timedelta(days=window_days) <= today
+        )
+        snapshot["observation_pending"] = len(prepared_rows) - int(snapshot["observation_complete"])
+        snapshot["used_unique_guests"] = len(used_guest_ids)
+        snapshot["used_observation_complete"] = sum(
+            1 for row in used_rows if row["_used_date"] + timedelta(days=window_days) <= today
+        )
+        snapshot["used_observation_pending"] = len(used_rows) - int(snapshot["used_observation_complete"])
+
+        anchor_dates = [row["_assigned_date"] for row in prepared_rows]
+        anchor_dates.extend(row["_used_date"] for row in used_rows)
+        query_from = min(anchor_dates) + timedelta(days=1)
+        query_to = min(max(anchor_dates) + timedelta(days=window_days), today)
+        if query_from > query_to:
+            return snapshot
+
+        orders_qs = OrderFact.objects.filter(
+            guest_id__in=guest_ids,
+            business_date__gte=query_from,
+            business_date__lte=query_to,
+        )
+        if selected_venue_code:
+            orders_qs = orders_qs.filter(department_id=selected_venue_code)
+
+        orders_by_guest: dict[int, list[dict[str, object]]] = defaultdict(list)
+        for order_row in orders_qs.values(
+            "id",
+            "guest_id",
+            "business_date",
+            "department_id",
+            "department_name",
+            "order_number",
+            "uniq_order_id",
+            "net_sum",
+            "gross_sum",
+        ).order_by("business_date", "id"):
+            if order_row.get("guest_id"):
+                orders_by_guest[int(order_row["guest_id"])].append(order_row)
+
+        returned_after_assignment_guest_ids: set[int] = set()
+        returned_after_use_guest_ids: set[int] = set()
+        post_use_orders_by_key: dict[tuple[object, ...], dict[str, object]] = {}
+        post_use_order_identities: set[tuple[object, str, int | None, str]] = set()
+
+        for assignment_row in prepared_rows:
+            guest_id = int(assignment_row["guest_id"])
+            guest_orders = orders_by_guest.get(guest_id, [])
+            assigned_from = assignment_row["_assigned_date"] + timedelta(days=1)
+            assigned_to = assignment_row["_assigned_date"] + timedelta(days=window_days)
+            used_date = assignment_row.get("_used_date")
+            used_from = used_date + timedelta(days=1) if used_date else None
+            used_to = used_date + timedelta(days=window_days) if used_date else None
+
+            for order_row in guest_orders:
+                business_date = order_row.get("business_date")
+                if business_date is None:
+                    continue
+                if assigned_from <= business_date <= assigned_to:
+                    returned_after_assignment_guest_ids.add(guest_id)
+                if used_from and used_to and used_from <= business_date <= used_to:
+                    returned_after_use_guest_ids.add(guest_id)
+                    identity = _order_identity(
+                        business_date=order_row.get("business_date"),
+                        department_id=order_row.get("department_id"),
+                        order_number=order_row.get("order_number"),
+                        uniq_order_id=order_row.get("uniq_order_id"),
+                    )
+                    order_key = ("order", *identity) if identity[0] is not None and identity[2] is not None else (
+                        "fact",
+                        int(order_row["id"]),
+                    )
+                    post_use_orders_by_key.setdefault(order_key, order_row)
+                    if order_key[0] == "order":
+                        post_use_order_identities.add(identity)
+
+        snapshot["returned_after_assignment_guests"] = len(returned_after_assignment_guest_ids)
+        snapshot["returned_after_assignment_rate"] = cls._format_percent(
+            len(returned_after_assignment_guest_ids),
+            len(guest_ids),
+        )
+        snapshot["returned_after_use_guests"] = len(returned_after_use_guest_ids)
+        snapshot["returned_after_use_rate"] = cls._format_percent(
+            len(returned_after_use_guest_ids),
+            len(used_guest_ids),
+        )
+
+        post_use_orders = list(post_use_orders_by_key.values())
+        if not post_use_orders:
+            return snapshot
+
+        revenue_after_use = sum((_decimal_or_zero(row.get("net_sum")) for row in post_use_orders), Decimal("0"))
+        orders_after_use = len(post_use_orders)
+        snapshot["orders_after_use"] = orders_after_use
+        snapshot["revenue_after_use"] = _money(revenue_after_use)
+        snapshot["avg_check_after_use"] = _money(
+            revenue_after_use / Decimal(orders_after_use) if orders_after_use else Decimal("0")
+        )
+
+        venue_stats: dict[str, dict[str, object]] = {}
+        for order_row in post_use_orders:
+            venue_key = _normalize_report_text(order_row.get("department_id"))
+            venue_row = venue_stats.setdefault(
+                venue_key,
+                {
+                    "venue_code": venue_key,
+                    "venue_name": _normalize_report_text(order_row.get("department_name")) or venue_key or "Не указано",
+                    "orders_count": 0,
+                    "guests": set(),
+                    "revenue_net": Decimal("0"),
+                },
+            )
+            venue_row["orders_count"] = int(venue_row["orders_count"]) + 1
+            if order_row.get("guest_id"):
+                venue_row["guests"].add(int(order_row["guest_id"]))
+            venue_row["revenue_net"] = venue_row["revenue_net"] + _decimal_or_zero(order_row.get("net_sum"))
+
+        venue_rows = []
+        selected_venue_name = ""
+        for venue_row in sorted(
+            venue_stats.values(),
+            key=lambda row: (-int(row["orders_count"]), str(row["venue_name"])),
+        ):
+            orders_count = int(venue_row["orders_count"])
+            revenue_value = venue_row["revenue_net"]
+            avg_check = revenue_value / Decimal(orders_count) if orders_count else Decimal("0")
+            is_selected = selected_venue_code and selected_venue_code == venue_row["venue_code"]
+            if is_selected:
+                selected_venue_name = str(venue_row["venue_name"])
+            venue_rows.append(
+                {
+                    "venue_code": venue_row["venue_code"],
+                    "venue_name": venue_row["venue_name"],
+                    "orders_count": orders_count,
+                    "unique_guests": len(venue_row["guests"]),
+                    "revenue_net": _money(revenue_value),
+                    "avg_check": _money(avg_check),
+                    "is_selected": bool(is_selected),
+                }
+            )
+        snapshot["venue_rows"] = venue_rows
+        snapshot["selected_venue_name"] = selected_venue_name if selected_venue_name else selected_venue_code
+
+        if not post_use_order_identities:
+            return snapshot
+
+        order_dates = sorted({identity[0] for identity in post_use_order_identities if identity[0]})
+        order_numbers = sorted({identity[2] for identity in post_use_order_identities if identity[2] is not None})
+        order_uniq_ids = sorted({identity[3] for identity in post_use_order_identities if identity[3]})
+        raw_filter = Q()
+        if order_uniq_ids:
+            raw_filter |= Q(uniq_order_id__in=order_uniq_ids)
+        if order_numbers:
+            raw_filter |= Q(order_number__in=order_numbers)
+        if not order_dates or not raw_filter:
+            return snapshot
+
+        product_stats: dict[tuple[str, str], dict[str, object]] = {}
+        for raw_row in (
+            OlapSalesRawLine.objects.filter(raw_filter, business_date__in=order_dates)
+            .values(
+                "business_date",
+                "department_id",
+                "order_number",
+                "uniq_order_id",
+                "dish_code",
+                "dish_name",
+                "dish_amount",
+                "dish_sum_before_discount",
+                "dish_sum_after_discount",
+            )
+            .order_by("business_date", "order_number", "id")
+        ):
+            raw_identity = _order_identity(
+                business_date=raw_row.get("business_date"),
+                department_id=raw_row.get("department_id"),
+                order_number=raw_row.get("order_number"),
+                uniq_order_id=raw_row.get("uniq_order_id"),
+            )
+            if raw_identity not in post_use_order_identities:
+                continue
+            product_key = (
+                _normalize_report_text(raw_row.get("dish_code")),
+                _normalize_report_text(raw_row.get("dish_name")) or "Без названия",
+            )
+            product_row = product_stats.setdefault(
+                product_key,
+                {
+                    "dish_code": product_key[0],
+                    "dish_name": product_key[1],
+                    "orders": set(),
+                    "quantity_total": Decimal("0"),
+                    "gross_sum": Decimal("0"),
+                    "revenue_net": Decimal("0"),
+                },
+            )
+            product_row["orders"].add(raw_identity)
+            product_row["quantity_total"] = product_row["quantity_total"] + _raw_line_quantity(raw_row)
+            product_row["gross_sum"] = product_row["gross_sum"] + _raw_line_gross_sum(raw_row)
+            product_row["revenue_net"] = product_row["revenue_net"] + _raw_line_net_sum(raw_row)
+
+        snapshot["product_rank_rows"] = sorted(
+            [
+                {
+                    "dish_code": row["dish_code"],
+                    "dish_name": row["dish_name"],
+                    "orders_count": len(row["orders"]),
+                    "quantity_total": str(row["quantity_total"]),
+                    "gross_sum": _money(row["gross_sum"]),
+                    "revenue_net": _money(row["revenue_net"]),
+                }
+                for row in product_stats.values()
+            ],
+            key=lambda row: (
+                -int(row["orders_count"]),
+                -_decimal_or_zero(row["revenue_net"]),
+                str(row["dish_name"]),
+            ),
+        )[:10]
+        return snapshot
 
     @staticmethod
     def _build_empty_revenue_snapshot(*, venue_code: str = "") -> dict:

@@ -447,6 +447,134 @@
       {% endif %}
     </div>
 
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-header bg-white fw-semibold">Повторные визиты после купона</div>
+      <div class="card-body">
+        <div class="text-muted small mb-3">
+          Выбранный период — это период выдачи купонов. Повторные визиты считаются на {{ autoscenario_report.followup.window_days }} дней вперёд после выдачи и отдельно после применения купона.
+        </div>
+        {% if autoscenario_report.followup.selected_venue_code %}
+          <div class="alert alert-secondary py-2 mb-3">
+            Повторные визиты, сумма и позиции показаны по заведению:
+            <b>{{ autoscenario_report.followup.selected_venue_name }}</b>.
+          </div>
+        {% endif %}
+        <div class="row g-3">
+          <div class="col-12 col-md-6 col-xl-2">
+            <div class="text-secondary small">Гостей с купоном</div>
+            <div class="h5 mb-0">{{ autoscenario_report.followup.unique_guests }}</div>
+            <div class="text-muted small">назначения: {{ autoscenario_report.followup.assignments_total }}</div>
+          </div>
+          <div class="col-12 col-md-6 col-xl-2">
+            <div class="text-secondary small">Вернулись после выдачи</div>
+            <div class="h5 mb-0">{{ autoscenario_report.followup.returned_after_assignment_guests }}</div>
+            <div class="text-muted small">{{ autoscenario_report.followup.returned_after_assignment_rate }}% от гостей с купоном</div>
+          </div>
+          <div class="col-12 col-md-6 col-xl-2">
+            <div class="text-secondary small">Применили купон</div>
+            <div class="h5 mb-0">{{ autoscenario_report.followup.used_unique_guests }}</div>
+            <div class="text-muted small">гости с заказом по купону</div>
+          </div>
+          <div class="col-12 col-md-6 col-xl-2">
+            <div class="text-secondary small">Повтор после применения</div>
+            <div class="h5 mb-0">{{ autoscenario_report.followup.returned_after_use_guests }}</div>
+            <div class="text-muted small">{{ autoscenario_report.followup.returned_after_use_rate }}% от применивших</div>
+          </div>
+          <div class="col-12 col-md-6 col-xl-2">
+            <div class="text-secondary small">Заказов после применения</div>
+            <div class="h5 mb-0">{{ autoscenario_report.followup.orders_after_use }}</div>
+            <div class="text-muted small">не включая сам купонный заказ</div>
+          </div>
+          <div class="col-12 col-md-6 col-xl-2">
+            <div class="text-secondary small">Оплачено после применения</div>
+            <div class="h5 mb-0">{{ autoscenario_report.followup.revenue_after_use }}</div>
+            <div class="text-muted small">средний чек: {{ autoscenario_report.followup.avg_check_after_use }}</div>
+          </div>
+        </div>
+
+        {% if autoscenario_report.followup.observation_pending or autoscenario_report.followup.used_observation_pending %}
+          <div class="alert alert-warning mt-3 mb-0">
+            Для части купонов окно {{ autoscenario_report.followup.window_days }} дней ещё не завершилось:
+            после выдачи в наблюдении {{ autoscenario_report.followup.observation_pending }},
+            после применения в наблюдении {{ autoscenario_report.followup.used_observation_pending }}.
+          </div>
+        {% elif autoscenario_report.followup.unique_guests == 0 %}
+          <div class="alert alert-info mt-3 mb-0">
+            За выбранный период боевых назначений купонов нет, повторные визиты считать не по кому.
+          </div>
+        {% endif %}
+
+        {% if autoscenario_report.followup.venue_rows or autoscenario_report.followup.product_rank_rows %}
+          <hr>
+          <div class="row g-3">
+            <div class="col-12 col-xl-5">
+              <h3 class="h6 mb-2">Повторные заказы по заведениям</h3>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Заведение</th>
+                      <th class="text-end">Заказов</th>
+                      <th class="text-end">Гостей</th>
+                      <th class="text-end">Оплачено</th>
+                      <th class="text-end">Средний чек</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in autoscenario_report.followup.venue_rows %}
+                      <tr{% if row.is_selected %} class="table-primary"{% endif %}>
+                        <td>
+                          {{ row.venue_name }}
+                          <div class="text-muted small"><code>{{ row.venue_code|default:"—" }}</code></div>
+                        </td>
+                        <td class="text-end">{{ row.orders_count }}</td>
+                        <td class="text-end">{{ row.unique_guests }}</td>
+                        <td class="text-end">{{ row.revenue_net }}</td>
+                        <td class="text-end">{{ row.avg_check }}</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="col-12 col-xl-7">
+              <h3 class="h6 mb-2">Топ 10 позиций в повторных заказах</h3>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Позиция</th>
+                      <th>Код</th>
+                      <th class="text-end">Заказов</th>
+                      <th class="text-end">Кол-во</th>
+                      <th class="text-end">До скидки</th>
+                      <th class="text-end">Оплачено</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in autoscenario_report.followup.product_rank_rows %}
+                      <tr>
+                        <td>{{ row.dish_name }}</td>
+                        <td><code>{{ row.dish_code|default:"—" }}</code></td>
+                        <td class="text-end">{{ row.orders_count }}</td>
+                        <td class="text-end">{{ row.quantity_total }}</td>
+                        <td class="text-end">{{ row.gross_sum }}</td>
+                        <td class="text-end">{{ row.revenue_net }}</td>
+                      </tr>
+                    {% empty %}
+                      <tr>
+                        <td colspan="6" class="text-center text-muted py-3">Позиции повторных заказов пока не найдены.</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+
     <details class="card border-0 shadow-sm mb-3">
       <summary class="card-header bg-white fw-semibold">Журнал пилотов</summary>
       <div class="card-body border-bottom">

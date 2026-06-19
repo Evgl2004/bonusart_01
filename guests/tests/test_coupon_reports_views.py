@@ -244,6 +244,10 @@ class CouponReportsViewsTests(TestCase):
         self.assertNotContains(response, campaign_guest.phone)
 
     def test_coupon_autoscenario_report_shows_delivery_and_order_fact_revenue(self):
+        assigned_at = self.now - timedelta(days=25)
+        used_at = self.now - timedelta(days=20)
+        used_business_date = used_at.date()
+        followup_business_date = self.now.date() - timedelta(days=10)
         guest = Guest.objects.create(
             phone="+79994445566",
             first_name="Auto",
@@ -304,14 +308,14 @@ class CouponReportsViewsTests(TestCase):
             coupon_code=coupon.code,
             venue_code="DEP_1",
             venue_name="Test venue",
-            assigned_at=self.now,
-            sent_at=self.now,
+            assigned_at=assigned_at,
+            sent_at=assigned_at,
             status=CouponAutoscenarioAssignment.Status.USED,
-            used_at=self.now,
+            used_at=used_at,
             used_order_id=7001,
-            used_business_date=self.now.date(),
+            used_business_date=used_business_date,
             vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
-            vtelemax_synced_at=self.now,
+            vtelemax_synced_at=used_at,
         )
         event = NotificationEvent.objects.create(
             scenario=scenario,
@@ -320,7 +324,7 @@ class CouponReportsViewsTests(TestCase):
             source_ref=f"coupon_autoscenario_assignment:{assignment.id}",
             dedupe_key=f"coupon_autoscenario_assignment:{assignment.id}",
             status=NotificationEvent.Status.TASK_CREATED,
-            planned_send_at=self.now,
+            planned_send_at=assigned_at,
             coupon_code=coupon.code,
             coupon_external_id=f"{coupon.series}:{coupon.code}",
         )
@@ -335,16 +339,16 @@ class CouponReportsViewsTests(TestCase):
             external_chat_id="12345",
             message_text="test",
             idempotency_key=f"coupon-autoscenario-test-{assignment.id}",
-            available_at=self.now,
-            scheduled_at=self.now,
-            enqueued_at=self.now,
-            started_at=self.now,
-            finished_at=self.now,
+            available_at=assigned_at,
+            scheduled_at=assigned_at,
+            enqueued_at=assigned_at,
+            started_at=assigned_at,
+            finished_at=assigned_at,
             attempt=1,
         )
         OrderFact.objects.create(
             guest=guest,
-            business_date=self.now.date(),
+            business_date=used_business_date,
             department_id="DEP_1",
             department_name="Test venue",
             order_number=7001,
@@ -355,7 +359,7 @@ class CouponReportsViewsTests(TestCase):
             coupon_used=True,
             coupon_series=coupon.series,
             coupon_number=coupon.code,
-            first_seen_at=self.now,
+            first_seen_at=used_at,
         )
         journal = OlapCheckSyncJournal.objects.create(
             idempotency_key="auto-report-7001",
@@ -364,16 +368,16 @@ class CouponReportsViewsTests(TestCase):
             terminal_group_id="TERM_1",
             order_number=7001,
             order_external_id="auto-report-7001",
-            business_date=self.now.date(),
+            business_date=used_business_date,
             department_id="DEP_1",
             department_code="DEP_1",
-            loaded_at=self.now,
+            loaded_at=used_at,
         )
         OlapSalesRawLine.objects.create(
             row_fingerprint="auto-report-7001-pizza",
             sync_journal=journal,
             guest=guest,
-            business_date=self.now.date(),
+            business_date=used_business_date,
             department_id="DEP_1",
             department_code="DEP_1",
             department_name="Test venue",
@@ -393,7 +397,7 @@ class CouponReportsViewsTests(TestCase):
             row_fingerprint="auto-report-7001-tea",
             sync_journal=journal,
             guest=guest,
-            business_date=self.now.date(),
+            business_date=used_business_date,
             department_id="DEP_1",
             department_code="DEP_1",
             department_name="Test venue",
@@ -408,6 +412,49 @@ class CouponReportsViewsTests(TestCase):
             bonus_sum="0.00",
             coupon_series=coupon.series,
             coupon_number=coupon.code,
+        )
+        OrderFact.objects.create(
+            guest=guest,
+            business_date=followup_business_date,
+            department_id="DEP_2",
+            department_name="Second venue",
+            order_number=7002,
+            uniq_order_id="auto-report-7002",
+            gross_sum="1000.00",
+            net_sum="900.00",
+            discount_sum="100.00",
+            coupon_used=False,
+            first_seen_at=self.now - timedelta(days=10),
+        )
+        followup_journal = OlapCheckSyncJournal.objects.create(
+            idempotency_key="auto-report-7002",
+            status=OlapCheckSyncJournal.Status.LOADED,
+            guest=guest,
+            terminal_group_id="TERM_2",
+            order_number=7002,
+            order_external_id="auto-report-7002",
+            business_date=followup_business_date,
+            department_id="DEP_2",
+            department_code="DEP_2",
+            loaded_at=self.now - timedelta(days=10),
+        )
+        OlapSalesRawLine.objects.create(
+            row_fingerprint="auto-report-7002-pasta",
+            sync_journal=followup_journal,
+            guest=guest,
+            business_date=followup_business_date,
+            department_id="DEP_2",
+            department_code="DEP_2",
+            department_name="Second venue",
+            order_number=7002,
+            uniq_order_id="auto-report-7002",
+            dish_code="PASTA",
+            dish_name="Паста",
+            dish_amount="1",
+            dish_sum_before_discount="1000.00",
+            dish_sum_after_discount="900.00",
+            discount_sum="100.00",
+            bonus_sum="0.00",
         )
 
         response = self.client.get(
@@ -431,16 +478,30 @@ class CouponReportsViewsTests(TestCase):
         self.assertEqual(revenue["venue_rows"][0]["unique_guests"], 1)
         self.assertEqual(revenue["product_rank_rows"][0]["dish_name"], "Пицца")
         self.assertEqual(revenue["product_rank_rows"][0]["revenue_net"], "200.00")
+        followup = response.context["autoscenario_report"]["followup"]
+        self.assertEqual(followup["unique_guests"], 1)
+        self.assertEqual(followup["returned_after_assignment_guests"], 1)
+        self.assertEqual(followup["used_unique_guests"], 1)
+        self.assertEqual(followup["returned_after_use_guests"], 1)
+        self.assertEqual(followup["orders_after_use"], 1)
+        self.assertEqual(followup["revenue_after_use"], "900.00")
+        self.assertEqual(followup["avg_check_after_use"], "900.00")
+        self.assertEqual(followup["venue_rows"][0]["venue_code"], "DEP_2")
+        self.assertEqual(followup["product_rank_rows"][0]["dish_name"], "Паста")
         self.assertContains(response, scenario.code)
         self.assertContains(response, coupon.code)
         self.assertContains(response, guest.phone)
         self.assertContains(response, "350.00")
+        self.assertContains(response, "900.00")
         self.assertContains(response, "7001")
         self.assertContains(response, "По заведениям")
         self.assertContains(response, "Топ 10 позиций")
+        self.assertContains(response, "Повторные визиты после купона")
         self.assertContains(response, "Test venue")
+        self.assertContains(response, "Second venue")
         self.assertContains(response, "Пицца")
         self.assertContains(response, "Чай")
+        self.assertContains(response, "Паста")
         self.assertContains(response, "Воронка боевых запусков")
         self.assertContains(response, "Динамика по дням")
         self.assertContains(response, "Попали под сценарий")
