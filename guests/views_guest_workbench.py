@@ -8,7 +8,11 @@ from datetime import date
 
 from django.views.generic import TemplateView
 
-from guests.services.guest_workbench import build_guest_workbench_payload, normalize_window_days
+from guests.services.guest_workbench import (
+    build_guest_workbench_payload,
+    normalize_audience_channel_group,
+    normalize_window_days,
+)
 
 
 class GuestsWorkbenchView(TemplateView):
@@ -29,6 +33,9 @@ class GuestsWorkbenchView(TemplateView):
         selected_department_id = (self.request.GET.get("department_id") or "").strip()
         selected_segment_code = (self.request.GET.get("segment_code") or "").strip()
         selected_focus_category_code = (self.request.GET.get("focus_category_code") or "").strip()
+        selected_audience_channel_group = normalize_audience_channel_group(
+            self.request.GET.get("audience_channel_group")
+        )
         complex_filters = _extract_complex_filters_from_query(self.request)
         show_all_presets = _to_bool_flag(self.request.GET.get("show_all_presets"))
 
@@ -41,6 +48,7 @@ class GuestsWorkbenchView(TemplateView):
             department_id=selected_department_id,
             segment_code=selected_segment_code,
             focus_category_code=selected_focus_category_code,
+            audience_channel_group=selected_audience_channel_group,
             complex_filters=complex_filters,
             show_all_presets=show_all_presets,
         )
@@ -51,6 +59,7 @@ class GuestsWorkbenchView(TemplateView):
         context["selected_department_id"] = payload["filters"]["department_id"]
         context["selected_segment_code"] = payload["filters"]["segment_code"]
         context["selected_focus_category_code"] = payload["filters"]["focus_category_code"]
+        context["selected_audience_channel_group"] = payload["filters"]["audience_channel_group"]
         context["selected_show_all_presets"] = bool(payload["filters"].get("show_all_presets"))
         return context
 

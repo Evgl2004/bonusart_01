@@ -22,6 +22,7 @@ from django.db.models import Exists, Max, OuterRef
 from guests.models import (
     FocusCategory,
     Guest,
+    GuestBotBinding,
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantWindowCategoryMetrics,
     GuestWorkbenchFilterPreset,
@@ -41,6 +42,18 @@ SEGMENT_DEFINITIONS = (
     (BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE, "Активен в боте, без визитов 180д"),
 )
 SEGMENT_NAMES_MAP = dict(SEGMENT_DEFINITIONS)
+AUDIENCE_CHANNEL_GROUP_ALL = "all"
+AUDIENCE_CHANNEL_GROUP_NEW_BOTS_SENDABLE = "new_bots_sendable"
+AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT = "legacy_no_new_bot"
+AUDIENCE_CHANNEL_GROUP_NEW_BOTS_BLOCKED = "new_bots_blocked"
+AUDIENCE_CHANNEL_GROUP_DEFINITIONS = (
+    (AUDIENCE_CHANNEL_GROUP_ALL, "Все гости"),
+    (AUDIENCE_CHANNEL_GROUP_NEW_BOTS_SENDABLE, "Доступна рассылка в новых ботах"),
+    (AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT, "Legacy Telegram / без новой регистрации"),
+    (AUDIENCE_CHANNEL_GROUP_NEW_BOTS_BLOCKED, "В новых ботах, но рассылка запрещена"),
+)
+AUDIENCE_CHANNEL_GROUP_NAMES_MAP = dict(AUDIENCE_CHANNEL_GROUP_DEFINITIONS)
+NEW_BOT_PROVIDER_TYPES = ("telegram", "max", "vk")
 SELECTED_GUESTS_LIMIT = 200
 COMPLEX_FILTER_MAX_ITEMS = 6
 COMPLEX_FILTER_FIELDS = (
@@ -94,6 +107,16 @@ def normalize_segment_code(raw_value: str | None) -> str:
     """
     value = (raw_value or "").strip()
     return value if value in SEGMENT_NAMES_MAP else ""
+
+
+def normalize_audience_channel_group(raw_value: str | None) -> str:
+    """
+    Нормализует тип аудитории по доступности канала для рассылки.
+    """
+    value = (raw_value or "").strip()
+    if value in AUDIENCE_CHANNEL_GROUP_NAMES_MAP:
+        return value
+    return AUDIENCE_CHANNEL_GROUP_ALL
 
 
 def normalize_complex_filters(raw_filters: list[dict[str, str]] | None) -> list[dict[str, Any]]:
@@ -326,6 +349,130 @@ def _collect_allowed_guest_keys_by_complex_filters(
     return allowed_keys
 
 
+def _build_audience_channel_filter(audience_channel_group: str) -> dict[str, set[int] | None]:
+    """
+    Готовит включающие/исключающие множества гостей для фильтра по каналам рассылки.
+
+    Фильтр разделяет три разных бизнес-смысла:
+    1. есть рабочая доставка через новые боты;
+    2. legacy-гость со старым Telegram-каналом, но без новой регистрации;
+    3. гость уже в новых ботах, но без права отправки сообщения.
+    """
+    normalized_group = normalize_audience_channel_group(audience_channel_group)
+    if normalized_group == AUDIENCE_CHANNEL_GROUP_ALL:
+        return {"include_guest_ids": None, "exclude_guest_ids": set()}
+
+    bot_bound_guest_ids = _collect_new_bot_bound_guest_ids()
+    sendable_guest_ids = _collect_new_bot_sendable_guest_ids()
+    legacy_telegram_guest_ids = _collect_legacy_telegram_guest_ids(
+        exclude_guest_ids=bot_bound_guest_ids,
+    )
+    if normalized_group == AUDIENCE_CHANNEL_GROUP_NEW_BOTS_SENDABLE:
+        return {"include_guest_ids": sendable_guest_ids, "exclude_guest_ids": set()}
+    if normalized_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT:
+        return {"include_guest_ids": legacy_telegram_guest_ids, "exclude_guest_ids": set()}
+
+    return {
+        "include_guest_ids": bot_bound_guest_ids - sendable_guest_ids,
+        "exclude_guest_ids": set(),
+    }
+
+
+def _collect_new_bot_bound_guest_ids() -> set[int]:
+    """
+    Возвращает гостей, у которых есть активная привязка к новым ботам.
+    """
+    return {
+        int(guest_id)
+        for guest_id in (
+            GuestBotBinding.objects.filter(
+                is_active=True,
+                bot__is_active=True,
+                bot__provider_type__in=NEW_BOT_PROVIDER_TYPES,
+            )
+            .exclude(external_chat_id__isnull=True)
+            .exclude(external_chat_id="")
+            .values_list("guest_id", flat=True)
+            .distinct()
+        )
+    }
+
+
+def _collect_new_bot_sendable_guest_ids() -> set[int]:
+    """
+    Возвращает гостей, которым можно отправить сообщение через новые боты.
+    """
+    return {
+        int(guest_id)
+        for guest_id in (
+            GuestBotBinding.objects.filter(
+                is_active=True,
+                is_opt_in=True,
+                is_stop_sending=False,
+                bot__is_active=True,
+                bot__provider_type__in=NEW_BOT_PROVIDER_TYPES,
+            )
+            .exclude(external_chat_id__isnull=True)
+            .exclude(external_chat_id="")
+            .values_list("guest_id", flat=True)
+            .distinct()
+        )
+    }
+
+
+def _collect_legacy_telegram_guest_ids(*, exclude_guest_ids: set[int]) -> set[int]:
+    """
+    Возвращает legacy-гостей Telegram: старый канал есть, новой привязки к ботам нет.
+    """
+    queryset = (
+        VtelemaxRecipientChannel.objects.filter(
+            guest__isnull=False,
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            is_registered=True,
+            notifications_allowed=True,
+        )
+        .exclude(guest_id__in=exclude_guest_ids)
+        .exclude(external_id__isnull=True)
+        .exclude(external_id="")
+        .values_list("guest_id", flat=True)
+        .distinct()
+    )
+    return {int(guest_id) for guest_id in queryset}
+
+
+def _apply_audience_channel_filter(scope_qs, audience_filter: dict[str, set[int] | None]):
+    """
+    Применяет фильтр аудитории к queryset метрик workbench.
+    """
+    include_guest_ids = audience_filter.get("include_guest_ids")
+    exclude_guest_ids = audience_filter.get("exclude_guest_ids") or set()
+    filtered_scope = scope_qs
+    if include_guest_ids is not None:
+        filtered_scope = filtered_scope.filter(guest_id__in=include_guest_ids)
+    if exclude_guest_ids:
+        filtered_scope = filtered_scope.exclude(guest_id__in=exclude_guest_ids)
+    return filtered_scope
+
+
+def _guest_key_allowed_by_audience_filter(
+    guest_key: tuple[int, str],
+    audience_filter: dict[str, set[int] | None] | None,
+) -> bool:
+    """
+    Проверяет синтетические строки сегментов по тому же фильтру новых ботов.
+    """
+    if audience_filter is None:
+        return True
+    guest_id = int(guest_key[0])
+    include_guest_ids = audience_filter.get("include_guest_ids")
+    exclude_guest_ids = audience_filter.get("exclude_guest_ids") or set()
+    if include_guest_ids is not None and guest_id not in include_guest_ids:
+        return False
+    if guest_id in exclude_guest_ids:
+        return False
+    return True
+
+
 def build_guest_workbench_payload(
     *,
     as_of_date: date | None = None,
@@ -333,6 +480,7 @@ def build_guest_workbench_payload(
     department_id: str | None = None,
     segment_code: str | None = None,
     focus_category_code: str | None = None,
+    audience_channel_group: str | None = None,
     complex_filters: list[dict[str, str]] | None = None,
     show_all_presets: bool = False,
     selected_guests_limit: int | None = SELECTED_GUESTS_LIMIT,
@@ -344,6 +492,8 @@ def build_guest_workbench_payload(
     selected_department_id = (department_id or "").strip()
     selected_segment_code = normalize_segment_code(segment_code)
     selected_focus_category_code_raw = (focus_category_code or "").strip()
+    selected_audience_channel_group = normalize_audience_channel_group(audience_channel_group)
+    audience_channel_filter = _build_audience_channel_filter(selected_audience_channel_group)
     normalized_complex_filters = normalize_complex_filters(complex_filters)
     complex_filter_options = _build_complex_filter_options()
     saved_presets = _build_saved_presets(show_all_presets=show_all_presets)
@@ -361,6 +511,7 @@ def build_guest_workbench_payload(
             selected_department_id=selected_department_id,
             selected_segment_code=selected_segment_code,
             selected_focus_category_code=selected_focus_category_code_raw,
+            selected_audience_channel_group=selected_audience_channel_group,
             normalized_complex_filters=normalized_complex_filters,
             complex_filter_options=complex_filter_options,
             show_all_presets=show_all_presets,
@@ -371,12 +522,14 @@ def build_guest_workbench_payload(
     base_scope = GuestRestaurantWindowMetrics.objects.filter(as_of_date=target_as_of)
     if selected_department_id:
         base_scope = base_scope.filter(department_id=selected_department_id)
+    base_scope = _apply_audience_channel_filter(base_scope, audience_channel_filter)
 
     base_segmentation, base_segment_by_key = _build_segmentation_state(
         base_scope,
         as_of_date=target_as_of,
         selected_department_id=selected_department_id,
         allowed_guest_keys=None,
+        audience_channel_filter=audience_channel_filter,
     )
     base_segment_focus_matrix, base_focus_guest_keys_by_code = _build_segment_focus_matrix(
         as_of_date=target_as_of,
@@ -420,6 +573,7 @@ def build_guest_workbench_payload(
         )
         if selected_department_id:
             active_metrics_scope = active_metrics_scope.filter(department_id=selected_department_id)
+        active_metrics_scope = _apply_audience_channel_filter(active_metrics_scope, audience_channel_filter)
 
     allowed_guest_keys = _collect_allowed_guest_keys_by_complex_filters(
         base_scope=active_metrics_scope,
@@ -441,6 +595,7 @@ def build_guest_workbench_payload(
             as_of_date=target_as_of,
             selected_department_id=selected_department_id,
             allowed_guest_keys=allowed_guest_keys,
+            audience_channel_filter=audience_channel_filter,
         )
         segment_focus_matrix, focus_guest_keys_by_code = _build_segment_focus_matrix(
             as_of_date=target_as_of,
@@ -582,6 +737,12 @@ def build_guest_workbench_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": focus_category_options,
+            "audience_channel_group": selected_audience_channel_group,
+            "audience_channel_group_name": AUDIENCE_CHANNEL_GROUP_NAMES_MAP.get(
+                selected_audience_channel_group,
+                AUDIENCE_CHANNEL_GROUP_NAMES_MAP[AUDIENCE_CHANNEL_GROUP_ALL],
+            ),
+            "audience_channel_group_options": _build_audience_channel_group_options(),
             "metrics_layer": "category_window" if use_category_window_metrics else "window",
             "metrics_layer_name": (
                 "Метрики по выбранной категории"
@@ -622,6 +783,7 @@ def _build_empty_payload(
     selected_department_id: str,
     selected_segment_code: str,
     selected_focus_category_code: str,
+    selected_audience_channel_group: str,
     normalized_complex_filters: list[dict[str, Any]],
     complex_filter_options: dict[str, list[dict[str, str]]],
     show_all_presets: bool,
@@ -642,6 +804,12 @@ def _build_empty_payload(
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
             "focus_category_options": [],
+            "audience_channel_group": selected_audience_channel_group,
+            "audience_channel_group_name": AUDIENCE_CHANNEL_GROUP_NAMES_MAP.get(
+                selected_audience_channel_group,
+                AUDIENCE_CHANNEL_GROUP_NAMES_MAP[AUDIENCE_CHANNEL_GROUP_ALL],
+            ),
+            "audience_channel_group_options": _build_audience_channel_group_options(),
             "metrics_layer": "window",
             "metrics_layer_name": "Общие метрики по окну",
             "complex_filters": normalized_complex_filters,
@@ -719,6 +887,13 @@ def _build_segment_options() -> list[dict[str, str]]:
     return [{"code": code, "name": name} for code, name in SEGMENT_DEFINITIONS]
 
 
+def _build_audience_channel_group_options() -> list[dict[str, str]]:
+    """
+    Формирует справочник типов аудитории по доступности канала рассылки.
+    """
+    return [{"code": code, "name": name} for code, name in AUDIENCE_CHANNEL_GROUP_DEFINITIONS]
+
+
 def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, Any]]:
     """
     Возвращает пресеты фильтров для экрана workbench.
@@ -744,6 +919,7 @@ def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, An
         "department_id",
         "segment_code",
         "focus_category_code",
+        "audience_channel_group",
         "is_active",
         "updated_at",
     )
@@ -753,6 +929,7 @@ def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, An
         department_id = (row.get("department_id") or "").strip()
         segment_code = (row.get("segment_code") or "").strip()
         focus_code = (row.get("focus_category_code") or "").strip()
+        audience_channel_group = normalize_audience_channel_group(row.get("audience_channel_group"))
 
         result.append(
             {
@@ -766,6 +943,11 @@ def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, An
                 "segment_name": SEGMENT_NAMES_MAP.get(segment_code, "Все сегменты") if segment_code else "Все сегменты",
                 "focus_category_code": focus_code,
                 "focus_category_name": focus_name_map.get(focus_code, focus_code) if focus_code else "Все категории",
+                "audience_channel_group": audience_channel_group,
+                "audience_channel_group_name": AUDIENCE_CHANNEL_GROUP_NAMES_MAP.get(
+                    audience_channel_group,
+                    AUDIENCE_CHANNEL_GROUP_NAMES_MAP[AUDIENCE_CHANNEL_GROUP_ALL],
+                ),
                 "is_active": bool(row.get("is_active")),
                 "updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else "",
             }
@@ -850,6 +1032,7 @@ def _build_segmentation_state(
     as_of_date: date,
     selected_department_id: str,
     allowed_guest_keys: set[tuple[int, str]] | None = None,
+    audience_channel_filter: dict[str, set[int] | None] | None = None,
 ) -> tuple[dict[str, int], dict[tuple[int, str], str]]:
     """
     Считает сегменты активности по окнам 30/60/180 дней.
@@ -907,6 +1090,8 @@ def _build_segmentation_state(
         allowed_guest_keys=allowed_guest_keys,
     )
     for key in sorted(bot_segment_keys):
+        if not _guest_key_allowed_by_audience_filter(key, audience_channel_filter):
+            continue
         if key in segment_by_key:
             continue
         segment_by_key[key] = BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE

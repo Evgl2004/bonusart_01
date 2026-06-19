@@ -19,6 +19,7 @@
       <input type="hidden" name="department_id" value="{{ selected_department_id }}">
       <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
       <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+      <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
       <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
       {% for rule in payload.filters.complex_filters %}
         <input type="hidden" name="cf_field" value="{{ rule.field }}">

@@ -227,6 +227,22 @@
     </div>
   </div>
 
+  <div class="row g-2 align-items-end mt-1">
+    <div class="col-12 col-lg-4">
+      <label class="form-label">Тип аудитории</label>
+      <select id="wb-audience-channel-group" name="audience_channel_group" class="form-select">
+        {% for group in payload.filters.audience_channel_group_options %}
+          <option value="{{ group.code }}" {% if group.code == selected_audience_channel_group %}selected{% endif %}>{{ group.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-8">
+      <div class="text-muted small">
+        Для рассылки через новые боты учитываются только гости с активной привязкой, согласием на сообщения и заполненным идентификатором чата.
+      </div>
+    </div>
+  </div>
+
   <div class="wb-complex-filters-box mt-2">
     <div class="d-flex align-items-center justify-content-between mb-2">
       <label class="form-label mb-0">Дополнительные условия (логика И)</label>
@@ -308,7 +324,7 @@
   Режим расчёта метрик: <strong>{{ payload.filters.metrics_layer_name }}</strong>
 </div>
 
-{% if selected_segment_code or selected_focus_category_code or selected_department_id or payload.filters.complex_filters %}
+{% if selected_segment_code or selected_focus_category_code or selected_department_id or selected_audience_channel_group != "all" or payload.filters.complex_filters %}
   <div id="wb-active-filters" class="alert alert-info border py-2 small mb-4">
     Активные фильтры:
     {% if selected_department_id %}
@@ -331,6 +347,9 @@
           <span class="badge text-bg-light border ms-1">Категория: {{ cat.name }}</span>
         {% endif %}
       {% endfor %}
+    {% endif %}
+    {% if selected_audience_channel_group != "all" %}
+      <span class="badge text-bg-light border ms-1">Аудитория: {{ payload.filters.audience_channel_group_name }}</span>
     {% endif %}
     {% for rule in payload.filters.complex_filters %}
       <span class="badge text-bg-light border ms-1">Условие: {{ rule.field_name }} {{ rule.operator_name }} {{ rule.value_str }}</span>
@@ -691,6 +710,7 @@
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
           <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
           <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+          <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
           <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
           {% for rule in payload.filters.complex_filters %}
             <input type="hidden" name="cf_field" value="{{ rule.field }}">
@@ -711,11 +731,11 @@
           {% for preset in payload.filters.saved_presets %}
             <div class="d-flex flex-wrap align-items-center gap-2">
               <a class="btn btn-sm {% if preset.is_active %}btn-outline-primary{% else %}btn-outline-secondary{% endif %}"
-                 href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}{% if selected_show_all_presets %}&show_all_presets=1{% endif %}">
+                 href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}&audience_channel_group={{ preset.audience_channel_group }}{% if selected_show_all_presets %}&show_all_presets=1{% endif %}">
                 {{ preset.name }}
               </a>
               <span class="text-muted small">
-                {{ preset.department_name }} · {{ preset.segment_name }} · {{ preset.focus_category_name }}
+                {{ preset.department_name }} · {{ preset.segment_name }} · {{ preset.focus_category_name }} · {{ preset.audience_channel_group_name }}
               </span>
               {% if not preset.is_active %}
                 <span class="badge text-bg-secondary">неактивный</span>
@@ -731,6 +751,7 @@
                   <input type="hidden" name="department_id" value="{{ selected_department_id }}">
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+                  <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
                   <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
                   {% for rule in payload.filters.complex_filters %}
                     <input type="hidden" name="cf_field" value="{{ rule.field }}">
@@ -751,6 +772,7 @@
                   <input type="hidden" name="department_id" value="{{ selected_department_id }}">
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+                  <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
                   <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
                   {% for rule in payload.filters.complex_filters %}
                     <input type="hidden" name="cf_field" value="{{ rule.field }}">
@@ -772,6 +794,7 @@
                   <input type="hidden" name="department_id" value="{{ selected_department_id }}">
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
+                  <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
                   <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
                   {% for rule in payload.filters.complex_filters %}
                     <input type="hidden" name="cf_field" value="{{ rule.field }}">
@@ -806,6 +829,7 @@
     const departmentSelect = document.getElementById("wb-department-id");
     const segmentSelect = document.getElementById("wb-segment-code");
     const focusSelect = document.getElementById("wb-focus-category-code");
+    const audienceChannelGroupSelect = document.getElementById("wb-audience-channel-group");
     const autoApplyCheckbox = document.getElementById("wb-auto-apply");
     const applyButton = document.getElementById("wb-apply-btn");
     const showAllPresetsCheckbox = document.getElementById("show-all-presets");
@@ -885,7 +909,7 @@
 
     const initFiltersAutoApply = () => {
       const storageKey = "gw_auto_apply_v1";
-      if (!filterForm || !windowSelect || !departmentSelect || !segmentSelect || !focusSelect || !autoApplyCheckbox || !applyButton) {
+      if (!filterForm || !windowSelect || !departmentSelect || !segmentSelect || !focusSelect || !audienceChannelGroupSelect || !autoApplyCheckbox || !applyButton) {
         return () => {};
       }
 
@@ -920,6 +944,7 @@
       departmentSelect.addEventListener("change", maybeAutoSubmit);
       segmentSelect.addEventListener("change", maybeAutoSubmit);
       focusSelect.addEventListener("change", maybeAutoSubmit);
+      audienceChannelGroupSelect.addEventListener("change", maybeAutoSubmit);
 
       if (showAllPresetsCheckbox) {
         showAllPresetsCheckbox.addEventListener("change", maybeAutoSubmit);

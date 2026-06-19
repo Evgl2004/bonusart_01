@@ -1335,6 +1335,13 @@ class GuestWorkbenchFilterPreset(models.Model):
         db_index=True,
         help_text="Код фокусной категории из workbench.",
     )
+    audience_channel_group = models.CharField(
+        max_length=32,
+        blank=True,
+        default="all",
+        db_index=True,
+        help_text="Тип аудитории по доступности канала для рассылки.",
+    )
     is_active = models.BooleanField(
         default=True,
         db_index=True,
