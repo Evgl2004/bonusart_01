@@ -798,6 +798,49 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(report.get("ready_rows"), 1)
         self.assertEqual(report.get("ready_rows_with_targets"), 1)
 
+    def test_campaign_ops_dry_run_counts_legacy_telegram_target(self):
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000886",
+            first_name="Павел",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now - timedelta(minutes=1),
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+        VtelemaxRecipientChannel.objects.create(
+            person_id=uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164=guest.phone,
+            external_id="legacy-tg-dry-run-1",
+            rules_accepted=True,
+            notifications_allowed=True,
+            is_registered=True,
+            registered_at=self.now,
+            guest=guest,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.id}),
+            {"action": "dry_run_campaign"},
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        report = self.client.session.get("mailing_ops_dry_run_report")
+        self.assertIsInstance(report, dict)
+        self.assertEqual(report.get("ready_rows"), 1)
+        self.assertEqual(report.get("ready_rows_with_targets"), 1)
+        self.assertEqual(report.get("ready_rows_without_targets"), 0)
+
     def test_campaign_ops_run_now_creates_dispatch_for_ready_rows(self):
         """
         Run-now операция должна провести one-shot постановку задач в DispatchTask.

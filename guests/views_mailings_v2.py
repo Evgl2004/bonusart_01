@@ -40,13 +40,13 @@ from guests.models import (
     CouponAutoscenarioAssignment,
     DispatchTask,
     Guest,
-    GuestBotBinding,
     Mailing,
     MailingGuest,
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
 )
+from guests.services.mailing_delivery_targets import build_mailing_delivery_plan
 from guests.services.template_render import render_message_for_guest
 from guests.services.notification_handler_registry import (
     get_registered_schedule_scenario_codes,
@@ -2449,21 +2449,13 @@ def _build_mailing_dry_run_report(mailing: Mailing, now) -> dict[str, object]:
     ready_rows_with_targets = 0
     ready_rows_without_targets = 0
     if ready_rows > 0 and selected_bot_ids:
-        targetable_guest_ids_qs = (
-            GuestBotBinding.objects.filter(
-                guest_id__in=ready_scope.values_list("guest_id", flat=True),
-                bot_id__in=selected_bot_ids,
-                is_active=True,
-                is_opt_in=True,
-                is_stop_sending=False,
-                bot__is_active=True,
-            )
-            .exclude(external_chat_id__isnull=True)
-            .exclude(external_chat_id="")
-            .values_list("guest_id", flat=True)
-            .distinct()
+        delivery_plan = build_mailing_delivery_plan(
+            ready_scope.values_list("guest_id", flat=True),
+            selected_bot_ids=selected_bot_ids,
+            target_mode=getattr(mailing, "target_mode", Mailing.TargetMode.PRIMARY_ONLY),
         )
-        ready_rows_with_targets = int(ready_scope.filter(guest_id__in=targetable_guest_ids_qs).count())
+        targetable_guest_ids = set(delivery_plan.deliverable_guest_ids)
+        ready_rows_with_targets = int(ready_scope.filter(guest_id__in=targetable_guest_ids).count())
         ready_rows_without_targets = max(ready_rows - ready_rows_with_targets, 0)
 
     report = {
