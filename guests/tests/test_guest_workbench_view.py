@@ -16,6 +16,7 @@ from guests.models import (
     FocusCategory,
     Guest,
     GuestBotBinding,
+    GuestRestaurantDailyOrderFact,
     GuestWorkbenchFilterPreset,
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantWindowCategoryMetrics,
@@ -217,6 +218,60 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(active_beer_cell["guests_count"], 1)
         self.assertEqual(cooling_wine_cell["guests_count"], 1)
 
+    def test_workbench_filters_by_favorite_venue_mode(self):
+        """
+        Режим «любимое заведение» должен оставлять гостей, у которых выбранное
+        заведение лидирует по числу заказов в выбранном окне.
+        """
+        another_department_id = "dep-2"
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 21),
+            guest=self.guest_1,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("500.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 21),
+            guest=self.guest_1,
+            department_id=another_department_id,
+            orders_count=5,
+            sum_net=Decimal("2500.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 21),
+            guest=self.guest_2,
+            department_id=self.department_id,
+            orders_count=4,
+            sum_net=Decimal("2800.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 21),
+            guest=self.guest_2,
+            department_id=another_department_id,
+            orders_count=1,
+            sum_net=Decimal("700.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "venue_selection_mode": "favorite",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["filters"]["venue_selection_mode"], "favorite")
+        self.assertEqual(payload["filters"]["venue_selection"]["total"], 1)
+        self.assertEqual(payload["cards"]["guests_total"], 1)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_2.phone)
+
     def test_workbench_filters_guests_with_new_bot_delivery(self):
         """
         Фильтр аудитории должен оставлять гостей с рабочей доставкой в новых ботах.
@@ -302,6 +357,7 @@ class GuestsWorkbenchViewTests(TestCase):
                 "as_of_date": self.as_of_date.isoformat(),
                 "window_days": 30,
                 "department_id": self.department_id,
+                "venue_selection_mode": "visited_once",
                 "segment_code": "active_30d",
                 "focus_category_code": "beer_ermolaev",
             },
@@ -666,6 +722,7 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertIn(str(mailing.id), snapshots)
         snapshot = snapshots[str(mailing.id)]
         self.assertEqual(snapshot["window_days"], "30")
+        self.assertEqual(snapshot["venue_selection_mode"], "visited_once")
         self.assertEqual(snapshot["segment_code"], "active_30d")
         self.assertEqual(snapshot["focus_category_code"], "beer_ermolaev")
         self.assertEqual(snapshot["audience_channel_group"], "all")
@@ -821,6 +878,7 @@ class GuestsWorkbenchViewTests(TestCase):
                 "as_of_date": self.as_of_date.isoformat(),
                 "window_days": 30,
                 "department_id": self.department_id,
+                "venue_selection_mode": "favorite",
                 "segment_code": "cooling_30_60d",
                 "focus_category_code": "wine",
                 "audience_channel_group": "legacy_no_new_bot",
@@ -833,6 +891,7 @@ class GuestsWorkbenchViewTests(TestCase):
         preset = GuestWorkbenchFilterPreset.objects.get(name="Остывшие + Вино")
         self.assertEqual(preset.window_days, 30)
         self.assertEqual(preset.department_id, self.department_id)
+        self.assertEqual(preset.venue_selection_mode, "favorite")
         self.assertEqual(preset.segment_code, "cooling_30_60d")
         self.assertEqual(preset.focus_category_code, "wine")
         self.assertEqual(preset.audience_channel_group, "legacy_no_new_bot")

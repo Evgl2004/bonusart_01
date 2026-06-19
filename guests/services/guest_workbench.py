@@ -30,6 +30,13 @@ from guests.models import (
     OrderFact,
     VtelemaxRecipientChannel,
 )
+from guests.services.guest_venue_selection import (
+    VENUE_SELECTION_MODE_CHOICES,
+    VENUE_SELECTION_MODE_LABELS,
+    VENUE_SELECTION_VISITED_ONCE,
+    build_guest_venue_selection,
+    normalize_venue_selection_mode,
+)
 
 WINDOW_OPTIONS = (7, 14, 30, 60, 180)
 DEFAULT_WINDOW_DAYS = 30
@@ -473,11 +480,81 @@ def _guest_key_allowed_by_audience_filter(
     return True
 
 
+def _build_venue_selection_filter(
+    *,
+    target_as_of: date,
+    selected_window_days: int,
+    selected_department_id: str,
+    selected_venue_selection_mode: str,
+) -> tuple[set[int] | None, set[tuple[int, str]] | None, dict[str, Any]]:
+    """
+    Готовит дополнительный отбор по связи гостя с заведением.
+
+    Базовый режим «был хотя бы 1 раз» оставляет прежнюю выборку workbench:
+    она уже ограничена выбранным заведением через оконные метрики. Режимы
+    «любимое заведение» и «самое последнее посещение» требуют отдельного
+    расчёта по дневным фактам заказов.
+    """
+    summary = {
+        "applied": False,
+        "department_id": selected_department_id,
+        "mode": selected_venue_selection_mode,
+        "mode_name": VENUE_SELECTION_MODE_LABELS.get(
+            selected_venue_selection_mode,
+            VENUE_SELECTION_MODE_LABELS[VENUE_SELECTION_VISITED_ONCE],
+        ),
+        "total": 0,
+    }
+
+    if not selected_department_id or selected_venue_selection_mode == VENUE_SELECTION_VISITED_ONCE:
+        return None, None, summary
+
+    date_from = target_as_of - timedelta(days=max(int(selected_window_days or 1), 1) - 1)
+    result = build_guest_venue_selection(
+        department_id=selected_department_id,
+        selection_mode=selected_venue_selection_mode,
+        date_from=date_from,
+        date_to=target_as_of,
+        limit_enabled=False,
+        limit_value=None,
+    )
+    guest_ids = set(result.guest_ids)
+    summary.update(
+        {
+            "applied": True,
+            "total": int(result.total),
+            "date_from": date_from.isoformat(),
+            "date_to": target_as_of.isoformat(),
+        }
+    )
+    return guest_ids, {(guest_id, selected_department_id) for guest_id in guest_ids}, summary
+
+
+def _apply_guest_ids_filter(scope_qs, guest_ids: set[int] | None):
+    if guest_ids is None:
+        return scope_qs
+    if not guest_ids:
+        return scope_qs.none()
+    return scope_qs.filter(guest_id__in=guest_ids)
+
+
+def _merge_allowed_guest_keys(
+    left: set[tuple[int, str]] | None,
+    right: set[tuple[int, str]] | None,
+) -> set[tuple[int, str]] | None:
+    if left is None:
+        return right
+    if right is None:
+        return left
+    return left & right
+
+
 def build_guest_workbench_payload(
     *,
     as_of_date: date | None = None,
     window_days: int | str | None = None,
     department_id: str | None = None,
+    venue_selection_mode: str | None = None,
     segment_code: str | None = None,
     focus_category_code: str | None = None,
     audience_channel_group: str | None = None,
@@ -490,6 +567,7 @@ def build_guest_workbench_payload(
     """
     selected_window_days = normalize_window_days(window_days)
     selected_department_id = (department_id or "").strip()
+    selected_venue_selection_mode = normalize_venue_selection_mode(venue_selection_mode)
     selected_segment_code = normalize_segment_code(segment_code)
     selected_focus_category_code_raw = (focus_category_code or "").strip()
     selected_audience_channel_group = normalize_audience_channel_group(audience_channel_group)
@@ -509,6 +587,7 @@ def build_guest_workbench_payload(
             as_of_date=None,
             selected_window_days=selected_window_days,
             selected_department_id=selected_department_id,
+            selected_venue_selection_mode=selected_venue_selection_mode,
             selected_segment_code=selected_segment_code,
             selected_focus_category_code=selected_focus_category_code_raw,
             selected_audience_channel_group=selected_audience_channel_group,
@@ -522,13 +601,20 @@ def build_guest_workbench_payload(
     base_scope = GuestRestaurantWindowMetrics.objects.filter(as_of_date=target_as_of)
     if selected_department_id:
         base_scope = base_scope.filter(department_id=selected_department_id)
+    venue_selection_guest_ids, venue_allowed_guest_keys, venue_selection_summary = _build_venue_selection_filter(
+        target_as_of=target_as_of,
+        selected_window_days=selected_window_days,
+        selected_department_id=selected_department_id,
+        selected_venue_selection_mode=selected_venue_selection_mode,
+    )
+    base_scope = _apply_guest_ids_filter(base_scope, venue_selection_guest_ids)
     base_scope = _apply_audience_channel_filter(base_scope, audience_channel_filter)
 
     base_segmentation, base_segment_by_key = _build_segmentation_state(
         base_scope,
         as_of_date=target_as_of,
         selected_department_id=selected_department_id,
-        allowed_guest_keys=None,
+        allowed_guest_keys=venue_allowed_guest_keys,
         audience_channel_filter=audience_channel_filter,
     )
     base_segment_focus_matrix, base_focus_guest_keys_by_code = _build_segment_focus_matrix(
@@ -537,7 +623,7 @@ def build_guest_workbench_payload(
         selected_department_id=selected_department_id,
         segment_by_key=base_segment_by_key,
         segment_totals=base_segmentation,
-        allowed_guest_keys=None,
+        allowed_guest_keys=venue_allowed_guest_keys,
     )
     initial_focus_options = [
         {
@@ -573,16 +659,18 @@ def build_guest_workbench_payload(
         )
         if selected_department_id:
             active_metrics_scope = active_metrics_scope.filter(department_id=selected_department_id)
+        active_metrics_scope = _apply_guest_ids_filter(active_metrics_scope, venue_selection_guest_ids)
         active_metrics_scope = _apply_audience_channel_filter(active_metrics_scope, audience_channel_filter)
 
-    allowed_guest_keys = _collect_allowed_guest_keys_by_complex_filters(
+    complex_allowed_guest_keys = _collect_allowed_guest_keys_by_complex_filters(
         base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
         segment_code=selected_segment_code,
         normalized_filters=normalized_complex_filters,
     )
+    allowed_guest_keys = _merge_allowed_guest_keys(venue_allowed_guest_keys, complex_allowed_guest_keys)
 
-    if not use_category_window_metrics and allowed_guest_keys is None:
+    if not use_category_window_metrics and complex_allowed_guest_keys is None:
         # Оптимизация: для базового режима без сложных условий
         # сегментация и матрица совпадают с уже посчитанными стартовыми данными.
         segmentation = base_segmentation
@@ -733,6 +821,13 @@ def build_guest_workbench_payload(
             "window_options": list(WINDOW_OPTIONS),
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
+            "venue_selection_mode": selected_venue_selection_mode,
+            "venue_selection_mode_name": VENUE_SELECTION_MODE_LABELS.get(
+                selected_venue_selection_mode,
+                VENUE_SELECTION_MODE_LABELS[VENUE_SELECTION_VISITED_ONCE],
+            ),
+            "venue_selection_mode_options": _build_venue_selection_mode_options(),
+            "venue_selection": venue_selection_summary,
             "segment_code": selected_segment_code,
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
@@ -781,6 +876,7 @@ def _build_empty_payload(
     as_of_date: date | None,
     selected_window_days: int,
     selected_department_id: str,
+    selected_venue_selection_mode: str,
     selected_segment_code: str,
     selected_focus_category_code: str,
     selected_audience_channel_group: str,
@@ -800,6 +896,22 @@ def _build_empty_payload(
             "window_options": list(WINDOW_OPTIONS),
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
+            "venue_selection_mode": selected_venue_selection_mode,
+            "venue_selection_mode_name": VENUE_SELECTION_MODE_LABELS.get(
+                selected_venue_selection_mode,
+                VENUE_SELECTION_MODE_LABELS[VENUE_SELECTION_VISITED_ONCE],
+            ),
+            "venue_selection_mode_options": _build_venue_selection_mode_options(),
+            "venue_selection": {
+                "applied": False,
+                "department_id": selected_department_id,
+                "mode": selected_venue_selection_mode,
+                "mode_name": VENUE_SELECTION_MODE_LABELS.get(
+                    selected_venue_selection_mode,
+                    VENUE_SELECTION_MODE_LABELS[VENUE_SELECTION_VISITED_ONCE],
+                ),
+                "total": 0,
+            },
             "segment_code": selected_segment_code,
             "segment_options": _build_segment_options(),
             "focus_category_code": selected_focus_category_code,
@@ -894,6 +1006,10 @@ def _build_audience_channel_group_options() -> list[dict[str, str]]:
     return [{"code": code, "name": name} for code, name in AUDIENCE_CHANNEL_GROUP_DEFINITIONS]
 
 
+def _build_venue_selection_mode_options() -> list[dict[str, str]]:
+    return [{"code": code, "name": name} for code, name in VENUE_SELECTION_MODE_CHOICES]
+
+
 def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, Any]]:
     """
     Возвращает пресеты фильтров для экрана workbench.
@@ -917,6 +1033,7 @@ def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, An
         "description",
         "window_days",
         "department_id",
+        "venue_selection_mode",
         "segment_code",
         "focus_category_code",
         "audience_channel_group",
@@ -927,6 +1044,7 @@ def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, An
     result: list[dict[str, Any]] = []
     for row in rows:
         department_id = (row.get("department_id") or "").strip()
+        venue_selection_mode = normalize_venue_selection_mode(row.get("venue_selection_mode"))
         segment_code = (row.get("segment_code") or "").strip()
         focus_code = (row.get("focus_category_code") or "").strip()
         audience_channel_group = normalize_audience_channel_group(row.get("audience_channel_group"))
@@ -939,6 +1057,11 @@ def _build_saved_presets(*, show_all_presets: bool = False) -> list[dict[str, An
                 "window_days": int(row.get("window_days") or DEFAULT_WINDOW_DAYS),
                 "department_id": department_id,
                 "department_name": department_name_map.get(department_id, department_id) if department_id else "Все заведения",
+                "venue_selection_mode": venue_selection_mode,
+                "venue_selection_mode_name": VENUE_SELECTION_MODE_LABELS.get(
+                    venue_selection_mode,
+                    VENUE_SELECTION_MODE_LABELS[VENUE_SELECTION_VISITED_ONCE],
+                ),
                 "segment_code": segment_code,
                 "segment_name": SEGMENT_NAMES_MAP.get(segment_code, "Все сегменты") if segment_code else "Все сегменты",
                 "focus_category_code": focus_code,

@@ -208,6 +208,14 @@
       </select>
     </div>
     <div class="col-12 col-lg-3">
+      <label class="form-label">Связь с заведением</label>
+      <select id="wb-venue-selection-mode" name="venue_selection_mode" class="form-select">
+        {% for mode in payload.filters.venue_selection_mode_options %}
+          <option value="{{ mode.code }}" {% if mode.code == selected_venue_selection_mode %}selected{% endif %}>{{ mode.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-3">
       <label class="form-label">Сегмент</label>
       <select id="wb-segment-code" name="segment_code" class="form-select">
         <option value="">Все сегменты</option>
@@ -324,7 +332,7 @@
   Режим расчёта метрик: <strong>{{ payload.filters.metrics_layer_name }}</strong>
 </div>
 
-{% if selected_segment_code or selected_focus_category_code or selected_department_id or selected_audience_channel_group != "all" or payload.filters.complex_filters %}
+{% if selected_segment_code or selected_focus_category_code or selected_department_id or selected_venue_selection_mode != "visited_once" or selected_audience_channel_group != "all" or payload.filters.complex_filters %}
   <div id="wb-active-filters" class="alert alert-info border py-2 small mb-4">
     Активные фильтры:
     {% if selected_department_id %}
@@ -350,6 +358,9 @@
     {% endif %}
     {% if selected_audience_channel_group != "all" %}
       <span class="badge text-bg-light border ms-1">Аудитория: {{ payload.filters.audience_channel_group_name }}</span>
+    {% endif %}
+    {% if selected_venue_selection_mode != "visited_once" %}
+      <span class="badge text-bg-light border ms-1">Связь с заведением: {{ payload.filters.venue_selection_mode_name }}</span>
     {% endif %}
     {% for rule in payload.filters.complex_filters %}
       <span class="badge text-bg-light border ms-1">Условие: {{ rule.field_name }} {{ rule.operator_name }} {{ rule.value_str }}</span>
@@ -708,6 +719,7 @@
           <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
           <input type="hidden" name="window_days" value="{{ selected_window_days }}">
           <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+          <input type="hidden" name="venue_selection_mode" value="{{ selected_venue_selection_mode }}">
           <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
           <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
           <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
@@ -731,7 +743,7 @@
           {% for preset in payload.filters.saved_presets %}
             <div class="d-flex flex-wrap align-items-center gap-2">
               <a class="btn btn-sm {% if preset.is_active %}btn-outline-primary{% else %}btn-outline-secondary{% endif %}"
-                 href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}&audience_channel_group={{ preset.audience_channel_group }}{% if selected_show_all_presets %}&show_all_presets=1{% endif %}">
+                 href="{% url 'guests_workbench' %}?as_of_date={{ selected_as_of_date }}&window_days={{ preset.window_days }}&department_id={{ preset.department_id }}&venue_selection_mode={{ preset.venue_selection_mode }}&segment_code={{ preset.segment_code }}&focus_category_code={{ preset.focus_category_code }}&audience_channel_group={{ preset.audience_channel_group }}{% if selected_show_all_presets %}&show_all_presets=1{% endif %}">
                 {{ preset.name }}
               </a>
               <span class="text-muted small">
@@ -749,6 +761,7 @@
                   <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
                   <input type="hidden" name="window_days" value="{{ selected_window_days }}">
                   <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                  <input type="hidden" name="venue_selection_mode" value="{{ selected_venue_selection_mode }}">
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
                   <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
@@ -770,6 +783,7 @@
                   <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
                   <input type="hidden" name="window_days" value="{{ selected_window_days }}">
                   <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                  <input type="hidden" name="venue_selection_mode" value="{{ selected_venue_selection_mode }}">
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
                   <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
@@ -792,6 +806,7 @@
                   <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
                   <input type="hidden" name="window_days" value="{{ selected_window_days }}">
                   <input type="hidden" name="department_id" value="{{ selected_department_id }}">
+                  <input type="hidden" name="venue_selection_mode" value="{{ selected_venue_selection_mode }}">
                   <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
                   <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
                   <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
@@ -827,6 +842,7 @@
     const filterForm = document.getElementById("wb-filters-form");
     const windowSelect = document.getElementById("wb-window-days");
     const departmentSelect = document.getElementById("wb-department-id");
+    const venueSelectionModeSelect = document.getElementById("wb-venue-selection-mode");
     const segmentSelect = document.getElementById("wb-segment-code");
     const focusSelect = document.getElementById("wb-focus-category-code");
     const audienceChannelGroupSelect = document.getElementById("wb-audience-channel-group");
@@ -909,7 +925,7 @@
 
     const initFiltersAutoApply = () => {
       const storageKey = "gw_auto_apply_v1";
-      if (!filterForm || !windowSelect || !departmentSelect || !segmentSelect || !focusSelect || !audienceChannelGroupSelect || !autoApplyCheckbox || !applyButton) {
+      if (!filterForm || !windowSelect || !departmentSelect || !venueSelectionModeSelect || !segmentSelect || !focusSelect || !audienceChannelGroupSelect || !autoApplyCheckbox || !applyButton) {
         return () => {};
       }
 
@@ -942,6 +958,7 @@
 
       windowSelect.addEventListener("change", maybeAutoSubmit);
       departmentSelect.addEventListener("change", maybeAutoSubmit);
+      venueSelectionModeSelect.addEventListener("change", maybeAutoSubmit);
       segmentSelect.addEventListener("change", maybeAutoSubmit);
       focusSelect.addEventListener("change", maybeAutoSubmit);
       audienceChannelGroupSelect.addEventListener("change", maybeAutoSubmit);

@@ -1321,6 +1321,13 @@ class GuestWorkbenchFilterPreset(models.Model):
         db_index=True,
         help_text="Department.Id для отбора. Пусто — все заведения.",
     )
+    venue_selection_mode = models.CharField(
+        max_length=32,
+        blank=True,
+        default="visited_once",
+        db_index=True,
+        help_text="Способ связи гостя с заведением для отбора.",
+    )
     segment_code = models.CharField(
         max_length=32,
         blank=True,

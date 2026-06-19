@@ -13,6 +13,7 @@ from guests.services.guest_workbench import (
     normalize_audience_channel_group,
     normalize_window_days,
 )
+from guests.services.guest_venue_selection import normalize_venue_selection_mode
 
 
 class GuestsWorkbenchView(TemplateView):
@@ -31,6 +32,9 @@ class GuestsWorkbenchView(TemplateView):
         raw_as_of_date = (self.request.GET.get("as_of_date") or "").strip()
         raw_window_days = self.request.GET.get("window_days")
         selected_department_id = (self.request.GET.get("department_id") or "").strip()
+        selected_venue_selection_mode = normalize_venue_selection_mode(
+            self.request.GET.get("venue_selection_mode")
+        )
         selected_segment_code = (self.request.GET.get("segment_code") or "").strip()
         selected_focus_category_code = (self.request.GET.get("focus_category_code") or "").strip()
         selected_audience_channel_group = normalize_audience_channel_group(
@@ -46,6 +50,7 @@ class GuestsWorkbenchView(TemplateView):
             as_of_date=as_of_value,
             window_days=selected_window_days,
             department_id=selected_department_id,
+            venue_selection_mode=selected_venue_selection_mode,
             segment_code=selected_segment_code,
             focus_category_code=selected_focus_category_code,
             audience_channel_group=selected_audience_channel_group,
@@ -57,6 +62,7 @@ class GuestsWorkbenchView(TemplateView):
         context["selected_as_of_date"] = payload["filters"]["as_of_date"]
         context["selected_window_days"] = payload["filters"]["window_days"]
         context["selected_department_id"] = payload["filters"]["department_id"]
+        context["selected_venue_selection_mode"] = payload["filters"]["venue_selection_mode"]
         context["selected_segment_code"] = payload["filters"]["segment_code"]
         context["selected_focus_category_code"] = payload["filters"]["focus_category_code"]
         context["selected_audience_channel_group"] = payload["filters"]["audience_channel_group"]

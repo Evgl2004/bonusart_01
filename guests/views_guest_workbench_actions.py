@@ -32,6 +32,7 @@ from guests.services.guest_workbench import (
     normalize_segment_code,
     normalize_window_days,
 )
+from guests.services.guest_venue_selection import normalize_venue_selection_mode
 from guests.services.mailing_delivery_targets import build_mailing_delivery_plan
 from guests.services.template_render import render_message_for_guest
 
@@ -68,6 +69,7 @@ class GuestsWorkbenchActionsView(View):
             as_of_date=filters["as_of_date"],
             window_days=filters["window_days"],
             department_id=filters["department_id"],
+            venue_selection_mode=filters["venue_selection_mode"],
             segment_code=filters["segment_code"],
             focus_category_code=filters["focus_category_code"],
             audience_channel_group=filters["audience_channel_group"],
@@ -199,6 +201,7 @@ class GuestsWorkbenchActionsView(View):
 
         window_days = normalize_window_days((request.POST.get("window_days") or "").strip())
         department_id = (request.POST.get("department_id") or "").strip()
+        venue_selection_mode = normalize_venue_selection_mode(request.POST.get("venue_selection_mode"))
         segment_code = normalize_segment_code((request.POST.get("segment_code") or "").strip())
         audience_channel_group = normalize_audience_channel_group(request.POST.get("audience_channel_group"))
 
@@ -213,6 +216,7 @@ class GuestsWorkbenchActionsView(View):
             defaults={
                 "window_days": window_days,
                 "department_id": department_id,
+                "venue_selection_mode": venue_selection_mode,
                 "segment_code": segment_code,
                 "focus_category_code": focus_category_code,
                 "audience_channel_group": audience_channel_group,
@@ -309,6 +313,9 @@ class GuestsWorkbenchActionsView(View):
             "as_of_date": _parse_iso_date(raw_as_of_date),
             "window_days": (request.POST.get("window_days") or "").strip(),
             "department_id": (request.POST.get("department_id") or "").strip(),
+            "venue_selection_mode": normalize_venue_selection_mode(
+                request.POST.get("venue_selection_mode")
+            ),
             "segment_code": (request.POST.get("segment_code") or "").strip(),
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
             "audience_channel_group": normalize_audience_channel_group(
@@ -343,6 +350,9 @@ class GuestsWorkbenchActionsView(View):
         as_of_date_value = as_of_date.isoformat() if as_of_date else ""
         window_days_value = str(filters.get("window_days") or "").strip()
         department_id_value = str(filters.get("department_id") or "").strip()
+        venue_selection_mode_value = normalize_venue_selection_mode(
+            str(filters.get("venue_selection_mode") or "").strip()
+        )
         segment_code_value = str(filters.get("segment_code") or "").strip()
         focus_category_code_value = str(filters.get("focus_category_code") or "").strip()
         audience_channel_group_value = normalize_audience_channel_group(
@@ -376,6 +386,7 @@ class GuestsWorkbenchActionsView(View):
             "as_of_date": as_of_date_value,
             "window_days": window_days_value,
             "department_id": department_id_value,
+            "venue_selection_mode": venue_selection_mode_value,
             "segment_code": segment_code_value,
             "focus_category_code": focus_category_code_value,
             "audience_channel_group": audience_channel_group_value,
@@ -414,6 +425,9 @@ class GuestsWorkbenchActionsView(View):
             "as_of_date": (request.POST.get("as_of_date") or "").strip(),
             "window_days": (request.POST.get("window_days") or "").strip(),
             "department_id": (request.POST.get("department_id") or "").strip(),
+            "venue_selection_mode": normalize_venue_selection_mode(
+                request.POST.get("venue_selection_mode")
+            ),
             "segment_code": (request.POST.get("segment_code") or "").strip(),
             "focus_category_code": (request.POST.get("focus_category_code") or "").strip(),
             "audience_channel_group": normalize_audience_channel_group(
@@ -502,10 +516,11 @@ def _build_mailing_name(payload: dict) -> str:
     segment_code = (filters.get("segment_code") or "").strip() or "all-segments"
     focus_category_code = (filters.get("focus_category_code") or "").strip() or "all-focus"
     audience_channel_group = (filters.get("audience_channel_group") or "").strip() or "all-audience"
+    venue_selection_mode = normalize_venue_selection_mode(filters.get("venue_selection_mode"))
 
     return (
         "Черновик из workbench: "
-        f"as_of={as_of_date}; window={window_days}; segment={segment_code}; "
+        f"as_of={as_of_date}; window={window_days}; venue={venue_selection_mode}; segment={segment_code}; "
         f"focus={focus_category_code}; audience={audience_channel_group}"
     )[:150]
 
