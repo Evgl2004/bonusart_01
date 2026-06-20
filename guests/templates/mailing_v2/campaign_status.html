@@ -219,6 +219,7 @@
               Готовых строк: <b>{{ mailing_ops_dry_run_report.ready_rows }}</b>,
               доступных для отправки: <b>{{ mailing_ops_dry_run_report.ready_rows_with_targets }}</b>,
               заблокированных: <b>{{ mailing_ops_dry_run_report.ready_rows_without_targets }}</b><br>
+              Строк с Telegram ID из файла: <b>{{ mailing_ops_dry_run_report.ready_rows_with_file_telegram_id|default:0 }}</b><br>
               Активных ботов: <b>{{ mailing_ops_dry_run_report.selected_bots_active }}/{{ mailing_ops_dry_run_report.selected_bots_total }}</b>,
               окно кампании открыто: <b>{{ mailing_ops_dry_run_report.schedule_window_open }}</b>,
               окно отправки открыто: <b>{{ mailing_ops_dry_run_report.send_window_open }}</b>

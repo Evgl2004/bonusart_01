@@ -121,7 +121,9 @@
             Уникальных телефонов: {{ request.session.mailing_import_report.unique_phones }}<br>
             Найдено гостей в базе: {{ request.session.mailing_import_report.found }}<br>
             Добавлено в рассылку: <b>{{ request.session.mailing_import_report.added }}</b><br>
+            Добавлено строк с Telegram ID из файла: {{ request.session.mailing_import_report.legacy_external_id|default:0 }}<br>
             Уже были в рассылке: {{ request.session.mailing_import_report.already }}<br>
+            Дубли в файле: {{ request.session.mailing_import_report.duplicate_rows|default:0 }}<br>
             Не найдено в базе: {{ request.session.mailing_import_report.not_found }}<br>
           </div>
         {% endif %}

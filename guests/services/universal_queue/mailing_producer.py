@@ -14,6 +14,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from guests.models import (
+    BotProfile,
     CouponCampaignAssignment,
     DispatchTask,
     Mailing,
@@ -25,6 +26,8 @@ from guests.services.mailing_delivery_targets import (
 )
 
 logger = logging.getLogger(__name__)
+
+CHANNEL_MODE_MAILING_ROW_EXTERNAL_ID = "mailing_row_external_id"
 
 
 @dataclass
@@ -100,6 +103,44 @@ def _build_coupon_assignments_map(mailing: Mailing, guest_ids: Iterable[int]) ->
     return mapping
 
 
+def _build_external_id_telegram_target(
+    mailing: Mailing,
+    *,
+    selected_bot_ids: Set[int],
+    row: MailingGuest,
+) -> List[dict]:
+    """
+    Возвращает цель доставки для разовых legacy-рассылок, где Telegram-идентификатор
+    пришёл из файла и сохранён прямо в строке аудитории кампании.
+    """
+    external_chat_id = str(row.external_id or "").strip()
+    if not external_chat_id:
+        return []
+
+    telegram_bot = (
+        mailing.bot_profiles.filter(
+            id__in=selected_bot_ids,
+            is_active=True,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+        )
+        .order_by("id")
+        .first()
+    )
+    if telegram_bot is None:
+        return []
+
+    return [
+        {
+            "provider_type": BotProfile.ProviderType.TELEGRAM,
+            "external_chat_id": external_chat_id,
+            "external_user_id": "",
+            "guest_binding": None,
+            "bot_profile": telegram_bot,
+            "channel_mode": CHANNEL_MODE_MAILING_ROW_EXTERNAL_ID,
+        }
+    ]
+
+
 def enqueue_mailing_rows_as_dispatch_tasks(
     mailing: Mailing,
     rows: List[MailingGuest],
@@ -141,13 +182,19 @@ def enqueue_mailing_rows_as_dispatch_tasks(
     for row in rows:
         assignment = coupon_assignments_map.get(int(row.guest_id)) if row.guest_id else None
         row_targets = targets_map.get(int(row.guest_id), []) if row.guest_id else []
+        if not row_targets:
+            row_targets = _build_external_id_telegram_target(
+                mailing,
+                selected_bot_ids=selected_bot_ids,
+                row=row,
+            )
 
         if not row_targets:
             row.status = MailingGuest.Status.ERROR
             row.delivery_status = "dispatch_no_targets"
             row.error_description = (
                 "Не найдено новой bot-привязки или доступного legacy Telegram-канала "
-                "для постановки в универсальную очередь."
+                "для постановки в универсальную очередь; внешний Telegram ID в строке кампании также отсутствует."
             )
             row.save(update_fields=["status", "delivery_status", "error_description"])
             summary.rows_failed += 1

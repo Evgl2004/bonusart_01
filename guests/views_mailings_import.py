@@ -1,6 +1,7 @@
 import re
 from io import BytesIO
 
+from django.db import transaction
 from django.views import View
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -33,21 +34,61 @@ def normalize_phone(raw: str) -> str | None:
     return None
 
 
-def read_phones_from_xlsx(file_obj) -> list[str]:
+def normalize_header(raw: str) -> str:
+    return str(raw or "").strip().lower().replace(" ", "_")
+
+
+def read_recipients_from_xlsx(file_obj) -> list[dict[str, str]]:
     wb = load_workbook(filename=file_obj, read_only=True, data_only=True)
     ws = wb.active
 
-    phones: list[str] = []
-    # читаем все строки/ячейки, 1 столбец достаточно
-    for row in ws.iter_rows(min_row=1, values_only=True):
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        return []
+
+    first_row = rows[0] or ()
+    headers = {
+        normalize_header(value): index
+        for index, value in enumerate(first_row)
+        if normalize_header(value)
+    }
+    phone_index = None
+    telegram_index = None
+    for header_name in ("phone", "телефон", "phone_e164", "phone_number"):
+        if header_name in headers:
+            phone_index = headers[header_name]
+            break
+    for header_name in ("telegram_external_id", "external_id", "telegram_id", "telegram_chat_id"):
+        if header_name in headers:
+            telegram_index = headers[header_name]
+            break
+
+    has_header = phone_index is not None
+    if phone_index is None:
+        phone_index = 0
+    if telegram_index is None and len(first_row) > 1:
+        telegram_index = 1
+
+    recipients: list[dict[str, str]] = []
+    data_rows = rows[1:] if has_header else rows
+    for row in data_rows:
         if not row:
             continue
-        val = row[0]
-        p = normalize_phone(val)
-        if p:
-            phones.append(p)
+        phone_raw = row[phone_index] if phone_index < len(row) else None
+        phone = normalize_phone(phone_raw)
+        if not phone:
+            continue
+        telegram_external_id = ""
+        if telegram_index is not None and telegram_index < len(row):
+            telegram_external_id = str(row[telegram_index] or "").strip()
+        recipients.append(
+            {
+                "phone": phone,
+                "telegram_external_id": telegram_external_id[:32],
+            }
+        )
 
-    return phones
+    return recipients
 
 
 def resolve_next_url(request, fallback_url: str) -> str:
@@ -81,10 +122,20 @@ class MailingImportPhonesView(View):
             request.session["mailing_import_error"] = str(form.errors)
             return redirect(redirect_url)
 
-        phones_raw = read_phones_from_xlsx(form.cleaned_data["file"])
+        recipients_raw = read_recipients_from_xlsx(form.cleaned_data["file"])
 
-        total_loaded = len(phones_raw)
-        phones_unique = sorted(set(phones_raw))
+        total_loaded = len(recipients_raw)
+        recipients_by_phone: dict[str, dict[str, str]] = {}
+        duplicate_rows = 0
+        for recipient in recipients_raw:
+            phone = recipient["phone"]
+            if phone in recipients_by_phone:
+                duplicate_rows += 1
+                if not recipients_by_phone[phone].get("telegram_external_id") and recipient.get("telegram_external_id"):
+                    recipients_by_phone[phone] = recipient
+                continue
+            recipients_by_phone[phone] = recipient
+        phones_unique = sorted(recipients_by_phone)
 
         # 1) находим гостей по телефону
         # ВАЖНО: в БД у тебя phone может быть с +7, пробелами и т.п.
@@ -121,12 +172,21 @@ class MailingImportPhonesView(View):
         )
 
         to_add = [g for g in guests_found if g.id not in already_ids]
+        guest_external_ids = {
+            g.id: recipients_by_phone.get(normalize_phone(g.phone) or "", {}).get("telegram_external_id", "")
+            for g in to_add
+        }
 
         # 2.5) Оставляем гостей только с активными привязками к ботам,
-        # выбранным в этой рассылке.
+        # выбранным в этой рассылке. Для legacy Telegram-файла разрешаем строку
+        # без новой привязки, если в Excel есть telegram_external_id.
         selected_bot_ids = list(
             mailing.bot_profiles.filter(is_active=True).values_list("id", flat=True)
         )
+        has_selected_telegram_bot = mailing.bot_profiles.filter(
+            is_active=True,
+            provider_type="telegram",
+        ).exists()
         if not selected_bot_ids:
             to_add = []
         elif to_add:
@@ -151,7 +211,11 @@ class MailingImportPhonesView(View):
             else:
                 eligible_ids = set(eligible_bindings.values_list("guest_id", flat=True).distinct())
 
-            to_add = [g for g in to_add if g.id in eligible_ids]
+            to_add = [
+                g
+                for g in to_add
+                if g.id in eligible_ids or (has_selected_telegram_bot and guest_external_ids.get(g.id))
+            ]
 
         # 3) создаём строки MailingGuest
         now = timezone.now()
@@ -169,23 +233,28 @@ class MailingImportPhonesView(View):
                 text_mailing_list=rendered_text,
                 scheduled_datetime=scheduled_dt,
                 status=MailingGuest.Status.PLANNED,
+                external_id=guest_external_ids.get(g.id) or None,
                 created_at=now,
             ))
 
-        MailingGuest.objects.bulk_create(rows)
+        with transaction.atomic():
+            MailingGuest.objects.bulk_create(rows)
 
         added_count = len(rows)
         already_count = len(already_ids)
         not_found_count = len(not_found)
+        legacy_external_id_count = sum(1 for row in rows if row.external_id)
 
         # 4) сохраняем отчёт (проще всего в session, чтобы показать на странице)
         request.session["mailing_import_report"] = {
             "total_loaded": total_loaded,
             "unique_phones": len(phones_unique),
+            "duplicate_rows": duplicate_rows,
             "found": found_count,
             "added": added_count,
             "already": already_count,
             "not_found": not_found_count,
+            "legacy_external_id": legacy_external_id_count,
         }
 
         return redirect(redirect_url)
@@ -200,7 +269,9 @@ class MailingImportTemplateDownloadView(View):
         ws = wb.active
         ws.title = "phones"
         ws["A1"] = "phone"
+        ws["B1"] = "telegram_external_id"
         ws["A2"] = "+79991234567"
+        ws["B2"] = "123456789"
 
         bio = BytesIO()
         wb.save(bio)

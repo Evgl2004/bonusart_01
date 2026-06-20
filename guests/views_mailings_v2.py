@@ -2448,6 +2448,7 @@ def _build_mailing_dry_run_report(mailing: Mailing, now) -> dict[str, object]:
 
     ready_rows_with_targets = 0
     ready_rows_without_targets = 0
+    ready_rows_with_file_telegram_id = 0
     if ready_rows > 0 and selected_bot_ids:
         delivery_plan = build_mailing_delivery_plan(
             ready_scope.values_list("guest_id", flat=True),
@@ -2455,7 +2456,25 @@ def _build_mailing_dry_run_report(mailing: Mailing, now) -> dict[str, object]:
             target_mode=getattr(mailing, "target_mode", Mailing.TargetMode.PRIMARY_ONLY),
         )
         targetable_guest_ids = set(delivery_plan.deliverable_guest_ids)
-        ready_rows_with_targets = int(ready_scope.filter(guest_id__in=targetable_guest_ids).count())
+        targetable_row_ids = set(
+            ready_scope.filter(guest_id__in=targetable_guest_ids).values_list("id", flat=True)
+        )
+
+        has_selected_telegram_bot = mailing.bot_profiles.filter(
+            id__in=selected_bot_ids,
+            is_active=True,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+        ).exists()
+        if has_selected_telegram_bot:
+            file_telegram_row_ids = set(
+                ready_scope.exclude(external_id__isnull=True)
+                .exclude(external_id="")
+                .values_list("id", flat=True)
+            )
+            ready_rows_with_file_telegram_id = len(file_telegram_row_ids)
+            targetable_row_ids.update(file_telegram_row_ids)
+
+        ready_rows_with_targets = len(targetable_row_ids)
         ready_rows_without_targets = max(ready_rows - ready_rows_with_targets, 0)
 
     report = {
@@ -2475,6 +2494,7 @@ def _build_mailing_dry_run_report(mailing: Mailing, now) -> dict[str, object]:
         "error_rows": int(rows_scope.filter(status=MailingGuest.Status.ERROR).count()),
         "ready_rows_with_targets": int(ready_rows_with_targets),
         "ready_rows_without_targets": int(ready_rows_without_targets),
+        "ready_rows_with_file_telegram_id": int(ready_rows_with_file_telegram_id),
     }
     return report
 

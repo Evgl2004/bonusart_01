@@ -267,7 +267,7 @@ class MailingForm(forms.ModelForm):
 class MailingImportPhonesForm(forms.Form):
     file = forms.FileField(
         label="Excel файл (.xlsx) с телефонами",
-        help_text="Один столбец phone/телефон/phone_number",
+        help_text="Столбец phone обязателен; telegram_external_id можно добавить для legacy Telegram.",
     )
 
     def clean_file(self):

@@ -66,7 +66,9 @@
           Уникальных телефонов: {{ mailing_import_report.unique_phones }}<br>
           Найдено гостей в базе: {{ mailing_import_report.found }}<br>
           Добавлено в кампанию: <b>{{ mailing_import_report.added }}</b><br>
+          Добавлено строк с Telegram ID из файла: {{ mailing_import_report.legacy_external_id|default:0 }}<br>
           Уже были в кампании: {{ mailing_import_report.already }}<br>
+          Дубли в файле: {{ mailing_import_report.duplicate_rows|default:0 }}<br>
           Не найдено в базе: {{ mailing_import_report.not_found }}<br>
         </div>
       {% endif %}

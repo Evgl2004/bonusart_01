@@ -22,11 +22,11 @@ from guests.models import (
     MailingGuest,
     MessageTemplate,
 )
+from guests.services.mailing_delivery_targets import build_targets_from_bindings
 from guests.services.universal_queue.mailing_producer import (
     _resolve_priority_for_mailing,
     _resolve_selected_bot_profiles,
     _resolve_target_mode_for_mailing,
-    _targets_from_bindings,
     enqueue_mailing_rows_as_dispatch_tasks,
 )
 
@@ -135,7 +135,7 @@ class MailingProducerTests(TestCase):
             is_stop_sending=False,
         )
 
-        targets = _targets_from_bindings([secondary_binding, primary_binding], target_mode="primary_only")
+        targets = build_targets_from_bindings([primary_binding, secondary_binding], target_mode="primary_only")
 
         self.assertEqual(len(targets), 1)
         self.assertEqual(targets[0]["external_chat_id"], "tg-chat-1")
@@ -173,6 +173,23 @@ class MailingProducerTests(TestCase):
         self.assertEqual(summary.tasks_created, 0)
         self.assertEqual(row.status, MailingGuest.Status.ERROR)
         self.assertEqual(row.delivery_status, "dispatch_no_targets")
+
+    def test_enqueue_row_uses_external_id_for_legacy_telegram_file(self):
+        row = self._create_row()
+        row.external_id = "legacy-file-chat-1"
+        row.save(update_fields=["external_id"])
+
+        summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
+
+        row.refresh_from_db()
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertEqual(summary.rows_queued, 1)
+        self.assertEqual(summary.tasks_created, 1)
+        self.assertEqual(task.provider_type, BotProfile.ProviderType.TELEGRAM)
+        self.assertEqual(task.external_chat_id, "legacy-file-chat-1")
+        self.assertIsNone(task.guest_binding_id)
+        self.assertEqual(task.payload.get("channel_mode"), "mailing_row_external_id")
+        self.assertEqual(row.status, MailingGuest.Status.DONE)
 
     def test_enqueue_rows_creates_dispatch_task_with_future_schedule(self):
         """
