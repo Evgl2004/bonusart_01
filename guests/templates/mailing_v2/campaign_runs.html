@@ -32,7 +32,7 @@
           </select>
         </div>
         <div class="col-12 col-md-4 col-xl-3">
-          <label class="form-label mb-1">Статус dispatch</label>
+          <label class="form-label mb-1">Статус доставки</label>
           <select name="task_status" class="form-select">
             <option value="">Все</option>
             {% for value, label in task_status_choices %}
@@ -70,7 +70,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Dispatch задачи</div>
+          <div class="text-muted small">Задачи доставки</div>
           <div class="h3 mb-0">{{ task_stats.total }}</div>
           <div class="small text-muted">После фильтра: {{ tasks_filtered_total }}</div>
         </div>
@@ -81,7 +81,7 @@
         <div class="card-body">
           <div class="text-muted small">Ошибки</div>
           <div class="h3 mb-0">{{ row_stats.error }}</div>
-          <div class="small text-muted">failed dispatch: {{ task_stats.failed }}</div>
+          <div class="small text-muted">ошибок доставки: {{ task_stats.failed }}</div>
         </div>
       </div>
     </div>
@@ -90,7 +90,7 @@
         <div class="card-body">
           <div class="text-muted small">В очереди/в работе</div>
           <div class="h3 mb-0">{{ task_stats.pending|add:task_stats.queued|add:task_stats.in_progress }}</div>
-          <div class="small text-muted">pending + queued + in_progress</div>
+          <div class="small text-muted">ожидают + в очереди + в обработке</div>
         </div>
       </div>
     </div>
@@ -100,7 +100,7 @@
     <div class="col-12 col-xxl-5">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Таймлайн dispatch (последние {{ timeline|length }})</h2>
+          <h2 class="h6 mb-0">Таймлайн доставки (последние {{ timeline|length }})</h2>
         </div>
         <div class="card-body">
           {% if timeline %}
@@ -144,9 +144,9 @@
                   <th>ID строки</th>
                   <th>Телефон</th>
                   <th>Статус</th>
-                  <th>Delivery</th>
+                  <th>Доставка</th>
                   <th>Запланировано</th>
-                  <th>Sent at</th>
+                  <th>Отправлено</th>
                   <th>Ошибка</th>
                 </tr>
               </thead>
@@ -155,8 +155,8 @@
                   <tr>
                     <td>{{ row.id }}</td>
                     <td>{{ row.phone|default:"—" }}</td>
-                    <td>{{ row.status }}</td>
-                    <td>{{ row.delivery_status|default:"—" }}</td>
+                    <td>{{ row.status_label }}</td>
+                    <td>{{ row.delivery_status_label }}</td>
                     <td>{{ row.scheduled_datetime|date:"Y-m-d H:i:s" }}</td>
                     <td>{{ row.sent_at|date:"Y-m-d H:i:s"|default:"—" }}</td>
                     <td class="small text-danger">{{ row.error_description|default:"—" }}</td>
@@ -172,7 +172,7 @@
 
       <div class="card border-0 shadow-sm">
         <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Dispatch задачи (первые 200)</h2>
+          <h2 class="h6 mb-0">Задачи доставки (первые 200)</h2>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -194,27 +194,27 @@
                 {% for task in tasks %}
                   <tr>
                     <td>{{ task.id }}</td>
-                    <td>{{ task.status }}</td>
-                    <td>{{ task.provider_type }}</td>
-                    <td>{{ task.priority }}</td>
+                    <td>{{ task.status_label }}</td>
+                    <td>{{ task.provider_type_label }}</td>
+                    <td>{{ task.priority_label }}</td>
                     <td>{{ task.attempt }}/{{ task.max_attempts }}</td>
                     <td>{% if task.guest and task.guest.phone %}{{ task.guest.phone }}{% else %}—{% endif %}</td>
                     <td>{{ task.external_chat_id|default:"—" }}</td>
                     <td>
                       {% if task.finished_at %}
-                        done: {{ task.finished_at|date:"Y-m-d H:i:s" }}
+                        завершено: {{ task.finished_at|date:"Y-m-d H:i:s" }}
                       {% elif task.started_at %}
-                        start: {{ task.started_at|date:"Y-m-d H:i:s" }}
+                        начато: {{ task.started_at|date:"Y-m-d H:i:s" }}
                       {% elif task.enqueued_at %}
-                        queue: {{ task.enqueued_at|date:"Y-m-d H:i:s" }}
+                        поставлено в очередь: {{ task.enqueued_at|date:"Y-m-d H:i:s" }}
                       {% else %}
-                        created: {{ task.created_at|date:"Y-m-d H:i:s" }}
+                        создано: {{ task.created_at|date:"Y-m-d H:i:s" }}
                       {% endif %}
                     </td>
                     <td class="small text-danger">{{ task.last_error|default:"—" }}</td>
                   </tr>
                 {% empty %}
-                  <tr><td colspan="9" class="text-center text-muted py-3">Нет dispatch-задач.</td></tr>
+                  <tr><td colspan="9" class="text-center text-muted py-3">Нет задач доставки.</td></tr>
                 {% endfor %}
               </tbody>
             </table>

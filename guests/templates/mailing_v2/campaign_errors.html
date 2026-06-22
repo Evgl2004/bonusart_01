@@ -23,11 +23,11 @@
           <input type="text" name="q" value="{{ query }}" class="form-control" placeholder="телефон / текст ошибки">
         </div>
         <div class="col-12 col-md-6 col-xl-4">
-          <label class="form-label mb-1">Delivery status</label>
+          <label class="form-label mb-1">Статус доставки</label>
           <select name="delivery_status" class="form-select">
             <option value="">Все</option>
-            {% for value in delivery_status_choices %}
-              <option value="{{ value }}" {% if selected_delivery_status == value %}selected{% endif %}>{{ value }}</option>
+            {% for value, label in delivery_status_choices %}
+              <option value="{{ value }}" {% if selected_delivery_status == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
         </div>
@@ -52,7 +52,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Error-строки</div>
+          <div class="text-muted small">Строки с ошибкой</div>
           <div class="h3 mb-0">{{ row_errors_total }}</div>
           <div class="small text-muted">из {{ row_stats.total }} строк</div>
         </div>
@@ -61,7 +61,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Failed dispatch</div>
+          <div class="text-muted small">Ошибки доставки</div>
           <div class="h3 mb-0">{{ failed_dispatch_total }}</div>
           <div class="small text-muted">из {{ task_stats.total }} задач</div>
         </div>
@@ -70,7 +70,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Строки in_progress</div>
+          <div class="text-muted small">Строки в обработке</div>
           <div class="h3 mb-0">{{ row_stats.in_progress }}</div>
           <div class="small text-muted">для ручного контроля</div>
         </div>
@@ -79,7 +79,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Dispatch pending/queued</div>
+          <div class="text-muted small">Доставка ожидает/в очереди</div>
           <div class="h3 mb-0">{{ task_stats.pending|add:task_stats.queued }}</div>
           <div class="small text-muted">ожидают обработки</div>
         </div>
@@ -91,21 +91,21 @@
     <div class="col-12 col-xxl-5">
       <div class="card border-0 shadow-sm mb-3">
         <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Топ delivery-status</h2>
+          <h2 class="h6 mb-0">Топ статусов доставки</h2>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
             <table class="table table-sm mb-0">
               <thead class="table-light">
                 <tr>
-                  <th>Delivery status</th>
+                  <th>Статус доставки</th>
                   <th class="text-end">Кол-во</th>
                 </tr>
               </thead>
               <tbody>
                 {% for item in row_error_groups %}
                   <tr>
-                    <td>{{ item.delivery_status|default:"(пусто)" }}</td>
+                    <td>{{ item.delivery_status_label|default:"(пусто)" }}</td>
                     <td class="text-end">{{ item.total }}</td>
                   </tr>
                 {% empty %}
@@ -119,7 +119,7 @@
 
       <div class="card border-0 shadow-sm">
         <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Топ failed dispatch</h2>
+          <h2 class="h6 mb-0">Топ ошибок доставки</h2>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -134,7 +134,7 @@
               <tbody>
                 {% for item in dispatch_error_groups %}
                   <tr>
-                    <td>{{ item.provider_type|default:"-" }}</td>
+                    <td>{{ item.provider_type_label|default:"-" }}</td>
                     <td class="small">{{ item.last_error|default:"-" }}</td>
                     <td class="text-end">{{ item.total }}</td>
                   </tr>
@@ -151,7 +151,7 @@
     <div class="col-12 col-xxl-7">
       <div class="card border-0 shadow-sm mb-3">
         <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Error-строки аудитории (первые 200)</h2>
+          <h2 class="h6 mb-0">Строки аудитории с ошибкой (первые 200)</h2>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -161,7 +161,7 @@
                   <th>ID строки</th>
                   <th>Телефон</th>
                   <th>Статус</th>
-                  <th>Delivery</th>
+                  <th>Доставка</th>
                   <th>Ошибка</th>
                 </tr>
               </thead>
@@ -170,8 +170,8 @@
                   <tr>
                     <td>{{ row.id }}</td>
                     <td>{{ row.phone|default:"-" }}</td>
-                    <td>{{ row.status }}</td>
-                    <td>{{ row.delivery_status|default:"-" }}</td>
+                    <td>{{ row.status_label }}</td>
+                    <td>{{ row.delivery_status_label }}</td>
                     <td class="small text-danger">{{ row.error_description|default:"-" }}</td>
                   </tr>
                 {% empty %}
@@ -185,7 +185,7 @@
 
       <div class="card border-0 shadow-sm">
         <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Failed dispatch (первые 200)</h2>
+          <h2 class="h6 mb-0">Задачи доставки с ошибкой (первые 200)</h2>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -203,13 +203,13 @@
                 {% for task in failed_dispatch %}
                   <tr>
                     <td>{{ task.id }}</td>
-                    <td>{{ task.provider_type }}</td>
+                    <td>{{ task.provider_type_label }}</td>
                     <td>{{ task.attempt }}/{{ task.max_attempts }}</td>
                     <td>{% if task.guest and task.guest.phone %}{{ task.guest.phone }}{% else %}-{% endif %}</td>
                     <td class="small text-danger">{{ task.last_error|default:"-" }}</td>
                   </tr>
                 {% empty %}
-                  <tr><td colspan="5" class="text-center text-muted py-3">Нет failed-задач</td></tr>
+                  <tr><td colspan="5" class="text-center text-muted py-3">Нет задач с ошибкой</td></tr>
                 {% endfor %}
               </tbody>
             </table>

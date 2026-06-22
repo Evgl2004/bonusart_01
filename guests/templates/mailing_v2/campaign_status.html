@@ -92,15 +92,31 @@
           <div class="mail-summary-chip mb-3">
             <div class="mb-1">ID: <b>{{ mailing.id }}</b></div>
             <div class="mb-1">
-              Активность:
-              {% if mailing.is_active %}
-                <span class="badge text-bg-success">включена</span>
-              {% else %}
-                <span class="badge text-bg-secondary">выключена</span>
-              {% endif %}
+              Состояние:
+              <span class="badge {{ mailing_ui_status.badge_class }}">{{ mailing_ui_status.label }}</span>
             </div>
+            <div class="small text-muted mb-1">{{ mailing_ui_status.description }}</div>
             <div class="mb-0">Получателей: <b>{{ guests_count }}</b></div>
           </div>
+
+          {% if workbench_snapshot %}
+            <div class="mail-section-title">Источник аудитории</div>
+            <div class="mail-summary-chip mb-3">
+              <div class="small mb-2">Кампания создана из экрана «Гости».</div>
+              <div class="d-flex flex-wrap gap-1 mb-2">
+                {% if workbench_snapshot.as_of_date %}<span class="badge text-bg-light border">Срез: {{ workbench_snapshot.as_of_date }}</span>{% endif %}
+                {% if workbench_snapshot.window_days %}<span class="badge text-bg-light border">Окно: {{ workbench_snapshot.window_days }} дн</span>{% endif %}
+                <span class="badge text-bg-light border">Связь с заведением: {{ workbench_snapshot.venue_selection_mode_label }}</span>
+                <span class="badge text-bg-light border">Аудитория: {{ workbench_snapshot.audience_channel_group_label }}</span>
+                {% if workbench_snapshot.mailing_template_name %}<span class="badge text-bg-light border">Шаблон: {{ workbench_snapshot.mailing_template_name }}</span>{% endif %}
+              </div>
+              <div class="small text-muted mb-2">
+                Выборка: {{ workbench_snapshot.selected_total }},
+                перенесено в кампанию: {{ workbench_snapshot.selected_rows_count }}.
+              </div>
+              <a class="btn btn-outline-primary btn-sm" href="{{ workbench_snapshot_url }}">Открыть фильтры в экране «Гости»</a>
+            </div>
+          {% endif %}
 
           <div class="mail-section-title">Статусы строк аудитории</div>
           <div class="mail-status-row"><span>Запланировано</span><b>{{ mailing_row_stats.planned }}</b></div>
@@ -190,7 +206,7 @@
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="dry_run_campaign">
-                <button type="submit" class="btn btn-outline-info btn-sm">Проверка перед запуском (dry-run)</button>
+                <button type="submit" class="btn btn-outline-info btn-sm">Проверка перед запуском</button>
               </form>
             </div>
 
@@ -199,7 +215,7 @@
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="run_now_campaign">
-                <button type="submit" class="btn btn-outline-primary btn-sm">Немедленный запуск (run-now)</button>
+                <button type="submit" class="btn btn-outline-primary btn-sm">Немедленный запуск</button>
               </form>
             </div>
 
@@ -208,14 +224,14 @@
               <form method="post" action="{{ ops_url }}">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="cancel_campaign">
-                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Остановить кампанию и освободить неотправленные купоны?');">Остановить кампанию (safe cancel)</button>
+                <button type="submit" class="btn btn-danger btn-sm" onclick="return confirm('Остановить кампанию и освободить неотправленные купоны?');">Остановить кампанию</button>
               </form>
             </div>
           </div>
 
           {% if mailing_ops_dry_run_report %}
             <div class="alert alert-info small mt-3 mb-0">
-              <b>Отчет dry-run</b><br>
+              <b>Отчёт проверки перед запуском</b><br>
               Готовых строк: <b>{{ mailing_ops_dry_run_report.ready_rows }}</b>,
               доступных для отправки: <b>{{ mailing_ops_dry_run_report.ready_rows_with_targets }}</b>,
               заблокированных: <b>{{ mailing_ops_dry_run_report.ready_rows_without_targets }}</b><br>
@@ -228,7 +244,7 @@
 
           {% if mailing_ops_run_now_report %}
             <div class="alert alert-secondary small mt-3 mb-0">
-              <b>Отчет run-now</b><br>
+              <b>Отчёт немедленного запуска</b><br>
               Обработано строк: <b>{{ mailing_ops_run_now_report.processed_rows_total }}</b>,
               батчей: <b>{{ mailing_ops_run_now_report.processed_batches }}</b> (max={{ mailing_ops_run_now_report.max_batches }})<br>
               Готово до запуска: <b>{{ mailing_ops_run_now_report.ready_rows_before }}</b>,

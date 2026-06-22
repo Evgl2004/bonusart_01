@@ -99,8 +99,8 @@
               <th>Шаблон</th>
               <th>Статус</th>
               <th>Получатели</th>
-              <th>Done</th>
-              <th>Error</th>
+              <th>Успешно</th>
+              <th>Ошибки</th>
               <th>Обновлена</th>
               <th></th>
             </tr>
@@ -121,13 +121,7 @@
                   {% endif %}
                 </td>
                 <td>
-                  {% if row.is_archived %}
-                    <span class="badge text-bg-dark">архив</span>
-                  {% elif row.is_active %}
-                    <span class="badge text-bg-success">активна</span>
-                  {% else %}
-                    <span class="badge text-bg-secondary">пауза</span>
-                  {% endif %}
+                  <span class="badge {{ row.ui_status.badge_class }}">{{ row.ui_status.label }}</span>
                 </td>
                 <td>{{ row.recipients_total }}</td>
                 <td>{{ row.recipients_done }}</td>
@@ -186,7 +180,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="kpi-label">Очередь dispatch</div>
+          <div class="kpi-label">Очередь доставки</div>
           <p class="kpi-value">{{ kpi.dispatch_pending }}</p>
           <div class="kpi-meta">Всего задач: {{ kpi.dispatch_total }}</div>
         </div>
@@ -195,7 +189,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="kpi-label">Ошибки dispatch</div>
+          <div class="kpi-label">Ошибки доставки</div>
           <p class="kpi-value">{{ kpi.dispatch_failed }}</p>
           <div class="kpi-meta">Успешно: {{ kpi.dispatch_done }}</div>
         </div>

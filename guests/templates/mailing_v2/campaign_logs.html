@@ -32,7 +32,7 @@
           </select>
         </div>
         <div class="col-12 col-md-6 col-xl-3">
-          <label class="form-label mb-1">Статус dispatch</label>
+          <label class="form-label mb-1">Статус доставки</label>
           <select name="task_status" class="form-select">
             <option value="">Все</option>
             {% for value, label in task_status_choices %}
@@ -61,7 +61,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Dispatch-задачи</div>
+          <div class="text-muted small">Задачи доставки</div>
           <div class="h3 mb-0">{{ task_stats.total }}</div>
           <div class="small text-muted">после фильтра: {{ tasks_filtered_total }}</div>
         </div>
@@ -79,7 +79,7 @@
     <div class="col-12 col-md-6 col-xl-3">
       <div class="card border-0 shadow-sm h-100">
         <div class="card-body">
-          <div class="text-muted small">Failed dispatch</div>
+          <div class="text-muted small">Ошибки доставки</div>
           <div class="h3 mb-0">{{ task_stats.failed }}</div>
           <div class="small text-muted">по кампании</div>
         </div>
@@ -101,7 +101,7 @@
                   <div class="d-flex justify-content-between gap-2">
                     <div>
                       <div class="fw-semibold">{{ item.title }} · {{ item.status }}</div>
-                      <div class="small text-muted">{{ item.kind }} {% if item.phone %}· {{ item.phone }}{% endif %}</div>
+                      <div class="small text-muted">{{ item.kind_label }}{% if item.phone %} · {{ item.phone }}{% endif %}</div>
                       {% if item.message %}
                         <div class="small text-muted">{{ item.message }}</div>
                       {% endif %}
@@ -131,9 +131,9 @@
                   <th>ID строки</th>
                   <th>Телефон</th>
                   <th>Статус</th>
-                  <th>Delivery</th>
+                  <th>Доставка</th>
                   <th>Запланировано</th>
-                  <th>Sent at</th>
+                  <th>Отправлено</th>
                 </tr>
               </thead>
               <tbody>
@@ -141,8 +141,8 @@
                   <tr>
                     <td>{{ row.id }}</td>
                     <td>{{ row.phone|default:"-" }}</td>
-                    <td>{{ row.status }}</td>
-                    <td>{{ row.delivery_status|default:"-" }}</td>
+                    <td>{{ row.status_label }}</td>
+                    <td>{{ row.delivery_status_label }}</td>
                     <td>{{ row.scheduled_datetime|date:"Y-m-d H:i:s" }}</td>
                     <td>{{ row.sent_at|date:"Y-m-d H:i:s"|default:"-" }}</td>
                   </tr>
@@ -157,7 +157,7 @@
 
       <div class="card border-0 shadow-sm">
         <div class="card-header bg-white">
-          <h2 class="h6 mb-0">Dispatch-задачи (первые 200)</h2>
+          <h2 class="h6 mb-0">Задачи доставки (первые 200)</h2>
         </div>
         <div class="card-body p-0">
           <div class="table-responsive">
@@ -176,19 +176,19 @@
                 {% for task in tasks %}
                   <tr>
                     <td>{{ task.id }}</td>
-                    <td>{{ task.status }}</td>
-                    <td>{{ task.provider_type }}</td>
+                    <td>{{ task.status_label }}</td>
+                    <td>{{ task.provider_type_label }}</td>
                     <td>{{ task.attempt }}/{{ task.max_attempts }}</td>
                     <td>{% if task.guest and task.guest.phone %}{{ task.guest.phone }}{% else %}-{% endif %}</td>
                     <td>
                       {% if task.finished_at %}
-                        done: {{ task.finished_at|date:"Y-m-d H:i:s" }}
+                        завершено: {{ task.finished_at|date:"Y-m-d H:i:s" }}
                       {% elif task.started_at %}
-                        start: {{ task.started_at|date:"Y-m-d H:i:s" }}
+                        начато: {{ task.started_at|date:"Y-m-d H:i:s" }}
                       {% elif task.enqueued_at %}
-                        queue: {{ task.enqueued_at|date:"Y-m-d H:i:s" }}
+                        поставлено в очередь: {{ task.enqueued_at|date:"Y-m-d H:i:s" }}
                       {% else %}
-                        created: {{ task.created_at|date:"Y-m-d H:i:s" }}
+                        создано: {{ task.created_at|date:"Y-m-d H:i:s" }}
                       {% endif %}
                     </td>
                   </tr>

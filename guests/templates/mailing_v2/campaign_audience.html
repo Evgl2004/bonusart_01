@@ -24,9 +24,14 @@
             <div class="d-flex flex-wrap gap-2 mb-2">
               {% if workbench_snapshot.as_of_date %}<span class="badge text-bg-light border">Срез: {{ workbench_snapshot.as_of_date }}</span>{% endif %}
               {% if workbench_snapshot.window_days %}<span class="badge text-bg-light border">Окно: {{ workbench_snapshot.window_days }} дн</span>{% endif %}
+              <span class="badge text-bg-light border">Связь с заведением: {{ workbench_snapshot.venue_selection_mode_label }}</span>
+              <span class="badge text-bg-light border">Аудитория: {{ workbench_snapshot.audience_channel_group_label }}</span>
               {% if workbench_snapshot.department_id %}<span class="badge text-bg-light border">Заведение: {{ workbench_snapshot.department_id }}</span>{% endif %}
               {% if workbench_snapshot.segment_code %}<span class="badge text-bg-light border">Сегмент: {{ workbench_snapshot.segment_code }}</span>{% endif %}
               {% if workbench_snapshot.focus_category_code %}<span class="badge text-bg-light border">Категория: {{ workbench_snapshot.focus_category_code }}</span>{% endif %}
+              {% if workbench_snapshot.mailing_template_name %}<span class="badge text-bg-light border">Шаблон: {{ workbench_snapshot.mailing_template_name }}</span>{% endif %}
+              {% if workbench_snapshot.mailing_target_mode_label %}<span class="badge text-bg-light border">Режим: {{ workbench_snapshot.mailing_target_mode_label }}</span>{% endif %}
+              {% if workbench_snapshot.mailing_queue_priority_label %}<span class="badge text-bg-light border">Очередь: {{ workbench_snapshot.mailing_queue_priority_label }}</span>{% endif %}
             </div>
             <div class="small text-muted">
               Сложных условий: {{ workbench_snapshot.complex_filters|length }}.
@@ -61,7 +66,7 @@
 
       {% if mailing_import_report %}
         <div class="alert alert-info mt-3 mb-0">
-          <b>Отчет импорта</b><br>
+          <b>Отчёт импорта</b><br>
           Загружено строк: {{ mailing_import_report.total_loaded }}<br>
           Уникальных телефонов: {{ mailing_import_report.unique_phones }}<br>
           Найдено гостей в базе: {{ mailing_import_report.found }}<br>

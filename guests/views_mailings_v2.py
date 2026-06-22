@@ -193,6 +193,16 @@ class MailingsV2CampaignsHubView(TemplateView):
                     filter=Q(guests_rows__status=MailingGuest.Status.ERROR),
                     distinct=True,
                 ),
+                recipients_planned=Count(
+                    "guests_rows",
+                    filter=Q(guests_rows__status=MailingGuest.Status.PLANNED),
+                    distinct=True,
+                ),
+                recipients_in_progress=Count(
+                    "guests_rows",
+                    filter=Q(guests_rows__status=MailingGuest.Status.IN_PROGRESS),
+                    distinct=True,
+                ),
             )
             .order_by("-updated_at", "-id")
         )
@@ -259,6 +269,16 @@ class MailingsV2CampaignsHubView(TemplateView):
             display_name, technical_name = _resolve_template_title(template_obj)
             campaign.template_display_name = display_name
             campaign.template_technical_name = technical_name
+            campaign.ui_status = _build_mailing_ui_status(
+                campaign,
+                row_stats={
+                    "total": int(campaign.recipients_total or 0),
+                    "planned": int(campaign.recipients_planned or 0),
+                    "in_progress": int(campaign.recipients_in_progress or 0),
+                    "done": int(campaign.recipients_done or 0),
+                    "error": int(campaign.recipients_error or 0),
+                },
+            )
 
         context["campaigns_total_filtered"] = campaigns_qs.count()
         context["campaigns"] = campaigns
@@ -337,6 +357,8 @@ class _MailingsV2CampaignFormMixin:
         }
 
         if mailing and mailing.pk:
+            row_stats = _build_mailing_row_stats(mailing)
+            dispatch_stats = _build_mailing_dispatch_stats(mailing)
             context["guests_count"] = mailing.guests_rows.count()
             context["campaign_active_tab"] = "params"
             context["status_url"] = reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.pk})
@@ -344,11 +366,16 @@ class _MailingsV2CampaignFormMixin:
             context["audience_url"] = reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.pk})
             context["runs_url"] = reverse("mailings_v2_campaigns_runs", kwargs={"pk": mailing.pk})
             context["ops_url"] = reverse("mailings_v2_campaigns_ops", kwargs={"pk": mailing.pk})
-            snapshot = _get_workbench_snapshot(self.request, mailing.pk)
+            snapshot = _get_workbench_snapshot(self.request, mailing)
             context["workbench_snapshot"] = snapshot
             context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
-            context["mailing_row_stats"] = _build_mailing_row_stats(mailing)
-            context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
+            context["mailing_row_stats"] = row_stats
+            context["dispatch_stats"] = dispatch_stats
+            context["mailing_ui_status"] = _build_mailing_ui_status(
+                mailing,
+                row_stats=row_stats,
+                dispatch_stats=dispatch_stats,
+            )
         else:
             context["guests_count"] = 0
             context["campaign_active_tab"] = ""
@@ -361,6 +388,7 @@ class _MailingsV2CampaignFormMixin:
             context["workbench_snapshot_url"] = ""
             context["mailing_row_stats"] = _empty_mailing_row_stats()
             context["dispatch_stats"] = _empty_dispatch_stats()
+            context["mailing_ui_status"] = _build_mailing_ui_status(None)
         return context
 
 
@@ -430,9 +458,9 @@ class MailingsV2CampaignStatusView(TemplateView):
     Экран статуса и операционного управления кампанией.
 
     Сводит в одном месте:
-    1. ключевые счётчики аудитории и dispatch;
+    1. ключевые счётчики аудитории и доставки;
     2. переходы к операционным экранам;
-    3. управляющие действия (запуск/пауза/retry/dry-run/run-now).
+    3. управляющие действия: запуск, пауза, повтор, проверка перед запуском, немедленный запуск.
     """
 
     template_name = "mailing_v2/campaign_status.html"
@@ -455,8 +483,18 @@ class MailingsV2CampaignStatusView(TemplateView):
             f"{reverse('reports_coupon_campaigns')}?{urlencode({'campaign_id': mailing.id})}"
         )
         context["guests_count"] = mailing.guests_rows.count()
-        context["mailing_row_stats"] = _build_mailing_row_stats(mailing)
-        context["dispatch_stats"] = _build_mailing_dispatch_stats(mailing)
+        row_stats = _build_mailing_row_stats(mailing)
+        dispatch_stats = _build_mailing_dispatch_stats(mailing)
+        snapshot = _get_workbench_snapshot(self.request, mailing)
+        context["mailing_row_stats"] = row_stats
+        context["dispatch_stats"] = dispatch_stats
+        context["mailing_ui_status"] = _build_mailing_ui_status(
+            mailing,
+            row_stats=row_stats,
+            dispatch_stats=dispatch_stats,
+        )
+        context["workbench_snapshot"] = snapshot
+        context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
         context["mailing_ops_dry_run_report"] = self.request.session.pop("mailing_ops_dry_run_report", None)
         context["mailing_ops_run_now_report"] = self.request.session.pop("mailing_ops_run_now_report", None)
 
@@ -487,8 +525,8 @@ class MailingsV2CampaignOpsView(View):
 
     Поддерживает:
     1. безопасный старт/пауза кампании;
-    2. возврат error/in_progress строк в planned;
-    3. ручной retry задач dispatch со статусом failed.
+    2. возврат ошибочных и зависших строк в состояние «запланировано»;
+    3. ручной повтор задач доставки со статусом «ошибка».
     4. безопасную отмену кампании с освобождением неотправленных купонов.
     """
 
@@ -545,9 +583,9 @@ class MailingsV2CampaignOpsView(View):
                 scheduled_datetime=timezone.now(),
             )
             if updated > 0:
-                messages.success(request, f"Возвращено в planned строк: {updated}.")
+                messages.success(request, f"Ошибочных строк возвращено в запланированные: {updated}.")
             else:
-                messages.info(request, "Строк со статусом error не найдено.")
+                messages.info(request, "Ошибочных строк не найдено.")
             return redirect(self._resolve_next_url(request, status_url))
 
         if action == "requeue_in_progress_rows":
@@ -559,9 +597,9 @@ class MailingsV2CampaignOpsView(View):
                 delivery_status="requeued_from_ui",
             )
             if updated > 0:
-                messages.success(request, f"Возвращено из in_progress в planned строк: {updated}.")
+                messages.success(request, f"Зависших строк возвращено в запланированные: {updated}.")
             else:
-                messages.info(request, "Зависших строк in_progress не найдено.")
+                messages.info(request, "Зависших строк не найдено.")
             return redirect(self._resolve_next_url(request, status_url))
 
         if action == "retry_failed_dispatch":
@@ -593,9 +631,9 @@ class MailingsV2CampaignOpsView(View):
             messages.info(
                 request,
                 (
-                    f"Dry-run: ready={report['ready_rows']} "
-                    f"targetable={report['ready_rows_with_targets']} "
-                    f"blocked={report['ready_rows_without_targets']}."
+                    f"Проверка перед запуском: готово строк={report['ready_rows']}, "
+                    f"доступно для отправки={report['ready_rows_with_targets']}, "
+                    f"заблокировано={report['ready_rows_without_targets']}."
                 ),
             )
             return redirect(self._resolve_next_url(request, status_url))
@@ -613,19 +651,19 @@ class MailingsV2CampaignOpsView(View):
                 messages.success(
                     request,
                     (
-                        f"Run-now: обработано строк {processed_rows}, "
+                        f"Немедленный запуск: обработано строк {processed_rows}, "
                         f"батчей {report['processed_batches']}, "
-                        f"лимит-достигнут={report['reached_batch_limit']}."
+                        f"достигнут лимит батчей={report['reached_batch_limit']}."
                     ),
                 )
             else:
                 messages.info(
                     request,
                     (
-                        f"Run-now: строки не обработаны "
-                        f"(schedule_open={report['schedule_window_open']}, "
-                        f"send_open={report['send_window_open']}, "
-                        f"ready={report['ready_rows_before']})."
+                        f"Немедленный запуск: строки не обработаны "
+                        f"(кампания в периоде={report['schedule_window_open']}, "
+                        f"окно отправки открыто={report['send_window_open']}, "
+                        f"готово строк={report['ready_rows_before']})."
                     ),
                 )
             return redirect(self._resolve_next_url(request, status_url))
@@ -648,7 +686,7 @@ class MailingsV2CampaignOpsView(View):
                 (
                     f"Кампания #{mailing.id} остановлена. "
                     f"Строк отменено={payload['rows_canceled']}, "
-                    f"dispatch отменено={payload['dispatch_tasks_canceled']}, "
+                    f"задач доставки отменено={payload['dispatch_tasks_canceled']}, "
                     f"купонов подготовлено к освобождению={payload.get('assignments_release_pending', 0)}."
                 ),
             )
@@ -686,6 +724,7 @@ class MailingsV2CampaignOpsView(View):
                     send_window_end=mailing.send_window_end,
                     target_mode=mailing.target_mode,
                     queue_priority=mailing.queue_priority,
+                    source_filter_snapshot=mailing.source_filter_snapshot or {},
                     coupon_series=mailing.coupon_series,
                     coupon_venue_code=mailing.coupon_venue_code,
                     coupon_venue_name=mailing.coupon_venue_name,
@@ -747,9 +786,7 @@ class MailingsV2CampaignAudienceView(TemplateView):
             .order_by("-id")
         )
         rows = list(rows_qs[:300])
-        for row in rows:
-            row.status_label = _localize_mailing_row_status(row.status)
-            row.delivery_status_label = _localize_delivery_status(row.delivery_status)
+        _decorate_mailing_rows(rows)
         context["mailing"] = mailing
         context["rows"] = rows
         context["stats"] = rows_qs.aggregate(
@@ -761,7 +798,7 @@ class MailingsV2CampaignAudienceView(TemplateView):
         )
         context["mailing_import_report"] = self.request.session.pop("mailing_import_report", None)
         context["mailing_import_error"] = self.request.session.pop("mailing_import_error", None)
-        snapshot = _get_workbench_snapshot(self.request, mailing.pk)
+        snapshot = _get_workbench_snapshot(self.request, mailing)
         context["workbench_snapshot"] = snapshot
         context["workbench_snapshot_url"] = _build_workbench_url_from_snapshot(snapshot) if snapshot else ""
         context["campaign_active_tab"] = "audience"
@@ -835,6 +872,8 @@ class MailingsV2CampaignRunsView(TemplateView):
 
         rows = list(rows_scope.order_by("-id")[:200])
         tasks = list(tasks_scope.order_by("-id")[:200])
+        _decorate_mailing_rows(rows)
+        _decorate_dispatch_tasks(tasks)
 
         timeline = _build_dispatch_timeline(tasks_scope.order_by("-updated_at")[:60])
 
@@ -846,9 +885,18 @@ class MailingsV2CampaignRunsView(TemplateView):
         context["tasks_filtered_total"] = tasks_filtered_total
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
-        context["row_status_choices"] = list(MailingGuest.Status.choices)
-        context["task_status_choices"] = list(DispatchTask.Status.choices)
-        context["provider_choices"] = list(BotProfile.ProviderType.choices)
+        context["row_status_choices"] = _localized_choices(
+            MailingGuest.Status.choices,
+            _localize_mailing_row_status,
+        )
+        context["task_status_choices"] = _localized_choices(
+            DispatchTask.Status.choices,
+            _localize_dispatch_status,
+        )
+        context["provider_choices"] = _localized_choices(
+            BotProfile.ProviderType.choices,
+            _localize_provider_type,
+        )
         context["selected_row_status"] = selected_row_status
         context["selected_task_status"] = selected_task_status
         context["selected_provider_type"] = selected_provider_type
@@ -911,13 +959,19 @@ class MailingsV2CampaignJobsView(TemplateView):
 
         tasks_filtered_total = int(tasks_scope.count())
         tasks = list(tasks_scope.order_by("-updated_at", "-id")[:250])
+        _decorate_dispatch_tasks(tasks)
 
         provider_status_rows = list(
             tasks_scope.values("provider_type", "status").annotate(total=Count("id")).order_by("provider_type", "status")
         )
+        for row in provider_status_rows:
+            row["provider_type_label"] = _localize_provider_type(row.get("provider_type"))
+            row["status_label"] = _localize_dispatch_status(row.get("status"))
         queue_rows = list(
             tasks_scope.values("queue_name").annotate(total=Count("id")).order_by("-total", "queue_name")[:30]
         )
+        for row in queue_rows:
+            row["queue_name_label"] = _localize_queue_name(row.get("queue_name"))
         top_errors = list(
             tasks_scope.filter(status=DispatchTask.Status.FAILED)
             .exclude(last_error__isnull=True)
@@ -926,6 +980,8 @@ class MailingsV2CampaignJobsView(TemplateView):
             .annotate(total=Count("id"))
             .order_by("-total", "provider_type", "last_error")[:25]
         )
+        for row in top_errors:
+            row["provider_type_label"] = _localize_provider_type(row.get("provider_type"))
         delivery_feedback_rows = list(
             MailingGuest.objects.filter(mailing=mailing)
             .exclude(delivery_status__isnull=True)
@@ -934,15 +990,23 @@ class MailingsV2CampaignJobsView(TemplateView):
             .annotate(total=Count("id"))
             .order_by("-total", "delivery_status")[:25]
         )
+        for row in delivery_feedback_rows:
+            row["delivery_status_label"] = _localize_delivery_status(row.get("delivery_status"))
 
         context["mailing"] = mailing
         context["query"] = query
         context["selected_task_status"] = selected_task_status
         context["selected_provider_type"] = selected_provider_type
         context["selected_queue_name"] = selected_queue_name
-        context["task_status_choices"] = list(DispatchTask.Status.choices)
-        context["provider_choices"] = list(BotProfile.ProviderType.choices)
-        context["queue_name_choices"] = list(
+        context["task_status_choices"] = _localized_choices(
+            DispatchTask.Status.choices,
+            _localize_dispatch_status,
+        )
+        context["provider_choices"] = _localized_choices(
+            BotProfile.ProviderType.choices,
+            _localize_provider_type,
+        )
+        queue_name_values = list(
             DispatchTask.objects.filter(mailing_guest__mailing=mailing)
             .exclude(queue_name__isnull=True)
             .exclude(queue_name__exact="")
@@ -950,6 +1014,10 @@ class MailingsV2CampaignJobsView(TemplateView):
             .distinct()
             .order_by("queue_name")
         )
+        context["queue_name_choices"] = [
+            (queue_name, _localize_queue_name(queue_name))
+            for queue_name in queue_name_values
+        ]
         context["tasks"] = tasks
         context["tasks_filtered_total"] = tasks_filtered_total
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
@@ -1042,27 +1110,43 @@ class MailingsV2CampaignErrorsView(TemplateView):
 
         row_errors_total = row_errors_scope.count()
         failed_dispatch_total = failed_dispatch_scope.count()
+        row_error_groups = list(
+            row_errors_scope.values("delivery_status")
+            .annotate(total=Count("id"))
+            .order_by("-total", "delivery_status")[:20]
+        )
+        for row in row_error_groups:
+            row["delivery_status_label"] = _localize_delivery_status(row.get("delivery_status"))
+        dispatch_error_groups = list(
+            failed_dispatch_scope.values("provider_type", "last_error")
+            .annotate(total=Count("id"))
+            .order_by("-total", "provider_type", "last_error")[:20]
+        )
+        for row in dispatch_error_groups:
+            row["provider_type_label"] = _localize_provider_type(row.get("provider_type"))
+        row_errors = list(row_errors_scope.order_by("-id")[:200])
+        failed_dispatch = list(failed_dispatch_scope.order_by("-updated_at", "-id")[:200])
+        _decorate_mailing_rows(row_errors)
+        _decorate_dispatch_tasks(failed_dispatch)
 
         context["mailing"] = mailing
         context["query"] = query
         context["selected_delivery_status"] = selected_delivery_status
         context["selected_provider_type"] = selected_provider_type
-        context["delivery_status_choices"] = delivery_status_choices
-        context["provider_choices"] = list(BotProfile.ProviderType.choices)
+        context["delivery_status_choices"] = [
+            (value, _localize_delivery_status(value))
+            for value in delivery_status_choices
+        ]
+        context["provider_choices"] = _localized_choices(
+            BotProfile.ProviderType.choices,
+            _localize_provider_type,
+        )
         context["row_errors_total"] = row_errors_total
         context["failed_dispatch_total"] = failed_dispatch_total
-        context["row_error_groups"] = (
-            row_errors_scope.values("delivery_status")
-            .annotate(total=Count("id"))
-            .order_by("-total", "delivery_status")[:20]
-        )
-        context["dispatch_error_groups"] = (
-            failed_dispatch_scope.values("provider_type", "last_error")
-            .annotate(total=Count("id"))
-            .order_by("-total", "provider_type", "last_error")[:20]
-        )
-        context["row_errors"] = list(row_errors_scope.order_by("-id")[:200])
-        context["failed_dispatch"] = list(failed_dispatch_scope.order_by("-updated_at", "-id")[:200])
+        context["row_error_groups"] = row_error_groups
+        context["dispatch_error_groups"] = dispatch_error_groups
+        context["row_errors"] = row_errors
+        context["failed_dispatch"] = failed_dispatch
         context["current_query_path"] = self.request.get_full_path()
         context["row_stats"] = _build_mailing_row_stats(mailing)
         context["task_stats"] = _build_mailing_dispatch_stats(mailing)
@@ -1130,14 +1214,22 @@ class MailingsV2CampaignLogsView(TemplateView):
 
         rows = list(rows_scope.order_by("-id")[:200])
         tasks = list(tasks_scope.order_by("-updated_at", "-id")[:200])
+        _decorate_mailing_rows(rows)
+        _decorate_dispatch_tasks(tasks)
         timeline = _build_mailing_log_timeline(rows=rows[:120], tasks=tasks[:120])
 
         context["mailing"] = mailing
         context["query"] = query
         context["selected_row_status"] = selected_row_status
         context["selected_task_status"] = selected_task_status
-        context["row_status_choices"] = list(MailingGuest.Status.choices)
-        context["task_status_choices"] = list(DispatchTask.Status.choices)
+        context["row_status_choices"] = _localized_choices(
+            MailingGuest.Status.choices,
+            _localize_mailing_row_status,
+        )
+        context["task_status_choices"] = _localized_choices(
+            DispatchTask.Status.choices,
+            _localize_dispatch_status,
+        )
         context["rows"] = rows
         context["tasks"] = tasks
         context["timeline"] = timeline
@@ -1430,11 +1522,11 @@ class MailingsV2MonitorView(TemplateView):
 
     def post(self, request, *args, **kwargs):
         """
-        Быстрые операционные действия по задачам dispatch на monitor-экране.
+        Быстрые операционные действия по задачам доставки на экране мониторинга.
 
         Поддерживает:
-        1. retry failed -> pending (сброс попыток);
-        2. requeue pending/queued -> pending с available_at=now.
+        1. повтор ошибочных задач с обнулением попыток;
+        2. возврат ожидающих задач в очередь с доступностью с текущего момента.
         """
         action = str(request.POST.get("action") or "").strip()
         return_query = str(request.POST.get("return_query") or "").strip()
@@ -1465,9 +1557,9 @@ class MailingsV2MonitorView(TemplateView):
                 "filters": filters,
             }
             if updated > 0:
-                messages.success(request, f"Переведено failed -> pending задач: {updated}.")
+                messages.success(request, f"Ошибочных задач возвращено в ожидание: {updated}.")
             else:
-                messages.info(request, "Под выбранный фильтр failed-задачи не найдены.")
+                messages.info(request, "Под выбранный фильтр ошибочные задачи не найдены.")
             return redirect(redirect_url)
 
         if action == "requeue_waiting_tasks":
@@ -1489,21 +1581,26 @@ class MailingsV2MonitorView(TemplateView):
                 "filters": filters,
             }
             if updated > 0:
-                messages.success(request, f"Переоткрыто pending/queued задач: {updated}.")
+                messages.success(request, f"Ожидающих задач возвращено в очередь: {updated}.")
             else:
-                messages.info(request, "Под выбранный фильтр pending/queued задачи не найдены.")
+                messages.info(request, "Под выбранный фильтр ожидающие задачи не найдены.")
             return redirect(redirect_url)
 
-        messages.error(request, "Неизвестное действие monitor.")
+        messages.error(request, "Неизвестное действие мониторинга.")
         return redirect(redirect_url)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         scope, filters = self._build_filtered_scope(self.request.GET)
 
-        status_rows = scope.values("status").annotate(total=Count("id")).order_by("status")
-        provider_rows = scope.values("provider_type").annotate(total=Count("id")).order_by("-total")
-        recent_rows = scope.order_by("-id")[:200]
+        status_rows = list(scope.values("status").annotate(total=Count("id")).order_by("status"))
+        for row in status_rows:
+            row["status_label"] = _localize_dispatch_status(row.get("status"))
+        provider_rows = list(scope.values("provider_type").annotate(total=Count("id")).order_by("-total"))
+        for row in provider_rows:
+            row["provider_type_label"] = _localize_provider_type(row.get("provider_type"))
+        recent_rows = list(scope.order_by("-id")[:200])
+        _decorate_dispatch_tasks(recent_rows)
         campaigns = Mailing.objects.order_by("-created_at")[:200]
         scenarios = NotificationScenario.objects.order_by("code")[:200]
 
@@ -1530,8 +1627,14 @@ class MailingsV2MonitorView(TemplateView):
 
         context["campaigns"] = campaigns
         context["scenarios"] = scenarios
-        context["status_choices"] = list(DispatchTask.Status.choices)
-        context["provider_choices"] = list(BotProfile.ProviderType.choices)
+        context["status_choices"] = _localized_choices(
+            DispatchTask.Status.choices,
+            _localize_dispatch_status,
+        )
+        context["provider_choices"] = _localized_choices(
+            BotProfile.ProviderType.choices,
+            _localize_provider_type,
+        )
         context["selected_mailing_id"] = filters["mailing_id"]
         context["selected_status"] = filters["status"]
         context["selected_provider_type"] = filters["provider_type"]
@@ -2401,15 +2504,15 @@ def _build_mailings_v2_flow(*, active_area: str) -> dict[str, object]:
         {
             "number": 3,
             "title": "Кампания и запуск",
-            "description": "Проверьте аудиторию, выполните dry-run и запускайте кампанию.",
-            "help": "Здесь настраиваются параметры запуска, состав аудитории и операционные действия: dry-run, run-now, запуск/пауза и повторы.",
+            "description": "Проверьте аудиторию, выполните проверку перед запуском и запускайте кампанию.",
+            "help": "Здесь настраиваются параметры запуска, состав аудитории и операционные действия: проверка перед запуском, немедленный запуск, запуск/пауза и повторы.",
             "url": reverse("mailings_v2_campaigns_new"),
             "cta": "Создать кампанию",
         },
         {
             "number": 4,
             "title": "Мониторинг и обратная связь",
-            "description": "Контролируйте dispatch, retry, ошибки и корректируйте следующий запуск.",
+            "description": "Контролируйте доставку, повторы, ошибки и корректируйте следующий запуск.",
             "help": "В мониторинге вы видите статусы доставки, ошибки и результаты отправок, чтобы улучшать следующий запуск.",
             "url": step4_url,
             "cta": "Открыть мониторинг",
@@ -2605,29 +2708,74 @@ def _run_mailing_now(mailing: Mailing, now, max_batches: int) -> dict[str, objec
     }
 
 
-def _get_workbench_snapshot(request, mailing_id: int) -> dict | None:
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value or default)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_workbench_snapshot(request, mailing: Mailing | int) -> dict | None:
     """
-    Достаёт и нормализует снимок фильтров Workbench для кампании из сессии.
+    Достаёт и нормализует снимок фильтров рабочего экрана гостей для кампании.
     """
+    mailing_id = int(mailing.pk if isinstance(mailing, Mailing) else mailing)
+    raw_snapshot = None
+    if isinstance(mailing, Mailing):
+        stored_snapshot = getattr(mailing, "source_filter_snapshot", None)
+        if isinstance(stored_snapshot, dict) and stored_snapshot:
+            raw_snapshot = stored_snapshot
+
     all_snapshots = request.session.get("mailings_v2_workbench_snapshots", {})
-    if not isinstance(all_snapshots, dict):
-        return None
-    raw_snapshot = all_snapshots.get(str(mailing_id))
+    if raw_snapshot is None and isinstance(all_snapshots, dict):
+        raw_snapshot = all_snapshots.get(str(mailing_id))
     if not isinstance(raw_snapshot, dict):
         return None
+
+    venue_selection_mode = str(raw_snapshot.get("venue_selection_mode") or "").strip()
+    audience_channel_group = str(raw_snapshot.get("audience_channel_group") or "").strip()
+    mailing_target_mode = str(raw_snapshot.get("mailing_target_mode") or "").strip()
+    mailing_queue_priority = str(raw_snapshot.get("mailing_queue_priority") or "").strip()
+    mailing_bot_profiles = raw_snapshot.get("mailing_bot_profiles") or []
+    if not isinstance(mailing_bot_profiles, list):
+        mailing_bot_profiles = []
 
     snapshot = {
         "as_of_date": str(raw_snapshot.get("as_of_date") or "").strip(),
         "window_days": str(raw_snapshot.get("window_days") or "").strip(),
         "department_id": str(raw_snapshot.get("department_id") or "").strip(),
+        "venue_selection_mode": venue_selection_mode,
+        "venue_selection_mode_label": _localize_workbench_venue_selection_mode(venue_selection_mode),
         "segment_code": str(raw_snapshot.get("segment_code") or "").strip(),
         "focus_category_code": str(raw_snapshot.get("focus_category_code") or "").strip(),
-        "selected_total": int(raw_snapshot.get("selected_total") or 0),
-        "selected_rows_count": int(raw_snapshot.get("selected_rows_count") or 0),
+        "audience_channel_group": audience_channel_group,
+        "audience_channel_group_label": _localize_workbench_audience_group(audience_channel_group),
+        "audience_limit_enabled": bool(raw_snapshot.get("audience_limit_enabled")),
+        "audience_limit": _safe_int(raw_snapshot.get("audience_limit")),
+        "selected_total": _safe_int(raw_snapshot.get("selected_total")),
+        "selected_rows_count": _safe_int(raw_snapshot.get("selected_rows_count")),
+        "delivery_total_guests": _safe_int(raw_snapshot.get("delivery_total_guests")),
+        "delivery_available_guests": _safe_int(raw_snapshot.get("delivery_available_guests")),
+        "delivery_blocked_without_bot_binding": _safe_int(raw_snapshot.get("delivery_blocked_without_bot_binding")),
+        "delivery_blocked_without_message_permission": _safe_int(
+            raw_snapshot.get("delivery_blocked_without_message_permission")
+        ),
+        "delivery_legacy_telegram_guests": _safe_int(raw_snapshot.get("delivery_legacy_telegram_guests")),
+        "delivery_planned_tasks": _safe_int(raw_snapshot.get("delivery_planned_tasks")),
+        "mailing_template_id": _safe_int(raw_snapshot.get("mailing_template_id")),
+        "mailing_template_name": str(raw_snapshot.get("mailing_template_name") or "").strip(),
+        "mailing_target_mode": mailing_target_mode,
+        "mailing_target_mode_label": _localize_target_mode(mailing_target_mode),
+        "mailing_queue_priority": mailing_queue_priority,
+        "mailing_queue_priority_label": _localize_queue_priority(mailing_queue_priority),
+        "mailing_send_window_begin": str(raw_snapshot.get("mailing_send_window_begin") or "").strip(),
+        "mailing_send_window_end": str(raw_snapshot.get("mailing_send_window_end") or "").strip(),
+        "mailing_bot_profiles": [str(item) for item in mailing_bot_profiles if str(item or "").strip()],
         "source_layer": str(raw_snapshot.get("source_layer") or "").strip(),
         "saved_at": str(raw_snapshot.get("saved_at") or "").strip(),
         "complex_filters": [],
     }
+    snapshot["mailing_bot_profiles_summary"] = ", ".join(snapshot["mailing_bot_profiles"])
 
     complex_filters_raw = raw_snapshot.get("complex_filters") or []
     if isinstance(complex_filters_raw, list):
@@ -2653,8 +2801,16 @@ def _build_workbench_url_from_snapshot(snapshot: dict) -> str:
     """
     Собирает URL перехода в Workbench по сохранённому snapshot фильтров.
     """
-    params = {}
-    for key in ("as_of_date", "window_days", "department_id", "segment_code", "focus_category_code"):
+    params = {"active_tab": "overview"}
+    for key in (
+        "as_of_date",
+        "window_days",
+        "department_id",
+        "venue_selection_mode",
+        "segment_code",
+        "focus_category_code",
+        "audience_channel_group",
+    ):
         value = str(snapshot.get(key) or "").strip()
         if value:
             params[key] = value
@@ -2732,7 +2888,7 @@ def _build_campaign_wizard_state(*, mailing: Mailing | None, active_tab: str) ->
         cta_url = step3_url
     else:
         summary = (
-            "Шаг 3 из 3: выполните dry-run, проверьте задания/ошибки и запустите кампанию."
+            "Шаг 3 из 3: выполните проверку перед запуском, проверьте задания/ошибки и запустите кампанию."
         )
         cta_label = "Открыть экран запусков"
         cta_url = step3_url
@@ -2868,7 +3024,7 @@ def _build_mailing_dispatch_stats(mailing: Mailing) -> dict[str, int]:
 
 def _build_dispatch_timeline(tasks: list[DispatchTask]) -> list[dict[str, object]]:
     """
-    Формирует компактный таймлайн по последним задачам dispatch.
+    Формирует компактный таймлайн по последним задачам доставки.
     """
     timeline: list[dict[str, object]] = []
     for task in tasks:
@@ -2876,8 +3032,8 @@ def _build_dispatch_timeline(tasks: list[DispatchTask]) -> list[dict[str, object
         timeline.append(
             {
                 "task_id": int(task.id),
-                "status": str(task.status),
-                "provider_type": str(task.provider_type),
+                "status": _localize_dispatch_status(task.status),
+                "provider_type": _localize_provider_type(task.provider_type),
                 "guest_phone": str(task.guest.phone) if task.guest and task.guest.phone else "",
                 "event_time": event_time,
                 "message": (task.last_error or "")[:200],
@@ -2893,7 +3049,7 @@ def _build_mailing_log_timeline(
     tasks: list[DispatchTask],
 ) -> list[dict[str, object]]:
     """
-    Собирает общий таймлайн изменений по строкам аудитории и dispatch-задачам.
+    Собирает общий таймлайн изменений по строкам аудитории и задачам доставки.
     """
     timeline: list[dict[str, object]] = []
 
@@ -2903,10 +3059,11 @@ def _build_mailing_log_timeline(
         timeline.append(
             {
                 "kind": "row",
+                "kind_label": "Строка аудитории",
                 "event_time": event_time,
-                "status": str(row.status),
+                "status": _localize_mailing_row_status(row.status),
                 "phone": str(row.phone or (row.guest.phone if row.guest and row.guest.phone else "")),
-                "title": f"Строка #{row.id}",
+                "title": f"Строка аудитории #{row.id}",
                 "message": str(row.error_description or row.delivery_status or ""),
             }
         )
@@ -2916,13 +3073,180 @@ def _build_mailing_log_timeline(
         timeline.append(
             {
                 "kind": "dispatch",
+                "kind_label": "Задача доставки",
                 "event_time": event_time,
-                "status": str(task.status),
+                "status": _localize_dispatch_status(task.status),
                 "phone": str(task.guest.phone) if task.guest and task.guest.phone else "",
-                "title": f"Dispatch #{task.id}",
+                "title": f"Задача доставки #{task.id}",
                 "message": str(task.last_error or task.message_text or "")[:240],
             }
         )
 
     timeline.sort(key=lambda item: item["event_time"] or timezone.now(), reverse=True)
     return timeline[:120]
+
+
+_DISPATCH_STATUS_LABELS_RU: dict[str, str] = {
+    DispatchTask.Status.PENDING: "ожидает",
+    DispatchTask.Status.QUEUED: "в очереди",
+    DispatchTask.Status.IN_PROGRESS: "в обработке",
+    DispatchTask.Status.DONE: "успешно",
+    DispatchTask.Status.FAILED: "ошибка",
+    DispatchTask.Status.CANCELED: "отменено",
+}
+
+_PROVIDER_TYPE_LABELS_RU: dict[str, str] = {
+    "telegram": "Телеграм",
+    "max": "Макс",
+    "vk": "ВК",
+}
+
+_WORKBENCH_AUDIENCE_GROUP_LABELS_RU: dict[str, str] = {
+    "all": "Все гости",
+    "new_bots_sendable": "Доступна рассылка в новых ботах",
+    "legacy_no_new_bot": "Legacy Telegram / без новой регистрации",
+    "new_bots_blocked": "В новых ботах, но рассылка запрещена",
+}
+
+_WORKBENCH_VENUE_SELECTION_LABELS_RU: dict[str, str] = {
+    "": "Все заведения",
+    "all": "Все заведения",
+    "visited_once": "Был хотя бы 1 раз",
+    "favorite": "Любимое заведение",
+    "last_visit": "Последнее посещение",
+}
+
+
+def _localize_dispatch_status(value: str | None) -> str:
+    status = str(value or "").strip()
+    if not status:
+        return "—"
+    return _DISPATCH_STATUS_LABELS_RU.get(status, status)
+
+
+def _localize_provider_type(value: str | None) -> str:
+    provider_type = str(value or "").strip()
+    if not provider_type:
+        return "—"
+    return _PROVIDER_TYPE_LABELS_RU.get(provider_type, provider_type)
+
+
+def _localize_target_mode(value: str | None) -> str:
+    target_mode = str(value or "").strip()
+    if not target_mode:
+        return "—"
+    return dict(Mailing.TargetMode.choices).get(target_mode, target_mode)
+
+
+def _localize_queue_priority(value: str | None) -> str:
+    priority = str(value or "").strip()
+    if not priority:
+        return "—"
+    return dict(Mailing.QueuePriority.choices).get(priority, priority)
+
+
+def _localize_workbench_audience_group(value: str | None) -> str:
+    audience_group = str(value or "").strip()
+    if not audience_group:
+        return "Все гости"
+    return _WORKBENCH_AUDIENCE_GROUP_LABELS_RU.get(audience_group, audience_group)
+
+
+def _localize_workbench_venue_selection_mode(value: str | None) -> str:
+    mode = str(value or "").strip()
+    return _WORKBENCH_VENUE_SELECTION_LABELS_RU.get(mode, mode or "Все заведения")
+
+
+def _localize_queue_name(value: str | None) -> str:
+    queue_name = str(value or "").strip()
+    if not queue_name:
+        return "—"
+    parts = queue_name.split(":")
+    if len(parts) >= 4 and parts[0] == "uq":
+        return f"{_localize_provider_type(parts[2])} / {_localize_queue_priority(parts[3])}"
+    return queue_name
+
+
+def _localized_choices(choices, localizer) -> list[tuple[str, str]]:
+    return [(value, localizer(value)) for value, _label in choices]
+
+
+def _decorate_mailing_rows(rows: list[MailingGuest]) -> None:
+    for row in rows:
+        row.status_label = _localize_mailing_row_status(row.status)
+        row.delivery_status_label = _localize_delivery_status(row.delivery_status)
+
+
+def _decorate_dispatch_tasks(tasks: list[DispatchTask]) -> None:
+    for task in tasks:
+        task.status_label = _localize_dispatch_status(task.status)
+        task.provider_type_label = _localize_provider_type(task.provider_type)
+        task.queue_name_label = _localize_queue_name(task.queue_name)
+        task.priority_label = _localize_queue_priority(task.priority)
+
+
+def _build_mailing_ui_status(
+    mailing: Mailing | None,
+    *,
+    row_stats: dict[str, int] | None = None,
+    dispatch_stats: dict[str, int] | None = None,
+) -> dict[str, str]:
+    """
+    Человекочитаемое состояние кампании для интерфейса.
+
+    Это не новое поле в базе: состояние вычисляется из активности кампании,
+    статусов строк аудитории и задач доставки.
+    """
+    if mailing is None:
+        return {
+            "code": "draft",
+            "label": "черновик",
+            "badge_class": "text-bg-light text-dark border",
+            "description": "Кампания ещё не сохранена.",
+        }
+
+    row_stats = row_stats or _build_mailing_row_stats(mailing)
+    dispatch_stats = dispatch_stats or _build_mailing_dispatch_stats(mailing)
+
+    total_rows = int(row_stats.get("total") or 0)
+    planned_rows = int(row_stats.get("planned") or 0)
+    in_progress_rows = int(row_stats.get("in_progress") or 0)
+    done_rows = int(row_stats.get("done") or 0)
+    error_rows = int(row_stats.get("error") or 0)
+    active_tasks = int(dispatch_stats.get("pending") or 0) + int(dispatch_stats.get("queued") or 0) + int(
+        dispatch_stats.get("in_progress") or 0
+    )
+    failed_tasks = int(dispatch_stats.get("failed") or 0)
+    final_rows = done_rows + error_rows
+
+    if mailing.is_archived:
+        return {
+            "code": "archived",
+            "label": "архив",
+            "badge_class": "text-bg-dark",
+            "description": "Кампания перенесена в архив.",
+        }
+
+    if total_rows > 0 and planned_rows == 0 and in_progress_rows == 0 and active_tasks == 0 and final_rows >= total_rows:
+        has_errors = error_rows > 0 or failed_tasks > 0
+        return {
+            "code": "completed",
+            "label": "завершена",
+            "badge_class": "text-bg-secondary",
+            "description": "Обработка завершена, есть ошибки доставки." if has_errors else "Обработка завершена.",
+        }
+
+    if mailing.is_active:
+        return {
+            "code": "active",
+            "label": "выполняется",
+            "badge_class": "text-bg-success",
+            "description": "Кампания включена и может обрабатывать подходящие строки.",
+        }
+
+    return {
+        "code": "paused",
+        "label": "пауза",
+        "badge_class": "text-bg-secondary",
+        "description": "Кампания остановлена или ожидает запуска.",
+    }

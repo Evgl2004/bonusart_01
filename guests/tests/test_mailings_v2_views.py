@@ -306,24 +306,23 @@ class MailingsV2ViewsTests(TestCase):
         Для кампании, созданной из Workbench, v2-экраны должны показывать сохранённый snapshot фильтров.
         """
         mailing = self._create_mailing()
-        session = self.client.session
-        session["mailings_v2_workbench_snapshots"] = {
-            str(mailing.id): {
-                "as_of_date": self.now.date().isoformat(),
-                "window_days": "30",
-                "department_id": "dep-1",
-                "segment_code": "active_30d",
-                "focus_category_code": "sushi_rolls",
-                "complex_filters": [
-                    {"field": "orders_count", "operator": "gte", "value": "2"},
-                ],
-                "selected_total": 10,
-                "selected_rows_count": 10,
-                "source_layer": "category_window",
-                "saved_at": self.now.isoformat(),
-            }
+        mailing.source_filter_snapshot = {
+            "as_of_date": self.now.date().isoformat(),
+            "window_days": "30",
+            "department_id": "dep-1",
+            "venue_selection_mode": "visited_once",
+            "segment_code": "active_30d",
+            "focus_category_code": "sushi_rolls",
+            "audience_channel_group": "new_bots_sendable",
+            "complex_filters": [
+                {"field": "orders_count", "operator": "gte", "value": "2"},
+            ],
+            "selected_total": 10,
+            "selected_rows_count": 10,
+            "source_layer": "category_window",
+            "saved_at": self.now.isoformat(),
         }
-        session.save()
+        mailing.save(update_fields=["source_filter_snapshot", "updated_at"])
 
         edit_response = self.client.get(
             reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}),
@@ -339,7 +338,54 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(audience_response.status_code, 200)
         self.assertContains(audience_response, "Аудитория собрана из экрана «Гости»")
         self.assertContains(audience_response, "active_30d")
+        self.assertContains(audience_response, "Связь с заведением: Был хотя бы 1 раз")
+        self.assertContains(audience_response, "Аудитория: Доступна рассылка в новых ботах")
         self.assertContains(audience_response, reverse("guests_workbench"))
+        self.assertContains(audience_response, "venue_selection_mode=visited_once")
+        self.assertContains(audience_response, "audience_channel_group=new_bots_sendable")
+
+        status_response = self.client.get(
+            reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+        self.assertEqual(status_response.status_code, 200)
+        self.assertContains(status_response, "Источник аудитории")
+        self.assertContains(status_response, "Открыть фильтры в экране «Гости»")
+
+    def test_completed_campaign_shows_computed_status(self):
+        """
+        Кампания с полностью обработанной аудиторией должна отображаться как завершённая.
+        """
+        mailing = self._create_mailing()
+        guest = Guest.objects.create(
+            phone="+79990000501",
+            first_name="Завершён",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now,
+            status=MailingGuest.Status.DONE,
+            delivery_status="done",
+            sent_at=self.now,
+            created_at=self.now,
+        )
+
+        status_response = self.client.get(
+            reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+        self.assertEqual(status_response.status_code, 200)
+        self.assertContains(status_response, "завершена")
+
+        hub_response = self.client.get(reverse("mailings_v2_campaigns"), secure=True)
+        self.assertEqual(hub_response.status_code, 200)
+        self.assertContains(hub_response, "завершена")
 
     def test_import_phones_view_respects_next_url(self):
         """
