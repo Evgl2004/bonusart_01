@@ -68,6 +68,8 @@ class NavigationMenuTests(TestCase):
         response_mailings = self.client.get(reverse("mailings_v2_campaigns"), secure=True)
         self.assertEqual(response_mailings.status_code, 200)
         self.assertContains(response_mailings, f'href="{reverse("mailings_v2_scenarios")}"', html=False)
+        self.assertContains(response_mailings, f'href="{reverse("mailings_v2_templates")}"', html=False)
+        self.assertContains(response_mailings, "Шаблоны")
 
         self.assertNotContains(response, f'href="{reverse("mailings")}"', html=False)
         self.assertNotContains(response, f'href="{reverse("reports")}"', html=False)

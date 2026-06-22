@@ -175,6 +175,12 @@
         </a>
         {% if 'mailings_v2' in current or current == 'mailings' or current == 'mailings_create' or current == 'mailing_edit' or current == 'mailing_logs' or current == 'message_templates' or current == 'message_templates_create' or current == 'message_templates_detail' or current == 'message_templates_edit' %}
           <a
+            href="{% url 'mailings_v2_templates' %}"
+            class="submenu-link {% if current == 'mailings_v2_templates' or current == 'mailings_v2_templates_new' or current == 'mailings_v2_templates_detail' or current == 'mailings_v2_templates_edit' or current == 'message_templates' or current == 'message_templates_create' or current == 'message_templates_detail' or current == 'message_templates_edit' %}active{% endif %}"
+          >
+            Шаблоны
+          </a>
+          <a
             href="{% url 'mailings_v2_scenarios' %}"
             class="submenu-link {% if current == 'mailings_v2_scenarios' or current == 'mailings_v2_coupon_autoscenario_settings' %}active{% endif %}"
           >
