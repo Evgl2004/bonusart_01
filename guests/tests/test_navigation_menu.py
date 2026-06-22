@@ -53,6 +53,7 @@ class NavigationMenuTests(TestCase):
         for route_name in (
             "dashboard",
             "segments",
+            "reports",
             "guests_workbench",
             "mailings_v2_campaigns",
             "focus_categories",
@@ -72,7 +73,6 @@ class NavigationMenuTests(TestCase):
         self.assertContains(response_mailings, "Шаблоны")
 
         self.assertNotContains(response, f'href="{reverse("mailings")}"', html=False)
-        self.assertNotContains(response, f'href="{reverse("reports")}"', html=False)
 
     def test_sidebar_hides_legacy_block_for_regular_user(self):
         """
