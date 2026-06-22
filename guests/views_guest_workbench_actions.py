@@ -383,7 +383,10 @@ class GuestsWorkbenchActionsView(View):
         bot_profiles: list[BotProfile],
     ) -> None:
         """
-        Сохраняет в сессии источник аудитории для созданной кампании.
+        Сохраняет источник аудитории для созданной кампании.
+
+        Постоянная копия нужна, чтобы оператор мог открыть кампанию позднее
+        и восстановить, каким фильтром была собрана аудитория.
         """
         as_of_date = filters.get("as_of_date")
         as_of_date_value = as_of_date.isoformat() if as_of_date else ""
@@ -464,6 +467,7 @@ class GuestsWorkbenchActionsView(View):
         all_snapshots[str(mailing_id)] = snapshot
         request.session["mailings_v2_workbench_snapshots"] = all_snapshots
         request.session.modified = True
+        Mailing.objects.filter(pk=mailing_id).update(source_filter_snapshot=snapshot)
 
     @staticmethod
     def _build_workbench_redirect_url(request) -> str:

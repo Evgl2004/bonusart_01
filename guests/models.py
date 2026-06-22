@@ -199,6 +199,11 @@ class Mailing(models.Model):
         default=QueuePriority.BULK,
         help_text="Приоритет задач рассылки в универсальной очереди.",
     )
+    source_filter_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Снимок фильтров рабочего экрана гостей, по которым создана аудитория кампании.",
+    )
 
     bot_profiles = models.ManyToManyField(
         "BotProfile",

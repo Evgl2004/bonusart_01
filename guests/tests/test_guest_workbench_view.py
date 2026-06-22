@@ -741,6 +741,11 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(snapshot["delivery_available_guests"], 1)
         self.assertEqual(snapshot["delivery_planned_tasks"], 1)
 
+        mailing.refresh_from_db()
+        self.assertEqual(mailing.source_filter_snapshot["window_days"], "30")
+        self.assertEqual(mailing.source_filter_snapshot["venue_selection_mode"], "visited_once")
+        self.assertEqual(mailing.source_filter_snapshot["audience_channel_group"], "all")
+
         rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].guest_id, self.guest_1.id)
@@ -796,6 +801,12 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(snapshot["mailing_send_window_begin"], "10:00")
         self.assertEqual(snapshot["mailing_send_window_end"], "18:30")
         self.assertEqual(snapshot["mailing_bot_profile_ids"], [self.bot_telegram.id])
+
+        mailing.refresh_from_db()
+        self.assertEqual(mailing.source_filter_snapshot["mailing_template_id"], custom_template.id)
+        self.assertEqual(mailing.source_filter_snapshot["mailing_template_name"], custom_template.name)
+        self.assertEqual(mailing.source_filter_snapshot["mailing_target_mode"], Mailing.TargetMode.ALL_BOTS)
+        self.assertEqual(mailing.source_filter_snapshot["mailing_queue_priority"], Mailing.QueuePriority.HIGH)
 
     def test_create_mailing_draft_skips_guests_without_delivery(self):
         """
@@ -867,6 +878,10 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(snapshot["audience_channel_group"], "legacy_no_new_bot")
         self.assertEqual(snapshot["delivery_available_guests"], 1)
         self.assertEqual(snapshot["delivery_legacy_telegram_guests"], 1)
+
+        mailing.refresh_from_db()
+        self.assertEqual(mailing.source_filter_snapshot["audience_channel_group"], "legacy_no_new_bot")
+        self.assertEqual(mailing.source_filter_snapshot["delivery_legacy_telegram_guests"], 1)
 
     def test_create_mailing_draft_without_audience_limit_uses_full_selection(self):
         """
