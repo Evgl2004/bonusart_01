@@ -3218,6 +3218,13 @@ def _build_mailing_ui_status(
     )
     failed_tasks = int(dispatch_stats.get("failed") or 0)
     final_rows = done_rows + error_rows
+    has_only_future_planned_rows = False
+    if planned_rows > 0 and in_progress_rows == 0 and active_tasks == 0 and final_rows == 0:
+        planned_scope = mailing.guests_rows.filter(status=MailingGuest.Status.PLANNED)
+        now = timezone.now()
+        future_rows_exist = planned_scope.filter(scheduled_datetime__gt=now).exists()
+        ready_rows_exist = planned_scope.filter(scheduled_datetime__lte=now).exists()
+        has_only_future_planned_rows = future_rows_exist and not ready_rows_exist
 
     if mailing.is_archived:
         return {
@@ -3234,6 +3241,14 @@ def _build_mailing_ui_status(
             "label": "завершена",
             "badge_class": "text-bg-secondary",
             "description": "Обработка завершена, есть ошибки доставки." if has_errors else "Обработка завершена.",
+        }
+
+    if mailing.is_active and total_rows > 0 and has_only_future_planned_rows:
+        return {
+            "code": "scheduled",
+            "label": "запланирована",
+            "badge_class": "text-bg-primary",
+            "description": "Кампания включена, отправка начнётся в запланированное время.",
         }
 
     if mailing.is_active:

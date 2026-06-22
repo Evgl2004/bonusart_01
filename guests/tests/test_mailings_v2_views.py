@@ -387,6 +387,46 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(hub_response.status_code, 200)
         self.assertContains(hub_response, "завершена")
 
+    def test_future_active_campaign_shows_scheduled_status(self):
+        """
+        Включённая кампания с будущими строками должна отображаться как запланированная.
+        """
+        mailing = self._create_mailing()
+        mailing.is_active = True
+        mailing.scheduled_time_begin = self.now + timedelta(days=1)
+        mailing.scheduled_time_end = self.now + timedelta(days=2)
+        mailing.save(update_fields=["is_active", "scheduled_time_begin", "scheduled_time_end", "updated_at"])
+
+        guest = Guest.objects.create(
+            phone="+79990000502",
+            first_name="Будущий",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        MailingGuest.objects.create(
+            mailing=mailing,
+            guest=guest,
+            phone=guest.phone,
+            email="",
+            text_mailing_list="Текст",
+            scheduled_datetime=self.now + timedelta(days=1),
+            status=MailingGuest.Status.PLANNED,
+            created_at=self.now,
+        )
+
+        status_response = self.client.get(
+            reverse("mailings_v2_campaigns_status", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(status_response.context["mailing_ui_status"]["code"], "scheduled")
+        self.assertContains(status_response, "запланирована")
+
+        hub_response = self.client.get(reverse("mailings_v2_campaigns"), secure=True)
+        self.assertEqual(hub_response.status_code, 200)
+        self.assertEqual(hub_response.context["campaigns"][0].ui_status["code"], "scheduled")
+        self.assertContains(hub_response, "запланирована")
+
     def test_import_phones_view_respects_next_url(self):
         """
         Импорт телефонов должен возвращать в переданный `next` URL.
