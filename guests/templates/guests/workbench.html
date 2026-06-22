@@ -482,6 +482,7 @@
     </div>
 
     {% include "guests/_selected_guests_block.html" with block_id="" %}
+    {% include "guests/_workbench_mailing_draft_block.html" %}
 
     <div class="row g-3 mb-4">
       <div class="col-12">
@@ -615,6 +616,7 @@
 
   <div class="tab-pane fade" id="pane-guests" role="tabpanel" aria-labelledby="tab-guests" tabindex="0">
     {% include "guests/_selected_guests_block.html" with block_id="selected-guests" %}
+    {% include "guests/_workbench_mailing_draft_block.html" %}
   </div>
 
   <div class="tab-pane fade" id="pane-rating" role="tabpanel" aria-labelledby="tab-rating" tabindex="0">

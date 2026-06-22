@@ -11,149 +11,6 @@
         Показаны первые {{ payload.selected_guests.limit }} записей.
       {% endif %}
     </p>
-    <form method="post" action="{% url 'guests_workbench_actions' %}" class="mb-3 js-workbench-mailing-form">
-      {% csrf_token %}
-      <input type="hidden" name="action" value="create_mailing_draft">
-      <input type="hidden" name="as_of_date" value="{{ selected_as_of_date }}">
-      <input type="hidden" name="window_days" value="{{ selected_window_days }}">
-      <input type="hidden" name="department_id" value="{{ selected_department_id }}">
-      <input type="hidden" name="venue_selection_mode" value="{{ selected_venue_selection_mode }}">
-      <input type="hidden" name="segment_code" value="{{ selected_segment_code }}">
-      <input type="hidden" name="focus_category_code" value="{{ selected_focus_category_code }}">
-      <input type="hidden" name="audience_channel_group" value="{{ selected_audience_channel_group }}">
-      <input type="hidden" name="show_all_presets" value="{% if selected_show_all_presets %}1{% endif %}">
-      {% for rule in payload.filters.complex_filters %}
-        <input type="hidden" name="cf_field" value="{{ rule.field }}">
-        <input type="hidden" name="cf_op" value="{{ rule.operator }}">
-        <input type="hidden" name="cf_value" value="{{ rule.value_str }}">
-      {% endfor %}
-      <div class="border rounded bg-light p-3 mb-3">
-        <div class="row g-2 align-items-end">
-          <div class="col-12 col-lg-4">
-            <label class="form-label small mb-1">Шаблон сообщения</label>
-            <select class="form-select form-select-sm" name="mailing_template_id" {% if not workbench_message_templates %}disabled{% endif %}>
-              {% for template in workbench_message_templates %}
-                <option value="{{ template.id }}" {% if forloop.first %}selected{% endif %}>{{ template.name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12 col-lg-3">
-            <label class="form-label small mb-1">Куда отправлять</label>
-            <select class="form-select form-select-sm" name="mailing_target_mode">
-              {% for value, label in workbench_target_mode_options %}
-                <option value="{{ value }}" {% if value == workbench_default_target_mode %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="col-12 col-lg-2">
-            <label class="form-label small mb-1">Начало окна</label>
-            <input type="time" class="form-control form-control-sm" name="mailing_send_window_begin" value="11:00">
-          </div>
-          <div class="col-12 col-lg-2">
-            <label class="form-label small mb-1">Конец окна</label>
-            <input type="time" class="form-control form-control-sm" name="mailing_send_window_end" value="23:00">
-          </div>
-          <div class="col-12 col-lg-1">
-            <label class="form-label small mb-1">Очередь</label>
-            <select class="form-select form-select-sm" name="mailing_queue_priority">
-              {% for value, label in workbench_queue_priority_options %}
-                <option value="{{ value }}" {% if value == workbench_default_queue_priority %}selected{% endif %}>{{ label }}</option>
-              {% endfor %}
-            </select>
-          </div>
-        </div>
-        <div class="mt-3">
-          <div class="small fw-semibold mb-2">Боты для отправки</div>
-          <input type="hidden" name="mailing_bot_profile_ids_present" value="1">
-          <div class="row g-2">
-            {% for bot in workbench_bot_profiles %}
-              <div class="col-12 col-lg-4">
-                <label class="form-check border rounded bg-white px-2 py-2 mb-0">
-                  <input class="form-check-input ms-0 me-2" type="checkbox" name="mailing_bot_profile_ids" value="{{ bot.id }}" checked>
-                  <span class="form-check-label">{{ bot.get_provider_type_display }} ({{ bot.code }})</span>
-                </label>
-              </div>
-            {% empty %}
-              <div class="col-12 text-muted small">Нет активных ботов для рассылки.</div>
-            {% endfor %}
-          </div>
-        </div>
-      </div>
-      <div class="border rounded p-3 mb-3 js-workbench-delivery-preview">
-        <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
-          <div class="fw-semibold">Проверка перед созданием черновика</div>
-          <span class="badge text-bg-light border">по выбранным ботам и режиму отправки</span>
-        </div>
-        <div class="row g-2 mb-2">
-          <div class="col-6 col-lg-3">
-            <div class="text-muted small">В текущем расчёте</div>
-            <div class="h5 mb-0" data-wb-preview-value="total">0</div>
-          </div>
-          <div class="col-6 col-lg-3">
-            <div class="text-muted small">Можно отправить</div>
-            <div class="h5 mb-0" data-wb-preview-value="deliverable">0</div>
-          </div>
-          <div class="col-6 col-lg-3">
-            <div class="text-muted small">Будет пропущено</div>
-            <div class="h5 mb-0" data-wb-preview-value="skipped">0</div>
-          </div>
-          <div class="col-6 col-lg-3">
-            <div class="text-muted small">Задач доставки</div>
-            <div class="h5 mb-0" data-wb-preview-value="tasks">0</div>
-          </div>
-        </div>
-        <div class="table-responsive">
-          <table class="table table-sm mb-0">
-            <tbody>
-              <tr>
-                <th class="fw-semibold">Нет привязки к выбранным ботам</th>
-                <td class="text-end" data-wb-preview-value="no_binding">0</td>
-              </tr>
-              <tr>
-                <th class="fw-semibold">Нет согласия на рассылку</th>
-                <td class="text-end" data-wb-preview-value="no_permission">0</td>
-              </tr>
-              <tr>
-                <th class="fw-semibold">Legacy через Telegram</th>
-                <td class="text-end" data-wb-preview-value="legacy">0</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        {% if payload.selected_guests.is_truncated %}
-          <div class="text-muted small mt-2">
-            Предварительный расчёт показан по текущему лимиту. Если снять лимит, перед созданием черновика система пересчитает всю выбранную аудиторию.
-          </div>
-        {% endif %}
-      </div>
-      <div class="row g-2 align-items-end">
-        <div class="col-12 col-lg-3">
-          <label class="form-label small mb-1">Ограничение аудитории</label>
-          <input type="hidden" name="audience_limit_enabled" value="0">
-          <div class="form-check">
-            <input class="form-check-input" type="checkbox" name="audience_limit_enabled" value="1" checked>
-            <label class="form-check-label">Использовать лимит</label>
-          </div>
-        </div>
-        <div class="col-12 col-lg-3">
-          <label class="form-label small mb-1">Гостей в черновике</label>
-          <input type="number" class="form-control form-control-sm" name="audience_limit" value="200" min="1" step="1">
-        </div>
-        <div class="col-12 col-lg-6">
-          <button type="submit" class="btn btn-outline-primary"
-                  data-wb-create-mailing-button
-                  data-wb-base-disabled="{% if payload.selected_guests.total <= 0 or not workbench_message_templates or not workbench_bot_profiles %}1{% else %}0{% endif %}"
-                  {% if payload.selected_guests.total <= 0 or not workbench_message_templates or not workbench_bot_profiles %}disabled{% endif %}>
-            Создать черновик рассылки по отбору
-          </button>
-          {% if payload.selected_guests.is_truncated %}
-            <div class="text-muted small mt-1">
-              Сейчас показаны первые {{ payload.selected_guests.limit }} гостей. Для полной выборки снимите ограничение аудитории.
-            </div>
-          {% endif %}
-        </div>
-      </div>
-    </form>
     <div class="wb-table-wrap">
       <table class="table table-sm align-middle mb-0">
         <thead>
@@ -184,5 +41,10 @@
         </tbody>
       </table>
     </div>
+    {% if payload.selected_guests.is_truncated %}
+      <div class="text-muted small mt-2">
+        Сейчас показаны первые {{ payload.selected_guests.limit }} гостей. Для полной выборки снимите ограничение аудитории.
+      </div>
+    {% endif %}
   </div>
 </div>
