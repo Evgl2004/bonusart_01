@@ -23,11 +23,12 @@ from django.utils.dateparse import parse_date
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views import View
-from django.views.generic import CreateView, DetailView, TemplateView, UpdateView
+from django.views.generic import CreateView, DetailView, FormView, TemplateView, UpdateView
 
 from guests.forms import (
     CouponAutomationConfigForm,
     CouponAutomationRuleFormSet,
+    CouponAutomationScenarioCreateForm,
     FillBirthdayRequestScenarioForm,
     MailingForm,
     MessageTemplateForm,
@@ -141,6 +142,7 @@ def _coupon_autoscenario_policy_label(*, venue_selection_mode: str = "") -> str:
 def _coupon_autoscenario_policy_rows(
     *,
     cooldown_days: int | None,
+    scenario_type: str = "",
     scenario_code: str = "",
     birthday_window_days: int | None = None,
     venue_selection_mode: str = "",
@@ -172,7 +174,10 @@ def _coupon_autoscenario_policy_rows(
         ("Повтор", cooldown_label),
         ("Если нет купонов", "гость пропускается и попадает в дефицит купонов"),
     ]
-    if str(scenario_code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON:
+    if (
+        str(scenario_type or "").strip() == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
+        or str(scenario_code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON
+    ):
         rows.insert(
             2,
             (
@@ -1988,6 +1993,7 @@ class MailingsV2ScenariosView(TemplateView):
             )
             config.coupon_selection_policy_rows = _coupon_autoscenario_policy_rows(
                 cooldown_days=config.cooldown_days,
+                scenario_type=config.scenario_type,
                 scenario_code=config.scenario.code,
                 birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
                 venue_selection_mode=config.venue_selection_mode,
@@ -2076,6 +2082,11 @@ class MailingsV2ScenariosView(TemplateView):
                 )
                 coupon_plan["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
                     cooldown_days=getattr(selected_coupon_config, "cooldown_days", None),
+                    scenario_type=(
+                        getattr(selected_coupon_config, "scenario_type", "")
+                        if selected_coupon_config is not None
+                        else ""
+                    ),
                     scenario_code=selected_coupon_scenario_code,
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
                     venue_selection_mode=coupon_plan.get("venue_selection_mode", ""),
@@ -2093,7 +2104,11 @@ class MailingsV2ScenariosView(TemplateView):
                         inactive_days=coupon_plan.get("inactive_days_threshold"),
                     )
                 )
-                if selected_coupon_scenario_code == SCENARIO_CODE_BIRTHDAY_COUPON:
+                if (
+                    selected_coupon_config is not None
+                    and selected_coupon_config.scenario_type
+                    == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
+                ):
                     coupon_plan["bot_bound_guests_label"] = "Именинников в новых ботах"
                     coupon_plan["bot_bound_guests_hint"] = "день рождения в периоде"
                     coupon_plan["message_target_guests_label"] = "С согласием на рассылку"
@@ -2173,6 +2188,41 @@ class MailingsV2ScenariosView(TemplateView):
         context["query"] = query
         context["return_query"] = self.request.GET.urlencode()
         context["scenarios_run_report"] = self.request.session.pop("mailings_v2_scenarios_run_report", None)
+        return context
+
+
+class MailingsV2CouponAutoscenarioCreateView(FormView):
+    """
+    Создание пользовательского купонного автосценария из интерфейса рассылок.
+
+    Форма создаёт выключенный `NotificationScenario`, шаблон сообщения и
+    черновой `CouponAutomationConfig`, затем переводит оператора в настройки
+    правил купонов и пилота.
+    """
+
+    form_class = CouponAutomationScenarioCreateForm
+    template_name = "mailing_v2/coupon_autoscenario_create.html"
+
+    def form_valid(self, form):
+        config = form.save()
+        self.object = config
+        messages.success(
+            self.request,
+            "Купонный автосценарий создан как черновик. Настройте правила купонов и пилот перед запуском.",
+        )
+        return redirect(self.get_success_url())
+
+    def get_success_url(self):
+        return reverse(
+            "mailings_v2_coupon_autoscenario_settings",
+            kwargs={"pk": self.object.pk},
+        )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["scenarios_url"] = reverse("mailings_v2_scenarios")
+        context["has_active_bot_profiles"] = BotProfile.objects.filter(is_active=True).exists()
+        context["bot_profiles_admin_url"] = "/admin/guests/botprofile/"
         return context
 
 
@@ -2309,6 +2359,7 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         )
         context["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
             cooldown_days=self.object.cooldown_days,
+            scenario_type=self.object.scenario_type,
             scenario_code=scenario_code,
             birthday_window_days=(self.object.settings or {}).get("birthday_preparation_window_days"),
             venue_selection_mode=self.object.venue_selection_mode,

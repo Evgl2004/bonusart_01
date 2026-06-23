@@ -1884,6 +1884,10 @@ class NotificationScenario(models.Model):
         if not normalized_code:
             return
 
+        self.code = normalized_code
+        if not self.is_system:
+            return
+
         if not is_registered_notification_scenario_code(normalized_code):
             raise ValidationError(
                 {
@@ -1893,7 +1897,6 @@ class NotificationScenario(models.Model):
                     )
                 }
             )
-        self.code = normalized_code
 
     def __str__(self):
         return f"{self.code} ({self.name})"

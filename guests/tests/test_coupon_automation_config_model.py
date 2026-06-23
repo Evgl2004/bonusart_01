@@ -48,6 +48,45 @@ class CouponAutomationConfigModelTests(TestCase):
             settings={},
         )
 
+    def test_system_scenario_rejects_unknown_code(self):
+        scenario = NotificationScenario(
+            code="unknown_system_coupon",
+            name="Неизвестный системный сценарий",
+            is_active=False,
+            is_system=True,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            template=self.template,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            settings={},
+        )
+
+        with self.assertRaises(ValidationError) as raised:
+            scenario.full_clean()
+
+        self.assertIn("code", raised.exception.message_dict)
+
+    def test_user_scenario_allows_custom_code(self):
+        scenario = NotificationScenario(
+            code="sami_susami_kanpeti_30d",
+            name="Сами Сусами: Канпети 30 дней",
+            is_active=False,
+            is_system=False,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            template=self.template,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            settings={"inactive_days": 30, "coupon_required": True},
+        )
+
+        scenario.full_clean()
+
+        self.assertEqual(scenario.code, "sami_susami_kanpeti_30d")
+
     def test_report_only_allows_empty_coupon_series(self):
         config = CouponAutomationConfig(
             scenario=self._scenario(),

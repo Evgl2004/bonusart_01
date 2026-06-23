@@ -10,6 +10,7 @@
       <p class="text-muted mb-0">Рабочий экран проверки и настройки купонных автосценариев.</p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-primary" href="{% url 'mailings_v2_coupon_autoscenario_create' %}">Создать автосценарий</a>
       <a class="btn btn-outline-primary" href="/admin/guests/notificationscenario/">Открыть админку сценариев</a>
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_campaigns' %}">Назад к рассылкам</a>
     </div>
@@ -116,6 +117,7 @@
                   <td>
                     <code>{{ config.scenario.code }}</code>
                     <div class="small text-muted">{{ config.scenario.name }}</div>
+                    <div class="small text-muted">тип: {{ config.get_scenario_type_display }}</div>
                   </td>
                   <td>
                     {% if config.execution_mode == "pilot" %}

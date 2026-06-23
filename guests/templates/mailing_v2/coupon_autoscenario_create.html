@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+
+{% block title %}Создать купонный автосценарий{% endblock %}
+
+{% block content %}
+<style>
+  .mail-bot-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.65rem;
+  }
+
+  .mail-bot-choice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .mail-bot-choice-list .form-check {
+    margin: 0;
+    padding: 0.45rem 0.55rem 0.45rem 2rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    background: #f8fafc;
+    width: 100%;
+  }
+</style>
+
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Создать купонный автосценарий</h1>
+      <p class="text-muted mb-0">Новый автосценарий создаётся выключенным и попадает в состояние «Черновик».</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ scenarios_url }}">К автосценариям</a>
+  </div>
+
+  {% if form.errors %}
+    <div class="alert alert-danger" role="alert">
+      <div class="fw-semibold mb-1">Автосценарий не создан.</div>
+      <ul class="mb-0">
+        {% for field in form %}
+          {% for error in field.errors %}
+            <li>{{ field.label }}: {{ error }}</li>
+          {% endfor %}
+        {% endfor %}
+        {% for error in form.non_field_errors %}
+          <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  <form method="post" class="card border-0 shadow-sm">
+    <div class="card-body">
+      {% csrf_token %}
+
+      <h2 class="h6 mb-3">Основные параметры</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          {{ form.code.label_tag }}
+          {{ form.code }}
+          {% if form.code.help_text %}
+            <div class="form-text">{{ form.code.help_text }}</div>
+          {% endif %}
+          {% if form.code.errors %}
+            <div class="text-danger small mt-1">{{ form.code.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-5">
+          {{ form.name.label_tag }}
+          {{ form.name }}
+          {% if form.name.errors %}
+            <div class="text-danger small mt-1">{{ form.name.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-3">
+          {{ form.scenario_type.label_tag }}
+          {{ form.scenario_type }}
+          {% if form.scenario_type.errors %}
+            <div class="text-danger small mt-1">{{ form.scenario_type.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-3">
+          {{ form.inactive_days.label_tag }}
+          {{ form.inactive_days }}
+          {% if form.inactive_days.help_text %}
+            <div class="form-text">{{ form.inactive_days.help_text }}</div>
+          {% endif %}
+          {% if form.inactive_days.errors %}
+            <div class="text-danger small mt-1">{{ form.inactive_days.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-3">
+          {{ form.birthday_preparation_window_days.label_tag }}
+          {{ form.birthday_preparation_window_days }}
+          {% if form.birthday_preparation_window_days.help_text %}
+            <div class="form-text">{{ form.birthday_preparation_window_days.help_text }}</div>
+          {% endif %}
+          {% if form.birthday_preparation_window_days.errors %}
+            <div class="text-danger small mt-1">{{ form.birthday_preparation_window_days.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <hr class="my-4">
+
+      <h2 class="h6 mb-3">Шаблон сообщения</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-6">
+          {{ form.template_name.label_tag }}
+          {{ form.template_name }}
+          {% if form.template_name.errors %}
+            <div class="text-danger small mt-1">{{ form.template_name.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-6">
+          {{ form.template_description.label_tag }}
+          {{ form.template_description }}
+          {% if form.template_description.errors %}
+            <div class="text-danger small mt-1">{{ form.template_description.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12">
+          {{ form.template_text.label_tag }}
+          {{ form.template_text }}
+          <div class="form-text">
+            Можно использовать переменные <code>&#123;&#123; first_name &#125;&#125;</code>, <code>&#123;&#123; days_without_visits &#125;&#125;</code>, <code>{coupon_code}</code>.
+          </div>
+          {% if form.template_text.errors %}
+            <div class="text-danger small mt-1">{{ form.template_text.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <hr class="my-4">
+
+      <h2 class="h6 mb-3">Разрешённые боты</h2>
+      <div class="border rounded p-3">
+        <div class="mail-bot-actions">
+          <button type="button" class="btn btn-outline-primary btn-sm" id="coupon-create-bot-select-all">Выбрать всё</button>
+          <button type="button" class="btn btn-outline-secondary btn-sm" id="coupon-create-bot-clear-all">Снять всё</button>
+        </div>
+        <div class="mail-bot-choice-list" id="coupon-create-bot-choice-list">
+          {% for checkbox in form.notification_bot_profiles %}
+            <div class="form-check">
+              {{ checkbox.tag }}
+              <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+            </div>
+          {% empty %}
+            <div class="text-muted">Активных ботов нет.</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% if has_active_bot_profiles %}
+        <small class="text-muted">
+          Выберите ботов, через которые разрешено отправлять сообщения этого автосценария.
+        </small>
+      {% else %}
+        <small class="text-danger d-block">
+          Нет активных ботов. Добавьте и активируйте профиль бота в
+          <a href="{{ bot_profiles_admin_url }}">админке</a>, затем обновите страницу.
+        </small>
+      {% endif %}
+      {% if form.notification_bot_profiles.errors %}
+        <div class="text-danger small mt-1">{{ form.notification_bot_profiles.errors|join:", " }}</div>
+      {% endif %}
+
+      <div class="d-flex justify-content-end gap-2 mt-4">
+        <a class="btn btn-outline-secondary" href="{{ scenarios_url }}">Отмена</a>
+        <button class="btn btn-primary" type="submit">Создать автосценарий</button>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+  (function () {
+    const list = document.getElementById("coupon-create-bot-choice-list");
+    if (!list) {
+      return;
+    }
+    const selectAll = document.getElementById("coupon-create-bot-select-all");
+    const clearAll = document.getElementById("coupon-create-bot-clear-all");
+    function setChecked(value) {
+      list.querySelectorAll('input[type="checkbox"]').forEach(function (input) {
+        input.checked = value;
+      });
+    }
+    if (selectAll) {
+      selectAll.addEventListener("click", function () {
+        setChecked(true);
+      });
+    }
+    if (clearAll) {
+      clearAll.addEventListener("click", function () {
+        setChecked(false);
+      });
+    }
+  })();
+</script>
+{% endblock %}

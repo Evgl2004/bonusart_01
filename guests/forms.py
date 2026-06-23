@@ -1,4 +1,5 @@
 ﻿from django import forms
+from django.db import transaction
 from django.utils import timezone
 
 from .models import (
@@ -14,7 +15,6 @@ from .services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GL
 from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
 from .services.guest_resolution import normalize_phone_e164
-from .services.notification_registry import SCENARIO_CODE_BIRTHDAY_COUPON
 
 
 COUPON_AUTOSCENARIO_STATE_CHOICES = [
@@ -23,6 +23,197 @@ COUPON_AUTOSCENARIO_STATE_CHOICES = [
     (CouponAutomationConfig.ExecutionMode.AUTOMATIC, "Активен"),
     (CouponAutomationConfig.ExecutionMode.PAUSED, "Пауза"),
 ]
+
+
+class CouponAutomationScenarioCreateForm(forms.Form):
+    """
+    Форма первичного создания пользовательского купонного автосценария.
+
+    После этого оператор попадает в существующую форму настройки правил купонов,
+    пилота, отбора гостей и запуска.
+    """
+
+    code = forms.SlugField(
+        label="Код автосценария",
+        max_length=80,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "sami_susami_kanpeti_30d",
+            }
+        ),
+        help_text="Технический код латиницей, цифрами, дефисом или подчёркиванием.",
+        error_messages={
+            "invalid": "Код может содержать только латинские буквы, цифры, дефис и подчёркивание.",
+        },
+    )
+    name = forms.CharField(
+        label="Название автосценария",
+        max_length=150,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Сами Сусами: не был 30 дней + Канпети",
+            }
+        ),
+    )
+    scenario_type = forms.ChoiceField(
+        label="Тип расчёта",
+        choices=CouponAutomationConfig.ScenarioType.choices,
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    inactive_days = forms.IntegerField(
+        label="Порог неактивности, дней",
+        required=False,
+        min_value=1,
+        initial=30,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
+        help_text="Используется для типа «Гость не был N дней + купон».",
+    )
+    birthday_preparation_window_days = forms.IntegerField(
+        label="Окно подготовки ко дню рождения, дней",
+        required=False,
+        min_value=0,
+        initial=7,
+        widget=forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+        help_text="Используется для типа «День рождения + купон».",
+    )
+    template_name = forms.CharField(
+        label="Название шаблона",
+        max_length=150,
+        widget=forms.TextInput(
+            attrs={
+                "class": "form-control",
+                "placeholder": "Сами Сусами: Канпети для остывших гостей",
+            }
+        ),
+    )
+    template_description = forms.CharField(
+        label="Описание шаблона",
+        max_length=255,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "form-control"}),
+    )
+    template_text = forms.CharField(
+        label="Текст сообщения",
+        widget=forms.Textarea(
+            attrs={
+                "class": "form-control",
+                "rows": 10,
+                "style": "min-height: 260px;",
+            }
+        ),
+    )
+    notification_bot_profiles = forms.ModelMultipleChoiceField(
+        label="Разрешённые боты",
+        required=True,
+        queryset=BotProfile.objects.none(),
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
+        error_messages={
+            "required": "Выберите хотя бы один бот для отправки сообщений.",
+        },
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["notification_bot_profiles"].queryset = BotProfile.objects.filter(
+            is_active=True
+        ).order_by(
+            "provider_type",
+            "name",
+            "id",
+        )
+
+    def clean_code(self):
+        code = str(self.cleaned_data.get("code") or "").strip().lower()
+        if NotificationScenario.objects.filter(code=code).exists():
+            raise forms.ValidationError("Сценарий с таким кодом уже существует.")
+        return code
+
+    def clean(self):
+        cleaned_data = super().clean()
+        scenario_type = cleaned_data.get("scenario_type")
+
+        if scenario_type == CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON:
+            if cleaned_data.get("inactive_days") is None:
+                self.add_error("inactive_days", "Укажите порог неактивности.")
+        elif scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON:
+            if cleaned_data.get("birthday_preparation_window_days") is None:
+                self.add_error(
+                    "birthday_preparation_window_days",
+                    "Укажите окно подготовки ко дню рождения.",
+                )
+
+        return cleaned_data
+
+    def _build_scenario_settings(self) -> dict:
+        scenario_type = self.cleaned_data["scenario_type"]
+        settings = {"coupon_required": True}
+        if scenario_type == CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON:
+            settings["inactive_days"] = int(self.cleaned_data.get("inactive_days") or 30)
+        elif scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON:
+            settings["profile_event_type"] = "birthdate_filled"
+        return settings
+
+    def _build_config_settings(self) -> dict:
+        scenario_type = self.cleaned_data["scenario_type"]
+        if scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON:
+            return {
+                "birthday_preparation_window_days": int(
+                    self.cleaned_data.get("birthday_preparation_window_days") or 7
+                )
+            }
+        if scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON:
+            return {"profile_event_type": "birthdate_filled"}
+        return {}
+
+    def _build_cooldown_days(self) -> int:
+        scenario_type = self.cleaned_data["scenario_type"]
+        if scenario_type == CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON:
+            return max(1, int(self.cleaned_data.get("inactive_days") or 30))
+        return 365
+
+    def save(self) -> CouponAutomationConfig:
+        with transaction.atomic():
+            template = MessageTemplate.objects.create(
+                name=str(self.cleaned_data["template_name"]).strip(),
+                description=str(self.cleaned_data.get("template_description") or "").strip() or None,
+                message_text=str(self.cleaned_data["template_text"]).strip(),
+                created_by="mailings_v2_user",
+                is_active=True,
+            )
+            scenario = NotificationScenario(
+                code=self.cleaned_data["code"],
+                name=str(self.cleaned_data["name"]).strip(),
+                description="",
+                is_active=False,
+                is_system=False,
+                trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+                template=template,
+                priority=NotificationScenario.Priority.BULK,
+                target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+                distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+                timezone="Asia/Yekaterinburg",
+                settings=self._build_scenario_settings(),
+            )
+            scenario.full_clean()
+            scenario.save()
+            scenario.bot_profiles.set(self.cleaned_data.get("notification_bot_profiles") or [])
+
+            config = CouponAutomationConfig(
+                scenario=scenario,
+                scenario_type=self.cleaned_data["scenario_type"],
+                execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                coupon_validity_days=14,
+                max_recipients_per_run=100,
+                max_active_coupons_per_guest=1,
+                cooldown_days=self._build_cooldown_days(),
+                settings=self._build_config_settings(),
+            )
+            config.full_clean()
+            config.save()
+
+        return config
 
 
 class CategoryForm(forms.ModelForm):
@@ -457,7 +648,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
         self.initial["pilot_include_unmatched"] = bool(settings.get("pilot_include_unmatched"))
         scenario = getattr(self.instance, "scenario", None)
         is_birthday_scenario = (
-            scenario is not None and str(scenario.code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON
+            self.instance.scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
         )
         self.fields["birthday_preparation_window_days"].required = is_birthday_scenario
         if is_birthday_scenario:
@@ -523,9 +714,8 @@ class CouponAutomationConfigForm(forms.ModelForm):
         )
         audience_venue_code = str(cleaned_data.get("audience_venue_code") or "").strip()
         venue_code = str(cleaned_data.get("venue_code") or "").strip()
-        scenario = getattr(self.instance, "scenario", None)
         is_birthday_scenario = (
-            scenario is not None and str(scenario.code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON
+            self.instance.scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
         )
         distribution_mode = (
             cleaned_data.get("notification_distribution_mode")
@@ -601,7 +791,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
             self.cleaned_data.get("pilot_include_unmatched")
         )
         scenario = getattr(instance, "scenario", None)
-        if scenario is not None and str(scenario.code or "").strip() == SCENARIO_CODE_BIRTHDAY_COUPON:
+        if instance.scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON:
             settings["birthday_preparation_window_days"] = int(
                 self.cleaned_data.get("birthday_preparation_window_days") or 0
             )

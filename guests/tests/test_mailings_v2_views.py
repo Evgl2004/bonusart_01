@@ -2206,6 +2206,102 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "AUTO_30D:REL-1")
         self.assertEqual(response.context["coupon_cleanup_report"]["queue_event_id"], 21)
 
+    def test_coupon_autoscenario_create_view_creates_user_draft(self):
+        """
+        Создание купонного автосценария из UI должно завести пользовательский сценарий,
+        новый шаблон и черновой CouponAutomationConfig без выдачи купонов.
+        """
+        hub_response = self.client.get(reverse("mailings_v2_scenarios"), secure=True)
+        self.assertEqual(hub_response.status_code, 200)
+        self.assertContains(hub_response, "Создать автосценарий")
+
+        response = self.client.get(reverse("mailings_v2_coupon_autoscenario_create"), secure=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Код автосценария")
+        self.assertContains(response, "Тип расчёта")
+        self.assertContains(response, "Разрешённые боты")
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_create"),
+            {
+                "code": "SAMI_SUSAMI_KANPETI_30D",
+                "name": "Сами Сусами: не был 30 дней + Канпети",
+                "scenario_type": CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+                "inactive_days": "30",
+                "birthday_preparation_window_days": "",
+                "template_name": "Сами Сусами: Канпети для остывших гостей",
+                "template_description": "Боевой шаблон для автосценария Сами Сусами.",
+                "template_text": "Гамарджоба, {{ first_name }}! Купон: {coupon_code}",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        scenario = NotificationScenario.objects.get(code="sami_susami_kanpeti_30d")
+        config = scenario.coupon_automation_config
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+        )
+        self.assertFalse(scenario.is_active)
+        self.assertFalse(scenario.is_system)
+        self.assertEqual(scenario.trigger_type, NotificationScenario.TriggerType.SCHEDULE)
+        self.assertEqual(scenario.priority, NotificationScenario.Priority.BULK)
+        self.assertEqual(scenario.settings["inactive_days"], 30)
+        self.assertTrue(scenario.settings["coupon_required"])
+        self.assertEqual(scenario.template.name, "Сами Сусами: Канпети для остывших гостей")
+        self.assertEqual(scenario.template.created_by, "mailings_v2_user")
+        self.assertEqual(list(scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])
+        self.assertEqual(
+            config.scenario_type,
+            CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+        )
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
+        self.assertEqual(config.cooldown_days, 30)
+        self.assertEqual(config.settings, {})
+        self.assertEqual(DispatchTask.objects.count(), 0)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_coupon_autoscenario_create_view_stores_birthday_window_by_type(self):
+        """
+        Пользовательский код birthday-сценария должен брать настройки по scenario_type,
+        а не по системному коду birthday_coupon.
+        """
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_create"),
+            {
+                "code": "custom_birthday_coupon_2026",
+                "name": "День рождения: пользовательский купон",
+                "scenario_type": CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
+                "inactive_days": "",
+                "birthday_preparation_window_days": "10",
+                "template_name": "Пользовательский день рождения",
+                "template_description": "",
+                "template_text": "Поздравляем, {{ first_name }}! Купон: {coupon_code}",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        scenario = NotificationScenario.objects.get(code="custom_birthday_coupon_2026")
+        config = scenario.coupon_automation_config
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(config.scenario_type, CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON)
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
+        self.assertEqual(config.cooldown_days, 365)
+        self.assertEqual(config.settings["birthday_preparation_window_days"], 10)
+        self.assertTrue(scenario.settings["coupon_required"])
+        self.assertNotIn("inactive_days", scenario.settings)
+
+        settings_response = self.client.get(
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+            secure=True,
+        )
+        self.assertEqual(settings_response.status_code, 200)
+        self.assertContains(settings_response, "Окно подготовки ко дню рождения")
+        self.assertContains(settings_response, "сегодня + 10 дн. включительно")
+
     def test_coupon_autoscenario_settings_view_updates_safe_pilot_fields(self):
         """
         Отдельная страница настроек сохраняет правила пилота без запуска отправок.
