@@ -165,6 +165,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             scenario=scenario,
             defaults={
                 "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "scenario_type": CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
                 "coupon_series": "AUTO_BIRTHDAY",
                 "venue_code": "__global__",
                 "venue_name": "Вся сеть",
@@ -176,6 +177,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             },
         )
         config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
+        config.scenario_type = CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
         config.coupon_series = "AUTO_BIRTHDAY"
         config.venue_code = "__global__"
         config.venue_name = "Вся сеть"
@@ -187,6 +189,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
         config.save(
             update_fields=[
                 "execution_mode",
+                "scenario_type",
                 "coupon_series",
                 "venue_code",
                 "venue_name",
@@ -237,6 +240,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             scenario=scenario,
             defaults={
                 "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "scenario_type": CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
                 "coupon_series": "AUTO_FILL_BIRTHDAY",
                 "venue_code": "__global__",
                 "venue_name": "Вся сеть",
@@ -248,6 +252,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             },
         )
         config.execution_mode = CouponAutomationConfig.ExecutionMode.REPORT_ONLY
+        config.scenario_type = CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON
         config.coupon_series = "AUTO_FILL_BIRTHDAY"
         config.venue_code = "__global__"
         config.venue_name = "Вся сеть"
@@ -259,6 +264,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
         config.save(
             update_fields=[
                 "execution_mode",
+                "scenario_type",
                 "coupon_series",
                 "venue_code",
                 "venue_name",
@@ -461,6 +467,53 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(preview.blocked_without_channel, 1)
         self.assertEqual(preview.planned_recipients_for_run, 1)
         self.assertEqual([row.guest_id for row in preview.sample_sendable_rows], [old_sendable.id])
+
+    def test_preview_accepts_custom_inactive_coupon_scenario_by_type(self):
+        scenario = NotificationScenario.objects.create(
+            code="custom_inactive_45_coupon",
+            name="Пользовательский сценарий: не был 45 дней + купон",
+            description="",
+            is_active=True,
+            is_system=False,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            template=self.template,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            settings={"inactive_days": 45},
+        )
+        scenario.bot_profiles.set(list(self.bots_by_platform.values()))
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="CUSTOM_INACTIVE_45",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            max_active_coupons_per_guest=1,
+            cooldown_days=45,
+        )
+        old_sendable = self._guest(phone="+79990000006", first_name="Достижимый")
+        too_recent = self._guest(phone="+79990000007", first_name="Свежий")
+        self._visit(guest=old_sendable, days_ago=50)
+        self._visit(guest=too_recent, days_ago=30)
+        self._sendable_channel(guest=old_sendable)
+        self._available_coupon_for_config(config=config, code="CUSTOM-1")
+
+        preview = preview_coupon_autoscenario_audience(
+            scenario_code=scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertEqual(preview.scenario_code, "custom_inactive_45_coupon")
+        self.assertEqual(preview.inactive_days_threshold, 45)
+        self.assertEqual(preview.matched_guests, 1)
+        self.assertEqual(preview.sendable_guests, 1)
+        self.assertEqual(preview.available_coupons, 1)
 
     def test_preview_reports_coupon_shortage(self):
         old_sendable = self._guest(phone="+79990000011", first_name="Можно")

@@ -28,20 +28,15 @@ from guests.models import (
 )
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon_global_venue
 from guests.services.notification_events import ScenarioNotConfiguredError, create_notification_event
-from guests.services.notification_registry import (
-    SCENARIO_CODE_BIRTHDAY_COUPON,
-    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
-    SCENARIO_CODE_INACTIVE_30D_COUPON,
-)
 from guests.services.notification_scenarios import _extract_inactive_days
 from guests.services.guest_resolution import normalize_phone_e164
 from guests.services.template_render import render_message_for_guest
 
 
-SUPPORTED_COUPON_AUTOSCENARIOS = {
-    SCENARIO_CODE_INACTIVE_30D_COUPON,
-    SCENARIO_CODE_BIRTHDAY_COUPON,
-    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
+SUPPORTED_COUPON_AUTOSCENARIO_TYPES = {
+    CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+    CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
+    CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
 }
 DEFAULT_PREVIEW_SCAN_LIMIT = 5000
 DEFAULT_PILOT_PHONE_E164 = "+79129923438"
@@ -464,10 +459,6 @@ def preview_coupon_autoscenario_audience(
     safe_code = str(scenario_code or "").strip()
     if not safe_code:
         raise CouponAutoscenarioPreviewError("Не указан код сценария.")
-    if safe_code not in SUPPORTED_COUPON_AUTOSCENARIOS:
-        raise CouponAutoscenarioPreviewError(
-            f"Купонный preview пока поддерживает только сценарии: {', '.join(sorted(SUPPORTED_COUPON_AUTOSCENARIOS))}."
-        )
 
     scenario = NotificationScenario.objects.filter(code=safe_code).first()
     if scenario is None:
@@ -479,6 +470,7 @@ def preview_coupon_autoscenario_audience(
         raise CouponAutoscenarioPreviewError(
             f"Для сценария '{safe_code}' не настроен CouponAutomationConfig."
         ) from exc
+    _validate_coupon_autoscenario_type(config=config, scenario_code=safe_code)
 
     warnings: list[str] = []
     if not scenario.is_active:
@@ -617,7 +609,6 @@ def build_coupon_autoscenario_execution_plan(
         matched_rows=matched_rows,
         config=config,
         pilot_filter=pilot_filter,
-        scenario_code=scenario.code,
         now=current_now,
     )
     bot_bound_guest_ids = _message_binding_guest_ids(
@@ -1411,10 +1402,6 @@ def _load_coupon_autoscenario_context(
     safe_code = str(scenario_code or "").strip()
     if not safe_code:
         raise CouponAutoscenarioPreviewError("Не указан код сценария.")
-    if safe_code not in SUPPORTED_COUPON_AUTOSCENARIOS:
-        raise CouponAutoscenarioPreviewError(
-            f"Купонный backend пока поддерживает только сценарии: {', '.join(sorted(SUPPORTED_COUPON_AUTOSCENARIOS))}."
-        )
 
     scenario = NotificationScenario.objects.filter(code=safe_code).first()
     if scenario is None:
@@ -1426,7 +1413,40 @@ def _load_coupon_autoscenario_context(
         raise CouponAutoscenarioPreviewError(
             f"Для сценария '{safe_code}' не настроен CouponAutomationConfig."
         ) from exc
+    _validate_coupon_autoscenario_type(config=config, scenario_code=safe_code)
     return scenario, config
+
+
+def _coupon_autoscenario_type(config: CouponAutomationConfig) -> str:
+    """
+    Возвращает тип купонного автосценария с безопасным значением по умолчанию.
+    """
+    return str(
+        config.scenario_type
+        or CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON
+    ).strip()
+
+
+def _validate_coupon_autoscenario_type(
+    *,
+    config: CouponAutomationConfig,
+    scenario_code: str,
+) -> None:
+    scenario_type = _coupon_autoscenario_type(config)
+    if scenario_type in SUPPORTED_COUPON_AUTOSCENARIO_TYPES:
+        return
+    raise CouponAutoscenarioPreviewError(
+        f"Для сценария '{scenario_code}' указан неподдерживаемый тип купонного автосценария: "
+        f"{scenario_type or '—'}."
+    )
+
+
+def _is_birthday_coupon_config(config: CouponAutomationConfig) -> bool:
+    return _coupon_autoscenario_type(config) == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
+
+
+def _is_birthdate_filled_coupon_config(config: CouponAutomationConfig) -> bool:
+    return _coupon_autoscenario_type(config) == CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON
 
 
 def _resolve_pilot_recipient_filter(*, config: CouponAutomationConfig) -> PilotRecipientFilter:
@@ -1532,12 +1552,11 @@ def _append_unmatched_pilot_rows_if_requested(
     matched_rows: list[CouponAutoscenarioAudienceRow],
     config: CouponAutomationConfig,
     pilot_filter: PilotRecipientFilter,
-    scenario_code: str,
     now: datetime,
 ) -> tuple[list[CouponAutoscenarioAudienceRow], int]:
     if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
         return matched_rows, 0
-    if scenario_code == SCENARIO_CODE_FILL_BIRTHDAY_COUPON:
+    if _is_birthdate_filled_coupon_config(config):
         return matched_rows, 0
     if not _settings_bool(config.settings, PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS):
         return matched_rows, 0
@@ -1559,7 +1578,6 @@ def _append_unmatched_pilot_rows_if_requested(
     last_order_venues = _last_order_venue_map(guest_ids=guest_ids)
     last_order_visits = _last_order_visit_at_map(guest_ids=guest_ids)
     birthday_pilot_context = _build_forced_pilot_birthday_context(
-        scenario_code=scenario_code,
         config=config,
         now=now,
     )
@@ -1618,7 +1636,7 @@ def _build_autoscenario_candidate_rows(
     scan_limit: int,
     now: datetime,
 ) -> tuple[int, int, int, list[CouponAutoscenarioAudienceRow]]:
-    if scenario.code == SCENARIO_CODE_BIRTHDAY_COUPON:
+    if _is_birthday_coupon_config(config):
         birthday_window_days = _resolve_birthday_preparation_window_days(config=config)
         scanned_guests, matched_rows = _build_birthday_candidate_rows(
             window_days=birthday_window_days,
@@ -1627,7 +1645,7 @@ def _build_autoscenario_candidate_rows(
         )
         return 0, birthday_window_days, scanned_guests, matched_rows
 
-    if scenario.code == SCENARIO_CODE_FILL_BIRTHDAY_COUPON:
+    if _is_birthdate_filled_coupon_config(config):
         scanned_guests, matched_rows = _build_birthdate_completion_candidate_rows(
             scan_limit=scan_limit,
             now=now,
@@ -1955,11 +1973,10 @@ def _profile_completion_event_id_from_trigger_key(trigger_key: str | None) -> in
 
 def _build_forced_pilot_birthday_context(
     *,
-    scenario_code: str,
     config: CouponAutomationConfig,
     now: datetime,
 ) -> dict[str, int | str | date | None]:
-    if scenario_code != SCENARIO_CODE_BIRTHDAY_COUPON:
+    if not _is_birthday_coupon_config(config):
         return {
             "days_until_birthday": None,
             "birthday_date": None,
