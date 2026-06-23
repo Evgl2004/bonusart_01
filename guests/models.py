@@ -1953,6 +1953,11 @@ class CouponAutomationConfig(models.Model):
         AUTOMATIC = "automatic", "Активен"
         PAUSED = "paused", "Пауза"
 
+    class ScenarioType(models.TextChoices):
+        INACTIVE_DAYS_COUPON = "inactive_days_coupon", "Гость не был N дней + купон"
+        BIRTHDAY_COUPON = "birthday_coupon", "День рождения + купон"
+        BIRTHDATE_FILLED_COUPON = "birthdate_filled_coupon", "Дата рождения заполнена + купон"
+
     class VenueSelectionMode(models.TextChoices):
         LAST_ORDER = "last_order", "Последнее заведение"
         ALL_VISITED = "all_visited", "Все посещённые заведения"
@@ -1970,6 +1975,13 @@ class CouponAutomationConfig(models.Model):
         on_delete=models.CASCADE,
         related_name="coupon_automation_config",
         help_text="Сценарий уведомлений, для которого настроена купонная автоматизация.",
+    )
+    scenario_type = models.CharField(
+        max_length=40,
+        choices=ScenarioType.choices,
+        default=ScenarioType.INACTIVE_DAYS_COUPON,
+        db_index=True,
+        help_text="Тип купонного автосценария: какая логика отбора гостей используется.",
     )
     execution_mode = models.CharField(
         max_length=24,
@@ -2074,6 +2086,16 @@ class CouponAutomationConfig(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(
+                    scenario_type__in=[
+                        "inactive_days_coupon",
+                        "birthday_coupon",
+                        "birthdate_filled_coupon",
+                    ]
+                ),
+                name="cauto_scenario_type_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
                     execution_mode__in=["report_only", "pilot", "automatic", "paused"]
                 ),
                 name="cauto_execution_mode_chk",
@@ -2108,6 +2130,7 @@ class CouponAutomationConfig(models.Model):
             ),
         ]
         indexes = [
+            models.Index(fields=["scenario_type"], name="cauto_scenario_type_idx"),
             models.Index(fields=["execution_mode"], name="cauto_mode_idx"),
             models.Index(fields=["venue_selection_mode"], name="cauto_venue_mode_idx"),
             models.Index(fields=["audience_venue_filter_mode"], name="cauto_aud_venue_mode_idx"),
@@ -2132,6 +2155,12 @@ class CouponAutomationConfig(models.Model):
 
         errors = {}
 
+        if self.scenario_type not in {
+            self.ScenarioType.INACTIVE_DAYS_COUPON,
+            self.ScenarioType.BIRTHDAY_COUPON,
+            self.ScenarioType.BIRTHDATE_FILLED_COUPON,
+        }:
+            errors["scenario_type"] = "Выберите тип купонного автосценария."
         if self.venue_selection_mode not in {
             self.VenueSelectionMode.LAST_ORDER,
             self.VenueSelectionMode.ALL_VISITED,

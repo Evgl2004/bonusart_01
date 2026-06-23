@@ -56,6 +56,23 @@ class CouponAutomationConfigModelTests(TestCase):
 
         config.full_clean()
 
+        self.assertEqual(
+            config.scenario_type,
+            CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+        )
+
+    def test_rejects_unknown_scenario_type(self):
+        config = CouponAutomationConfig(
+            scenario=self._scenario(),
+            scenario_type="unknown",
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+        )
+
+        with self.assertRaises(ValidationError) as raised:
+            config.full_clean()
+
+        self.assertIn("scenario_type", raised.exception.message_dict)
+
     def test_pilot_allows_coupon_series_in_rules(self):
         config = CouponAutomationConfig(
             scenario=self._scenario(),
