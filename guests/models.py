@@ -1958,6 +1958,13 @@ class CouponAutomationConfig(models.Model):
         ALL_VISITED = "all_visited", "Все посещённые заведения"
         FAVORITE = "favorite", "Любимое заведение"
 
+    class AudienceVenueFilterMode(models.TextChoices):
+        DISABLED = "disabled", "Без ограничения по заведению"
+        VISITED_ONCE_AND_INACTIVE = (
+            "visited_once_and_inactive",
+            "Был хотя бы 1 раз и не был N+ дней",
+        )
+
     scenario = models.OneToOneField(
         "NotificationScenario",
         on_delete=models.CASCADE,
@@ -1977,6 +1984,26 @@ class CouponAutomationConfig(models.Model):
         default=VenueSelectionMode.LAST_ORDER,
         db_index=True,
         help_text="Как выбирать заведения гостя для правил купонного автосценария.",
+    )
+    audience_venue_filter_mode = models.CharField(
+        max_length=32,
+        choices=AudienceVenueFilterMode.choices,
+        default=AudienceVenueFilterMode.DISABLED,
+        db_index=True,
+        help_text="Как ограничивать аудиторию автосценария конкретным заведением.",
+    )
+    audience_venue_code = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Код заведения, по которому отбирается аудитория автосценария.",
+    )
+    audience_venue_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Название заведения, по которому отбирается аудитория автосценария.",
     )
     coupon_series = models.CharField(
         max_length=120,
@@ -2058,6 +2085,12 @@ class CouponAutomationConfig(models.Model):
                 name="cauto_venue_mode_chk",
             ),
             models.CheckConstraint(
+                condition=models.Q(
+                    audience_venue_filter_mode__in=["disabled", "visited_once_and_inactive"]
+                ),
+                name="cauto_audience_venue_mode_chk",
+            ),
+            models.CheckConstraint(
                 condition=models.Q(coupon_validity_days__gte=1),
                 name="cauto_validity_days_gte_1",
             ),
@@ -2077,6 +2110,8 @@ class CouponAutomationConfig(models.Model):
         indexes = [
             models.Index(fields=["execution_mode"], name="cauto_mode_idx"),
             models.Index(fields=["venue_selection_mode"], name="cauto_venue_mode_idx"),
+            models.Index(fields=["audience_venue_filter_mode"], name="cauto_aud_venue_mode_idx"),
+            models.Index(fields=["audience_venue_code"], name="cauto_aud_venue_idx"),
             models.Index(fields=["coupon_series"], name="cauto_series_idx"),
             models.Index(fields=["venue_code"], name="cauto_venue_idx"),
         ]
@@ -2090,6 +2125,10 @@ class CouponAutomationConfig(models.Model):
             self.venue_code = self.venue_code.strip()
         if self.venue_name:
             self.venue_name = self.venue_name.strip()
+        if self.audience_venue_code:
+            self.audience_venue_code = self.audience_venue_code.strip()
+        if self.audience_venue_name:
+            self.audience_venue_name = self.audience_venue_name.strip()
 
         errors = {}
 
@@ -2099,6 +2138,16 @@ class CouponAutomationConfig(models.Model):
             self.VenueSelectionMode.FAVORITE,
         }:
             errors["venue_selection_mode"] = "Выберите способ выбора заведений."
+        if self.audience_venue_filter_mode not in {
+            self.AudienceVenueFilterMode.DISABLED,
+            self.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE,
+        }:
+            errors["audience_venue_filter_mode"] = "Выберите способ отбора гостей по заведению."
+        if self.audience_venue_filter_mode == self.AudienceVenueFilterMode.DISABLED:
+            self.audience_venue_code = None
+            self.audience_venue_name = None
+        elif not self.audience_venue_code:
+            errors["audience_venue_code"] = "Для отбора гостей выберите заведение."
         if self.coupon_validity_days is not None and self.coupon_validity_days < 1:
             errors["coupon_validity_days"] = "Срок действия купона должен быть не меньше 1 дня."
         if self.max_recipients_per_run is not None and self.max_recipients_per_run < 1:

@@ -362,6 +362,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
         model = CouponAutomationConfig
         fields = [
             "execution_mode",
+            "audience_venue_filter_mode",
+            "audience_venue_code",
+            "audience_venue_name",
             "venue_selection_mode",
             "coupon_series",
             "venue_code",
@@ -378,6 +381,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
         ]
         widgets = {
             "execution_mode": forms.Select(attrs={"class": "form-select"}),
+            "audience_venue_filter_mode": forms.Select(attrs={"class": "form-select"}),
+            "audience_venue_code": forms.Select(attrs={"class": "form-select"}),
+            "audience_venue_name": forms.TextInput(attrs={"class": "form-control"}),
             "venue_selection_mode": forms.Select(attrs={"class": "form-select"}),
             "venue_code": forms.Select(attrs={"class": "form-select"}),
             "venue_name": forms.TextInput(attrs={"class": "form-control"}),
@@ -392,6 +398,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
         }
         labels = {
             "execution_mode": "Состояние автосценария",
+            "audience_venue_filter_mode": "Как отбирать гостей по заведению",
+            "audience_venue_code": "Заведение для отбора гостей",
+            "audience_venue_name": "Название заведения для отбора гостей",
             "venue_selection_mode": "Как выбирать заведения для купонов",
             "venue_code": "Резервное заведение без правил",
             "venue_name": "Название резервного заведения",
@@ -413,10 +422,24 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "Активен будет использоваться для боевого расписания после отдельного включения."
         )
         self.fields["venue_selection_mode"].required = False
+        self.fields["audience_venue_filter_mode"].required = False
 
         self.fields["coupon_series"].choices = build_available_coupon_series_choices(
             existing_series=str(getattr(self.instance, "coupon_series", "") or "").strip()
         )[0]
+
+        audience_venue_choices, self._audience_venue_map = build_coupon_venue_choices(
+            existing_venue_code=str(getattr(self.instance, "audience_venue_code", "") or "").strip(),
+            existing_venue_name=str(getattr(self.instance, "audience_venue_name", "") or "").strip(),
+        )
+        audience_venue_choices = [
+            (value, label)
+            for value, label in audience_venue_choices
+            if value != COUPON_VENUE_GLOBAL_CODE
+        ]
+        self._audience_venue_map.pop(COUPON_VENUE_GLOBAL_CODE, None)
+        self.fields["audience_venue_code"].choices = audience_venue_choices
+        self.fields["audience_venue_code"].widget.choices = audience_venue_choices
 
         venue_choices, self._coupon_venue_map = build_coupon_venue_choices(
             existing_venue_code=str(getattr(self.instance, "venue_code", "") or "").strip(),
@@ -494,6 +517,11 @@ class CouponAutomationConfigForm(forms.ModelForm):
         cleaned_data = super().clean()
         execution_mode = cleaned_data.get("execution_mode")
         pilot_phones = cleaned_data.get("pilot_phones") or []
+        audience_mode = (
+            cleaned_data.get("audience_venue_filter_mode")
+            or CouponAutomationConfig.AudienceVenueFilterMode.DISABLED
+        )
+        audience_venue_code = str(cleaned_data.get("audience_venue_code") or "").strip()
         venue_code = str(cleaned_data.get("venue_code") or "").strip()
         scenario = getattr(self.instance, "scenario", None)
         is_birthday_scenario = (
@@ -533,6 +561,26 @@ class CouponAutomationConfigForm(forms.ModelForm):
 
         if not cleaned_data.get("venue_selection_mode"):
             cleaned_data["venue_selection_mode"] = CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
+
+        if not audience_mode:
+            audience_mode = CouponAutomationConfig.AudienceVenueFilterMode.DISABLED
+        cleaned_data["audience_venue_filter_mode"] = audience_mode
+        if audience_mode == CouponAutomationConfig.AudienceVenueFilterMode.DISABLED:
+            cleaned_data["audience_venue_code"] = None
+            cleaned_data["audience_venue_name"] = None
+        else:
+            if not audience_venue_code:
+                self.add_error("audience_venue_code", "Для отбора гостей выберите заведение.")
+            elif audience_venue_code == COUPON_VENUE_GLOBAL_CODE:
+                self.add_error("audience_venue_code", "Для отбора гостей выберите конкретное заведение.")
+            elif audience_venue_code not in getattr(self, "_audience_venue_map", {}):
+                self.add_error("audience_venue_code", "Выбранное заведение не найдено в справочнике.")
+            else:
+                cleaned_data["audience_venue_code"] = audience_venue_code
+                cleaned_data["audience_venue_name"] = (
+                    self._audience_venue_map.get(audience_venue_code)
+                    or cleaned_data.get("audience_venue_name")
+                )
 
         if venue_code and venue_code in getattr(self, "_coupon_venue_map", {}):
             cleaned_data["venue_name"] = self._coupon_venue_map.get(venue_code) or cleaned_data.get("venue_name")
