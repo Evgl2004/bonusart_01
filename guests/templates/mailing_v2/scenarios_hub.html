@@ -117,7 +117,7 @@
                   <td>
                     <code>{{ config.scenario.code }}</code>
                     <div class="small text-muted">{{ config.scenario.name }}</div>
-                    <div class="small text-muted">тип: {{ config.get_scenario_type_display }}</div>
+                    <div class="small text-muted">тип: {{ config.effective_scenario_type_label }}</div>
                   </td>
                   <td>
                     {% if config.execution_mode == "pilot" %}

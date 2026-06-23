@@ -29,10 +29,20 @@ from guests.models import (
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon_global_venue
 from guests.services.notification_events import ScenarioNotConfiguredError, create_notification_event
 from guests.services.notification_scenarios import _extract_inactive_days
+from guests.services.notification_registry import (
+    SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
+    SCENARIO_CODE_INACTIVE_30D_COUPON,
+)
 from guests.services.guest_resolution import normalize_phone_e164
 from guests.services.template_render import render_message_for_guest
 
 
+SYSTEM_COUPON_AUTOSCENARIO_TYPES = {
+    SCENARIO_CODE_INACTIVE_30D_COUPON: CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+    SCENARIO_CODE_BIRTHDAY_COUPON: CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_COUPON: CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
+}
 SUPPORTED_COUPON_AUTOSCENARIO_TYPES = {
     CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
     CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
@@ -1421,6 +1431,22 @@ def _coupon_autoscenario_type(config: CouponAutomationConfig) -> str:
     """
     Возвращает тип купонного автосценария с безопасным значением по умолчанию.
     """
+    return resolve_coupon_autoscenario_type(config)
+
+
+def resolve_coupon_autoscenario_type(config: CouponAutomationConfig) -> str:
+    """
+    Возвращает эффективный тип купонного автосценария.
+
+    Исторические системные конфигурации могли быть созданы до явного поля
+    `scenario_type`, поэтому для известных системных кодов тип определяется
+    по коду сценария. Пользовательские сценарии используют сохранённое поле.
+    """
+    scenario = getattr(config, "scenario", None)
+    scenario_code = str(getattr(scenario, "code", "") or "").strip()
+    if scenario_code in SYSTEM_COUPON_AUTOSCENARIO_TYPES:
+        return SYSTEM_COUPON_AUTOSCENARIO_TYPES[scenario_code]
+
     return str(
         config.scenario_type
         or CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON

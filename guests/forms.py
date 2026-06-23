@@ -12,6 +12,7 @@ from .models import (
     NotificationScenario,
 )
 from .services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME, is_coupon_global_venue
+from .services.coupon_autoscenarios import resolve_coupon_autoscenario_type
 from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
 from .services.guest_resolution import normalize_phone_e164
@@ -647,8 +648,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
         self.initial["pilot_phones"] = ", ".join(str(phone) for phone in pilot_phones if str(phone).strip())
         self.initial["pilot_include_unmatched"] = bool(settings.get("pilot_include_unmatched"))
         scenario = getattr(self.instance, "scenario", None)
+        effective_scenario_type = resolve_coupon_autoscenario_type(self.instance)
         is_birthday_scenario = (
-            self.instance.scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
+            effective_scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
         )
         self.fields["birthday_preparation_window_days"].required = is_birthday_scenario
         if is_birthday_scenario:
@@ -714,8 +716,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
         )
         audience_venue_code = str(cleaned_data.get("audience_venue_code") or "").strip()
         venue_code = str(cleaned_data.get("venue_code") or "").strip()
+        effective_scenario_type = resolve_coupon_autoscenario_type(self.instance)
         is_birthday_scenario = (
-            self.instance.scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
+            effective_scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
         )
         distribution_mode = (
             cleaned_data.get("notification_distribution_mode")
@@ -791,7 +794,8 @@ class CouponAutomationConfigForm(forms.ModelForm):
             self.cleaned_data.get("pilot_include_unmatched")
         )
         scenario = getattr(instance, "scenario", None)
-        if instance.scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON:
+        effective_scenario_type = resolve_coupon_autoscenario_type(instance)
+        if effective_scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON:
             settings["birthday_preparation_window_days"] = int(
                 self.cleaned_data.get("birthday_preparation_window_days") or 0
             )

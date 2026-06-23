@@ -61,6 +61,7 @@ from guests.services.coupon_autoscenarios import (
     cleanup_coupon_autoscenario_pilot_assignment,
     execute_coupon_autoscenario_pilot,
     format_coupon_autoscenario_audience_venue_filter,
+    resolve_coupon_autoscenario_type,
 )
 from guests.services.notification_registry import (
     SCENARIO_CODE_BIRTHDAY_COUPON,
@@ -1978,6 +1979,11 @@ class MailingsV2ScenariosView(TemplateView):
             .order_by("scenario__code")[:100]
         )
         for config in coupon_configs:
+            effective_scenario_type = resolve_coupon_autoscenario_type(config)
+            config.effective_scenario_type = effective_scenario_type
+            config.effective_scenario_type_label = dict(
+                CouponAutomationConfig.ScenarioType.choices
+            ).get(effective_scenario_type, effective_scenario_type or "—")
             template_obj = getattr(config.scenario, "template", None)
             display_name, technical_name = _resolve_template_title(template_obj)
             config.template_display_name = display_name
@@ -1993,7 +1999,7 @@ class MailingsV2ScenariosView(TemplateView):
             )
             config.coupon_selection_policy_rows = _coupon_autoscenario_policy_rows(
                 cooldown_days=config.cooldown_days,
-                scenario_type=config.scenario_type,
+                scenario_type=effective_scenario_type,
                 scenario_code=config.scenario.code,
                 birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
                 venue_selection_mode=config.venue_selection_mode,
@@ -2083,7 +2089,7 @@ class MailingsV2ScenariosView(TemplateView):
                 coupon_plan["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
                     cooldown_days=getattr(selected_coupon_config, "cooldown_days", None),
                     scenario_type=(
-                        getattr(selected_coupon_config, "scenario_type", "")
+                        getattr(selected_coupon_config, "effective_scenario_type", "")
                         if selected_coupon_config is not None
                         else ""
                     ),
@@ -2106,7 +2112,7 @@ class MailingsV2ScenariosView(TemplateView):
                 )
                 if (
                     selected_coupon_config is not None
-                    and selected_coupon_config.scenario_type
+                    and selected_coupon_config.effective_scenario_type
                     == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
                 ):
                     coupon_plan["bot_bound_guests_label"] = "Именинников в новых ботах"
@@ -2357,9 +2363,10 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
         context["coupon_selection_policy_label"] = _coupon_autoscenario_policy_label(
             venue_selection_mode=self.object.venue_selection_mode
         )
+        effective_scenario_type = resolve_coupon_autoscenario_type(self.object)
         context["coupon_selection_policy_rows"] = _coupon_autoscenario_policy_rows(
             cooldown_days=self.object.cooldown_days,
-            scenario_type=self.object.scenario_type,
+            scenario_type=effective_scenario_type,
             scenario_code=scenario_code,
             birthday_window_days=(self.object.settings or {}).get("birthday_preparation_window_days"),
             venue_selection_mode=self.object.venue_selection_mode,

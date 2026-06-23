@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from io import StringIO
 from uuid import uuid4
 
@@ -52,7 +52,10 @@ from guests.tasks import run_coupon_autoscenarios_task
 class CouponAutoscenarioPreviewTests(TestCase):
     def setUp(self):
         super().setUp()
-        self.now = timezone.now()
+        self.now = timezone.make_aware(
+            datetime.combine(timezone.localdate(), time(12, 0)),
+            timezone.get_current_timezone(),
+        )
         self.template = MessageTemplate.objects.create(
             name="Autoscenario preview template",
             description="",

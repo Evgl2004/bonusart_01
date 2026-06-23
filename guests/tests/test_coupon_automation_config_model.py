@@ -11,7 +11,12 @@ from guests.models import (
     MessageTemplate,
     NotificationScenario,
 )
-from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
+from guests.services.coupon_autoscenarios import resolve_coupon_autoscenario_type
+from guests.services.notification_registry import (
+    SCENARIO_CODE_BIRTHDAY_COUPON,
+    SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
+    SCENARIO_CODE_INACTIVE_30D_COUPON,
+)
 
 
 class CouponAutomationConfigModelTests(TestCase):
@@ -98,6 +103,62 @@ class CouponAutomationConfigModelTests(TestCase):
         self.assertEqual(
             config.scenario_type,
             CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+        )
+
+    def test_resolver_uses_system_code_for_legacy_birthday_config(self):
+        config = CouponAutomationConfig(
+            scenario=self._scenario(code=SCENARIO_CODE_BIRTHDAY_COUPON),
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+        )
+
+        self.assertEqual(
+            config.scenario_type,
+            CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+        )
+        self.assertEqual(
+            resolve_coupon_autoscenario_type(config),
+            CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
+        )
+
+    def test_resolver_uses_system_code_for_legacy_birthdate_filled_config(self):
+        config = CouponAutomationConfig(
+            scenario=self._scenario(code=SCENARIO_CODE_FILL_BIRTHDAY_COUPON),
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+        )
+
+        self.assertEqual(
+            config.scenario_type,
+            CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+        )
+        self.assertEqual(
+            resolve_coupon_autoscenario_type(config),
+            CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
+        )
+
+    def test_resolver_uses_saved_type_for_user_scenario(self):
+        scenario = NotificationScenario.objects.create(
+            code="custom_birthday_coupon_2026",
+            name="Пользовательский день рождения + купон",
+            description="",
+            is_active=False,
+            is_system=False,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            template=self.template,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            settings={"coupon_required": True},
+        )
+        config = CouponAutomationConfig(
+            scenario=scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+        )
+
+        self.assertEqual(
+            resolve_coupon_autoscenario_type(config),
+            CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
         )
 
     def test_rejects_unknown_scenario_type(self):
