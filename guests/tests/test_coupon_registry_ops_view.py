@@ -90,7 +90,7 @@ class CouponRegistryOpsViewTests(TestCase):
             self.assertEqual(response.status_code, 302)
 
         batch = CouponPoolBatch.objects.get(series="LOOKALIKE_OPS")
-        allowed_letters = set("ABCEHKMOPTXY")
+        allowed_letters = set("ABCEHKMPTXY")
         codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
 
         self.assertEqual(batch.alphabet_mode, CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER)
@@ -127,7 +127,7 @@ class CouponRegistryOpsViewTests(TestCase):
             self.assertEqual(response.status_code, 302)
 
         batch = CouponPoolBatch.objects.get(series="LOOKALIKE_DIGITS_OPS")
-        allowed_symbols = set("0123456789ABCEHKMOPTXY")
+        allowed_symbols = set("0123456789ABCEHKMPTXY")
         codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
 
         self.assertEqual(

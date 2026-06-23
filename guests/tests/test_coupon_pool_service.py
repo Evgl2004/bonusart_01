@@ -90,7 +90,7 @@ class CouponPoolServiceTests(TestCase):
         )
 
         batch = result.batch
-        allowed_letters = set("ABCEHKMOPTXY")
+        allowed_letters = set("ABCEHKMPTXY")
         codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
 
         self.assertEqual(batch.alphabet_mode, CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER)
@@ -111,7 +111,7 @@ class CouponPoolServiceTests(TestCase):
         )
 
         batch = result.batch
-        allowed_symbols = set("0123456789ABCEHKMOPTXY")
+        allowed_symbols = set("0123456789ABCEHKMPTXY")
         codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
 
         self.assertEqual(
