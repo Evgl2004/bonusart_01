@@ -1153,6 +1153,9 @@ class CouponAutoscenarioPreviewTests(TestCase):
         output = stdout.getvalue()
         self.assertIn("scenario_code=inactive_30d_coupon", output)
         self.assertIn("can_execute=True", output)
+        self.assertIn("audience_venue_filter=Без ограничения по заведению", output)
+        self.assertIn("audience_venue_code=-", output)
+        self.assertIn("audience_venue_name=-", output)
         self.assertIn("planned_assignments=1", output)
         self.assertIn("AUTO-CMD-PLAN", output)
 

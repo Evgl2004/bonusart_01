@@ -161,7 +161,12 @@
                     {% endif %}
                     <div class="small text-muted">срок: {{ config.coupon_validity_days }} дн.</div>
                   </td>
-                  <td>{{ config.venue_name|default:config.venue_code|default:"—" }}</td>
+                  <td>
+                    {{ config.venue_name|default:config.venue_code|default:"—" }}
+                    {% if config.audience_venue_filter_summary %}
+                      <div class="small text-muted mt-1">{{ config.audience_venue_filter_summary }}</div>
+                    {% endif %}
+                  </td>
                   <td>
                     {{ config.max_recipients_per_run }} за проход
                     <div class="small text-muted">повтор через {{ config.cooldown_days }} дн.</div>
@@ -284,6 +289,9 @@
               <div class="text-muted small">
                 Состояние: {{ coupon_plan.execution_state_label }} · серия: {{ coupon_plan.coupon_series|default:"—" }} · заведение: {{ coupon_plan.venue_name|default:coupon_plan.venue_code|default:"—" }}
               </div>
+              {% if coupon_plan.audience_venue_filter_summary %}
+                <div class="text-muted small">{{ coupon_plan.audience_venue_filter_summary }}</div>
+              {% endif %}
               {% if coupon_plan.execution_state_hint %}
                 <div class="text-muted small">{{ coupon_plan.execution_state_hint }}</div>
               {% endif %}
@@ -324,6 +332,9 @@
           <details class="border rounded p-2 mb-3 bg-light">
             <summary class="fw-semibold small" style="cursor: pointer;">Как получены эти числа</summary>
             <div class="small text-muted mt-2">{{ coupon_plan.audience_source_label }}</div>
+            {% if coupon_plan.audience_venue_filter_summary %}
+              <div class="small text-muted mt-1">{{ coupon_plan.audience_venue_filter_summary }}</div>
+            {% endif %}
             <div class="small text-muted mt-1">{{ coupon_plan.sendable_channel_label }}</div>
           </details>
 

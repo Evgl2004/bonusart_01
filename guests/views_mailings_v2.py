@@ -59,6 +59,7 @@ from guests.services.coupon_autoscenarios import (
     build_coupon_autoscenario_execution_plan,
     cleanup_coupon_autoscenario_pilot_assignment,
     execute_coupon_autoscenario_pilot,
+    format_coupon_autoscenario_audience_venue_filter,
 )
 from guests.services.notification_registry import (
     SCENARIO_CODE_BIRTHDAY_COUPON,
@@ -90,6 +91,31 @@ def _coupon_autoscenario_state_label(mode: str) -> str:
 
 def _coupon_autoscenario_state_hint(mode: str) -> str:
     return COUPON_AUTOSCENARIO_STATE_HINTS.get(str(mode or ""), "")
+
+
+def _coupon_autoscenario_audience_venue_filter_summary(
+    *,
+    mode: str | None,
+    venue_code: str | None,
+    venue_name: str | None,
+    inactive_days: int | None,
+) -> str:
+    """
+    Кратко описывает дополнительный отбор аудитории по заведению.
+    """
+    safe_mode = str(mode or "").strip()
+    if safe_mode != CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE:
+        return ""
+
+    venue = str(venue_name or venue_code or "заведение не выбрано").strip()
+    try:
+        days = int(inactive_days or 0)
+    except (TypeError, ValueError):
+        days = 0
+
+    if days > 0:
+        return f"Отбор гостей: был в заведении «{venue}» хотя бы 1 раз и не был там {days}+ дней."
+    return f"Отбор гостей: был в заведении «{venue}» хотя бы 1 раз."
 
 
 def _coupon_autoscenario_policy_label(*, venue_selection_mode: str = "") -> str:
@@ -1966,6 +1992,15 @@ class MailingsV2ScenariosView(TemplateView):
                 birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
                 venue_selection_mode=config.venue_selection_mode,
             )
+            config.audience_venue_filter_label = format_coupon_autoscenario_audience_venue_filter(
+                config.audience_venue_filter_mode
+            )
+            config.audience_venue_filter_summary = _coupon_autoscenario_audience_venue_filter_summary(
+                mode=config.audience_venue_filter_mode,
+                venue_code=config.audience_venue_code,
+                venue_name=config.audience_venue_name,
+                inactive_days=(config.scenario.settings or {}).get("inactive_days"),
+            )
             selected_bots = list(config.scenario.bot_profiles.all())
             config.notification_target_mode_label = config.scenario.get_target_mode_display()
             config.notification_bot_profiles_summary = (
@@ -2044,6 +2079,19 @@ class MailingsV2ScenariosView(TemplateView):
                     scenario_code=selected_coupon_scenario_code,
                     birthday_window_days=coupon_plan.get("birthday_preparation_window_days"),
                     venue_selection_mode=coupon_plan.get("venue_selection_mode", ""),
+                )
+                coupon_plan["audience_venue_filter_label"] = (
+                    format_coupon_autoscenario_audience_venue_filter(
+                        coupon_plan.get("audience_venue_filter_mode", "")
+                    )
+                )
+                coupon_plan["audience_venue_filter_summary"] = (
+                    _coupon_autoscenario_audience_venue_filter_summary(
+                        mode=coupon_plan.get("audience_venue_filter_mode", ""),
+                        venue_code=coupon_plan.get("audience_venue_code", ""),
+                        venue_name=coupon_plan.get("audience_venue_name", ""),
+                        inactive_days=coupon_plan.get("inactive_days_threshold"),
+                    )
                 )
                 if selected_coupon_scenario_code == SCENARIO_CODE_BIRTHDAY_COUPON:
                     coupon_plan["bot_bound_guests_label"] = "Именинников в новых ботах"

@@ -86,6 +86,15 @@ def format_coupon_autoscenario_execution_mode(value: str | None) -> str:
     return COUPON_AUTOSCENARIO_EXECUTION_MODE_LABELS.get(safe_value, safe_value or "—")
 
 
+def format_coupon_autoscenario_audience_venue_filter(value: str | None) -> str:
+    """
+    Возвращает русское название режима отбора аудитории по заведению.
+    """
+    labels = dict(CouponAutomationConfig.AudienceVenueFilterMode.choices)
+    safe_value = str(value or "").strip()
+    return labels.get(safe_value, safe_value or "—")
+
+
 @dataclass(frozen=True, slots=True)
 class CouponAutoscenarioAudienceRow:
     guest_id: int

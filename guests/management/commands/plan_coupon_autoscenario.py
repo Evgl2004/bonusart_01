@@ -6,6 +6,7 @@ from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioExecutionPlan,
     CouponAutoscenarioPreviewError,
     build_coupon_autoscenario_execution_plan,
+    format_coupon_autoscenario_audience_venue_filter,
     format_coupon_autoscenario_execution_mode,
 )
 from guests.services.notification_registry import SCENARIO_CODE_INACTIVE_30D_COUPON
@@ -73,6 +74,12 @@ class Command(BaseCommand):
         self.stdout.write(f"coupon_series={plan.coupon_series or '-'}")
         self.stdout.write(f"venue_code={plan.venue_code or '-'}")
         self.stdout.write(f"venue_name={plan.venue_name or '-'}")
+        self.stdout.write(
+            "audience_venue_filter="
+            f"{format_coupon_autoscenario_audience_venue_filter(plan.audience_venue_filter_mode)}"
+        )
+        self.stdout.write(f"audience_venue_code={plan.audience_venue_code or '-'}")
+        self.stdout.write(f"audience_venue_name={plan.audience_venue_name or '-'}")
         self.stdout.write(f"inactive_days_threshold={plan.inactive_days_threshold}")
         self.stdout.write(f"birthday_preparation_window_days={plan.birthday_preparation_window_days}")
         self.stdout.write(f"max_recipients_per_run={plan.max_recipients_per_run}")

@@ -466,6 +466,36 @@
 
       <hr class="my-4">
 
+      <h2 class="h6 mb-3">Отбор гостей по заведению</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          {{ form.audience_venue_filter_mode.label_tag }}
+          {{ form.audience_venue_filter_mode }}
+          {% if form.audience_venue_filter_mode.errors %}
+            <div class="text-danger small mt-1">{{ form.audience_venue_filter_mode.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-4">
+          {{ form.audience_venue_code.label_tag }}
+          {{ form.audience_venue_code }}
+          {{ form.audience_venue_name.as_hidden }}
+          {% if form.audience_venue_code.errors %}
+            <div class="text-danger small mt-1">{{ form.audience_venue_code.errors|join:", " }}</div>
+          {% endif %}
+          {% if form.audience_venue_name.errors %}
+            <div class="text-danger small mt-1">{{ form.audience_venue_name.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+        <div class="col-12 col-lg-4">
+          <div class="alert alert-light border small mb-0">
+            <div><strong>Без ограничения</strong> - аудитория строится по обычным условиям автосценария.</div>
+            <div><strong>Был хотя бы 1 раз и не был N+ дней</strong> - гость должен иметь визит в выбранном заведении и не возвращаться туда указанное число дней.</div>
+          </div>
+        </div>
+      </div>
+
+      <hr class="my-4">
+
       <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
         <div>
           <h2 class="h6 mb-1">Заведения и серии купонов</h2>
