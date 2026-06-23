@@ -62,6 +62,83 @@ class CouponRegistryOpsViewTests(TestCase):
             self.assertGreaterEqual(len(lines), 3)
             self.assertEqual(lines[0], "series;number")
 
+    def test_generate_pool_action_accepts_latin_letters_matching_cyrillic(self):
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-dep-1",
+            department_id="DEP_1",
+            department_name="Тестовое заведение",
+            is_active=True,
+        )
+        with TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "generated.csv"
+            response = self.client.post(
+                reverse("coupon_registry_ops"),
+                {
+                    "action": "generate_pool",
+                    "series": "LOOKALIKE_OPS",
+                    "venue_code": "DEP_1",
+                    "prefix": "REL-",
+                    "count": "4",
+                    "random_length": "8",
+                    "alphabet_mode": CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER,
+                    "generated_by": "tester",
+                    "export_path": str(csv_path),
+                },
+                secure=True,
+            )
+
+            self.assertEqual(response.status_code, 302)
+
+        batch = CouponPoolBatch.objects.get(series="LOOKALIKE_OPS")
+        allowed_letters = set("ABCEHKMOPTXY")
+        codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
+
+        self.assertEqual(batch.alphabet_mode, CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER)
+        self.assertEqual(len(codes), 4)
+        for code in codes:
+            self.assertTrue(code.startswith("REL-"))
+            self.assertLessEqual(set(code.removeprefix("REL-")), allowed_letters)
+
+    def test_generate_pool_action_accepts_digits_and_latin_letters_matching_cyrillic(self):
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-dep-1",
+            department_id="DEP_1",
+            department_name="Тестовое заведение",
+            is_active=True,
+        )
+        with TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "generated.csv"
+            response = self.client.post(
+                reverse("coupon_registry_ops"),
+                {
+                    "action": "generate_pool",
+                    "series": "LOOKALIKE_DIGITS_OPS",
+                    "venue_code": "DEP_1",
+                    "prefix": "REL-",
+                    "count": "4",
+                    "random_length": "8",
+                    "alphabet_mode": CouponPoolBatch.AlphabetMode.DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER,
+                    "generated_by": "tester",
+                    "export_path": str(csv_path),
+                },
+                secure=True,
+            )
+
+            self.assertEqual(response.status_code, 302)
+
+        batch = CouponPoolBatch.objects.get(series="LOOKALIKE_DIGITS_OPS")
+        allowed_symbols = set("0123456789ABCEHKMOPTXY")
+        codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
+
+        self.assertEqual(
+            batch.alphabet_mode,
+            CouponPoolBatch.AlphabetMode.DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER,
+        )
+        self.assertEqual(len(codes), 4)
+        for code in codes:
+            self.assertTrue(code.startswith("REL-"))
+            self.assertLessEqual(set(code.removeprefix("REL-")), allowed_symbols)
+
     def test_generate_pool_rejects_unknown_venue_code(self):
         response = self.client.post(
             reverse("coupon_registry_ops"),

@@ -2529,6 +2529,14 @@ class CouponPoolBatch(models.Model):
     class AlphabetMode(models.TextChoices):
         DIGITS = "digits", "Только цифры"
         LATIN_UPPER = "latin_upper", "Только латинские буквы (верхний регистр)"
+        LATIN_CYRILLIC_LOOKALIKE_UPPER = (
+            "latin_cyrillic_lookalike_upper",
+            "Латинские буквы, похожие на кириллицу",
+        )
+        DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER = (
+            "digits_latin_lookalike_upper",
+            "Цифры и латинские буквы, похожие на кириллицу",
+        )
         DIGITS_LATIN_UPPER = "digits_latin_upper", "Цифры и латинские буквы (верхний регистр)"
 
     class VerificationStatus(models.TextChoices):

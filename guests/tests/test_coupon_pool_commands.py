@@ -56,6 +56,55 @@ class GenerateCouponPoolCommandTests(TestCase):
         self.assertEqual(batch.venue_code, COUPON_VENUE_GLOBAL_CODE)
         self.assertEqual(batch.venue_name, COUPON_VENUE_GLOBAL_NAME)
 
+    def test_generate_command_accepts_latin_letters_matching_cyrillic(self):
+        call_command(
+            "generate_coupon_pool",
+            series="LOOKALIKE_CMD",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            prefix="REL-",
+            count=5,
+            random_length=8,
+            alphabet_mode=CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER,
+            skip_export=True,
+        )
+
+        batch = CouponPoolBatch.objects.get(series="LOOKALIKE_CMD")
+        allowed_letters = set("ABCEHKMOPTXY")
+        codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
+
+        self.assertEqual(batch.alphabet_mode, CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER)
+        self.assertEqual(len(codes), 5)
+        for code in codes:
+            self.assertTrue(code.startswith("REL-"))
+            self.assertLessEqual(set(code.removeprefix("REL-")), allowed_letters)
+
+    def test_generate_command_accepts_digits_and_latin_letters_matching_cyrillic(self):
+        call_command(
+            "generate_coupon_pool",
+            series="LOOKALIKE_DIGITS_CMD",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            prefix="REL-",
+            count=5,
+            random_length=8,
+            alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER,
+            skip_export=True,
+        )
+
+        batch = CouponPoolBatch.objects.get(series="LOOKALIKE_DIGITS_CMD")
+        allowed_symbols = set("0123456789ABCEHKMOPTXY")
+        codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
+
+        self.assertEqual(
+            batch.alphabet_mode,
+            CouponPoolBatch.AlphabetMode.DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER,
+        )
+        self.assertEqual(len(codes), 5)
+        for code in codes:
+            self.assertTrue(code.startswith("REL-"))
+            self.assertLessEqual(set(code.removeprefix("REL-")), allowed_symbols)
+
 
 class IikoCouponClientUrlTests(TestCase):
     def test_normalizes_root_base_url_to_api_v1(self):

@@ -40,6 +40,8 @@ class CouponPoolService:
     ALPHABETS = {
         CouponPoolBatch.AlphabetMode.DIGITS: "0123456789",
         CouponPoolBatch.AlphabetMode.LATIN_UPPER: "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER: "ABCEHKMOPTXY",
+        CouponPoolBatch.AlphabetMode.DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER: "0123456789ABCEHKMOPTXY",
         CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
     }
 

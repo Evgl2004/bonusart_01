@@ -78,6 +78,51 @@ class CouponPoolServiceTests(TestCase):
             CouponRegistryEntry.objects.filter(batch=result.batch, code="TST-AAAA1111").exists()
         )
 
+    def test_generate_pool_can_use_latin_letters_matching_cyrillic(self):
+        result = self.service.generate_pool(
+            series="LOOKALIKE",
+            prefix="REL-",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            count=20,
+            random_length=12,
+            alphabet_mode=CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER,
+        )
+
+        batch = result.batch
+        allowed_letters = set("ABCEHKMOPTXY")
+        codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
+
+        self.assertEqual(batch.alphabet_mode, CouponPoolBatch.AlphabetMode.LATIN_CYRILLIC_LOOKALIKE_UPPER)
+        self.assertEqual(len(codes), 20)
+        for code in codes:
+            self.assertTrue(code.startswith("REL-"))
+            self.assertLessEqual(set(code.removeprefix("REL-")), allowed_letters)
+
+    def test_generate_pool_can_use_digits_and_latin_letters_matching_cyrillic(self):
+        result = self.service.generate_pool(
+            series="LOOKALIKE_DIGITS",
+            prefix="REL-",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            count=20,
+            random_length=12,
+            alphabet_mode=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER,
+        )
+
+        batch = result.batch
+        allowed_symbols = set("0123456789ABCEHKMOPTXY")
+        codes = list(CouponRegistryEntry.objects.filter(batch=batch).values_list("code", flat=True))
+
+        self.assertEqual(
+            batch.alphabet_mode,
+            CouponPoolBatch.AlphabetMode.DIGITS_LATIN_CYRILLIC_LOOKALIKE_UPPER,
+        )
+        self.assertEqual(len(codes), 20)
+        for code in codes:
+            self.assertTrue(code.startswith("REL-"))
+            self.assertLessEqual(set(code.removeprefix("REL-")), allowed_symbols)
+
     def test_export_batch_csv_minimal_format(self):
         result = self.service.generate_pool(
             series="TEST",

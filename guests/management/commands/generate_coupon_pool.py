@@ -44,11 +44,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--alphabet-mode",
-            choices=[
-                CouponPoolBatch.AlphabetMode.DIGITS,
-                CouponPoolBatch.AlphabetMode.LATIN_UPPER,
-                CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
-            ],
+            choices=[choice[0] for choice in CouponPoolBatch.AlphabetMode.choices],
             default=CouponPoolBatch.AlphabetMode.DIGITS_LATIN_UPPER,
             help="Режим алфавита генерации случайной части.",
         )
