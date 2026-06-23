@@ -99,6 +99,8 @@ class CouponAutoscenarioAudienceRow:
     birthday_date: date | None = None
     trigger_key: str = ""
     trigger_date: date | None = None
+    audience_venue_code: str = ""
+    audience_venue_name: str = ""
 
     @property
     def has_sendable_channel(self) -> bool:
@@ -118,6 +120,8 @@ class CouponAutoscenarioAudienceRow:
             "birthday_date": self.birthday_date.isoformat() if self.birthday_date else None,
             "trigger_key": self.trigger_key,
             "trigger_date": self.trigger_date.isoformat() if self.trigger_date else None,
+            "audience_venue_code": self.audience_venue_code,
+            "audience_venue_name": self.audience_venue_name,
         }
 
 
@@ -263,6 +267,9 @@ class CouponAutoscenarioExecutionPlan:
     scenario_code: str
     execution_mode: str
     venue_selection_mode: str
+    audience_venue_filter_mode: str
+    audience_venue_code: str
+    audience_venue_name: str
     coupon_series: str
     venue_code: str
     venue_name: str
@@ -302,6 +309,9 @@ class CouponAutoscenarioExecutionPlan:
             "scenario_code": self.scenario_code,
             "execution_mode": self.execution_mode,
             "venue_selection_mode": self.venue_selection_mode,
+            "audience_venue_filter_mode": self.audience_venue_filter_mode,
+            "audience_venue_code": self.audience_venue_code,
+            "audience_venue_name": self.audience_venue_name,
             "coupon_series": self.coupon_series,
             "venue_code": self.venue_code,
             "venue_name": self.venue_name,
@@ -555,6 +565,9 @@ def build_coupon_autoscenario_execution_plan(
     safe_scan_limit = _resolve_preview_scan_limit(scan_limit=scan_limit, run_limit=safe_limit)
     current_now = now or timezone.now()
     venue_selection_mode = _venue_selection_mode(config=config)
+    audience_venue_filter_mode = _audience_venue_filter_mode(config=config)
+    audience_venue_code = _audience_venue_code(config=config)
+    audience_venue_name = _audience_venue_name(config=config)
 
     blockers: list[str] = []
     warnings: list[str] = []
@@ -689,6 +702,12 @@ def build_coupon_autoscenario_execution_plan(
         eligible_rows.append(row)
 
     last_order_venues = _last_order_venue_map(guest_ids=[row.guest_id for row in eligible_rows])
+    audience_venue_overrides = _audience_venue_override_map(rows=eligible_rows)
+    if (
+        audience_venue_overrides
+        and venue_selection_mode == CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
+    ):
+        last_order_venues = {**last_order_venues, **audience_venue_overrides}
     guest_venue_affinities = (
         _guest_venue_affinity_map(
             guest_ids=[row.guest_id for row in eligible_rows],
@@ -838,6 +857,9 @@ def build_coupon_autoscenario_execution_plan(
         scenario_code=scenario.code,
         execution_mode=config.execution_mode,
         venue_selection_mode=venue_selection_mode,
+        audience_venue_filter_mode=audience_venue_filter_mode,
+        audience_venue_code=audience_venue_code,
+        audience_venue_name=audience_venue_name,
         coupon_series=_format_coupon_series_summary(coupon_rules),
         venue_code=str(config.venue_code or "").strip(),
         venue_name=str(config.venue_name or "").strip(),
@@ -1604,12 +1626,117 @@ def _build_autoscenario_candidate_rows(
         return 0, 0, scanned_guests, matched_rows
 
     inactive_days = _extract_inactive_days(scenario)
-    scanned_guests, matched_rows = _build_candidate_rows(
-        inactive_days=inactive_days,
-        scan_limit=scan_limit,
-        now=now,
-    )
+    if _is_audience_venue_filter_enabled(config=config):
+        scanned_guests, matched_rows = _build_venue_inactive_candidate_rows(
+            inactive_days=inactive_days,
+            scan_limit=scan_limit,
+            now=now,
+            venue_code=_audience_venue_code(config=config),
+            venue_name=_audience_venue_name(config=config),
+        )
+    else:
+        scanned_guests, matched_rows = _build_candidate_rows(
+            inactive_days=inactive_days,
+            scan_limit=scan_limit,
+            now=now,
+        )
     return inactive_days, 0, scanned_guests, matched_rows
+
+
+def _build_venue_inactive_candidate_rows(
+    *,
+    inactive_days: int,
+    scan_limit: int,
+    now: datetime,
+    venue_code: str,
+    venue_name: str,
+) -> tuple[int, list[CouponAutoscenarioAudienceRow]]:
+    safe_venue_code = str(venue_code or "").strip()
+    if not safe_venue_code:
+        return 0, []
+
+    safe_scan_limit = max(1, int(scan_limit))
+    safe_inactive_days = max(1, int(inactive_days))
+    safe_venue_name = str(venue_name or "").strip()
+    cutoff_date = timezone.localtime(now).date() - timedelta(days=safe_inactive_days)
+
+    rows_by_guest: dict[int, dict] = {}
+    daily_rows = (
+        GuestRestaurantDailyOrderFact.objects.filter(
+            department_id=safe_venue_code,
+            orders_count__gt=0,
+        )
+        .values("guest_id")
+        .annotate(last_visit_date=Max("business_date"))
+        .filter(last_visit_date__lte=cutoff_date)
+        .order_by("guest_id")[:safe_scan_limit]
+    )
+    for row in daily_rows:
+        guest_id = int(row["guest_id"])
+        rows_by_guest[guest_id] = {
+            "guest_id": guest_id,
+            "business_date": row.get("last_visit_date"),
+            "first_seen_at": None,
+            "department_name": safe_venue_name,
+        }
+
+    if len(rows_by_guest) < safe_scan_limit:
+        order_fact_rows = (
+            OrderFact.objects.filter(department_id=safe_venue_code, guest_id__isnull=False)
+            .exclude(guest_id__in=list(rows_by_guest))
+            .values("guest_id")
+            .annotate(
+                last_visit_date=Max("business_date"),
+                last_seen_at=Max("first_seen_at"),
+                department_name=Max("department_name"),
+            )
+            .filter(last_visit_date__lte=cutoff_date)
+            .order_by("guest_id")[: max(safe_scan_limit - len(rows_by_guest), 0)]
+        )
+        for row in order_fact_rows:
+            guest_id = int(row["guest_id"])
+            rows_by_guest[guest_id] = {
+                "guest_id": guest_id,
+                "business_date": row.get("last_visit_date"),
+                "first_seen_at": row.get("last_seen_at"),
+                "department_name": str(row.get("department_name") or safe_venue_name).strip(),
+            }
+
+    guest_ids = list(rows_by_guest)
+    guests_by_id = Guest.objects.in_bulk(guest_ids)
+    channels_map = _build_sendable_channels_map(guest_ids=guest_ids)
+
+    matched_rows: list[CouponAutoscenarioAudienceRow] = []
+    for guest_id in sorted(rows_by_guest):
+        guest = guests_by_id.get(guest_id)
+        if guest is None:
+            continue
+        row = rows_by_guest[guest_id]
+        last_visit_at = _order_fact_visit_datetime(
+            business_date=row.get("business_date"),
+            first_seen_at=row.get("first_seen_at"),
+        )
+        if last_visit_at is None:
+            continue
+        days_without_visits = _days_without_visits_from_last_visit(
+            last_visit_at=last_visit_at,
+            now=now,
+        )
+        if days_without_visits is None or days_without_visits < safe_inactive_days:
+            continue
+        matched_rows.append(
+            CouponAutoscenarioAudienceRow(
+                guest_id=int(guest.id),
+                phone=str(guest.phone or ""),
+                first_name=str(guest.first_name or ""),
+                last_name=str(guest.last_name or ""),
+                last_visit_at=last_visit_at,
+                sendable_channels=tuple(channels_map.get(guest.id, ())),
+                audience_venue_code=safe_venue_code,
+                audience_venue_name=str(row.get("department_name") or safe_venue_name).strip(),
+            )
+        )
+    return len(rows_by_guest), matched_rows
 
 
 def _build_birthdate_completion_candidate_rows(
@@ -2109,6 +2236,52 @@ def _venue_selection_mode(*, config: CouponAutomationConfig) -> str:
     if value in allowed_values:
         return value
     return CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
+
+
+def _audience_venue_filter_mode(*, config: CouponAutomationConfig) -> str:
+    value = str(getattr(config, "audience_venue_filter_mode", "") or "").strip()
+    allowed_values = {choice[0] for choice in CouponAutomationConfig.AudienceVenueFilterMode.choices}
+    if value in allowed_values:
+        return value
+    return CouponAutomationConfig.AudienceVenueFilterMode.DISABLED
+
+
+def _audience_venue_code(*, config: CouponAutomationConfig) -> str:
+    if _audience_venue_filter_mode(config=config) == CouponAutomationConfig.AudienceVenueFilterMode.DISABLED:
+        return ""
+    return str(getattr(config, "audience_venue_code", "") or "").strip()
+
+
+def _audience_venue_name(*, config: CouponAutomationConfig) -> str:
+    if _audience_venue_filter_mode(config=config) == CouponAutomationConfig.AudienceVenueFilterMode.DISABLED:
+        return ""
+    return str(getattr(config, "audience_venue_name", "") or "").strip()
+
+
+def _is_audience_venue_filter_enabled(*, config: CouponAutomationConfig) -> bool:
+    return (
+        _audience_venue_filter_mode(config=config)
+        == CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE
+        and bool(_audience_venue_code(config=config))
+    )
+
+
+def _audience_venue_override_map(
+    *,
+    rows: list[CouponAutoscenarioAudienceRow],
+) -> dict[int, GuestLastOrderVenue]:
+    result: dict[int, GuestLastOrderVenue] = {}
+    for row in rows:
+        venue_code = str(row.audience_venue_code or "").strip()
+        if not venue_code:
+            continue
+        result[int(row.guest_id)] = GuestLastOrderVenue(
+            department_id=venue_code,
+            department_name=str(row.audience_venue_name or "").strip(),
+            business_date=row.last_visit_at.date() if row.last_visit_at else None,
+            last_visit_at=row.last_visit_at,
+        )
+    return result
 
 
 def _guest_venue_affinity_map(

@@ -761,6 +761,107 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(items_by_guest[global_guest.id].coupon_selection_source, "global_fallback")
         self.assertEqual(self._side_effect_counts(), before_counts)
 
+    def test_execution_plan_filters_inactive_guests_by_selected_audience_venue(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
+        self.config.coupon_series = ""
+        self.config.venue_code = ""
+        self.config.venue_name = ""
+        self.config.venue_selection_mode = CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
+        self.config.audience_venue_filter_mode = (
+            CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE
+        )
+        self.config.audience_venue_code = "DEP_1"
+        self.config.audience_venue_name = "Venue One"
+        self.config.max_recipients_per_run = 10
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "coupon_series",
+                "venue_code",
+                "venue_name",
+                "venue_selection_mode",
+                "audience_venue_filter_mode",
+                "audience_venue_code",
+                "audience_venue_name",
+                "max_recipients_per_run",
+                "updated_at",
+            ]
+        )
+        CouponAutomationRule.objects.create(
+            config=self.config,
+            scope_type=CouponAutomationRule.ScopeType.VENUE,
+            coupon_series="AUTO_DEP_1_ONLY",
+            venue_code="DEP_1",
+            venue_name="Venue One",
+            priority=10,
+        )
+
+        selected_guest = self._guest(phone="+79990000131", first_name="Selected")
+        recent_same_venue_guest = self._guest(phone="+79990000132", first_name="Recent")
+        other_venue_guest = self._guest(phone="+79990000133", first_name="Other")
+        for guest in [selected_guest, recent_same_venue_guest, other_venue_guest]:
+            self._sendable_channel(guest=guest)
+
+        self._daily_guest_venue_fact(
+            guest=selected_guest,
+            venue_code="DEP_1",
+            days_ago=45,
+            orders_count=1,
+        )
+        self._daily_guest_venue_fact(
+            guest=recent_same_venue_guest,
+            venue_code="DEP_1",
+            days_ago=5,
+            orders_count=1,
+        )
+        self._daily_guest_venue_fact(
+            guest=other_venue_guest,
+            venue_code="DEP_OTHER",
+            days_ago=45,
+            orders_count=1,
+        )
+        OrderFact.objects.create(
+            guest=selected_guest,
+            business_date=(self.now - timedelta(days=5)).date(),
+            department_id="DEP_OTHER",
+            department_name="Other Venue",
+            order_number=11,
+            uniq_order_id="venue-filter-recent-other",
+            first_seen_at=self.now - timedelta(days=5),
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_DEP_1_ONLY",
+            code="DEP-ONLY",
+            venue_code="DEP_1",
+            venue_name="Venue One",
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.VERIFIED_LOADED,
+            iiko_check_status=CouponRegistryEntry.IikoCheckStatus.FOUND,
+        )
+
+        before_counts = self._side_effect_counts()
+
+        plan = build_coupon_autoscenario_execution_plan(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            now=self.now,
+        )
+
+        self.assertTrue(plan.can_execute)
+        self.assertEqual(
+            plan.audience_venue_filter_mode,
+            CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE,
+        )
+        self.assertEqual(plan.audience_venue_code, "DEP_1")
+        self.assertEqual(plan.audience_venue_name, "Venue One")
+        self.assertEqual(plan.planned_assignments, 1)
+        self.assertEqual(plan.plan_items[0].guest_id, selected_guest.id)
+        self.assertEqual(plan.plan_items[0].coupon_id, coupon.id)
+        self.assertEqual(plan.plan_items[0].venue_code, "DEP_1")
+        self.assertEqual(plan.plan_items[0].last_order_department_id, "DEP_1")
+        self.assertEqual(plan.plan_items[0].days_without_visits, 45)
+        self.assertEqual(self._side_effect_counts(), before_counts)
+
     def test_execution_plan_selects_all_visited_venue_rules_for_one_guest(self):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.AUTOMATIC
         self.config.venue_selection_mode = CouponAutomationConfig.VenueSelectionMode.ALL_VISITED
