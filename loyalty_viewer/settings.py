@@ -623,7 +623,7 @@ COUPON_REDEMPTION_SYNC_LIMIT = _env_int("COUPON_REDEMPTION_SYNC_LIMIT", 0, min_v
 # Управление отправкой balance-уведомлений в ботов из webhook-контура.
 # Позволяет включать/выключать создание DispatchTask без изменений кода.
 # Автосинхронизация `settings.Q_CLUSTER["schedule"]` -> `django_q_schedule`.
-# Срабатывает на старте `manage.py qcluster` (см. guests.apps.GuestsConfig.ready).
+# Срабатывает после первого подключения к БД на старте `manage.py qcluster`.
 DJANGO_Q_SCHEDULE_AUTOSYNC_ON_QCLUSTER_START = _env_bool(
     "DJANGO_Q_SCHEDULE_AUTOSYNC_ON_QCLUSTER_START",
     True,

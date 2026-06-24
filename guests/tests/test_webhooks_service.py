@@ -515,13 +515,17 @@ class WebhookGuestAndCategoryTests(TestCase):
         Если terminalGroupId отсутствует в активной карте сопоставления,
         OLAP-задача не должна создаваться.
         """
+        restaurant_without_mapping = Restaurant.objects.create(
+            iiko_id="rest-without-active-map",
+            name="Ресторан без active mapping",
+        )
         webhook = {
             "id": "wh-nt1-unknown-terminal",
             "parsed_body": {
                 "id": "evt-unknown-terminal-1",
                 "notificationType": 1,
                 "phone": self.guest.phone,
-                "terminalGroupId": "terminal-unknown-1",
+                "terminalGroupId": restaurant_without_mapping.iiko_id,
                 "changedOn": "2026-03-18T11:30:00+05:00",
                 "orderNumber": 700102,
                 "orderId": "order-unknown-1",
