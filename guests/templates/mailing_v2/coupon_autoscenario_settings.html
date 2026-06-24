@@ -151,6 +151,13 @@
           <div class="text-muted small mb-2">{{ template_technical_name }}</div>
         {% endif %}
         <div class="border rounded bg-light p-2 small" style="white-space: pre-wrap;">{{ message_template.message_text }}</div>
+        <div class="mt-3">
+          <div class="fw-semibold small mb-1">Предпросмотр с тестовым купоном</div>
+          <div class="border rounded p-2 small" style="white-space: pre-wrap;">{{ message_template_preview_text }}</div>
+          <div class="form-text">
+            Пример: first_name=Анна, days_without_visits=30, coupon_code=TEST123.
+          </div>
+        </div>
         <div class="form-text mt-2">
           Основные переменные: <code>&#123;&#123; first_name &#125;&#125;</code>, <code>&#123;&#123; days_without_visits &#125;&#125;</code>, <code>&#123;&#123; days_until_birthday &#125;&#125;</code>, <code>{coupon_code}</code>.
           Шаблон сообщения редактируется отдельно, чтобы случайно не изменить его при настройке купонных правил.

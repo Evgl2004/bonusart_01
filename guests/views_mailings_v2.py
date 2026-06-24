@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
+from types import SimpleNamespace
 from urllib.parse import urlencode
 
 from django.contrib import messages
@@ -2282,8 +2283,42 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             fill_birthday_request_form is None or fill_birthday_request_form.is_valid()
         )
         if form.is_valid() and rule_formset.is_valid() and request_form_is_valid:
+            if not self._validate_coupon_launch_readiness(form=form, rule_formset=rule_formset):
+                return self.forms_invalid(form, rule_formset, fill_birthday_request_form)
             return self.forms_valid(form, rule_formset, fill_birthday_request_form)
         return self.forms_invalid(form, rule_formset, fill_birthday_request_form)
+
+    @staticmethod
+    def _has_active_coupon_rule(rule_formset) -> bool:
+        for rule_form in rule_formset.forms:
+            if not getattr(rule_form, "cleaned_data", None):
+                continue
+            if rule_form.cleaned_data.get("DELETE"):
+                continue
+            if not bool(rule_form.cleaned_data.get("is_active")):
+                continue
+            if str(rule_form.cleaned_data.get("coupon_series") or "").strip():
+                return True
+        return False
+
+    def _validate_coupon_launch_readiness(self, *, form, rule_formset) -> bool:
+        execution_mode = form.cleaned_data.get("execution_mode")
+        if execution_mode not in {
+            CouponAutomationConfig.ExecutionMode.PILOT,
+            CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+        }:
+            return True
+
+        fallback_series = str(form.cleaned_data.get("coupon_series") or "").strip()
+        if fallback_series or self._has_active_coupon_rule(rule_formset):
+            return True
+
+        form.add_error(
+            None,
+            "Нельзя перевести купонный автосценарий в «Пилот» или «Активен»: "
+            "добавьте хотя бы одно активное правило с серией купонов или заполните резервную серию.",
+        )
+        return False
 
     def forms_valid(self, form, rule_formset, fill_birthday_request_form=None):
         with transaction.atomic():
@@ -2386,6 +2421,25 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             if template_obj
             else ""
         )
+        context["message_template_preview_text"] = ""
+        if template_obj is not None:
+            preview_guest = SimpleNamespace(
+                first_name="Анна",
+                last_name="Иванова",
+                phone="+79990000000",
+                email="anna@example.test",
+                birthdate=None,
+            )
+            context["message_template_preview_text"] = render_message_for_guest(
+                template_obj.message_text,
+                preview_guest,
+                extra_context={
+                    "coupon_code": "TEST123",
+                    "days_without_visits": 30,
+                    "days_until_birthday": 7,
+                    "birthday_date": "01.07",
+                },
+            )
         context["coupon_rules_admin_url"] = (
             f"/admin/guests/couponautomationconfig/{self.object.pk}/change/"
             if self.object.pk

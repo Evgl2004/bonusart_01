@@ -848,6 +848,21 @@ class CouponAutomationConfigForm(forms.ModelForm):
                 "notification_distribution_mode",
                 "Для состояния «Активен» выберите «Равномерно в окне», чтобы сообщения не уходили сразу после подтверждения vtelemax.",
             )
+        if execution_mode in {
+            CouponAutomationConfig.ExecutionMode.PILOT,
+            CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+        }:
+            template = getattr(getattr(self.instance, "scenario", None), "template", None)
+            try:
+                validate_coupon_code_placeholder(getattr(template, "message_text", ""))
+            except forms.ValidationError as exc:
+                self.add_error(
+                    None,
+                    forms.ValidationError(
+                        "Нельзя перевести купонный автосценарий в «Пилот» или «Активен»: %(error)s",
+                        params={"error": "; ".join(exc.messages)},
+                    ),
+                )
 
         if not cleaned_data.get("venue_selection_mode"):
             cleaned_data["venue_selection_mode"] = CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
