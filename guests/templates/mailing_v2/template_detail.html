@@ -23,9 +23,57 @@
   <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates' %}">Назад к шаблонам</a>
       <a class="btn btn-outline-primary" href="{{ campaign_prefill_url }}">Создать кампанию по шаблону</a>
-      <a class="btn btn-primary" href="{% url 'mailings_v2_templates_edit' template_obj.id %}">Редактировать</a>
+      <a class="btn btn-outline-primary" href="{{ template_copy_url }}">Создать на основе</a>
+      {% if template_locked_by_coupon_autoscenarios %}
+        <a class="btn btn-outline-primary" href="{% url 'mailings_v2_templates_edit' template_obj.id %}">Открыть редактор</a>
+      {% else %}
+        <a class="btn btn-primary" href="{% url 'mailings_v2_templates_edit' template_obj.id %}">Редактировать</a>
+      {% endif %}
     </div>
   </div>
+
+  {% if coupon_autoscenario_usages %}
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body">
+        <h2 class="h6 mb-2">Использование в купонных автосценариях</h2>
+        {% if template_locked_by_coupon_autoscenarios %}
+          <div class="alert alert-warning py-2 mb-3">
+            Шаблон используется в автосценарии в режиме «Пилот» или «Активен», поэтому редактирование заблокировано.
+          </div>
+        {% endif %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>Автосценарий</th>
+                <th>Код</th>
+                <th>Режим</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for usage in coupon_autoscenario_usages %}
+                <tr>
+                  <td>{{ usage.scenario_name }}</td>
+                  <td><code>{{ usage.scenario_code }}</code></td>
+                  <td>
+                    {% if usage.is_locking %}
+                      <span class="badge text-bg-warning">{{ usage.execution_mode_label }}</span>
+                    {% else %}
+                      <span class="badge text-bg-secondary">{{ usage.execution_mode_label }}</span>
+                    {% endif %}
+                  </td>
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{{ usage.settings_url }}">Открыть автосценарий</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% endif %}
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">

@@ -71,6 +71,7 @@
               <th>Активен</th>
               <th>Кампаний</th>
               <th>Сценариев</th>
+              <th>Активных купонных автосценариев</th>
               <th>Обновлен</th>
               <th></th>
             </tr>
@@ -94,6 +95,13 @@
                 </td>
                 <td>{{ row.mailings_total }}</td>
                 <td>{{ row.scenarios_total }}</td>
+                <td>
+                  {% if row.active_coupon_autoscenarios_total %}
+                    <span class="badge text-bg-warning">{{ row.active_coupon_autoscenarios_total }}</span>
+                  {% else %}
+                    <span class="text-muted">0</span>
+                  {% endif %}
+                </td>
                 <td>{{ row.updated_at|date:"Y-m-d H:i" }}</td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-primary" href="{% url 'mailings_v2_templates_edit' row.id %}">Открыть</a>
@@ -101,7 +109,7 @@
               </tr>
             {% empty %}
               <tr>
-                <td colspan="7" class="text-center text-muted py-4">Шаблонов пока нет.</td>
+                <td colspan="8" class="text-center text-muted py-4">Шаблонов пока нет.</td>
               </tr>
             {% endfor %}
           </tbody>

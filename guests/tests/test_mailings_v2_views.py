@@ -1486,6 +1486,23 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(detail_response, "Создать кампанию по шаблону")
         self.assertContains(detail_response, "Проверка шаблона на госте")
 
+    def test_create_template_v2_prefills_from_source_template(self):
+        """
+        Кнопка «создать на основе» должна открывать создание копии без изменения оригинала.
+        """
+        response = self.client.get(
+            reverse("mailings_v2_templates_new"),
+            {"source_template_id": self.template.id},
+            secure=True,
+        )
+
+        form = response.context["form"]
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(form.initial["name"], "Тестовый шаблон (копия)")
+        self.assertEqual(form.initial["description"], self.template.description)
+        self.assertEqual(form.initial["message_text"], self.template.message_text)
+        self.assertContains(response, "Исходный шаблон не будет изменён")
+
     def test_template_preview_on_create_without_save(self):
         """
         Предпросмотр на форме создания шаблона должен работать без сохранения.
@@ -1513,6 +1530,129 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Проверка шаблона на госте")
         self.assertContains(response, "Здравствуйте, Ирина!")
         self.assertFalse(MessageTemplate.objects.filter(name="Черновой шаблон").exists())
+
+    def test_template_detail_shows_coupon_autoscenario_usage(self):
+        """
+        Карточка шаблона должна показывать, где он задействован в купонных автосценариях.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="template_usage_active_coupon",
+            name="Шаблон используется в активном купонном сценарии",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_templates_detail", kwargs={"pk": self.template.id}),
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Использование в купонных автосценариях")
+        self.assertContains(response, "Шаблон используется в активном купонном сценарии")
+        self.assertContains(response, "template_usage_active_coupon")
+        self.assertContains(response, "редактирование заблокировано")
+        self.assertContains(
+            response,
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+        )
+
+    def test_template_edit_locked_by_active_coupon_autoscenario_does_not_save(self):
+        """
+        Шаблон, используемый активным купонным автосценарием, нельзя изменить даже прямым POST.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="template_usage_lock_coupon",
+            name="Активный купонный автосценарий",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+        )
+        CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+        )
+
+        edit_response = self.client.get(
+            reverse("mailings_v2_templates_edit", kwargs={"pk": self.template.id}),
+            secure=True,
+        )
+        self.assertEqual(edit_response.status_code, 200)
+        self.assertContains(edit_response, "Редактирование шаблона заблокировано")
+        self.assertContains(edit_response, "readonly")
+        self.assertNotContains(
+            edit_response,
+            '<button type="submit" class="btn btn-primary">Сохранить</button>',
+            html=False,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_templates_edit", kwargs={"pk": self.template.id}),
+            {
+                "name": "Изменённое имя",
+                "description": "Изменённое описание",
+                "message_text": "Нельзя сохранить этот текст",
+                "is_active": "on",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.url,
+            reverse("mailings_v2_templates_detail", kwargs={"pk": self.template.id}),
+        )
+        self.template.refresh_from_db()
+        self.assertEqual(self.template.name, "Тестовый шаблон")
+        self.assertEqual(self.template.message_text, "Привет, {{ first_name }}")
+
+    def test_template_edit_allows_report_only_coupon_autoscenario_template(self):
+        """
+        Черновой купонный автосценарий не должен блокировать правку шаблона.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="template_usage_draft_coupon",
+            name="Черновой купонный автосценарий",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+        )
+        CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_templates_edit", kwargs={"pk": self.template.id}),
+            {
+                "name": "Разрешённое имя",
+                "description": "Разрешённое описание",
+                "message_text": "Разрешённый текст {coupon_code}",
+                "is_active": "on",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.template.refresh_from_db()
+        self.assertEqual(self.template.name, "Разрешённое имя")
+        self.assertEqual(self.template.message_text, "Разрешённый текст {coupon_code}")
 
     def test_flow_bridge_visible_only_on_campaigns_hub(self):
         """
@@ -2300,6 +2440,40 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(scenario.template_id, existing_template.id)
         self.assertEqual(MessageTemplate.objects.count(), templates_before)
+
+    def test_coupon_autoscenario_create_view_exposes_existing_template_preview_actions(self):
+        """
+        При выборе существующего шаблона оператор должен видеть текст, предпросмотр и безопасные действия.
+        """
+        existing_template = MessageTemplate.objects.create(
+            name="Готовый шаблон предпросмотра",
+            description="Согласованный текст для купона.",
+            message_text="Привет, {{ first_name }}! Купон: {coupon_code}",
+            created_by="operator",
+            is_active=True,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_coupon_autoscenario_create"),
+            secure=True,
+        )
+
+        payload = response.context["existing_template_payload"]
+        valid_payload = payload[str(existing_template.id)]
+        invalid_payload = payload[str(self.template.id)]
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "coupon-existing-template-card")
+        self.assertContains(response, "Редактировать шаблон")
+        self.assertContains(response, "Создать на основе")
+        self.assertContains(response, "coupon-existing-template-data")
+        self.assertTrue(valid_payload["has_coupon_code"])
+        self.assertIn("TEST123", valid_payload["preview_text"])
+        self.assertEqual(
+            valid_payload["edit_url"],
+            reverse("mailings_v2_templates_edit", kwargs={"pk": existing_template.id}),
+        )
+        self.assertFalse(invalid_payload["has_coupon_code"])
+        self.assertIn("должен быть параметр", invalid_payload["coupon_code_status"])
 
     def test_coupon_autoscenario_create_view_requires_coupon_code_in_new_template(self):
         """

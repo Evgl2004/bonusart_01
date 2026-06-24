@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from urllib.parse import urlencode
 
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Count, F, Max, Prefetch, Q
 from django.http import QueryDict
@@ -27,12 +28,14 @@ from django.views import View
 from django.views.generic import CreateView, DetailView, FormView, TemplateView, UpdateView
 
 from guests.forms import (
+    COUPON_CODE_PLACEHOLDER,
     CouponAutomationConfigForm,
     CouponAutomationRuleFormSet,
     CouponAutomationScenarioCreateForm,
     FillBirthdayRequestScenarioForm,
     MailingForm,
     MessageTemplateForm,
+    validate_coupon_code_placeholder,
 )
 from guests.management.commands import mailing_worker as mailing_worker_cmd
 from guests.models import (
@@ -78,6 +81,11 @@ COUPON_AUTOSCENARIO_STATE_LABELS = {
     CouponAutomationConfig.ExecutionMode.PILOT: "Пилот",
     CouponAutomationConfig.ExecutionMode.AUTOMATIC: "Активен",
     CouponAutomationConfig.ExecutionMode.PAUSED: "Пауза",
+}
+
+COUPON_TEMPLATE_LOCK_EXECUTION_MODES = {
+    CouponAutomationConfig.ExecutionMode.PILOT,
+    CouponAutomationConfig.ExecutionMode.AUTOMATIC,
 }
 
 COUPON_AUTOSCENARIO_STATE_HINTS = {
@@ -1294,6 +1302,15 @@ class MailingsV2TemplatesView(TemplateView):
         template_rows = MessageTemplate.objects.annotate(
             mailings_total=Count("mailings", distinct=True),
             scenarios_total=Count("notification_scenarios", distinct=True),
+            active_coupon_autoscenarios_total=Count(
+                "notification_scenarios__coupon_automation_config",
+                filter=Q(
+                    notification_scenarios__coupon_automation_config__execution_mode__in=(
+                        COUPON_TEMPLATE_LOCK_EXECUTION_MODES
+                    )
+                ),
+                distinct=True,
+            ),
         ).order_by("-updated_at")
 
         if not show_inactive:
@@ -1337,6 +1354,32 @@ class MailingsV2TemplateCreateView(CreateView):
     form_class = MessageTemplateForm
     template_name = "mailing_v2/template_form.html"
 
+    def _get_source_template(self) -> MessageTemplate | None:
+        source_template_id = str(self.request.GET.get("source_template_id") or "").strip()
+        if not source_template_id:
+            return None
+        if not source_template_id.isdigit():
+            return None
+        return MessageTemplate.objects.filter(pk=source_template_id).first()
+
+    def get_initial(self):
+        initial = super().get_initial()
+        source_template = self._get_source_template()
+        if source_template is None:
+            return initial
+
+        display_name, _technical_name = _resolve_template_title(source_template)
+        copied_name = f"{display_name or source_template.name} (копия)"
+        initial.update(
+            {
+                "name": copied_name[:150],
+                "description": source_template.description or f"На основе шаблона ID {source_template.pk}",
+                "message_text": source_template.message_text,
+                "is_active": source_template.is_active,
+            }
+        )
+        return initial
+
     @staticmethod
     def _build_new_template_preview_source() -> MessageTemplate:
         """
@@ -1358,6 +1401,13 @@ class MailingsV2TemplateCreateView(CreateView):
                 selected_guest_id=selected_guest_id,
                 message_text_override=message_text_override,
             )
+        )
+        source_template = self._get_source_template()
+        context["source_template"] = source_template
+        context["source_template_detail_url"] = (
+            reverse("mailings_v2_templates_detail", kwargs={"pk": source_template.pk})
+            if source_template is not None
+            else ""
         )
         context["preview_requested"] = bool(selected_guest_id)
         return context
@@ -1409,6 +1459,14 @@ class MailingsV2TemplateDetailView(DetailView):
         context["campaign_prefill_url"] = (
             f"{reverse('mailings_v2_campaigns_new')}?{urlencode({'template_id': self.object.id})}"
         )
+        context["template_copy_url"] = (
+            f"{reverse('mailings_v2_templates_new')}?{urlencode({'source_template_id': self.object.id})}"
+        )
+        coupon_usage_rows = _build_coupon_autoscenario_template_usage_rows(self.object)
+        context["coupon_autoscenario_usages"] = coupon_usage_rows
+        context["template_locked_by_coupon_autoscenarios"] = any(
+            row["is_locking"] for row in coupon_usage_rows
+        )
 
         preview_context = _build_template_preview_state(
             template_obj=self.object,
@@ -1430,16 +1488,27 @@ class MailingsV2TemplateUpdateView(UpdateView):
 
     def _build_editor_context(self) -> dict[str, object]:
         display_name, technical_name = _resolve_template_title(self.object)
+        coupon_usage_rows = _build_coupon_autoscenario_template_usage_rows(self.object)
         return {
             "template_display_name": display_name,
             "template_technical_name": technical_name,
             "template_is_system": _is_system_template(self.object),
             "campaign_prefill_url": f"{reverse('mailings_v2_campaigns_new')}?{urlencode({'template_id': self.object.id})}",
+            "template_copy_url": (
+                f"{reverse('mailings_v2_templates_new')}?"
+                f"{urlencode({'source_template_id': self.object.id})}"
+            ),
+            "coupon_autoscenario_usages": coupon_usage_rows,
+            "template_locked_by_coupon_autoscenarios": any(
+                row["is_locking"] for row in coupon_usage_rows
+            ),
         }
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context.update(self._build_editor_context())
+        if context.get("template_locked_by_coupon_autoscenarios"):
+            _mark_template_form_readonly(context.get("form"))
 
         selected_guest_id = str(self.request.GET.get("guest_id") or "").strip()
         preview_context = _build_template_preview_state(
@@ -1452,6 +1521,16 @@ class MailingsV2TemplateUpdateView(UpdateView):
 
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
+        if (
+            str(request.POST.get("action") or "").strip() != "preview"
+            and _is_template_locked_by_coupon_autoscenarios(self.object)
+        ):
+            messages.error(
+                self.request,
+                "Шаблон не сохранён: он используется в купонном автосценарии в режиме «Пилот» или «Активен».",
+            )
+            return redirect("mailings_v2_templates_detail", pk=self.object.pk)
+
         if str(request.POST.get("action") or "").strip() == "preview":
             form = self.get_form()
             selected_guest_id = str(request.POST.get("preview_guest_id") or "").strip()
@@ -1475,6 +1554,63 @@ class MailingsV2TemplateUpdateView(UpdateView):
         self.object = form.save()
         messages.success(self.request, "Шаблон сохранен.")
         return redirect("mailings_v2_templates_edit", pk=self.object.pk)
+
+
+def _build_coupon_autoscenario_template_usage_rows(template_obj: MessageTemplate | None) -> list[dict[str, object]]:
+    """
+    Возвращает купонные автосценарии, где используется шаблон.
+    """
+    if template_obj is None or not template_obj.pk:
+        return []
+
+    configs = (
+        CouponAutomationConfig.objects.select_related("scenario")
+        .filter(scenario__template=template_obj)
+        .order_by("scenario__name", "scenario__code", "id")
+    )
+    rows: list[dict[str, object]] = []
+    for config in configs:
+        scenario = config.scenario
+        rows.append(
+            {
+                "config_id": config.pk,
+                "scenario_name": scenario.name,
+                "scenario_code": scenario.code,
+                "execution_mode": config.execution_mode,
+                "execution_mode_label": config.get_execution_mode_display(),
+                "is_locking": config.execution_mode in COUPON_TEMPLATE_LOCK_EXECUTION_MODES,
+                "settings_url": reverse(
+                    "mailings_v2_coupon_autoscenario_settings",
+                    kwargs={"pk": config.pk},
+                ),
+            }
+        )
+    return rows
+
+
+def _is_template_locked_by_coupon_autoscenarios(template_obj: MessageTemplate | None) -> bool:
+    """
+    Запрещает правку шаблона, уже задействованного в работающем купонном сценарии.
+    """
+    if template_obj is None or not template_obj.pk:
+        return False
+    return CouponAutomationConfig.objects.filter(
+        scenario__template=template_obj,
+        execution_mode__in=COUPON_TEMPLATE_LOCK_EXECUTION_MODES,
+    ).exists()
+
+
+def _mark_template_form_readonly(form) -> None:
+    """
+    Оставляет форму видимой, но не даёт случайно принять её как редактируемую.
+    """
+    if form is None:
+        return
+    for field_name, field in form.fields.items():
+        if field_name == "is_active":
+            field.widget.attrs["disabled"] = "disabled"
+        else:
+            field.widget.attrs["readonly"] = "readonly"
 
 
 class MailingsV2MonitorView(TemplateView):
@@ -2210,6 +2346,59 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
     form_class = CouponAutomationScenarioCreateForm
     template_name = "mailing_v2/coupon_autoscenario_create.html"
 
+    @staticmethod
+    def _build_existing_template_payload() -> dict[str, dict[str, object]]:
+        preview_guest = SimpleNamespace(
+            first_name="Анна",
+            last_name="Иванова",
+            phone="+79990000000",
+            email="anna@example.test",
+            birthdate=None,
+        )
+        payload: dict[str, dict[str, object]] = {}
+        templates = MessageTemplate.objects.filter(is_active=True).order_by("name", "id")
+        for template_obj in templates:
+            display_name, technical_name = _resolve_template_title(template_obj)
+            message_text = str(template_obj.message_text or "")
+            coupon_code_error = ""
+            try:
+                validate_coupon_code_placeholder(message_text)
+            except ValidationError as exc:
+                coupon_code_error = "; ".join(exc.messages)
+            payload[str(template_obj.pk)] = {
+                "id": template_obj.pk,
+                "name": template_obj.name,
+                "display_name": display_name or template_obj.name,
+                "technical_name": technical_name,
+                "description": template_obj.description or "",
+                "message_text": message_text,
+                "preview_text": render_message_for_guest(
+                    message_text,
+                    preview_guest,
+                    extra_context={
+                        "coupon_code": "TEST123",
+                        "days_without_visits": 30,
+                        "days_until_birthday": 7,
+                        "birthday_date": "01.07",
+                    },
+                ),
+                "has_coupon_code": not bool(coupon_code_error),
+                "coupon_code_status": (
+                    f"Параметр {COUPON_CODE_PLACEHOLDER} найден."
+                    if not coupon_code_error
+                    else coupon_code_error
+                ),
+                "detail_url": reverse(
+                    "mailings_v2_templates_detail",
+                    kwargs={"pk": template_obj.pk},
+                ),
+                "edit_url": reverse(
+                    "mailings_v2_templates_edit",
+                    kwargs={"pk": template_obj.pk},
+                ),
+            }
+        return payload
+
     def form_valid(self, form):
         config = form.save()
         self.object = config
@@ -2230,6 +2419,7 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
         context["scenarios_url"] = reverse("mailings_v2_scenarios")
         context["has_active_bot_profiles"] = BotProfile.objects.filter(is_active=True).exists()
         context["bot_profiles_admin_url"] = "/admin/guests/botprofile/"
+        context["existing_template_payload"] = self._build_existing_template_payload()
         return context
 
 

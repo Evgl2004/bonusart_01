@@ -30,9 +30,38 @@
       <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates' %}">Назад к шаблонам</a>
       {% if object and object.pk %}
         <a class="btn btn-outline-primary" href="{{ campaign_prefill_url }}">Создать кампанию по шаблону</a>
+        <a class="btn btn-outline-primary" href="{{ template_copy_url }}">Создать на основе</a>
       {% endif %}
     </div>
   </div>
+
+  {% if source_template %}
+    <div class="alert alert-info" role="alert">
+      Создаётся копия шаблона
+      <a href="{{ source_template_detail_url }}">{{ source_template.name }}</a>.
+      Исходный шаблон не будет изменён.
+    </div>
+  {% endif %}
+
+  {% if template_locked_by_coupon_autoscenarios %}
+    <div class="alert alert-warning" role="alert">
+      <div class="fw-semibold mb-2">Редактирование шаблона заблокировано.</div>
+      <div class="mb-2">
+        Шаблон используется в купонном автосценарии в режиме «Пилот» или «Активен».
+        Чтобы изменить текст, создайте отдельный шаблон на основе текущего или переведите автосценарий в безопасный режим.
+      </div>
+      <ul class="mb-0">
+        {% for usage in coupon_autoscenario_usages %}
+          {% if usage.is_locking %}
+            <li>
+              <a href="{{ usage.settings_url }}">{{ usage.scenario_name }}</a>
+              (<code>{{ usage.scenario_code }}</code>, {{ usage.execution_mode_label }})
+            </li>
+          {% endif %}
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
 
   <div class="card border-0 shadow-sm">
     <div class="card-body">
@@ -131,7 +160,11 @@
         {% endif %}
 
         <div class="d-flex gap-2 mt-3">
-          <button type="submit" class="btn btn-primary">Сохранить</button>
+          {% if template_locked_by_coupon_autoscenarios %}
+            <a class="btn btn-outline-primary" href="{% url 'mailings_v2_templates_detail' object.id %}">Открыть карточку шаблона</a>
+          {% else %}
+            <button type="submit" class="btn btn-primary">Сохранить</button>
+          {% endif %}
           <a class="btn btn-outline-secondary" href="{% url 'mailings_v2_templates' %}">К списку шаблонов</a>
         </div>
       </form>

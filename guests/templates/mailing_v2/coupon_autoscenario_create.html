@@ -38,6 +38,15 @@
     border-radius: 0.45rem;
     background: #f8fafc;
   }
+
+  .coupon-template-preview {
+    background: #f8fafc;
+  }
+
+  .coupon-template-preview pre {
+    min-height: 120px;
+    white-space: pre-wrap;
+  }
 </style>
 
 <div class="container-fluid">
@@ -145,6 +154,31 @@
           {% if form.existing_template.errors %}
             <div class="text-danger small mt-1">{{ form.existing_template.errors|join:", " }}</div>
           {% endif %}
+          <div class="coupon-template-preview border rounded p-3 mt-3" id="coupon-existing-template-card" hidden>
+            <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+              <div>
+                <div class="fw-semibold" id="coupon-existing-template-title"></div>
+                <div class="small text-muted" id="coupon-existing-template-description"></div>
+              </div>
+              <div class="d-flex gap-2">
+                <a class="btn btn-sm btn-outline-primary" id="coupon-existing-template-edit" href="#" target="_blank" rel="noopener">Редактировать шаблон</a>
+                <button class="btn btn-sm btn-outline-secondary" type="button" id="coupon-existing-template-copy">Создать на основе</button>
+              </div>
+            </div>
+            <div class="mb-2">
+              <span class="badge" id="coupon-existing-template-status"></span>
+            </div>
+            <div class="row g-3">
+              <div class="col-12 col-lg-6">
+                <div class="small text-muted mb-1">Текст выбранного шаблона</div>
+                <pre class="mb-0 border rounded bg-white p-2" id="coupon-existing-template-text"></pre>
+              </div>
+              <div class="col-12 col-lg-6">
+                <div class="small text-muted mb-1">Предпросмотр с тестовым купоном</div>
+                <pre class="mb-0 border rounded bg-white p-2" id="coupon-existing-template-preview"></pre>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div class="col-12" data-template-mode-section="create">
@@ -218,19 +252,108 @@
   </form>
 </div>
 
+{{ existing_template_payload|json_script:"coupon-existing-template-data" }}
+
 <script>
   (function () {
     const templateModeList = document.getElementById("coupon-template-mode-list");
+    const existingTemplateSelect = document.getElementById("id_existing_template");
+    const existingTemplateDataElement = document.getElementById("coupon-existing-template-data");
+    const existingTemplateCard = document.getElementById("coupon-existing-template-card");
+    const existingTemplateTitle = document.getElementById("coupon-existing-template-title");
+    const existingTemplateDescription = document.getElementById("coupon-existing-template-description");
+    const existingTemplateStatus = document.getElementById("coupon-existing-template-status");
+    const existingTemplateText = document.getElementById("coupon-existing-template-text");
+    const existingTemplatePreview = document.getElementById("coupon-existing-template-preview");
+    const existingTemplateEdit = document.getElementById("coupon-existing-template-edit");
+    const existingTemplateCopy = document.getElementById("coupon-existing-template-copy");
+    let existingTemplateData = {};
+    if (existingTemplateDataElement) {
+      try {
+        existingTemplateData = JSON.parse(existingTemplateDataElement.textContent || "{}");
+      } catch (error) {
+        existingTemplateData = {};
+      }
+    }
+
+    function selectedExistingTemplate() {
+      if (!existingTemplateSelect) {
+        return null;
+      }
+      return existingTemplateData[String(existingTemplateSelect.value || "")] || null;
+    }
+
+    function setText(element, value) {
+      if (element) {
+        element.textContent = value || "—";
+      }
+    }
+
+    function updateExistingTemplateCard() {
+      const selected = selectedExistingTemplate();
+      if (!existingTemplateCard) {
+        return;
+      }
+      existingTemplateCard.hidden = !selected;
+      if (!selected) {
+        return;
+      }
+
+      setText(existingTemplateTitle, selected.display_name || selected.name);
+      setText(existingTemplateDescription, selected.description || selected.technical_name || "");
+      setText(existingTemplateText, selected.message_text);
+      setText(existingTemplatePreview, selected.preview_text);
+
+      if (existingTemplateStatus) {
+        existingTemplateStatus.className = selected.has_coupon_code ? "badge text-bg-success" : "badge text-bg-danger";
+        existingTemplateStatus.textContent = selected.coupon_code_status || "";
+      }
+      if (existingTemplateEdit) {
+        existingTemplateEdit.href = selected.edit_url || "#";
+      }
+    }
+
     function updateTemplateModeSections() {
       const checked = document.querySelector('input[name="template_mode"]:checked');
       const mode = checked ? checked.value : "create";
       document.querySelectorAll("[data-template-mode-section]").forEach(function (section) {
         section.hidden = section.getAttribute("data-template-mode-section") !== mode;
       });
+      updateExistingTemplateCard();
     }
     if (templateModeList) {
       templateModeList.addEventListener("change", updateTemplateModeSections);
       updateTemplateModeSections();
+    }
+    if (existingTemplateSelect) {
+      existingTemplateSelect.addEventListener("change", updateExistingTemplateCard);
+      updateExistingTemplateCard();
+    }
+    if (existingTemplateCopy) {
+      existingTemplateCopy.addEventListener("click", function () {
+        const selected = selectedExistingTemplate();
+        if (!selected) {
+          return;
+        }
+        const createMode = document.querySelector('input[name="template_mode"][value="create"]');
+        if (createMode) {
+          createMode.checked = true;
+        }
+        const nameInput = document.getElementById("id_template_name");
+        const descriptionInput = document.getElementById("id_template_description");
+        const textInput = document.getElementById("id_template_text");
+        if (nameInput) {
+          nameInput.value = `${selected.name || selected.display_name || "Шаблон"} (копия)`;
+        }
+        if (descriptionInput) {
+          descriptionInput.value = selected.description || `На основе шаблона ID ${selected.id}`;
+        }
+        if (textInput) {
+          textInput.value = selected.message_text || "";
+          textInput.focus();
+        }
+        updateTemplateModeSections();
+      });
     }
 
     const list = document.getElementById("coupon-create-bot-choice-list");
