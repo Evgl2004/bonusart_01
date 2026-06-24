@@ -424,6 +424,7 @@ class NotificationScenarioRunnerBranchesTests(TestCase):
             stat = notification_scenarios.run_scheduled_meat_lover_scenario(
                 scenario_code=scenario.code,
                 limit_per_scenario=100,
+                coupon_resolver=lambda _guest, _scenario: {"coupon_code": "IGNORED"},
                 now=now,
             )
 

@@ -382,6 +382,7 @@ def run_scheduled_meat_lover_scenario(
     *,
     scenario_code: str,
     limit_per_scenario: int = 1000,
+    coupon_resolver: Optional[CouponResolver] = None,
     now: Optional[datetime] = None,
 ) -> ScenarioRunStat:
     """
@@ -392,6 +393,8 @@ def run_scheduled_meat_lover_scenario(
     2. минимальное число заказов `min_orders_count`;
     3. минимальный средний чек `min_avg_check_net`.
     """
+    del coupon_resolver
+
     safe_code = str(scenario_code or "").strip()
     if not safe_code:
         return ScenarioRunStat(scenario_code="")
