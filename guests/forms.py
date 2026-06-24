@@ -886,6 +886,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
                     self._audience_venue_map.get(audience_venue_code)
                     or cleaned_data.get("audience_venue_name")
                 )
+                cleaned_data["venue_selection_mode"] = (
+                    CouponAutomationConfig.VenueSelectionMode.LAST_ORDER
+                )
 
         if venue_code and venue_code in getattr(self, "_coupon_venue_map", {}):
             cleaned_data["venue_name"] = self._coupon_venue_map.get(venue_code) or cleaned_data.get("venue_name")

@@ -2643,6 +2643,9 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Отбор гостей по заведению")
         self.assertContains(response, "Как отбирать гостей по заведению")
         self.assertContains(response, "Был хотя бы 1 раз и не был N+ дней")
+        self.assertContains(response, "venue-selection-locked-hint")
+        self.assertContains(response, "Отбор гостей по заведению включён")
+        self.assertContains(response, "venueSelectionMode.disabled = true")
         self.assertContains(response, "Резерв без правил")
         self.assertContains(response, "Дополнительно: условия iikoCard и карточка купона")
         self.assertContains(response, "Шаблон сообщения гостю")
@@ -2712,7 +2715,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         config.refresh_from_db()
         self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.PILOT)
-        self.assertEqual(config.venue_selection_mode, CouponAutomationConfig.VenueSelectionMode.ALL_VISITED)
+        self.assertEqual(config.venue_selection_mode, CouponAutomationConfig.VenueSelectionMode.LAST_ORDER)
         self.assertEqual(
             config.audience_venue_filter_mode,
             CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE,

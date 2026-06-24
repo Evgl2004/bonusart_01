@@ -461,6 +461,10 @@
           {% if form.venue_selection_mode.errors %}
             <div class="text-danger small mt-1">{{ form.venue_selection_mode.errors|join:", " }}</div>
           {% endif %}
+          <div class="form-text text-primary" id="venue-selection-locked-hint" hidden>
+            Отбор гостей по заведению включён, поэтому купон выбирается по выбранному заведению отбора.
+            Технически используется безопасный режим «Последнее заведение».
+          </div>
         </div>
         <div class="col-12 col-lg-8">
           <div class="alert alert-light border small mb-0">
@@ -791,6 +795,31 @@
 
     connectBotSelectionButtons("coupon-bot-choice-list", "coupon-bot-select-all", "coupon-bot-clear-all");
     connectBotSelectionButtons("request-bot-choice-list", "request-bot-select-all", "request-bot-clear-all");
+
+    var audienceVenueMode = document.getElementById("id_audience_venue_filter_mode");
+    var venueSelectionMode = document.getElementById("id_venue_selection_mode");
+    var venueSelectionLockedHint = document.getElementById("venue-selection-locked-hint");
+
+    function syncVenueSelectionLock() {
+      if (!audienceVenueMode || !venueSelectionMode) {
+        return;
+      }
+      var audienceFilterEnabled = audienceVenueMode.value && audienceVenueMode.value !== "disabled";
+      if (audienceFilterEnabled) {
+        venueSelectionMode.value = "last_order";
+        venueSelectionMode.disabled = true;
+      } else {
+        venueSelectionMode.disabled = false;
+      }
+      if (venueSelectionLockedHint) {
+        venueSelectionLockedHint.hidden = !audienceFilterEnabled;
+      }
+    }
+
+    if (audienceVenueMode && venueSelectionMode) {
+      audienceVenueMode.addEventListener("change", syncVenueSelectionLock);
+      syncVenueSelectionLock();
+    }
 
     if (window.bootstrap && window.bootstrap.Tooltip) {
       var tooltipNodes = document.querySelectorAll('[data-bs-toggle="tooltip"]');
