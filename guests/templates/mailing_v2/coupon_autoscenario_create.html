@@ -25,6 +25,19 @@
     background: #f8fafc;
     width: 100%;
   }
+
+  .coupon-template-mode-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .coupon-template-mode-list .form-check {
+    padding: 0.45rem 0.65rem 0.45rem 2rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    background: #f8fafc;
+  }
 </style>
 
 <div class="container-fluid">
@@ -108,29 +121,59 @@
 
       <h2 class="h6 mb-3">Шаблон сообщения</h2>
       <div class="row g-3">
-        <div class="col-12 col-lg-6">
-          {{ form.template_name.label_tag }}
-          {{ form.template_name }}
-          {% if form.template_name.errors %}
-            <div class="text-danger small mt-1">{{ form.template_name.errors|join:", " }}</div>
-          {% endif %}
-        </div>
-        <div class="col-12 col-lg-6">
-          {{ form.template_description.label_tag }}
-          {{ form.template_description }}
-          {% if form.template_description.errors %}
-            <div class="text-danger small mt-1">{{ form.template_description.errors|join:", " }}</div>
-          {% endif %}
-        </div>
         <div class="col-12">
-          {{ form.template_text.label_tag }}
-          {{ form.template_text }}
-          <div class="form-text">
-            Можно использовать переменные <code>&#123;&#123; first_name &#125;&#125;</code>, <code>&#123;&#123; days_without_visits &#125;&#125;</code>, <code>{coupon_code}</code>.
+          {{ form.template_mode.label_tag }}
+          <div class="coupon-template-mode-list" id="coupon-template-mode-list">
+            {% for radio in form.template_mode %}
+              <div class="form-check">
+                {{ radio.tag }}
+                <label class="form-check-label" for="{{ radio.id_for_label }}">{{ radio.choice_label }}</label>
+              </div>
+            {% endfor %}
           </div>
-          {% if form.template_text.errors %}
-            <div class="text-danger small mt-1">{{ form.template_text.errors|join:", " }}</div>
+          {% if form.template_mode.errors %}
+            <div class="text-danger small mt-1">{{ form.template_mode.errors|join:", " }}</div>
           {% endif %}
+        </div>
+
+        <div class="col-12" data-template-mode-section="existing">
+          {{ form.existing_template.label_tag }}
+          {{ form.existing_template }}
+          {% if form.existing_template.help_text %}
+            <div class="form-text">{{ form.existing_template.help_text }}</div>
+          {% endif %}
+          {% if form.existing_template.errors %}
+            <div class="text-danger small mt-1">{{ form.existing_template.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="col-12" data-template-mode-section="create">
+          <div class="row g-3">
+            <div class="col-12 col-lg-6">
+              {{ form.template_name.label_tag }}
+              {{ form.template_name }}
+              {% if form.template_name.errors %}
+                <div class="text-danger small mt-1">{{ form.template_name.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-lg-6">
+              {{ form.template_description.label_tag }}
+              {{ form.template_description }}
+              {% if form.template_description.errors %}
+                <div class="text-danger small mt-1">{{ form.template_description.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+            <div class="col-12">
+              {{ form.template_text.label_tag }}
+              {{ form.template_text }}
+              <div class="form-text">
+                Обязательный параметр купона: <code>{coupon_code}</code>. Также можно использовать <code>&#123;&#123; first_name &#125;&#125;</code> и <code>&#123;&#123; days_without_visits &#125;&#125;</code>.
+              </div>
+              {% if form.template_text.errors %}
+                <div class="text-danger small mt-1">{{ form.template_text.errors|join:", " }}</div>
+              {% endif %}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -177,6 +220,19 @@
 
 <script>
   (function () {
+    const templateModeList = document.getElementById("coupon-template-mode-list");
+    function updateTemplateModeSections() {
+      const checked = document.querySelector('input[name="template_mode"]:checked');
+      const mode = checked ? checked.value : "create";
+      document.querySelectorAll("[data-template-mode-section]").forEach(function (section) {
+        section.hidden = section.getAttribute("data-template-mode-section") !== mode;
+      });
+    }
+    if (templateModeList) {
+      templateModeList.addEventListener("change", updateTemplateModeSections);
+      updateTemplateModeSections();
+    }
+
     const list = document.getElementById("coupon-create-bot-choice-list");
     if (!list) {
       return;

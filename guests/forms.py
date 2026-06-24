@@ -25,6 +25,45 @@ COUPON_AUTOSCENARIO_STATE_CHOICES = [
     (CouponAutomationConfig.ExecutionMode.PAUSED, "Пауза"),
 ]
 
+COUPON_CODE_PLACEHOLDER = "{coupon_code}"
+COUPON_CODE_PLACEHOLDER_HINTS = (
+    "{{ coupon_code }}",
+    "{{coupon_code}}",
+    "{ coupon_code }",
+    "[coupon_code]",
+)
+COUPON_TEMPLATE_MODE_CREATE = "create"
+COUPON_TEMPLATE_MODE_EXISTING = "existing"
+COUPON_TEMPLATE_MODE_CHOICES = (
+    (COUPON_TEMPLATE_MODE_CREATE, "Создать новый шаблон"),
+    (COUPON_TEMPLATE_MODE_EXISTING, "Использовать существующий шаблон"),
+)
+
+
+def validate_coupon_code_placeholder(text: str):
+    """
+    Купонный автосценарий обязан показать гостю фактический код купона.
+    """
+    safe_text = str(text or "")
+    if COUPON_CODE_PLACEHOLDER in safe_text:
+        return
+
+    for wrong_placeholder in COUPON_CODE_PLACEHOLDER_HINTS:
+        if wrong_placeholder in safe_text:
+            raise forms.ValidationError(
+                "Для купонного автосценария нужен плейсхолдер %(placeholder)s. "
+                "Найден похожий, но неверный вариант: %(wrong)s.",
+                params={
+                    "placeholder": COUPON_CODE_PLACEHOLDER,
+                    "wrong": wrong_placeholder,
+                },
+            )
+
+    raise forms.ValidationError(
+        "В шаблоне купонного автосценария должен быть параметр %(placeholder)s.",
+        params={"placeholder": COUPON_CODE_PLACEHOLDER},
+    )
+
 
 class CouponAutomationScenarioCreateForm(forms.Form):
     """
@@ -79,9 +118,25 @@ class CouponAutomationScenarioCreateForm(forms.Form):
         widget=forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
         help_text="Используется для типа «День рождения + купон».",
     )
+    template_mode = forms.ChoiceField(
+        label="Как выбрать шаблон",
+        choices=COUPON_TEMPLATE_MODE_CHOICES,
+        required=False,
+        initial=COUPON_TEMPLATE_MODE_CREATE,
+        widget=forms.RadioSelect,
+    )
+    existing_template = forms.ModelChoiceField(
+        label="Существующий шаблон",
+        required=False,
+        queryset=MessageTemplate.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+        empty_label="— Выберите шаблон —",
+        help_text="Можно использовать активный шаблон из раздела «Шаблоны».",
+    )
     template_name = forms.CharField(
         label="Название шаблона",
         max_length=150,
+        required=False,
         widget=forms.TextInput(
             attrs={
                 "class": "form-control",
@@ -97,6 +152,7 @@ class CouponAutomationScenarioCreateForm(forms.Form):
     )
     template_text = forms.CharField(
         label="Текст сообщения",
+        required=False,
         widget=forms.Textarea(
             attrs={
                 "class": "form-control",
@@ -124,6 +180,12 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             "name",
             "id",
         )
+        self.fields["existing_template"].queryset = MessageTemplate.objects.filter(
+            is_active=True
+        ).order_by(
+            "name",
+            "id",
+        )
 
     def clean_code(self):
         code = str(self.cleaned_data.get("code") or "").strip().lower()
@@ -134,6 +196,8 @@ class CouponAutomationScenarioCreateForm(forms.Form):
     def clean(self):
         cleaned_data = super().clean()
         scenario_type = cleaned_data.get("scenario_type")
+        template_mode = cleaned_data.get("template_mode") or COUPON_TEMPLATE_MODE_CREATE
+        cleaned_data["template_mode"] = template_mode
 
         if scenario_type == CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON:
             if cleaned_data.get("inactive_days") is None:
@@ -144,6 +208,30 @@ class CouponAutomationScenarioCreateForm(forms.Form):
                     "birthday_preparation_window_days",
                     "Укажите окно подготовки ко дню рождения.",
                 )
+
+        if template_mode == COUPON_TEMPLATE_MODE_EXISTING:
+            template = cleaned_data.get("existing_template")
+            if template is None:
+                self.add_error("existing_template", "Выберите существующий шаблон.")
+            else:
+                try:
+                    validate_coupon_code_placeholder(template.message_text)
+                except forms.ValidationError as exc:
+                    self.add_error("existing_template", exc)
+        else:
+            template_name = str(cleaned_data.get("template_name") or "").strip()
+            template_text = str(cleaned_data.get("template_text") or "").strip()
+            cleaned_data["template_name"] = template_name
+            cleaned_data["template_text"] = template_text
+            if not template_name:
+                self.add_error("template_name", "Укажите название нового шаблона.")
+            if not template_text:
+                self.add_error("template_text", "Укажите текст нового шаблона.")
+            else:
+                try:
+                    validate_coupon_code_placeholder(template_text)
+                except forms.ValidationError as exc:
+                    self.add_error("template_text", exc)
 
         return cleaned_data
 
@@ -176,13 +264,22 @@ class CouponAutomationScenarioCreateForm(forms.Form):
 
     def save(self) -> CouponAutomationConfig:
         with transaction.atomic():
-            template = MessageTemplate.objects.create(
-                name=str(self.cleaned_data["template_name"]).strip(),
-                description=str(self.cleaned_data.get("template_description") or "").strip() or None,
-                message_text=str(self.cleaned_data["template_text"]).strip(),
-                created_by="mailings_v2_user",
-                is_active=True,
-            )
+            if self.cleaned_data["template_mode"] == COUPON_TEMPLATE_MODE_EXISTING:
+                template = self.cleaned_data["existing_template"]
+            else:
+                raw_description = str(self.cleaned_data.get("template_description") or "").strip()
+                scenario_code = str(self.cleaned_data["code"]).strip()
+                description_parts = [raw_description] if raw_description else []
+                description_parts.append(
+                    f"Создано для купонного автосценария: {scenario_code}"
+                )
+                template = MessageTemplate.objects.create(
+                    name=str(self.cleaned_data["template_name"]).strip(),
+                    description=" ".join(description_parts),
+                    message_text=str(self.cleaned_data["template_text"]).strip(),
+                    created_by="mailings_v2_user",
+                    is_active=True,
+                )
             scenario = NotificationScenario(
                 code=self.cleaned_data["code"],
                 name=str(self.cleaned_data["name"]).strip(),

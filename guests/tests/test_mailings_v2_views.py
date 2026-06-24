@@ -2219,6 +2219,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Код автосценария")
         self.assertContains(response, "Тип расчёта")
+        self.assertContains(response, "Использовать существующий шаблон")
         self.assertContains(response, "Разрешённые боты")
 
         response = self.client.post(
@@ -2252,6 +2253,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertTrue(scenario.settings["coupon_required"])
         self.assertEqual(scenario.template.name, "Сами Сусами: Канпети для остывших гостей")
         self.assertEqual(scenario.template.created_by, "mailings_v2_user")
+        self.assertIn("Создано для купонного автосценария: sami_susami_kanpeti_30d", scenario.template.description)
         self.assertEqual(list(scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])
         self.assertEqual(
             config.scenario_type,
@@ -2262,6 +2264,116 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(config.settings, {})
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_coupon_autoscenario_create_view_uses_existing_template(self):
+        """
+        Оператор может привязать активный существующий шаблон без создания дубля.
+        """
+        existing_template = MessageTemplate.objects.create(
+            name="Готовый шаблон купона",
+            description="Уже согласованный текст.",
+            message_text="Привет, {{ first_name }}! Ваш купон: {coupon_code}",
+            created_by="operator",
+            is_active=True,
+        )
+        templates_before = MessageTemplate.objects.count()
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_create"),
+            {
+                "code": "existing_template_coupon",
+                "name": "Сценарий с готовым шаблоном",
+                "scenario_type": CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+                "inactive_days": "30",
+                "birthday_preparation_window_days": "",
+                "template_mode": "existing",
+                "existing_template": str(existing_template.id),
+                "template_name": "",
+                "template_description": "",
+                "template_text": "",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        scenario = NotificationScenario.objects.get(code="existing_template_coupon")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(scenario.template_id, existing_template.id)
+        self.assertEqual(MessageTemplate.objects.count(), templates_before)
+
+    def test_coupon_autoscenario_create_view_requires_coupon_code_in_new_template(self):
+        """
+        Новый купонный автосценарий нельзя создать с шаблоном без {coupon_code}.
+        """
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_create"),
+            {
+                "code": "missing_coupon_code",
+                "name": "Без кода купона",
+                "scenario_type": CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+                "inactive_days": "30",
+                "birthday_preparation_window_days": "",
+                "template_name": "Шаблон без купона",
+                "template_description": "",
+                "template_text": "Привет, {{ first_name }}!",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "должен быть параметр")
+        self.assertFalse(NotificationScenario.objects.filter(code="missing_coupon_code").exists())
+
+    def test_coupon_autoscenario_create_view_rejects_wrong_coupon_placeholder(self):
+        """
+        Похожие, но неверные варианты плейсхолдера не должны проходить валидацию.
+        """
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_create"),
+            {
+                "code": "wrong_coupon_placeholder",
+                "name": "Неверный код купона",
+                "scenario_type": CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+                "inactive_days": "30",
+                "birthday_preparation_window_days": "",
+                "template_name": "Шаблон с неверным купоном",
+                "template_description": "",
+                "template_text": "Привет, {{ first_name }}! Купон: {{ coupon_code }}",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Найден похожий, но неверный вариант")
+        self.assertFalse(NotificationScenario.objects.filter(code="wrong_coupon_placeholder").exists())
+
+    def test_coupon_autoscenario_create_view_rejects_existing_template_without_coupon_code(self):
+        """
+        Существующий шаблон тоже обязан содержать точный {coupon_code}.
+        """
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_create"),
+            {
+                "code": "existing_template_without_coupon",
+                "name": "Готовый шаблон без купона",
+                "scenario_type": CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+                "inactive_days": "30",
+                "birthday_preparation_window_days": "",
+                "template_mode": "existing",
+                "existing_template": str(self.template.id),
+                "template_name": "",
+                "template_description": "",
+                "template_text": "",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "должен быть параметр")
+        self.assertFalse(NotificationScenario.objects.filter(code="existing_template_without_coupon").exists())
 
     def test_coupon_autoscenario_create_view_stores_birthday_window_by_type(self):
         """

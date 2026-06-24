@@ -2201,9 +2201,9 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
     """
     Создание пользовательского купонного автосценария из интерфейса рассылок.
 
-    Форма создаёт выключенный `NotificationScenario`, шаблон сообщения и
-    черновой `CouponAutomationConfig`, затем переводит оператора в настройки
-    правил купонов и пилота.
+    Форма создаёт выключенный `NotificationScenario`, создаёт или привязывает
+    шаблон сообщения и черновой `CouponAutomationConfig`, затем переводит
+    оператора в настройки правил купонов и пилота.
     """
 
     form_class = CouponAutomationScenarioCreateForm
