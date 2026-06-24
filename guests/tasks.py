@@ -242,6 +242,28 @@ def run_coupon_campaign_close_task() -> int:
         return 0
 
 
+def run_coupon_autoscenario_close_task() -> int:
+    if not bool(getattr(settings, "COUPON_AUTOSCENARIO_CLOSE_ENABLED", True)):
+        logger.info(
+            "Coupon autoscenario close (schedule): disabled by COUPON_AUTOSCENARIO_CLOSE_ENABLED."
+        )
+        return 0
+    if not bool(getattr(settings, "COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED", False)):
+        logger.info(
+            "Coupon autoscenario close (schedule): disabled by COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED."
+        )
+        return 0
+
+    limit = max(1, int(getattr(settings, "COUPON_AUTOSCENARIO_CLOSE_LIMIT", 100) or 100))
+    try:
+        call_command("close_coupon_autoscenarios", limit=limit)
+        logger.info("Coupon autoscenario close (schedule): completed (limit=%s).", limit)
+        return 1
+    except Exception as err:
+        logger.exception("Coupon autoscenario close (schedule): failed: %s", err)
+        return 0
+
+
 def _parse_hhmm(value: str, *, default: dt_time) -> dt_time:
     """
     Возвращает время в формате HH:MM.

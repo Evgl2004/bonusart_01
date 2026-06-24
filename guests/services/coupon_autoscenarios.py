@@ -392,6 +392,24 @@ class CouponAutoscenarioCleanupResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CouponAutoscenarioCloseStats:
+    assignments_scanned: int = 0
+    assignments_expired: int = 0
+    registry_marked_expired: int = 0
+    queue_events_created: int = 0
+    queue_events_updated: int = 0
+
+    def as_dict(self) -> dict:
+        return {
+            "assignments_scanned": int(self.assignments_scanned),
+            "assignments_expired": int(self.assignments_expired),
+            "registry_marked_expired": int(self.registry_marked_expired),
+            "queue_events_created": int(self.queue_events_created),
+            "queue_events_updated": int(self.queue_events_updated),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PilotRecipientFilter:
     phones: tuple[str, ...] = field(default_factory=tuple)
     guest_ids: tuple[int, ...] = field(default_factory=tuple)
@@ -1272,6 +1290,139 @@ def cleanup_coupon_autoscenario_pilot_assignment(
         queue_event_created=created,
         coupon_series=assignment.coupon_series,
         coupon_code=assignment.coupon_code,
+    )
+
+
+def close_expired_coupon_autoscenario_assignments(
+    *,
+    close_before: datetime | None = None,
+    limit: int = 100,
+    dry_run: bool = False,
+) -> CouponAutoscenarioCloseStats:
+    current_now = close_before or timezone.now()
+    safe_limit = max(1, int(limit or 100))
+
+    assignments_scanned = 0
+    assignments_expired = 0
+    registry_marked_expired = 0
+    queue_events_created = 0
+    queue_events_updated = 0
+    run_ids_to_refresh: set[int] = set()
+
+    with transaction.atomic():
+        assignments = list(
+            _autoscenario_assignments_for_update_queryset()
+            .select_related("coupon", "scenario", "run", "config", "guest")
+            .filter(
+                status__in=[
+                    CouponAutoscenarioAssignment.Status.RESERVED,
+                    CouponAutoscenarioAssignment.Status.SENT,
+                ],
+                vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+                lifetime_expires_at__isnull=False,
+                lifetime_expires_at__lte=current_now,
+            )
+            .order_by("lifetime_expires_at", "id")[:safe_limit]
+        )
+        assignments_scanned = len(assignments)
+
+        for assignment in assignments:
+            assignments_expired += 1
+            payload = _build_autoscenario_status_update_payload(
+                assignment=assignment,
+                status=CouponAutoscenarioAssignment.Status.EXPIRED,
+                now=current_now,
+                meta={
+                    "post_autoscenario_expire": True,
+                    "remove_from_guest": True,
+                    "release_to_pool": False,
+                },
+            )
+            existing_event = _find_autoscenario_status_update_event(
+                assignment=assignment,
+                status=CouponAutoscenarioAssignment.Status.EXPIRED,
+            )
+            existing_event_acked = (
+                existing_event is not None
+                and existing_event.status == CouponVtelemaxSyncQueue.Status.ACKED
+            )
+            if existing_event is None:
+                queue_events_created += 1
+            elif not existing_event_acked:
+                queue_events_updated += 1
+
+            coupon = assignment.coupon
+            if coupon is not None and (
+                coupon.is_active or coupon.pool_status != CouponRegistryEntry.PoolStatus.EXPIRED
+            ):
+                registry_marked_expired += 1
+
+            if dry_run:
+                continue
+
+            if coupon is not None:
+                coupon.is_active = False
+                coupon.pool_status = CouponRegistryEntry.PoolStatus.EXPIRED
+                coupon.save(update_fields=["is_active", "pool_status", "updated_at"])
+
+            assignment.status = CouponAutoscenarioAssignment.Status.EXPIRED
+            if existing_event_acked:
+                assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+                assignment.vtelemax_synced_at = existing_event.ack_at
+            else:
+                assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING
+                assignment.vtelemax_synced_at = None
+            assignment.vtelemax_sync_error = None
+            assignment.save(
+                update_fields=[
+                    "status",
+                    "vtelemax_sync_status",
+                    "vtelemax_synced_at",
+                    "vtelemax_sync_error",
+                    "updated_at",
+                ]
+            )
+
+            if existing_event is None:
+                CouponVtelemaxSyncQueue.objects.create(
+                    direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+                    autoscenario_assignment=assignment,
+                    payload_json=payload,
+                    status=CouponVtelemaxSyncQueue.Status.PENDING,
+                    next_retry_at=current_now,
+                )
+            elif not existing_event_acked:
+                existing_event.payload_json = payload
+                existing_event.status = CouponVtelemaxSyncQueue.Status.PENDING
+                existing_event.last_error = None
+                existing_event.next_retry_at = current_now
+                existing_event.sent_at = None
+                existing_event.ack_at = None
+                existing_event.save(
+                    update_fields=[
+                        "payload_json",
+                        "status",
+                        "last_error",
+                        "next_retry_at",
+                        "sent_at",
+                        "ack_at",
+                        "updated_at",
+                    ]
+                )
+
+            if assignment.run_id:
+                run_ids_to_refresh.add(int(assignment.run_id))
+
+        if not dry_run:
+            for run_id in sorted(run_ids_to_refresh):
+                _refresh_autoscenario_run_status(run_id=run_id)
+
+    return CouponAutoscenarioCloseStats(
+        assignments_scanned=assignments_scanned,
+        assignments_expired=assignments_expired,
+        registry_marked_expired=registry_marked_expired,
+        queue_events_created=queue_events_created,
+        queue_events_updated=queue_events_updated,
     )
 
 

@@ -14,6 +14,10 @@ class EnvSampleDocumentationTests(SimpleTestCase):
             "COUPON_AUTOSCENARIO_SCHEDULE_CODES",
             "COUPON_AUTOSCENARIO_SCHEDULE_LIMIT",
             "COUPON_AUTOSCENARIO_SCHEDULE_SCAN_LIMIT",
+            "COUPON_AUTOSCENARIO_CLOSE_ENABLED",
+            "COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED",
+            "COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_CRON",
+            "COUPON_AUTOSCENARIO_CLOSE_LIMIT",
         )
 
         for variable_name in expected_variables:
@@ -21,3 +25,4 @@ class EnvSampleDocumentationTests(SimpleTestCase):
                 self.assertIn(f"{variable_name}=", env_sample)
 
         self.assertNotIn("COUPON_AUTOSCENARIO_SCHEDULE_MINUTES=", env_sample)
+        self.assertNotIn("COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_MINUTES=", env_sample)

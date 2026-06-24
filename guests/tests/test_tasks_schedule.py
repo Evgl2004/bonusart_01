@@ -252,6 +252,49 @@ class CouponCampaignCloseScheduleTaskTests(SimpleTestCase):
         mocked_call_command.assert_called_once()
 
 
+class CouponAutoscenarioCloseScheduleTaskTests(SimpleTestCase):
+    @override_settings(
+        COUPON_AUTOSCENARIO_CLOSE_ENABLED=False,
+        COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.call_command")
+    def test_autoscenario_close_task_returns_zero_when_globally_disabled(self, mocked_call_command):
+        result = tasks.run_coupon_autoscenario_close_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        COUPON_AUTOSCENARIO_CLOSE_ENABLED=True,
+        COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED=False,
+    )
+    @patch("guests.tasks.call_command")
+    def test_autoscenario_close_task_returns_zero_when_schedule_disabled(self, mocked_call_command):
+        result = tasks.run_coupon_autoscenario_close_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_not_called()
+
+    @override_settings(
+        COUPON_AUTOSCENARIO_CLOSE_ENABLED=True,
+        COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED=True,
+        COUPON_AUTOSCENARIO_CLOSE_LIMIT=77,
+    )
+    @patch("guests.tasks.call_command")
+    def test_autoscenario_close_task_calls_management_command(self, mocked_call_command):
+        result = tasks.run_coupon_autoscenario_close_task()
+        self.assertEqual(result, 1)
+        mocked_call_command.assert_called_once_with("close_coupon_autoscenarios", limit=77)
+
+    @override_settings(
+        COUPON_AUTOSCENARIO_CLOSE_ENABLED=True,
+        COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.call_command", side_effect=RuntimeError("close failed"))
+    def test_autoscenario_close_task_returns_zero_on_error(self, mocked_call_command):
+        result = tasks.run_coupon_autoscenario_close_task()
+        self.assertEqual(result, 0)
+        mocked_call_command.assert_called_once()
+
+
 class OlapDerivedScheduleTasksTests(SimpleTestCase):
     """
     Проверяет расписание инкрементальных витрин (order/daily/window).
