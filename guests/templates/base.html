@@ -98,16 +98,22 @@
 
         <a
           href="{% url 'dashboard' %}"
-          class="{% if current == 'dashboard' or current == 'dashboard_bots' or current == 'analytics_dashboard' %}active{% endif %}"
+          class="{% if current == 'dashboard' or current == 'dashboard_bots' or current == 'dashboard_segment_dynamics' or current == 'analytics_dashboard' %}active{% endif %}"
         >
           Дашборд
         </a>
-        {% if current == 'dashboard' or current == 'dashboard_bots' or current == 'analytics_dashboard' %}
+        {% if current == 'dashboard' or current == 'dashboard_bots' or current == 'dashboard_segment_dynamics' or current == 'analytics_dashboard' %}
           <a
             href="{% url 'dashboard_bots' %}"
             class="submenu-link {% if current == 'dashboard_bots' %}active{% endif %}"
           >
             Боты
+          </a>
+          <a
+            href="{% url 'dashboard_segment_dynamics' %}"
+            class="submenu-link {% if current == 'dashboard_segment_dynamics' %}active{% endif %}"
+          >
+            Динамика сегментов
           </a>
         {% endif %}
 

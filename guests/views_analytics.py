@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from typing import Any
 
 from django.views.generic import TemplateView
 from django.utils import timezone
@@ -16,6 +17,11 @@ from guests.services.analytics_dashboard import (
 from guests.services.bots_dashboard import (
     build_bots_dashboard_payload,
     normalize_bots_period_days,
+)
+from guests.services.segment_dynamics_dashboard import (
+    build_segment_dynamics_dashboard_payload,
+    normalize_period_days as normalize_segment_dynamics_period_days,
+    normalize_segment_code as normalize_segment_dynamics_segment_code,
 )
 
 
@@ -46,6 +52,64 @@ class AnalyticsDashboardView(TemplateView):
         context["period_options"] = payload["filters"]["period_options"]
         context["department_options"] = payload["filters"]["departments"]
         return context
+
+
+class SegmentDynamicsDashboardView(TemplateView):
+    """
+    Страница "Дашборд -> Динамика сегментов".
+    """
+
+    template_name = "analytics/dashboard_segment_dynamics.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        selected_period_days = normalize_segment_dynamics_period_days(
+            self.request.GET.get("period_days")
+        )
+        selected_department_id = (self.request.GET.get("department_id") or "").strip()
+        selected_segment_code = normalize_segment_dynamics_segment_code(
+            self.request.GET.get("segment_code")
+        )
+        selected_date_to = timezone.localdate() - timedelta(days=1)
+
+        payload = build_segment_dynamics_dashboard_payload(
+            date_to=selected_date_to,
+            period_days=selected_period_days,
+            department_id=selected_department_id,
+            segment_code=selected_segment_code,
+        )
+
+        context["segment_dynamics_payload"] = payload
+        context["period_options"] = payload["filters"]["period_options"]
+        context["period_links"] = self._build_period_links(
+            selected_period_days=payload["filters"]["period_days"],
+            period_options=payload["filters"]["period_options"],
+        )
+        context["selected_period_days"] = payload["filters"]["period_days"]
+        context["selected_department_id"] = payload["filters"]["department_id"]
+        context["selected_segment_code"] = payload["filters"]["segment_code"]
+        context["department_options"] = payload["filters"]["departments"]
+        context["segment_options"] = payload["filters"]["segments"]
+        return context
+
+    def _build_period_links(
+        self,
+        *,
+        selected_period_days: int,
+        period_options: list[int],
+    ) -> list[dict[str, Any]]:
+        links: list[dict[str, Any]] = []
+        for days in period_options:
+            params = self.request.GET.copy()
+            params["period_days"] = str(days)
+            links.append(
+                {
+                    "days": days,
+                    "query": params.urlencode(),
+                    "is_active": int(days) == int(selected_period_days),
+                }
+            )
+        return links
 
 
 class BotsDashboardView(TemplateView):

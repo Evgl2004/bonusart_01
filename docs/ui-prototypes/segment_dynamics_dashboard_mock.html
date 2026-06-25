@@ -1,0 +1,553 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Эскиз: Динамика сегментов</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  >
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
+      background: #f9fafb;
+      color: #111827;
+    }
+
+    .prototype-shell {
+      max-width: 1480px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .segdyn-header {
+      border: 1px solid #e5e7eb;
+      border-radius: 0.9rem;
+      background: #fff;
+      box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+      padding: 0.9rem;
+      margin-bottom: 0.9rem;
+    }
+
+    .segdyn-header-layout {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 14px;
+      align-items: start;
+    }
+
+    .segdyn-muted {
+      color: #6b7280;
+      font-size: 0.92rem;
+    }
+
+    .segdyn-period-switch {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .segdyn-period-btn {
+      border: 1px solid #c7ced9;
+      border-radius: 8px;
+      background: #fff;
+      color: #334155;
+      padding: 4px 10px;
+      font-size: 0.82rem;
+      text-decoration: none;
+    }
+
+    .segdyn-period-btn.is-active {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    .segdyn-filters {
+      border: 1px solid #e5e7eb;
+      border-radius: 0.75rem;
+      background: #f8fafc;
+      padding: 0.75rem;
+    }
+
+    .segdyn-hint {
+      border: 1px solid #bae6fd;
+      border-radius: 0.75rem;
+      background: #f0f9ff;
+      color: #075985;
+      font-size: 0.9rem;
+      padding: 0.65rem 0.8rem;
+      margin-bottom: 0.9rem;
+    }
+
+    .segdyn-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .segdyn-kpi {
+      border: 1px solid #e5e7eb;
+      border-radius: 0.85rem;
+      background: #fff;
+      box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+      padding: 0.9rem 1rem;
+      min-height: 105px;
+    }
+
+    .segdyn-kpi-title {
+      color: #475569;
+      font-size: 0.84rem;
+      margin-bottom: 0.35rem;
+    }
+
+    .segdyn-kpi-value {
+      color: #111827;
+      font-size: 1.55rem;
+      font-weight: 750;
+      line-height: 1.15;
+      margin-bottom: 0.3rem;
+    }
+
+    .segdyn-kpi-description {
+      color: #64748b;
+      font-size: 0.78rem;
+      line-height: 1.25;
+    }
+
+    .segdyn-grid {
+      display: grid;
+      grid-template-columns: 2fr 0.8fr;
+      gap: 14px;
+    }
+
+    .segdyn-panel {
+      border: 1px solid #e5e7eb;
+      border-radius: 0.9rem;
+      background: #fff;
+      box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+      padding: 0.9rem;
+      height: 100%;
+    }
+
+    .segdyn-panel-title {
+      color: #111827;
+      font-size: 1.05rem;
+      font-weight: 650;
+      margin: 0 0 0.35rem 0;
+    }
+
+    .segdyn-panel-subtitle {
+      color: #64748b;
+      font-size: 0.86rem;
+      margin: 0 0 0.7rem 0;
+    }
+
+    .segdyn-chart-wrap {
+      border: 1px solid #e5e7eb;
+      border-radius: 0.75rem;
+      background: #fff;
+      padding: 6px 6px 2px;
+    }
+
+    .segdyn-chart {
+      width: 100%;
+      height: 410px;
+    }
+
+    .segdyn-legend-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 0.4rem;
+    }
+
+    .segdyn-legend-item {
+      border: 1px solid #e2e8f0;
+      border-radius: 0.7rem;
+      background: #f8fafc;
+      padding: 0.55rem 0.65rem;
+      font-size: 0.84rem;
+      color: #334155;
+    }
+
+    .segdyn-legend-title {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      color: #111827;
+      font-weight: 650;
+      margin-bottom: 0.18rem;
+    }
+
+    .segdyn-dot {
+      width: 0.65rem;
+      height: 0.65rem;
+      border-radius: 999px;
+      flex: 0 0 auto;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+    }
+
+    .segdyn-tech {
+      margin-top: 14px;
+      border: 1px solid #e5e7eb;
+      border-radius: 0.9rem;
+      background: #fff;
+      box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+      padding: 0.85rem 0.9rem;
+    }
+
+    .segdyn-tech summary {
+      cursor: pointer;
+      color: #111827;
+      font-weight: 650;
+    }
+
+    .segdyn-table-wrap {
+      margin-top: 0.8rem;
+      overflow-x: auto;
+      border: 1px solid #e5e7eb;
+      border-radius: 0.7rem;
+    }
+
+    .segdyn-table {
+      margin: 0;
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }
+
+    @media (max-width: 1200px) {
+      .segdyn-header-layout,
+      .segdyn-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .segdyn-kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 768px) {
+      .prototype-shell {
+        padding: 14px;
+      }
+
+      .segdyn-kpi-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .segdyn-chart {
+        height: 320px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="prototype-shell">
+    <div class="segdyn-header">
+      <div class="segdyn-header-layout">
+        <div>
+          <h1 class="h3 mb-1">Дашборд: динамика сегментов</h1>
+          <div class="segdyn-muted">Период графика: 2026-05-26 - 2026-06-24 (30 дней)</div>
+          <div class="segdyn-period-switch">
+            <a class="segdyn-period-btn" href="#">7 дней</a>
+            <a class="segdyn-period-btn" href="#">14 дней</a>
+            <a class="segdyn-period-btn is-active" href="#">30 дней</a>
+            <a class="segdyn-period-btn" href="#">60 дней</a>
+            <a class="segdyn-period-btn" href="#">180 дней</a>
+          </div>
+        </div>
+
+        <form class="segdyn-filters">
+          <div class="row g-2 align-items-end">
+            <div class="col-12 col-lg-5">
+              <label class="form-label">Заведение</label>
+              <select id="departmentSelect" class="form-select">
+                <option value="">Все заведения</option>
+                <option value="center" selected>Sagur Центр</option>
+                <option value="park">Sagur Парк</option>
+                <option value="east">Sagur Восток</option>
+              </select>
+            </div>
+            <div class="col-12 col-lg-5">
+              <label class="form-label">Сегмент</label>
+              <select id="segmentSelect" class="form-select">
+                <option value="all" selected>Все сегменты</option>
+                <option value="new_in_venue">Новые за день</option>
+                <option value="active_30d">Активные 30д</option>
+                <option value="single_visit_30d">1 визит за 30д</option>
+                <option value="cooling_30_60d">Остывшие 30-60д</option>
+                <option value="lost_60d_plus">Потерянные 60+д</option>
+                <option value="bot_active_no_visits_180d">Активен в боте, без визитов 180д</option>
+              </select>
+            </div>
+            <div class="col-12 col-lg-2">
+              <button type="button" class="btn btn-primary w-100">Применить</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="newSegmentHint" class="segdyn-hint d-none">
+      Для сегмента «Новые» нужно выбрать конкретное заведение. В эскизе без заведения ряд «Новые за день» показан нулями.
+    </div>
+
+    <div id="kpiGrid" class="segdyn-kpi-grid"></div>
+
+    <div class="segdyn-grid">
+      <article class="segdyn-panel">
+        <h2 class="segdyn-panel-title">График динамики</h2>
+        <p id="chartSubtitle" class="segdyn-panel-subtitle">Sagur Центр · Все сегменты</p>
+        <div class="segdyn-chart-wrap">
+          <div id="segmentDynamicsChart" class="segdyn-chart"></div>
+        </div>
+      </article>
+
+      <aside class="segdyn-panel">
+        <h2 class="segdyn-panel-title">Ряды на графике</h2>
+        <p class="segdyn-panel-subtitle">Окно сегмента не вынесено в фильтр и зашито в название.</p>
+        <div id="legendList" class="segdyn-legend-list"></div>
+      </aside>
+    </div>
+
+    <details class="segdyn-tech">
+      <summary>Техническая детализация</summary>
+      <div class="segdyn-table-wrap">
+        <table class="table table-sm table-striped segdyn-table">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Новые</th>
+              <th>Активные 30д</th>
+              <th>1 визит за 30д</th>
+              <th>Остывшие 30-60д</th>
+              <th>Потерянные 60+д</th>
+              <th>Бот активен, без визитов 180д</th>
+              <th>Сумма рядов</th>
+            </tr>
+          </thead>
+          <tbody id="techRows"></tbody>
+        </table>
+      </div>
+    </details>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <script>
+    (function() {
+      const segments = [
+        { code: "new_in_venue", name: "Новые за день", color: "#0891b2", description: "Первая покупка в выбранном заведении пришлась на день графика." },
+        { code: "active_30d", name: "Активные 30д", color: "#0e9f6e", description: "2+ визита за последние 30 дней относительно даты графика." },
+        { code: "single_visit_30d", name: "1 визит за 30д", color: "#2563eb", description: "Ровно 1 визит за последние 30 дней относительно даты графика." },
+        { code: "cooling_30_60d", name: "Остывшие 30-60д", color: "#f59e0b", description: "Нет визитов за 30 дней, но есть визиты за последние 60 дней." },
+        { code: "lost_60d_plus", name: "Потерянные 60+д", color: "#ef4444", description: "Нет визитов за 60 дней, но есть визиты за последние 180 дней." },
+        { code: "bot_active_no_visits_180d", name: "Активен в боте, без визитов 180д", color: "#7c3aed", description: "Активен в боте, но нет визитов за последние 180 дней." }
+      ];
+      const departmentLabels = {
+        "": "Все заведения",
+        center: "Sagur Центр",
+        park: "Sagur Парк",
+        east: "Sagur Восток"
+      };
+      const departmentFactors = {
+        "": 2.35,
+        center: 1,
+        park: 0.72,
+        east: 0.54
+      };
+      const rows = buildRows("center");
+      const chart = echarts.init(document.getElementById("segmentDynamicsChart"));
+      const state = { department: "center", segment: "all" };
+
+      document.getElementById("departmentSelect").addEventListener("change", function(event) {
+        state.department = event.target.value;
+        render();
+      });
+      document.getElementById("segmentSelect").addEventListener("change", function(event) {
+        state.segment = event.target.value;
+        render();
+      });
+      window.addEventListener("resize", function() {
+        chart.resize();
+      });
+
+      render();
+
+      function render() {
+        const currentRows = buildRows(state.department);
+        const visibleSegments = state.segment === "all"
+          ? segments
+          : segments.filter(function(segment) { return segment.code === state.segment; });
+        const segmentName = state.segment === "all" ? "Все сегменты" : visibleSegments[0].name;
+        document.getElementById("chartSubtitle").textContent = departmentLabels[state.department] + " · " + segmentName;
+        document.getElementById("newSegmentHint").classList.toggle(
+          "d-none",
+          !(state.department === "" && (state.segment === "all" || state.segment === "new_in_venue"))
+        );
+        renderKpis(currentRows, state.segment);
+        renderLegend(visibleSegments);
+        renderTable(currentRows);
+        renderChart(currentRows, visibleSegments);
+      }
+
+      function buildRows(department) {
+        const factor = departmentFactors[department] || 1;
+        const result = [];
+        const dates = [
+          "2026-05-26", "2026-05-27", "2026-05-28", "2026-05-29", "2026-05-30",
+          "2026-05-31", "2026-06-01", "2026-06-02", "2026-06-03", "2026-06-04",
+          "2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08", "2026-06-09",
+          "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14",
+          "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19",
+          "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24"
+        ];
+        dates.forEach(function(day, index) {
+          const row = {
+            day: day,
+            dayLabel: day.slice(8, 10) + "." + day.slice(5, 7),
+            new_in_venue: department === "" ? 0 : Math.max(0, Math.round((9 + (index % 6) + ((index * 2) % 5)) * factor)),
+            active_30d: Math.max(0, Math.round((420 + index * 3.5 + ((index % 5) - 2) * 5) * factor)),
+            single_visit_30d: Math.max(0, Math.round((178 + index * 1.8 + ((index % 7) - 3) * 3) * factor)),
+            cooling_30_60d: Math.max(0, Math.round((126 - index * 0.45 + ((index % 6) - 2) * 4) * factor)),
+            lost_60d_plus: Math.max(0, Math.round((88 - index * 0.25 + ((index % 8) - 4) * 2) * factor)),
+            bot_active_no_visits_180d: Math.max(0, Math.round((46 - index * 0.08 + ((index % 4) - 1) * 1.5) * factor))
+          };
+          row.technicalTotal = segments.reduce(function(sum, segment) {
+            return sum + Number(row[segment.code] || 0);
+          }, 0);
+          result.push(row);
+        });
+        return result;
+      }
+
+      function renderKpis(currentRows, segmentCode) {
+        const sourceCode = segmentCode === "all" ? "" : segmentCode;
+        const first = currentRows[0];
+        const current = currentRows[currentRows.length - 1];
+        const previous = currentRows[currentRows.length - 2];
+        const weekAgo = currentRows[currentRows.length - 8];
+        const value = function(row) {
+          return sourceCode ? row[sourceCode] : row.technicalTotal;
+        };
+        const title = sourceCode
+          ? segments.find(function(segment) { return segment.code === sourceCode; }).name
+          : "Сумма рядов на графике";
+        const items = [
+          { title: "На конец периода", value: formatInt(value(current)), description: title },
+          { title: "Предыдущий день", value: formatInt(value(previous)), description: previous.day },
+          { title: "7 дней назад", value: formatInt(value(weekAgo)), description: weekAgo.day },
+          { title: "Изменение за период", value: formatSigned(value(current) - value(first)), description: first.day + " - " + current.day }
+        ];
+        document.getElementById("kpiGrid").innerHTML = items.map(function(item) {
+          return [
+            '<div class="segdyn-kpi">',
+            '<div class="segdyn-kpi-title">' + item.title + '</div>',
+            '<div class="segdyn-kpi-value">' + item.value + '</div>',
+            '<div class="segdyn-kpi-description">' + item.description + '</div>',
+            '</div>'
+          ].join("");
+        }).join("");
+      }
+
+      function renderLegend(visibleSegments) {
+        document.getElementById("legendList").innerHTML = visibleSegments.map(function(segment) {
+          return [
+            '<div class="segdyn-legend-item">',
+            '<div class="segdyn-legend-title">',
+            '<span class="segdyn-dot" style="background:' + segment.color + '"></span>',
+            '<span>' + segment.name + '</span>',
+            '</div>',
+            segment.description,
+            '</div>'
+          ].join("");
+        }).join("");
+      }
+
+      function renderTable(currentRows) {
+        document.getElementById("techRows").innerHTML = currentRows.map(function(row) {
+          return [
+            "<tr>",
+            "<td>" + row.day + "</td>",
+            "<td>" + row.new_in_venue + "</td>",
+            "<td>" + row.active_30d + "</td>",
+            "<td>" + row.single_visit_30d + "</td>",
+            "<td>" + row.cooling_30_60d + "</td>",
+            "<td>" + row.lost_60d_plus + "</td>",
+            "<td>" + row.bot_active_no_visits_180d + "</td>",
+            "<td>" + row.technicalTotal + "</td>",
+            "</tr>"
+          ].join("");
+        }).join("");
+      }
+
+      function renderChart(currentRows, visibleSegments) {
+        chart.setOption({
+          animation: false,
+          color: visibleSegments.map(function(segment) { return segment.color; }),
+          tooltip: {
+            trigger: "axis",
+            confine: true,
+            axisPointer: { type: "line" },
+            formatter: function(params) {
+              if (!params || !params.length) {
+                return "";
+              }
+              const lines = ["<strong>" + params[0].axisValue + "</strong>"];
+              params.forEach(function(item) {
+                lines.push(item.marker + item.seriesName + ": " + formatInt(item.value));
+              });
+              return lines.join("<br>");
+            }
+          },
+          legend: {
+            type: "scroll",
+            top: 0,
+            data: visibleSegments.map(function(segment) { return segment.name; })
+          },
+          grid: { left: 58, right: 18, top: 52, bottom: 42 },
+          xAxis: {
+            type: "category",
+            data: currentRows.map(function(row) { return row.dayLabel; }),
+            axisTick: { alignWithLabel: true }
+          },
+          yAxis: {
+            type: "value",
+            axisLabel: { formatter: function(value) { return formatInt(value); } },
+            splitLine: { lineStyle: { color: "#e5e7eb" } }
+          },
+          series: visibleSegments.map(function(segment) {
+            return {
+              name: segment.name,
+              type: "line",
+              smooth: false,
+              symbolSize: 6,
+              lineStyle: { width: 2.4 },
+              data: currentRows.map(function(row) { return Number(row[segment.code] || 0); })
+            };
+          })
+        }, true);
+      }
+
+      function formatInt(value) {
+        return new Intl.NumberFormat("ru-RU").format(Number(value || 0));
+      }
+
+      function formatSigned(value) {
+        const numeric = Number(value || 0);
+        if (numeric > 0) {
+          return "+" + formatInt(numeric);
+        }
+        if (numeric < 0) {
+          return "-" + formatInt(Math.abs(numeric));
+        }
+        return "0";
+      }
+    })();
+  </script>
+</body>
+</html>

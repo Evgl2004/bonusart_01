@@ -27,6 +27,7 @@ class NavigationMenuTests(TestCase):
         for route_name in (
             "dashboard",
             "dashboard_bots",
+            "dashboard_segment_dynamics",
             "segments",
             "focus_categories",
             "virtual_categories",
@@ -65,6 +66,7 @@ class NavigationMenuTests(TestCase):
         response_dashboard = self.client.get(reverse("dashboard"), secure=True)
         self.assertEqual(response_dashboard.status_code, 200)
         self.assertContains(response_dashboard, f'href="{reverse("dashboard_bots")}"', html=False)
+        self.assertContains(response_dashboard, f'href="{reverse("dashboard_segment_dynamics")}"', html=False)
 
         response_mailings = self.client.get(reverse("mailings_v2_campaigns"), secure=True)
         self.assertEqual(response_mailings.status_code, 200)

@@ -1,0 +1,447 @@
+{% extends "base.html" %}
+
+{% block title %}Дашборд: динамика сегментов{% endblock %}
+
+{% block extra_css %}
+<style>
+  .segdyn-header {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    padding: 0.9rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .segdyn-header-layout {
+    display: grid;
+    grid-template-columns: 0.9fr 1.1fr;
+    gap: 14px;
+    align-items: start;
+  }
+
+  .segdyn-muted {
+    color: #6b7280;
+    font-size: 0.92rem;
+  }
+
+  .segdyn-period-switch {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .segdyn-period-btn {
+    border: 1px solid #c7ced9;
+    border-radius: 8px;
+    background: #fff;
+    color: #334155;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    text-decoration: none;
+  }
+
+  .segdyn-period-btn.is-active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .segdyn-filters {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: #f8fafc;
+    padding: 0.75rem;
+  }
+
+  .segdyn-hint {
+    border: 1px solid #bae6fd;
+    border-radius: 0.75rem;
+    background: #f0f9ff;
+    color: #075985;
+    font-size: 0.9rem;
+    padding: 0.65rem 0.8rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .segdyn-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .segdyn-kpi {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    padding: 0.9rem 1rem;
+    min-height: 105px;
+  }
+
+  .segdyn-kpi-title {
+    color: #475569;
+    font-size: 0.84rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .segdyn-kpi-value {
+    color: #111827;
+    font-size: 1.55rem;
+    font-weight: 750;
+    line-height: 1.15;
+    margin-bottom: 0.3rem;
+  }
+
+  .segdyn-kpi-description {
+    color: #64748b;
+    font-size: 0.78rem;
+    line-height: 1.25;
+  }
+
+  .segdyn-grid {
+    display: grid;
+    grid-template-columns: 2fr 0.8fr;
+    gap: 14px;
+  }
+
+  .segdyn-panel {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    padding: 0.9rem;
+    height: 100%;
+  }
+
+  .segdyn-panel-title {
+    color: #111827;
+    font-size: 1.05rem;
+    font-weight: 650;
+    margin: 0 0 0.35rem 0;
+  }
+
+  .segdyn-panel-subtitle {
+    color: #64748b;
+    font-size: 0.86rem;
+    margin: 0 0 0.7rem 0;
+  }
+
+  .segdyn-chart-wrap {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.75rem;
+    background: #fff;
+    padding: 6px 6px 2px;
+  }
+
+  .segdyn-chart {
+    width: 100%;
+    height: 410px;
+  }
+
+  .segdyn-legend-list {
+    display: grid;
+    gap: 8px;
+    margin-top: 0.4rem;
+  }
+
+  .segdyn-legend-item {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.7rem;
+    background: #f8fafc;
+    padding: 0.55rem 0.65rem;
+    font-size: 0.84rem;
+    color: #334155;
+  }
+
+  .segdyn-legend-title {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: #111827;
+    font-weight: 650;
+    margin-bottom: 0.18rem;
+  }
+
+  .segdyn-dot {
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 999px;
+    flex: 0 0 auto;
+    border: 1px solid rgba(15, 23, 42, 0.12);
+  }
+
+  .segdyn-tech {
+    margin-top: 14px;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.9rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+    padding: 0.85rem 0.9rem;
+  }
+
+  .segdyn-tech summary {
+    cursor: pointer;
+    color: #111827;
+    font-weight: 650;
+  }
+
+  .segdyn-table-wrap {
+    margin-top: 0.8rem;
+    overflow-x: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.7rem;
+  }
+
+  .segdyn-table {
+    margin: 0;
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+
+  @media (max-width: 1200px) {
+    .segdyn-header-layout,
+    .segdyn-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .segdyn-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 768px) {
+    .segdyn-kpi-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .segdyn-chart {
+      height: 320px;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="segdyn-header">
+  <div class="segdyn-header-layout">
+    <div>
+      <h1 class="h3 mb-1">Дашборд: динамика сегментов</h1>
+      <div class="segdyn-muted">
+        Период графика: {{ segment_dynamics_payload.filters.date_from }} - {{ segment_dynamics_payload.filters.date_to }}
+        ({{ segment_dynamics_payload.filters.period_days }} дней)
+      </div>
+      <div class="segdyn-period-switch">
+        {% for item in period_links %}
+          <a
+            class="segdyn-period-btn {% if item.is_active %}is-active{% endif %}"
+            href="?{{ item.query }}"
+          >
+            {{ item.days }} дней
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+
+    <form method="get" class="segdyn-filters">
+      <input type="hidden" name="period_days" value="{{ selected_period_days }}">
+      <div class="row g-2 align-items-end">
+        <div class="col-12 col-lg-5">
+          <label class="form-label">Заведение</label>
+          <select name="department_id" class="form-select">
+            <option value="" {% if not selected_department_id %}selected{% endif %}>Все заведения</option>
+            {% for dep in department_options %}
+              <option value="{{ dep.id }}" {% if dep.id == selected_department_id %}selected{% endif %}>
+                {{ dep.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-lg-5">
+          <label class="form-label">Сегмент</label>
+          <select name="segment_code" class="form-select">
+            {% for segment in segment_options %}
+              <option value="{{ segment.code }}" {% if segment.code == selected_segment_code %}selected{% endif %}>
+                {{ segment.name }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-12 col-lg-2">
+          <button type="submit" class="btn btn-primary w-100">Применить</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if segment_dynamics_payload.needs_department_hint %}
+  <div class="segdyn-hint">
+    {{ segment_dynamics_payload.new_segment_hint }}
+  </div>
+{% endif %}
+
+<div class="segdyn-kpi-grid">
+  {% for kpi in segment_dynamics_payload.kpis %}
+    <div class="segdyn-kpi">
+      <div class="segdyn-kpi-title">{{ kpi.title }}</div>
+      <div class="segdyn-kpi-value">{{ kpi.value }}</div>
+      <div class="segdyn-kpi-description">{{ kpi.description }}</div>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="segdyn-grid">
+  <article class="segdyn-panel">
+    <h2 class="segdyn-panel-title">График динамики</h2>
+    <p class="segdyn-panel-subtitle">
+      {{ segment_dynamics_payload.filters.department_name }} · {{ segment_dynamics_payload.filters.segment_name }}
+    </p>
+    <div class="segdyn-chart-wrap">
+      <div id="segmentDynamicsChart" class="segdyn-chart"></div>
+    </div>
+  </article>
+
+  <aside class="segdyn-panel">
+    <h2 class="segdyn-panel-title">Ряды на графике</h2>
+    <p class="segdyn-panel-subtitle">Окно сегмента не вынесено в фильтр и зашито в название.</p>
+    <div class="segdyn-legend-list">
+      {% for segment in segment_dynamics_payload.segments %}
+        <div class="segdyn-legend-item">
+          <div class="segdyn-legend-title">
+            <span class="segdyn-dot" style="background: {{ segment.color }}"></span>
+            <span>{{ segment.name }}</span>
+          </div>
+          {% if segment.code == "new_in_venue" %}
+            Первая покупка в выбранном заведении пришлась на день графика.
+          {% elif segment.code == "active_30d" %}
+            2+ визита за последние 30 дней относительно даты графика.
+          {% elif segment.code == "single_visit_30d" %}
+            Ровно 1 визит за последние 30 дней относительно даты графика.
+          {% elif segment.code == "cooling_30_60d" %}
+            Нет визитов за 30 дней, но есть визиты за последние 60 дней.
+          {% elif segment.code == "lost_60d_plus" %}
+            Нет визитов за 60 дней, но есть визиты за последние 180 дней.
+          {% elif segment.code == "bot_active_no_visits_180d" %}
+            Активен в боте, но нет визитов за последние 180 дней.
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </aside>
+</div>
+
+<details class="segdyn-tech">
+  <summary>Техническая детализация</summary>
+  <div class="segdyn-table-wrap">
+    <table class="table table-sm table-striped segdyn-table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Новые</th>
+          <th>Активные 30д</th>
+          <th>1 визит за 30д</th>
+          <th>Остывшие 30-60д</th>
+          <th>Потерянные 60+д</th>
+          <th>Бот активен, без визитов 180д</th>
+          <th>Сумма рядов</th>
+          <th>Оконные метрики</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in segment_dynamics_payload.rows %}
+          <tr>
+            <td>{{ row.day }}</td>
+            <td>{{ row.new_in_venue }}</td>
+            <td>{{ row.active_30d }}</td>
+            <td>{{ row.single_visit_30d }}</td>
+            <td>{{ row.cooling_30_60d }}</td>
+            <td>{{ row.lost_60d_plus }}</td>
+            <td>{{ row.bot_active_no_visits_180d }}</td>
+            <td>{{ row.technical_total }}</td>
+            <td>{% if row.has_window_metrics %}есть{% else %}нет{% endif %}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+
+{{ segment_dynamics_payload|json_script:"segment-dynamics-data" }}
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script>
+  (function() {
+    const payloadNode = document.getElementById("segment-dynamics-data");
+    const chartNode = document.getElementById("segmentDynamicsChart");
+    if (!payloadNode || !chartNode || !window.echarts) {
+      return;
+    }
+
+    const payload = JSON.parse(payloadNode.textContent || "{}");
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    const segments = Array.isArray(payload.segments) ? payload.segments : [];
+    const labels = rows.map((row) => row.day_label || row.day || "");
+
+    const chart = window.echarts.init(chartNode);
+    chart.setOption({
+      animation: false,
+      color: segments.map((segment) => segment.color),
+      tooltip: {
+        trigger: "axis",
+        confine: true,
+        axisPointer: { type: "line" },
+        formatter: function(params) {
+          if (!params || !params.length) {
+            return "";
+          }
+          const lines = ["<strong>" + params[0].axisValue + "</strong>"];
+          params.forEach(function(item) {
+            lines.push(item.marker + item.seriesName + ": " + formatInt(item.value));
+          });
+          return lines.join("<br>");
+        }
+      },
+      legend: {
+        type: "scroll",
+        top: 0,
+        data: segments.map((segment) => segment.name)
+      },
+      grid: { left: 58, right: 18, top: 52, bottom: 42 },
+      xAxis: {
+        type: "category",
+        data: labels,
+        axisTick: { alignWithLabel: true }
+      },
+      yAxis: {
+        type: "value",
+        axisLabel: { formatter: function(value) { return formatInt(value); } },
+        splitLine: { lineStyle: { color: "#e5e7eb" } }
+      },
+      series: segments.map(function(segment) {
+        return {
+          name: segment.name,
+          type: "line",
+          smooth: false,
+          symbolSize: 6,
+          lineStyle: { width: 2.4 },
+          data: rows.map(function(row) { return Number(row[segment.code] || 0); })
+        };
+      })
+    }, true);
+
+    window.addEventListener("resize", function() {
+      chart.resize();
+    });
+
+    function formatInt(value) {
+      return new Intl.NumberFormat("ru-RU").format(Number(value || 0));
+    }
+  })();
+</script>
+{% endblock %}
