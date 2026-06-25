@@ -235,6 +235,12 @@
     </div>
   </div>
 
+  {% if selected_segment_code == "new_in_venue" and not selected_department_id %}
+    <div class="alert alert-warning border py-2 small my-2">
+      Для сегмента «Новые» выберите конкретное заведение. Счётчики и аудитория появятся после выбора.
+    </div>
+  {% endif %}
+
   <div class="row g-2 align-items-end mt-1">
     <div class="col-12 col-lg-4">
       <label class="form-label">Тип аудитории</label>
@@ -365,12 +371,6 @@
     {% for rule in payload.filters.complex_filters %}
       <span class="badge text-bg-light border ms-1">Условие: {{ rule.field_name }} {{ rule.operator_name }} {{ rule.value_str }}</span>
     {% endfor %}
-  </div>
-{% endif %}
-
-{% if selected_segment_code == "new_in_venue" and not selected_department_id %}
-  <div class="alert alert-warning border py-2 small mb-4">
-    Для сегмента «Новые» выберите конкретное заведение.
   </div>
 {% endif %}
 
