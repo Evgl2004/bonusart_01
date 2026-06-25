@@ -35,6 +35,19 @@ class SegmentDynamicsDashboardServiceTests(TestCase):
         self.as_of_date = date(2026, 6, 24)
         self._phone_counter = 0
 
+    def test_unsupported_180_days_period_falls_back_to_default(self):
+        payload = build_segment_dynamics_dashboard_payload(
+            period_days=180,
+            department_id="",
+            segment_code="all",
+            date_to=self.as_of_date,
+        )
+
+        self.assertEqual(payload["filters"]["period_days"], 30)
+        self.assertEqual(payload["filters"]["date_from"], "2026-05-26")
+        self.assertEqual(payload["filters"]["date_to"], "2026-06-24")
+        self.assertNotIn(180, payload["filters"]["period_options"])
+
     def test_new_in_venue_counts_first_purchase_exact_day(self):
         first_on_23 = self._create_guest("Новый 23")
         first_on_24 = self._create_guest("Новый 24")

@@ -23,7 +23,7 @@ from guests.models import (
     VtelemaxRecipientChannel,
 )
 
-ALLOWED_PERIOD_DAYS = (7, 14, 30, 60, 180)
+ALLOWED_PERIOD_DAYS = (7, 14, 30, 60)
 DEFAULT_PERIOD_DAYS = 30
 
 NEW_IN_VENUE_SEGMENT_CODE = "new_in_venue"
