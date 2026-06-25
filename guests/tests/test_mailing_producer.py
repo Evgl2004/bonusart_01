@@ -377,12 +377,14 @@ class MailingProducerTests(TestCase):
         self.mailing.coupon_series = "TEST"
         self.mailing.coupon_venue_code = "DEP_1"
         self.mailing.coupon_venue_name = "Тестовый ресторан"
+        self.mailing.coupon_title = "Сет в подарок"
         self.mailing.coupon_promo_text = "Скидка 20% на сет по купону."
         self.mailing.save(
             update_fields=[
                 "coupon_series",
                 "coupon_venue_code",
                 "coupon_venue_name",
+                "coupon_title",
                 "coupon_promo_text",
                 "updated_at",
             ]
@@ -415,6 +417,7 @@ class MailingProducerTests(TestCase):
             coupon_code="TST-PL-001",
             venue_code="DEP_1",
             venue_name="Тестовый ресторан",
+            coupon_title="Сет в подарок",
             promo_text="Скидка 20% на сет по купону.",
             status=CouponCampaignAssignment.Status.RESERVED,
         )
@@ -431,4 +434,5 @@ class MailingProducerTests(TestCase):
         self.assertEqual(task.payload.get("coupon_code"), "TST-PL-001")
         self.assertEqual(task.payload.get("coupon_venue_code"), "DEP_1")
         self.assertEqual(task.payload.get("coupon_venue_name"), "Тестовый ресторан")
+        self.assertEqual(task.payload.get("coupon_title"), "Сет в подарок")
         self.assertEqual(task.payload.get("coupon_promo_text"), "Скидка 20% на сет по купону.")

@@ -737,6 +737,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             coupon_series="AUTO_DEP_1",
             venue_code="DEP_1",
             venue_name="Тестовое заведение",
+            coupon_title_template="Подарок DEP {coupon_code}",
             priority=10,
         )
         CouponAutomationRule.objects.create(
@@ -811,6 +812,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertTrue(plan.can_execute)
         self.assertEqual(plan.planned_assignments, 2)
         self.assertEqual(items_by_guest[dep_guest.id].coupon_id, venue_coupon.id)
+        self.assertEqual(items_by_guest[dep_guest.id].coupon_title_template, "Подарок DEP {coupon_code}")
         self.assertEqual(items_by_guest[dep_guest.id].coupon_selection_source, "last_order_department")
         self.assertEqual(items_by_guest[dep_guest.id].last_order_department_id, "DEP_1")
         self.assertEqual(items_by_guest[global_guest.id].coupon_id, global_coupon.id)
@@ -1252,13 +1254,15 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
         self.config.max_recipients_per_run = 1
         self.config.settings = {"pilot_phones": ["+79990000141"]}
+        self.config.coupon_title_template = "Подарок {coupon_code} для {first_name}"
         self.config.coupon_promo_text_template = (
-            "Купон {coupon_code} для {first_name}. Действует до {coupon_expires_at}."
+            "Карточка: {coupon_title}. Действует до {coupon_expires_at}."
         )
         self.config.save(
             update_fields=[
                 "execution_mode",
                 "max_recipients_per_run",
+                "coupon_title_template",
                 "coupon_promo_text_template",
                 "settings",
                 "updated_at",
@@ -1297,6 +1301,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
             assignment.vtelemax_sync_status,
             CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
         )
+        self.assertEqual(assignment.coupon_title, "Подарок AUTO-PILOT для Pilot")
         self.assertIn("AUTO-PILOT", assignment.promo_text)
         self.assertIn("Pilot", assignment.promo_text)
 
@@ -1313,6 +1318,7 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertEqual(queue_event.payload_json["scenario_code"], self.scenario.code)
         self.assertEqual(queue_event.payload_json["assignment_id"], assignment.id)
         self.assertEqual(queue_event.payload_json["coupon_code"], "AUTO-PILOT")
+        self.assertEqual(queue_event.payload_json["coupon_title"], "Подарок AUTO-PILOT для Pilot")
         self.assertIn("valid_until", queue_event.payload_json)
 
         self.assertEqual(CouponCampaignAssignment.objects.count(), 0)

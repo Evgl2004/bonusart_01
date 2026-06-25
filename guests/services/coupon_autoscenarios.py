@@ -211,6 +211,7 @@ class CouponAutoscenarioPlanItem:
     is_pilot_forced: bool = False
     coupon_rule_id: int | None = None
     coupon_rule_label: str = ""
+    coupon_title_template: str = ""
     coupon_selection_source: str = ""
     last_order_department_id: str = ""
     last_order_department_name: str = ""
@@ -265,6 +266,7 @@ class CouponAutoscenarioPlanItem:
             "is_pilot_forced": self.is_pilot_forced,
             "coupon_rule_id": self.coupon_rule_id,
             "coupon_rule_label": self.coupon_rule_label,
+            "coupon_title_template": self.coupon_title_template,
             "coupon_selection_source": self.coupon_selection_source,
             "coupon_selection_source_display": selection_source_labels.get(
                 self.coupon_selection_source,
@@ -430,6 +432,7 @@ class CouponRuleOption:
     priority: int
     rule_id: int | None = None
     coupon_validity_days: int | None = None
+    coupon_title_template: str = ""
     coupon_promo_text_template: str = ""
     is_legacy_fallback: bool = False
 
@@ -1084,6 +1087,20 @@ def _create_coupon_autoscenario_run_from_plan(
                 )
 
             channel = primary_channels.get(item.guest_id)
+            rendered_coupon_title = _render_autoscenario_coupon_title(
+                config=config,
+                guest=guest,
+                coupon_title_template=item.coupon_title_template,
+                coupon_code=item.coupon_code,
+                coupon_series=item.coupon_series,
+                venue_code=item.venue_code,
+                venue_name=item.venue_name,
+                valid_until=item.valid_until,
+                now=current_now,
+                days_without_visits=item.days_without_visits,
+                days_until_birthday=item.days_until_birthday,
+                birthday_date=item.birthday_date,
+            )
             rendered_promo_text = _render_autoscenario_coupon_text(
                 scenario=scenario,
                 config=config,
@@ -1092,6 +1109,7 @@ def _create_coupon_autoscenario_run_from_plan(
                 coupon_series=item.coupon_series,
                 venue_code=item.venue_code,
                 venue_name=item.venue_name,
+                coupon_title=rendered_coupon_title,
                 valid_until=item.valid_until,
                 now=current_now,
                 days_without_visits=item.days_without_visits,
@@ -1114,6 +1132,7 @@ def _create_coupon_autoscenario_run_from_plan(
                 venue_name=item.venue_name or None,
                 trigger_key=item.trigger_key or None,
                 trigger_date=item.trigger_date,
+                coupon_title=rendered_coupon_title or None,
                 promo_text=rendered_promo_text or None,
                 assigned_at=current_now,
                 lifetime_expires_at=item.valid_until,
@@ -1484,6 +1503,7 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             coupon_series=assignment.coupon_series,
             venue_code=assignment.venue_code or "",
             venue_name=assignment.venue_name or "",
+            coupon_title=assignment.coupon_title or "",
             valid_until=assignment.lifetime_expires_at,
             days_without_visits=(
                 days_without_visits
@@ -2281,6 +2301,7 @@ def _effective_coupon_rules(*, config: CouponAutomationConfig) -> tuple[CouponRu
                     scope_type=scope_type,
                     priority=int(rule.priority or 100),
                     coupon_validity_days=rule.coupon_validity_days,
+                    coupon_title_template=str(rule.coupon_title_template or "").strip(),
                     coupon_promo_text_template=str(rule.coupon_promo_text_template or "").strip(),
                 )
             )
@@ -2309,6 +2330,7 @@ def _effective_coupon_rules(*, config: CouponAutomationConfig) -> tuple[CouponRu
             scope_type=scope_type,
             priority=100,
             coupon_validity_days=config.coupon_validity_days,
+            coupon_title_template=str(config.coupon_title_template or "").strip(),
             coupon_promo_text_template=str(config.coupon_promo_text_template or "").strip(),
             is_legacy_fallback=True,
         ),
@@ -2724,6 +2746,7 @@ def _build_plan_item_from_coupon_selection(
         is_pilot_forced=row.is_pilot_forced,
         coupon_rule_id=rule.rule_id,
         coupon_rule_label=rule.label,
+        coupon_title_template=rule.coupon_title_template,
         coupon_selection_source=option.selection_source,
         last_order_department_id=str(last_order_venue.department_id if last_order_venue else "").strip(),
         last_order_department_name=str(last_order_venue.department_name if last_order_venue else "").strip(),
@@ -2819,6 +2842,7 @@ def _render_autoscenario_coupon_text(
     venue_code: str,
     venue_name: str,
     valid_until: datetime,
+    coupon_title: str = "",
     now: datetime | None = None,
     days_without_visits: int | None = None,
     days_until_birthday: int | None = None,
@@ -2838,6 +2862,50 @@ def _render_autoscenario_coupon_text(
             coupon_series=coupon_series,
             venue_code=venue_code,
             venue_name=venue_name,
+            coupon_title=coupon_title,
+            valid_until=valid_until,
+            days_without_visits=(
+                days_without_visits
+                if days_without_visits is not None
+                else _calculate_days_without_visits(
+                    guest_id=int(guest.id),
+                    now=current_now,
+                )
+            ),
+            days_until_birthday=days_until_birthday,
+            birthday_date=birthday_date,
+        ),
+    )
+
+
+def _render_autoscenario_coupon_title(
+    *,
+    config: CouponAutomationConfig,
+    guest: Guest,
+    coupon_title_template: str,
+    coupon_code: str,
+    coupon_series: str,
+    venue_code: str,
+    venue_name: str,
+    valid_until: datetime,
+    now: datetime | None = None,
+    days_without_visits: int | None = None,
+    days_until_birthday: int | None = None,
+    birthday_date: date | None = None,
+) -> str:
+    template_text = str(coupon_title_template or config.coupon_title_template or "").strip()
+    if not template_text:
+        return ""
+    current_now = now or timezone.now()
+    return render_message_for_guest(
+        template_text,
+        guest,
+        extra_context=_build_autoscenario_template_context(
+            coupon_code=coupon_code,
+            coupon_series=coupon_series,
+            venue_code=venue_code,
+            venue_name=venue_name,
+            coupon_title="",
             valid_until=valid_until,
             days_without_visits=(
                 days_without_visits
@@ -2931,6 +2999,7 @@ def _build_autoscenario_template_context(
     venue_code: str,
     venue_name: str,
     valid_until: datetime | None,
+    coupon_title: str = "",
     days_without_visits: int | None = None,
     days_until_birthday: int | None = None,
     birthday_date: date | None = None,
@@ -2940,6 +3009,7 @@ def _build_autoscenario_template_context(
         "coupon_series": str(coupon_series or "").strip(),
         "coupon_venue_code": str(venue_code or "").strip(),
         "coupon_venue_name": str(venue_name or "").strip(),
+        "coupon_title": str(coupon_title or "").strip(),
         "coupon_expires_at": timezone.localtime(valid_until).strftime("%d.%m.%Y") if valid_until else "",
         "valid_until": _format_valid_until(valid_until) or "",
         "days_without_visits": str(days_without_visits) if days_without_visits is not None else "",
@@ -2976,6 +3046,7 @@ def _build_autoscenario_dispatch_payload(*, assignment: CouponAutoscenarioAssign
         "coupon_code": assignment.coupon_code,
         "coupon_venue_code": assignment.venue_code,
         "coupon_venue_name": assignment.venue_name,
+        "coupon_title": assignment.coupon_title,
         "coupon_valid_until": _format_valid_until(assignment.lifetime_expires_at),
         "trigger_key": assignment.trigger_key,
         "trigger_date": assignment.trigger_date.isoformat() if assignment.trigger_date else None,
@@ -3054,6 +3125,7 @@ def _build_autoscenario_assignment_payload(
         "valid_until": _format_valid_until(assignment.lifetime_expires_at),
         "venue_code": assignment.venue_code,
         "venue_name": assignment.venue_name,
+        "coupon_title": assignment.coupon_title,
         "promo_text": assignment.promo_text,
         "days_without_visits": days_without_visits,
         "days_until_birthday": days_until_birthday,
@@ -3085,6 +3157,7 @@ def _build_autoscenario_status_update_payload(
         "coupon_code": assignment.coupon_code,
         "venue_code": assignment.venue_code,
         "venue_name": assignment.venue_name,
+        "coupon_title": assignment.coupon_title,
         "promo_text": assignment.promo_text,
         "trigger_key": assignment.trigger_key,
         "trigger_date": assignment.trigger_date.isoformat() if assignment.trigger_date else None,

@@ -289,6 +289,25 @@
           </div>
           <div class="mb-3">
             <div class="mail-label-row">
+              {{ form.coupon_title.label_tag }}
+              <button
+                type="button"
+                class="btn btn-outline-secondary mail-help-btn"
+                data-bs-toggle="tooltip"
+                data-bs-placement="top"
+                title="Короткое название купона, которое vtelemax сможет показать на кнопке или в карточке купона."
+              >?</button>
+            </div>
+            {{ form.coupon_title }}
+            <small class="text-muted d-block mt-1">
+              Например: “Сет «Канпети» в подарок”. Если оставить пустым, vtelemax получит пустое название.
+            </small>
+            {% if form.coupon_title.errors %}
+              <div class="text-danger small mt-1">{{ form.coupon_title.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+          <div class="mb-3">
+            <div class="mail-label-row">
               {{ form.coupon_promo_text.label_tag }}
               <button
                 type="button"

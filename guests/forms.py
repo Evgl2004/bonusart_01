@@ -378,6 +378,7 @@ class MailingForm(forms.ModelForm):
             "queue_priority",
             "coupon_series",
             "coupon_venue_code",
+            "coupon_title",
             "coupon_promo_text",
             "bot_profiles",
             # "is_active",
@@ -412,6 +413,13 @@ class MailingForm(forms.ModelForm):
                     "class": "form-select",
                 }
             ),
+            "coupon_title": forms.TextInput(
+                attrs={
+                    "class": "form-control",
+                    "maxlength": "120",
+                    "placeholder": "Например: Сет «Канпети» в подарок",
+                }
+            ),
             "coupon_promo_text": forms.Textarea(
                 attrs={
                     "class": "form-control",
@@ -438,6 +446,7 @@ class MailingForm(forms.ModelForm):
             "queue_priority": "Приоритет в очереди",
             "coupon_series": "Серия купонов",
             "coupon_venue_code": "Заведение для купонной кампании",
+            "coupon_title": "Название купона в vtelemax",
             "coupon_promo_text": "Текст акции для гостя",
             "bot_profiles": "Боты для рассылки",
             # "is_active": "Активна",
@@ -502,10 +511,12 @@ class MailingForm(forms.ModelForm):
         cleaned_data = super().clean()
         series = str(cleaned_data.get("coupon_series") or "").strip()
         venue_code = str(cleaned_data.get("coupon_venue_code") or "").strip()
+        coupon_title = str(cleaned_data.get("coupon_title") or "").strip()
         promo_text = str(cleaned_data.get("coupon_promo_text") or "").strip()
 
         if not series:
             cleaned_data["coupon_venue_code"] = None
+            cleaned_data["coupon_title"] = None
             cleaned_data["coupon_promo_text"] = None
             self._resolved_coupon_venue_name = None
             return cleaned_data
@@ -519,6 +530,7 @@ class MailingForm(forms.ModelForm):
 
         cleaned_data["coupon_series"] = series
         cleaned_data["coupon_venue_code"] = venue_code or None
+        cleaned_data["coupon_title"] = coupon_title or None
         cleaned_data["coupon_promo_text"] = promo_text or None
         if venue_code not in self._coupon_venue_map:
             self._resolved_coupon_venue_name = None
@@ -538,12 +550,15 @@ class MailingForm(forms.ModelForm):
             instance.coupon_series = None
             instance.coupon_venue_code = None
             instance.coupon_venue_name = None
+            instance.coupon_title = None
             instance.coupon_promo_text = None
         else:
             instance.coupon_series = series
             venue_code = str(getattr(instance, "coupon_venue_code", "") or "").strip() or None
             instance.coupon_venue_code = venue_code
             instance.coupon_venue_name = self._resolved_coupon_venue_name or instance.coupon_venue_name or None
+            coupon_title = str(getattr(instance, "coupon_title", "") or "").strip()
+            instance.coupon_title = coupon_title or None
             promo_text = str(getattr(instance, "coupon_promo_text", "") or "").strip()
             instance.coupon_promo_text = promo_text or None
 
@@ -661,6 +676,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "coupon_validity_days",
             "max_recipients_per_run",
             "cooldown_days",
+            "coupon_title_template",
             "coupon_promo_text_template",
             "min_order_amount",
             "iikocard_action_note",
@@ -679,6 +695,13 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "coupon_validity_days": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
             "max_recipients_per_run": forms.NumberInput(attrs={"class": "form-control", "min": "1"}),
             "cooldown_days": forms.NumberInput(attrs={"class": "form-control", "min": "0"}),
+            "coupon_title_template": forms.TextInput(
+                attrs={
+                    "class": "form-control",
+                    "maxlength": "120",
+                    "placeholder": "Например: Сет «Канпети» в подарок",
+                }
+            ),
             "coupon_promo_text_template": forms.Textarea(attrs={"class": "form-control", "rows": 5}),
             "min_order_amount": forms.NumberInput(
                 attrs={"class": "form-control", "min": "0", "step": "0.01"}
@@ -696,6 +719,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
             "coupon_validity_days": "Срок действия купона, дней",
             "max_recipients_per_run": "Лимит гостей за проход",
             "cooldown_days": "Пауза перед повтором, дней",
+            "coupon_title_template": "Название купона в vtelemax",
             "coupon_promo_text_template": "Текст карточки купона в vtelemax",
             "min_order_amount": "Минимальная сумма заказа в iikoCard",
             "iikocard_action_note": "Что настроено в iikoCard",
@@ -1080,6 +1104,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
             "priority",
             "min_order_amount",
             "iikocard_action_note",
+            "coupon_title_template",
             "coupon_promo_text_template",
         ]
         widgets = {
@@ -1090,6 +1115,13 @@ class CouponAutomationRuleForm(forms.ModelForm):
             "priority": forms.HiddenInput(),
             "min_order_amount": forms.HiddenInput(),
             "iikocard_action_note": forms.HiddenInput(),
+            "coupon_title_template": forms.TextInput(
+                attrs={
+                    "class": "form-control form-control-sm",
+                    "maxlength": "120",
+                    "placeholder": "Если пусто — общее название",
+                }
+            ),
             "coupon_promo_text_template": forms.HiddenInput(),
         }
         labels = {
@@ -1101,6 +1133,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
             "priority": "Приоритет",
             "min_order_amount": "Мин. заказ",
             "iikocard_action_note": "Что настроено в iikoCard",
+            "coupon_title_template": "Название купона в vtelemax",
             "coupon_promo_text_template": "Текст карточки купона в vtelemax",
         }
 
@@ -1148,6 +1181,7 @@ class CouponAutomationRuleForm(forms.ModelForm):
             "coupon_validity_days",
             "min_order_amount",
             "iikocard_action_note",
+            "coupon_title_template",
             "coupon_promo_text_template",
         ]
         for field_name in meaningful_field_names:

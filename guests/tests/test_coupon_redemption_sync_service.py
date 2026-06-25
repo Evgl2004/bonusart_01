@@ -113,6 +113,7 @@ class CouponRedemptionSyncServiceTests(TestCase):
             coupon_code=code,
             venue_code="DEP_1",
             venue_name="Тестовое заведение",
+            coupon_title="Сет в подарок",
             promo_text="Скидка 20%",
             assigned_at=self.now,
             lifetime_expires_at=self.now + timedelta(days=7),
@@ -191,6 +192,7 @@ class CouponRedemptionSyncServiceTests(TestCase):
             coupon_code=code,
             venue_code="DEP_1",
             venue_name="Автосценарий",
+            coupon_title="Автосценарий: подарок",
             promo_text="Автосценарий: тестовый купон",
             assigned_at=self.now,
             sent_at=self.now,
@@ -229,6 +231,7 @@ class CouponRedemptionSyncServiceTests(TestCase):
         )
         self.assertEqual(event.status, CouponVtelemaxSyncQueue.Status.PENDING)
         self.assertEqual(event.payload_json.get("status"), CouponCampaignAssignment.Status.USED)
+        self.assertEqual(event.payload_json.get("coupon_title"), "Сет в подарок")
         self.assertEqual(event.payload_json.get("used_order_id"), 101)
 
         self.assertEqual(stats.assignments_matched, 1)
@@ -275,6 +278,7 @@ class CouponRedemptionSyncServiceTests(TestCase):
         self.assertEqual(event.payload_json.get("autoscenario_assignment_id"), assignment.id)
         self.assertEqual(event.payload_json.get("scenario_code"), assignment.scenario.code)
         self.assertEqual(event.payload_json.get("status"), CouponAutoscenarioAssignment.Status.USED)
+        self.assertEqual(event.payload_json.get("coupon_title"), "Автосценарий: подарок")
         self.assertEqual(event.payload_json.get("used_order_id"), 601)
         self.assertEqual(event.payload_json.get("used_business_date"), self.now.date().isoformat())
 

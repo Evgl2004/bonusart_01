@@ -92,6 +92,7 @@ class VtelemaxCouponSyncServiceTests(TestCase):
             coupon_code=coupon.code,
             venue_code="DEP_1",
             venue_name="Тестовое заведение",
+            coupon_title="Тестовый купон",
             promo_text="Тестовый промо-текст",
             assigned_at=self.now,
             lifetime_expires_at=self.now + timedelta(days=7),
@@ -108,6 +109,7 @@ class VtelemaxCouponSyncServiceTests(TestCase):
                 "guest_id": int(guest.id),
                 "coupon_series": coupon.series,
                 "coupon_code": coupon.code,
+                "coupon_title": "Тестовый купон",
                 "status": assignment.status,
             },
             status=event_status,
@@ -139,6 +141,7 @@ class VtelemaxCouponSyncServiceTests(TestCase):
                 "assignment_id": int(assignment.id),
                 "coupon_series": assignment.coupon_series,
                 "coupon_code": assignment.coupon_code,
+                "coupon_title": assignment.coupon_title,
                 "status": status_value,
                 "meta": {
                     "release_to_pool": bool(release_to_pool),
@@ -235,6 +238,7 @@ class VtelemaxCouponSyncServiceTests(TestCase):
             coupon_code=coupon.code,
             venue_code=coupon.venue_code,
             venue_name=coupon.venue_name,
+            coupon_title="Автосценарий купон",
             promo_text="Автосценарий промо",
             assigned_at=self.now,
             lifetime_expires_at=self.now + timedelta(days=14),
@@ -252,6 +256,7 @@ class VtelemaxCouponSyncServiceTests(TestCase):
                 "guest_id": int(guest.id),
                 "coupon_series": coupon.series,
                 "coupon_code": coupon.code,
+                "coupon_title": "Автосценарий купон",
                 "status": assignment.status,
             },
             status=CouponVtelemaxSyncQueue.Status.PENDING,
@@ -329,6 +334,10 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         self.assertEqual(
             {item["event_id"] for item in request_body["items"]},
             {str(event.event_id), str(second_event.event_id)},
+        )
+        self.assertEqual(
+            {item["coupon_title"] for item in request_body["items"]},
+            {"Тестовый купон"},
         )
         self.assertNotIn("payload", request_body)
 

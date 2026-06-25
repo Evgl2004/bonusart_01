@@ -2661,6 +2661,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Telegram main")
         self.assertContains(response, "Сразу")
         self.assertContains(response, "Если “Текст карточки купона” оставить пустым")
+        self.assertContains(response, "Если пусто, используется общее название из блока ниже")
         self.assertContains(response, "Контрольные телефоны пилота")
 
         response = self.client.post(
@@ -2681,6 +2682,7 @@ class MailingsV2ViewsTests(TestCase):
                 "pilot_include_unmatched": "on",
                 "min_order_amount": "200.00",
                 "iikocard_action_note": "Подарок при заказе от 200 ₽.",
+                "coupon_title_template": "Общее название купона",
                 "coupon_promo_text_template": "Тестовый купон автосценария.",
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
                 "notification_target_mode": NotificationScenario.TargetMode.ALL_BOTS,
@@ -2699,6 +2701,7 @@ class MailingsV2ViewsTests(TestCase):
                 "coupon_rules-0-priority": "100",
                 "coupon_rules-0-min_order_amount": "",
                 "coupon_rules-0-iikocard_action_note": "",
+                "coupon_rules-0-coupon_title_template": "Сет «Канпети»",
                 "coupon_rules-0-coupon_promo_text_template": "",
                 "coupon_rules-1-is_active": "on",
                 "coupon_rules-1-venue_code": "__global__",
@@ -2707,6 +2710,7 @@ class MailingsV2ViewsTests(TestCase):
                 "coupon_rules-1-priority": "100",
                 "coupon_rules-1-min_order_amount": "",
                 "coupon_rules-1-iikocard_action_note": "",
+                "coupon_rules-1-coupon_title_template": "",
                 "coupon_rules-1-coupon_promo_text_template": "",
             },
             secure=True,
@@ -2726,6 +2730,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(config.max_recipients_per_run, 1)
         self.assertEqual(config.cooldown_days, 45)
         self.assertEqual(config.venue_name, "Сами Сусами")
+        self.assertEqual(config.coupon_title_template, "Общее название купона")
         self.assertEqual(config.settings["pilot_phones"], ["+79129923438"])
         self.assertTrue(config.settings["pilot_include_unmatched"])
         scenario.refresh_from_db()
@@ -2741,12 +2746,14 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(rules[0].venue_code, "DEP_1")
         self.assertEqual(rules[0].venue_name, "Сами Сусами")
         self.assertEqual(rules[0].coupon_series, "AUTO_30D")
+        self.assertEqual(rules[0].coupon_title_template, "Сет «Канпети»")
         self.assertIsNone(rules[0].coupon_validity_days)
         self.assertIsNone(rules[0].min_order_amount)
         self.assertEqual(rules[1].scope_type, CouponAutomationRule.ScopeType.GLOBAL)
         self.assertEqual(rules[1].venue_code, "__global__")
         self.assertEqual(rules[1].venue_name, "Вся сеть")
         self.assertEqual(rules[1].coupon_series, "AUTO_GLOBAL")
+        self.assertIsNone(rules[1].coupon_title_template)
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
 

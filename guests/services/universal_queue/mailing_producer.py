@@ -219,6 +219,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                 "coupon_code": assignment.coupon_code if assignment else None,
                 "coupon_venue_code": assignment.venue_code if assignment else None,
                 "coupon_venue_name": assignment.venue_name if assignment else None,
+                "coupon_title": assignment.coupon_title if assignment else None,
                 "coupon_promo_text": assignment.promo_text if assignment else None,
             }
             if provider_type == "max":

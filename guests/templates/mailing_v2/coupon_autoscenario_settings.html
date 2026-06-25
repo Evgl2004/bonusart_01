@@ -528,13 +528,14 @@
               <th style="width: 90px;">Использовать</th>
               <th style="min-width: 360px;">Заведение или вся сеть</th>
               <th style="min-width: 320px;">Серия купонов</th>
+              <th style="min-width: 260px;">Название купона</th>
               <th style="width: 110px;">Удалить</th>
             </tr>
           </thead>
           <tbody id="coupon-rule-rows">
             {% if not rule_formset.forms %}
               <tr id="coupon-rule-empty-message">
-                <td colspan="4" class="text-muted">
+                <td colspan="5" class="text-muted">
                   Правила пока не добавлены. Нажмите “Добавить правило”, выберите заведение или “Вся сеть” и серию купонов.
                 </td>
               </tr>
@@ -572,6 +573,13 @@
                   {% endif %}
                 </td>
                 <td>
+                  {{ rule_form.coupon_title_template }}
+                  <div class="form-text small">Если пусто, используется общее название из блока ниже.</div>
+                  {% if rule_form.coupon_title_template.errors %}
+                    <div class="text-danger small">{{ rule_form.coupon_title_template.errors|join:", " }}</div>
+                  {% endif %}
+                </td>
+                <td>
                   {% if rule_form.instance.pk %}
                     <div class="form-check">
                       {{ rule_form.DELETE }}
@@ -587,14 +595,14 @@
               </tr>
               {% if rule_form.non_field_errors %}
                 <tr>
-                  <td colspan="4">
+                  <td colspan="5">
                     <div class="alert alert-danger py-2 mb-0">{{ rule_form.non_field_errors }}</div>
                   </td>
                 </tr>
               {% endif %}
               {% if rule_form.coupon_validity_days.errors or rule_form.priority.errors or rule_form.min_order_amount.errors or rule_form.iikocard_action_note.errors or rule_form.coupon_promo_text_template.errors %}
                 <tr>
-                  <td colspan="4">
+                  <td colspan="5">
                     <div class="alert alert-danger py-2 mb-0">
                       {{ rule_form.coupon_validity_days.errors }}
                       {{ rule_form.priority.errors }}
@@ -633,6 +641,10 @@
           </td>
           <td>
             {{ rule_formset.empty_form.coupon_series }}
+          </td>
+          <td>
+            {{ rule_formset.empty_form.coupon_title_template }}
+            <div class="form-text small">Если пусто, используется общее название из блока ниже.</div>
           </td>
           <td>
             <button class="btn btn-outline-secondary btn-sm" type="button" data-remove-rule>
@@ -689,6 +701,16 @@
             <div class="form-text">Например: подарок при заказе от 200 ₽, место продаж, тип заказа, серия купонов в iikoCard.</div>
             {% if form.iikocard_action_note.errors %}
               <div class="text-danger small mt-1">{{ form.iikocard_action_note.errors|join:", " }}</div>
+            {% endif %}
+          </div>
+          <div class="col-12">
+            {{ form.coupon_title_template.label_tag }}
+            {{ form.coupon_title_template }}
+            <div class="form-text">
+              Короткое название для кнопки или карточки купона в vtelemax. Можно использовать переменные, например {coupon_code}.
+            </div>
+            {% if form.coupon_title_template.errors %}
+              <div class="text-danger small mt-1">{{ form.coupon_title_template.errors|join:", " }}</div>
             {% endif %}
           </div>
           <div class="col-12">

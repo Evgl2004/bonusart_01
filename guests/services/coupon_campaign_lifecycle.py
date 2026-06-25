@@ -327,6 +327,7 @@ class CouponCampaignLifecycleService:
             "coupon_code": assignment.coupon_code,
             "venue_code": assignment.venue_code,
             "venue_name": assignment.venue_name,
+            "coupon_title": assignment.coupon_title,
             "promo_text": assignment.promo_text,
             "status": status,
             "status_at": now.isoformat(),

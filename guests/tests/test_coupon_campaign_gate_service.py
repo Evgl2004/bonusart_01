@@ -325,10 +325,11 @@ class CouponCampaignGateServiceTests(TestCase):
         """
         Текст акции в карточке купона использует те же переменные, что и шаблон рассылки.
         """
-        self.template.message_text = "Акция: {coupon_promo_text}"
+        self.template.message_text = "Акция: {coupon_promo_text}; Название: {coupon_title}"
         self.template.save(update_fields=["message_text", "updated_at"])
+        self.mailing.coupon_title = "Подарок для {first_name}: {coupon_code}"
         self.mailing.coupon_promo_text = "Здравствуйте, {first_name}. Купон {coupon_code}"
-        self.mailing.save(update_fields=["coupon_promo_text", "updated_at"])
+        self.mailing.save(update_fields=["coupon_title", "coupon_promo_text", "updated_at"])
 
         row = self._create_row("1236")
         self._create_valid_channel(guest=row.guest, phone_e164="+799900001236")
@@ -354,10 +355,13 @@ class CouponCampaignGateServiceTests(TestCase):
         self.assertEqual(report.issues_by_code().get("coupon_sync_event_pending"), 1)
 
         assignment = CouponCampaignAssignment.objects.get(campaign=self.mailing, guest=row.guest)
+        expected_coupon_title = "Подарок для Guest1236: TST-AAA113"
         expected_promo_text = "Здравствуйте, Guest1236. Купон TST-AAA113"
+        self.assertEqual(assignment.coupon_title, expected_coupon_title)
         self.assertEqual(assignment.promo_text, expected_promo_text)
 
         queue_event = CouponVtelemaxSyncQueue.objects.get(assignment=assignment)
+        self.assertEqual(queue_event.payload_json.get("coupon_title"), expected_coupon_title)
         self.assertEqual(queue_event.payload_json.get("promo_text"), expected_promo_text)
 
         assignment.vtelemax_sync_status = CouponCampaignAssignment.VtelemaxSyncStatus.OK
@@ -379,7 +383,7 @@ class CouponCampaignGateServiceTests(TestCase):
         row.refresh_from_db()
         self.assertEqual(
             row.text_mailing_list,
-            f"Акция: {expected_promo_text}\n\n{COUPON_MESSAGE_FOOTER}",
+            f"Акция: {expected_promo_text}; Название: {expected_coupon_title}\n\n{COUPON_MESSAGE_FOOTER}",
         )
 
     def test_prepare_rows_blocks_when_coupons_not_enough(self):

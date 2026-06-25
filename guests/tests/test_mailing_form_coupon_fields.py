@@ -120,6 +120,7 @@ class MailingFormCouponFieldsTests(TestCase):
             {
                 "coupon_series": "",
                 "coupon_venue_code": "DEP_1",
+                "coupon_title": "Сет в подарок",
                 "coupon_promo_text": "Скидка 20%",
             }
         )
@@ -131,6 +132,7 @@ class MailingFormCouponFieldsTests(TestCase):
         self.assertIsNone(instance.coupon_series)
         self.assertIsNone(instance.coupon_venue_code)
         self.assertIsNone(instance.coupon_venue_name)
+        self.assertIsNone(instance.coupon_title)
         self.assertIsNone(instance.coupon_promo_text)
 
     def test_resolves_venue_name_for_coupon_mode(self):
@@ -139,6 +141,7 @@ class MailingFormCouponFieldsTests(TestCase):
             {
                 "coupon_series": "TEST_SERIES",
                 "coupon_venue_code": "DEP_1",
+                "coupon_title": "  Сет «Канпети» в подарок  ",
                 "coupon_promo_text": "Скидка 20% на сет",
             }
         )
@@ -150,6 +153,7 @@ class MailingFormCouponFieldsTests(TestCase):
         self.assertEqual(instance.coupon_series, "TEST_SERIES")
         self.assertEqual(instance.coupon_venue_code, "DEP_1")
         self.assertEqual(instance.coupon_venue_name, "Ассорти Франсуа")
+        self.assertEqual(instance.coupon_title, "Сет «Канпети» в подарок")
         self.assertEqual(instance.coupon_promo_text, "Скидка 20% на сет")
 
     def test_rejects_unknown_venue_code_for_coupon_mode(self):

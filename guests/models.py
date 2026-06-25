@@ -237,6 +237,12 @@ class Mailing(models.Model):
         null=True,
         help_text="Человекочитаемое название заведения купонной кампании.",
     )
+    coupon_title = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        help_text="Название купона для кнопки и карточки гостя в vtelemax.",
+    )
     coupon_promo_text = models.TextField(
         blank=True,
         null=True,
@@ -2044,6 +2050,12 @@ class CouponAutomationConfig(models.Model):
         default=14,
         help_text="Срок действия выдаваемого купона в днях.",
     )
+    coupon_title_template = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        help_text="Название купона для кнопки и карточки vtelemax; поддерживает переменные шаблона.",
+    )
     coupon_promo_text_template = models.TextField(
         blank=True,
         null=True,
@@ -2253,6 +2265,12 @@ class CouponAutomationRule(models.Model):
         help_text="Справочная минимальная сумма заказа, настроенная в iikoCard для этого правила.",
     )
     iikocard_action_note = models.TextField(blank=True, null=True)
+    coupon_title_template = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        help_text="Если задано, переопределяет название купона из общей настройки.",
+    )
     coupon_promo_text_template = models.TextField(
         blank=True,
         null=True,
@@ -2860,6 +2878,12 @@ class CouponCampaignAssignment(models.Model):
         null=True,
         help_text="Текст акции, который передаётся гостю вместе с купоном.",
     )
+    coupon_title = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        help_text="Снимок названия купона, отправленного гостю в vtelemax.",
+    )
     assigned_at = models.DateTimeField(default=timezone.now, db_index=True)
     sent_at = models.DateTimeField(blank=True, null=True)
     lifetime_expires_at = models.DateTimeField(blank=True, null=True, db_index=True)
@@ -3041,6 +3065,7 @@ class CouponAutoscenarioAssignment(models.Model):
     coupon_selection_source = models.CharField(max_length=32, blank=True, null=True, db_index=True)
     trigger_key = models.CharField(max_length=120, blank=True, null=True, db_index=True)
     trigger_date = models.DateField(blank=True, null=True, db_index=True)
+    coupon_title = models.CharField(max_length=120, blank=True, null=True)
     promo_text = models.TextField(blank=True, null=True)
     assigned_at = models.DateTimeField(default=timezone.now, db_index=True)
     sent_at = models.DateTimeField(blank=True, null=True)
