@@ -457,6 +457,300 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["cards"]["guests_total"], 2)
         self.assertEqual(payload["selected_guests"]["total"], 2)
 
+    def test_new_in_venue_segment_includes_first_purchase_in_selected_period(self):
+        """
+        Гость попадает в «Новые», если первая покупка в выбранном заведении
+        пришлась на выбранный период.
+        """
+        new_guest = Guest.objects.create(phone="+79990007771", first_name="Новый")
+        self._create_window_metric(
+            guest=new_guest,
+            orders_count=2,
+            visits_count=2,
+            sum_net="1800.00",
+            avg_check_net="900.00",
+            rating_score="25.00",
+            last_visit_at=date(2026, 3, 20),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 20),
+            guest=new_guest,
+            department_id=self.department_id,
+            orders_count=2,
+            sum_net=Decimal("1800.00"),
+        )
+        GuestRestaurantDailyCategoryFact.objects.create(
+            business_date=date(2026, 3, 20),
+            guest=new_guest,
+            department_id=self.department_id,
+            focus_category=self.focus_beer,
+            orders_count=1,
+            items_count=1,
+            sum_gross=Decimal("900.00"),
+            sum_net=Decimal("900.00"),
+            bonus_sum=Decimal("0.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "new_in_venue",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["segments"]["new_in_venue"], 1)
+        self.assertEqual(payload["segments"]["active_30d"], 2)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], new_guest.phone)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["segment_code"], "new_in_venue")
+
+        matrix = payload["segment_focus_matrix"]
+        col_index = {col["focus_category_code"]: idx for idx, col in enumerate(matrix["columns"])}
+        row_index = {row["segment_code"]: row for row in matrix["rows"]}
+        self.assertEqual(row_index["new_in_venue"]["guests_total"], 1)
+        self.assertEqual(
+            row_index["new_in_venue"]["cells"][col_index["beer_ermolaev"]]["guests_count"],
+            1,
+        )
+
+    def test_new_in_venue_segment_excludes_first_purchase_before_selected_period(self):
+        """
+        Гость не попадает в «Новые», если первая покупка в выбранном заведении
+        была раньше выбранного периода.
+        """
+        old_guest = Guest.objects.create(phone="+79990007772", first_name="Старый")
+        self._create_window_metric(
+            guest=old_guest,
+            orders_count=1,
+            visits_count=1,
+            sum_net="700.00",
+            avg_check_net="700.00",
+            rating_score="12.00",
+            last_visit_at=date(2026, 2, 20),
+            window_days=180,
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 2, 20),
+            guest=old_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("700.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "new_in_venue",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["segments"]["new_in_venue"], 0)
+        self.assertEqual(payload["selected_guests"]["total"], 0)
+
+    def test_new_in_venue_segment_is_calculated_per_selected_venue(self):
+        """
+        Старые покупки в другом заведении не мешают считать гостя новым
+        для выбранного заведения.
+        """
+        other_department_id = "dep-2"
+        network_guest = Guest.objects.create(phone="+79990007773", first_name="Сеть")
+        self._create_window_metric(
+            guest=network_guest,
+            orders_count=1,
+            visits_count=1,
+            sum_net="900.00",
+            avg_check_net="900.00",
+            rating_score="14.00",
+            last_visit_at=date(2026, 3, 18),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 1, 10),
+            guest=network_guest,
+            department_id=other_department_id,
+            orders_count=1,
+            sum_net=Decimal("500.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 18),
+            guest=network_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("900.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "new_in_venue",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["segments"]["new_in_venue"], 1)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], network_guest.phone)
+
+    def test_new_in_venue_segment_excludes_repeat_visit_in_selected_venue(self):
+        """
+        Повторный визит в выбранное заведение не делает гостя новым, если
+        первая покупка в этом заведении была раньше.
+        """
+        repeat_guest = Guest.objects.create(phone="+79990007774", first_name="Повтор")
+        self._create_window_metric(
+            guest=repeat_guest,
+            orders_count=1,
+            visits_count=1,
+            sum_net="1100.00",
+            avg_check_net="1100.00",
+            rating_score="16.00",
+            last_visit_at=date(2026, 3, 19),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 1, 15),
+            guest=repeat_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("600.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 19),
+            guest=repeat_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("1100.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "new_in_venue",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["segments"]["new_in_venue"], 0)
+        self.assertEqual(payload["selected_guests"]["total"], 0)
+
+    def test_new_in_venue_segment_without_selected_venue_returns_empty_audience(self):
+        """
+        Если заведение не выбрано, сегмент «Новые» не падает и возвращает
+        нулевой счётчик с пустой аудиторией.
+        """
+        new_guest = Guest.objects.create(phone="+79990007775", first_name="Без заведения")
+        self._create_window_metric(
+            guest=new_guest,
+            orders_count=1,
+            visits_count=1,
+            sum_net="1000.00",
+            avg_check_net="1000.00",
+            rating_score="15.00",
+            last_visit_at=date(2026, 3, 21),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 21),
+            guest=new_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("1000.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "segment_code": "new_in_venue",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Для сегмента «Новые» выберите конкретное заведение.")
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["segments"]["new_in_venue"], 0)
+        self.assertEqual(payload["selected_guests"]["total"], 0)
+
+    def test_new_in_venue_segment_respects_complex_filters(self):
+        """
+        Дополнительные условия должны сужать аудиторию сегмента «Новые».
+        """
+        matching_guest = Guest.objects.create(phone="+79990007776", first_name="Фильтр да")
+        filtered_guest = Guest.objects.create(phone="+79990007777", first_name="Фильтр нет")
+        self._create_window_metric(
+            guest=matching_guest,
+            orders_count=3,
+            visits_count=2,
+            sum_net="2100.00",
+            avg_check_net="700.00",
+            rating_score="27.00",
+            last_visit_at=date(2026, 3, 22),
+        )
+        self._create_window_metric(
+            guest=filtered_guest,
+            orders_count=1,
+            visits_count=1,
+            sum_net="800.00",
+            avg_check_net="800.00",
+            rating_score="13.00",
+            last_visit_at=date(2026, 3, 22),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 22),
+            guest=matching_guest,
+            department_id=self.department_id,
+            orders_count=3,
+            sum_net=Decimal("2100.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 22),
+            guest=filtered_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("800.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "new_in_venue",
+                "cf_field": ["orders_count"],
+                "cf_op": ["gte"],
+                "cf_value": ["2"],
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertEqual(payload["segments"]["new_in_venue"], 1)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], matching_guest.phone)
+
     @override_settings(WORKBENCH_CATEGORY_WINDOW_METRICS_V2=False)
     def test_focus_selected_uses_general_window_metrics_when_flag_disabled(self):
         """
@@ -751,6 +1045,94 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(rows[0].guest_id, self.guest_1.id)
         self.assertEqual(list(mailing.bot_profiles.values_list("id", flat=True)), [self.bot_telegram.id])
 
+    def test_create_mailing_draft_from_new_in_venue_selection_preserves_audience(self):
+        """
+        Черновик кампании из сегмента «Новые» должен использовать тот же отбор,
+        что и экран гостей, включая дополнительные условия.
+        """
+        matching_guest = Guest.objects.create(phone="+79990008881", first_name="Новый купон")
+        filtered_guest = Guest.objects.create(phone="+79990008882", first_name="Новый мимо")
+        self._create_bot_binding(matching_guest, external_chat_id="tg-new-coupon-ok", is_primary=True)
+        self._create_bot_binding(filtered_guest, external_chat_id="tg-new-coupon-skip", is_primary=True)
+        self._create_window_metric(
+            guest=matching_guest,
+            orders_count=3,
+            visits_count=2,
+            sum_net="2400.00",
+            avg_check_net="800.00",
+            rating_score="28.00",
+            last_visit_at=date(2026, 3, 21),
+        )
+        self._create_window_metric(
+            guest=filtered_guest,
+            orders_count=1,
+            visits_count=1,
+            sum_net="600.00",
+            avg_check_net="600.00",
+            rating_score="11.00",
+            last_visit_at=date(2026, 3, 21),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 21),
+            guest=matching_guest,
+            department_id=self.department_id,
+            orders_count=3,
+            sum_net=Decimal("2400.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2026, 3, 21),
+            guest=filtered_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("600.00"),
+        )
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "segment_code": "new_in_venue",
+                "cf_field": ["orders_count"],
+                "cf_op": ["gte"],
+                "cf_value": ["2"],
+                "audience_limit_enabled": "0",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        self.assertEqual(
+            response.url,
+            reverse("mailings_v2_campaigns_edit", kwargs={"pk": mailing.id}),
+        )
+        rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
+        self.assertEqual([row.guest_id for row in rows], [matching_guest.id])
+
+        snapshot = self.client.session["mailings_v2_workbench_snapshots"][str(mailing.id)]
+        self.assertEqual(snapshot["segment_code"], "new_in_venue")
+        self.assertEqual(snapshot["department_id"], self.department_id)
+        self.assertEqual(snapshot["selected_total"], 1)
+        self.assertEqual(snapshot["selected_rows_count"], 1)
+        self.assertEqual(snapshot["delivery_available_guests"], 1)
+        self.assertEqual(snapshot["complex_filters"], [{"field": "orders_count", "operator": "gte", "value": "2"}])
+
+        mailing.refresh_from_db()
+        self.assertEqual(mailing.source_filter_snapshot["segment_code"], "new_in_venue")
+        self.assertEqual(mailing.source_filter_snapshot["complex_filters"], snapshot["complex_filters"])
+
+        audience_response = self.client.get(
+            reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+        self.assertEqual(audience_response.status_code, 200)
+        self.assertContains(audience_response, "Аудитория собрана из экрана «Гости»")
+        self.assertContains(audience_response, "new_in_venue")
+        self.assertContains(audience_response, "segment_code=new_in_venue")
+
     def test_create_mailing_draft_uses_selected_mailing_settings(self):
         """
         Черновик должен учитывать выбранные на workbench параметры рассылки.
@@ -972,6 +1354,30 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(preset.segment_code, "cooling_30_60d")
         self.assertEqual(preset.focus_category_code, "wine")
         self.assertEqual(preset.audience_channel_group, "legacy_no_new_bot")
+
+    def test_save_filter_preset_accepts_new_in_venue_segment(self):
+        """
+        Пресеты формы должны сохранять новый сегмент как валидный код.
+        """
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "save_filter_preset",
+                "preset_name": "Новые в заведении",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "venue_selection_mode": "visited_once",
+                "segment_code": "new_in_venue",
+                "audience_channel_group": "all",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        preset = GuestWorkbenchFilterPreset.objects.get(name="Новые в заведении")
+        self.assertEqual(preset.department_id, self.department_id)
+        self.assertEqual(preset.segment_code, "new_in_venue")
 
     def _create_bulk_window_metrics(self, *, department_id: str, total: int) -> None:
         """
@@ -1232,6 +1638,37 @@ class GuestsWorkbenchViewTests(TestCase):
         payload_after = response_after.context["payload"]
         self.assertEqual(payload_after["segments"]["bot_active_no_visits_180d"], 0)
         self.assertEqual(payload_after["selected_guests"]["total"], 0)
+
+    def _create_window_metric(
+        self,
+        *,
+        guest: Guest,
+        department_id: str | None = None,
+        window_days: int = 30,
+        orders_count: int,
+        visits_count: int,
+        sum_net: str,
+        avg_check_net: str,
+        rating_score: str,
+        last_visit_at: date | None,
+    ) -> None:
+        """
+        Создаёт строку общей оконной витрины для проверок workbench.
+        """
+        GuestRestaurantWindowMetrics.objects.create(
+            as_of_date=self.as_of_date,
+            guest=guest,
+            department_id=department_id or self.department_id,
+            window_days=window_days,
+            orders_count=orders_count,
+            visits_count=visits_count,
+            avg_check_net=Decimal(avg_check_net),
+            sum_net=Decimal(sum_net),
+            bonus_in_sum=Decimal("0.00"),
+            bonus_out_sum=Decimal("0.00"),
+            rating_score=Decimal(rating_score),
+            last_visit_at=last_visit_at,
+        )
 
     def _create_focus_category(self, code: str, name: str) -> FocusCategory:
         """

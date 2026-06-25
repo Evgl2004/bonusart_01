@@ -220,7 +220,7 @@
       <select id="wb-segment-code" name="segment_code" class="form-select">
         <option value="">Все сегменты</option>
         {% for seg in payload.filters.segment_options %}
-          <option value="{{ seg.code }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
+          <option value="{{ seg.code }}" title="{{ seg.description }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
         {% endfor %}
       </select>
     </div>
@@ -368,6 +368,12 @@
   </div>
 {% endif %}
 
+{% if selected_segment_code == "new_in_venue" and not selected_department_id %}
+  <div class="alert alert-warning border py-2 small mb-4">
+    Для сегмента «Новые» выберите конкретное заведение.
+  </div>
+{% endif %}
+
 <ul class="nav nav-tabs wb-tabs mb-3" id="guests-workbench-tabs" role="tablist">
   <li class="nav-item" role="presentation">
     <button class="nav-link active" id="tab-overview" data-bs-toggle="tab" data-bs-target="#pane-overview" type="button" role="tab" aria-controls="pane-overview" aria-selected="true">
@@ -457,6 +463,16 @@
                     title="Суммарно списанные бонусы по гостям за выбранный период и фильтры.">?</button>
           </div>
           <div class="wb-kpi-value">{{ payload.cards.bonus_out_total }}</div>
+        </div></div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="wb-card"><div class="card-body">
+          <div class="wb-kpi-title-row">
+            <div class="wb-kpi-title">Новые</div>
+            <button type="button" class="btn btn-outline-secondary wb-help-btn" data-bs-toggle="tooltip" data-bs-placement="top"
+                    title="Гости, у которых первая покупка в выбранном заведении попала в выбранный период. Для расчёта выберите конкретное заведение.">?</button>
+          </div>
+          <div class="wb-kpi-value">{{ payload.segments.new_in_venue }}</div>
         </div></div>
       </div>
       <div class="col-6 col-lg-3">

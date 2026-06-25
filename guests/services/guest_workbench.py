@@ -17,13 +17,14 @@ from types import SimpleNamespace
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Exists, Max, OuterRef
+from django.db.models import Exists, Max, Min, OuterRef
 
 from guests.models import (
     FocusCategory,
     Guest,
     GuestBotBinding,
     GuestRestaurantDailyCategoryFact,
+    GuestRestaurantDailyOrderFact,
     GuestRestaurantWindowCategoryMetrics,
     GuestWorkbenchFilterPreset,
     GuestRestaurantWindowMetrics,
@@ -40,8 +41,10 @@ from guests.services.guest_venue_selection import (
 
 WINDOW_OPTIONS = (7, 14, 30, 60, 180)
 DEFAULT_WINDOW_DAYS = 30
+NEW_IN_VENUE_SEGMENT_CODE = "new_in_venue"
 BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE = "bot_active_no_visits_180d"
 SEGMENT_DEFINITIONS = (
+    (NEW_IN_VENUE_SEGMENT_CODE, "Новые"),
     ("active_30d", "Активные 30д (2+ визита)"),
     ("single_visit_30d", "1 визит за 30д"),
     ("cooling_30_60d", "Остывшие 30-60д"),
@@ -49,6 +52,15 @@ SEGMENT_DEFINITIONS = (
     (BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE, "Активен в боте, без визитов 180д"),
 )
 SEGMENT_NAMES_MAP = dict(SEGMENT_DEFINITIONS)
+SEGMENT_DESCRIPTIONS = {
+    NEW_IN_VENUE_SEGMENT_CODE: "Первая покупка в выбранном заведении за выбранный период.",
+    "active_30d": "Гости, у которых за последние 30 дней 2 и более визита.",
+    "single_visit_30d": "Гости с одним визитом за последние 30 дней.",
+    "cooling_30_60d": "Гости без визитов за 30 дней, но с визитами в окне 60 дней.",
+    "lost_60d_plus": "Гости без визитов за 60 дней, но с визитами в окне 180 дней.",
+    BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE: "Гости активны в боте, но не посещали заведение 180 дней.",
+}
+SEGMENTS_REQUIRING_DEPARTMENT = {NEW_IN_VENUE_SEGMENT_CODE}
 AUDIENCE_CHANNEL_GROUP_ALL = "all"
 AUDIENCE_CHANNEL_GROUP_NEW_BOTS_SENDABLE = "new_bots_sendable"
 AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT = "legacy_no_new_bot"
@@ -232,11 +244,14 @@ def _build_preferred_windows(selected_window_days: int, segment_code: str) -> li
     Логика:
     1. если сегмент не выбран, таблица должна показывать метрики строго в выбранном окне;
     2. если выбран сегмент, окно определяется бизнес-смыслом сегмента:
-       1. active_30d / single_visit_30d -> окно 30;
-       2. cooling_30_60d -> окно 60 (fallback: 30);
-       3. lost_60d_plus -> окно 180 (fallback: 60, 30).
+       1. new_in_venue -> выбранное пользователем окно;
+       2. active_30d / single_visit_30d -> окно 30;
+       3. cooling_30_60d -> окно 60 (fallback: 30);
+       4. lost_60d_plus -> окно 180 (fallback: 60, 30).
     """
-    if segment_code == "active_30d":
+    if segment_code == NEW_IN_VENUE_SEGMENT_CODE:
+        preferred_windows = [selected_window_days]
+    elif segment_code == "active_30d":
         preferred_windows = [30]
     elif segment_code == "single_visit_30d":
         preferred_windows = [30]
@@ -610,9 +625,10 @@ def build_guest_workbench_payload(
     base_scope = _apply_guest_ids_filter(base_scope, venue_selection_guest_ids)
     base_scope = _apply_audience_channel_filter(base_scope, audience_channel_filter)
 
-    base_segmentation, base_segment_by_key = _build_segmentation_state(
+    base_segmentation, base_segment_by_key, base_segment_guest_keys_by_code = _build_segmentation_state(
         base_scope,
         as_of_date=target_as_of,
+        selected_window_days=selected_window_days,
         selected_department_id=selected_department_id,
         allowed_guest_keys=venue_allowed_guest_keys,
         audience_channel_filter=audience_channel_filter,
@@ -621,7 +637,7 @@ def build_guest_workbench_payload(
         as_of_date=target_as_of,
         selected_window_days=selected_window_days,
         selected_department_id=selected_department_id,
-        segment_by_key=base_segment_by_key,
+        segment_guest_keys_by_code=base_segment_guest_keys_by_code,
         segment_totals=base_segmentation,
         allowed_guest_keys=venue_allowed_guest_keys,
     )
@@ -675,12 +691,14 @@ def build_guest_workbench_payload(
         # сегментация и матрица совпадают с уже посчитанными стартовыми данными.
         segmentation = base_segmentation
         segment_by_key = base_segment_by_key
+        segment_guest_keys_by_code = base_segment_guest_keys_by_code
         segment_focus_matrix = base_segment_focus_matrix
         focus_guest_keys_by_code = base_focus_guest_keys_by_code
     else:
-        segmentation, segment_by_key = _build_segmentation_state(
+        segmentation, segment_by_key, segment_guest_keys_by_code = _build_segmentation_state(
             active_metrics_scope,
             as_of_date=target_as_of,
+            selected_window_days=selected_window_days,
             selected_department_id=selected_department_id,
             allowed_guest_keys=allowed_guest_keys,
             audience_channel_filter=audience_channel_filter,
@@ -689,7 +707,7 @@ def build_guest_workbench_payload(
             as_of_date=target_as_of,
             selected_window_days=selected_window_days,
             selected_department_id=selected_department_id,
-            segment_by_key=segment_by_key,
+            segment_guest_keys_by_code=segment_guest_keys_by_code,
             segment_totals=segmentation,
             allowed_guest_keys=allowed_guest_keys,
         )
@@ -719,6 +737,7 @@ def build_guest_workbench_payload(
         base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
         segment_by_key=segment_by_key,
+        segment_guest_keys_by_code=segment_guest_keys_by_code,
         focus_guest_keys_by_code=focus_guest_keys_by_code,
         segment_code=selected_segment_code,
         focus_category_code=selected_focus_category_code,
@@ -729,6 +748,7 @@ def build_guest_workbench_payload(
         base_scope=active_metrics_scope,
         selected_window_days=selected_window_days,
         segment_by_key=segment_by_key,
+        segment_guest_keys_by_code=segment_guest_keys_by_code,
         focus_guest_keys_by_code=focus_guest_keys_by_code,
         segment_code=selected_segment_code,
         focus_category_code=selected_focus_category_code,
@@ -939,13 +959,7 @@ def _build_empty_payload(
             "bonus_out_total": "0.00",
             "avg_rating": "0.00",
         },
-        "segments": {
-            "active_30d": 0,
-            "single_visit_30d": 0,
-            "cooling_30_60d": 0,
-            "lost_60d_plus": 0,
-            BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE: 0,
-        },
+        "segments": {code: 0 for code, _ in SEGMENT_DEFINITIONS},
         "segment_focus_matrix": {
             "rows": [
                 {
@@ -992,11 +1006,19 @@ def _build_department_options() -> list[dict[str, str]]:
     return result
 
 
-def _build_segment_options() -> list[dict[str, str]]:
+def _build_segment_options() -> list[dict[str, Any]]:
     """
     Формирует справочник сегментов для фильтра на экране workbench.
     """
-    return [{"code": code, "name": name} for code, name in SEGMENT_DEFINITIONS]
+    return [
+        {
+            "code": code,
+            "name": name,
+            "description": SEGMENT_DESCRIPTIONS.get(code, ""),
+            "requires_department": code in SEGMENTS_REQUIRING_DEPARTMENT,
+        }
+        for code, name in SEGMENT_DEFINITIONS
+    ]
 
 
 def _build_audience_channel_group_options() -> list[dict[str, str]]:
@@ -1153,18 +1175,20 @@ def _build_segmentation_state(
     scope_qs,
     *,
     as_of_date: date,
+    selected_window_days: int,
     selected_department_id: str,
     allowed_guest_keys: set[tuple[int, str]] | None = None,
     audience_channel_filter: dict[str, set[int] | None] | None = None,
-) -> tuple[dict[str, int], dict[tuple[int, str], str]]:
+) -> tuple[dict[str, int], dict[tuple[int, str], str], dict[str, set[tuple[int, str]]]]:
     """
-    Считает сегменты активности по окнам 30/60/180 дней.
+    Считает сегменты гостей по окнам и дополнительным бизнес-признакам.
 
     Логика:
-    1. active_30d: visits_30 >= 2;
-    2. single_visit_30d: visits_30 == 1;
-    3. cooling_30_60d: visits_30 == 0 и visits_60 > 0;
-    4. lost_60d_plus: visits_60 == 0 и visits_180 > 0.
+    1. new_in_venue: первая покупка в выбранном заведении попала в выбранное окно;
+    2. active_30d: visits_30 >= 2;
+    3. single_visit_30d: visits_30 == 1;
+    4. cooling_30_60d: visits_30 == 0 и visits_60 > 0;
+    5. lost_60d_plus: visits_60 == 0 и visits_180 > 0.
     """
     rows = (
         scope_qs.filter(window_days__in=[30, 60, 180])
@@ -1183,6 +1207,10 @@ def _build_segmentation_state(
 
     segment_totals = {code: 0 for code, _ in SEGMENT_DEFINITIONS}
     segment_by_key: dict[tuple[int, str], str] = {}
+    segment_guest_keys_by_code: dict[str, set[tuple[int, str]]] = {
+        code: set()
+        for code, _ in SEGMENT_DEFINITIONS
+    }
 
     for key, window_map in state.items():
         if allowed_guest_keys is not None and key not in allowed_guest_keys:
@@ -1193,18 +1221,22 @@ def _build_segmentation_state(
 
         if visits_30 >= 2:
             segment_by_key[key] = "active_30d"
+            segment_guest_keys_by_code["active_30d"].add(key)
             segment_totals["active_30d"] += 1
             continue
         if visits_30 == 1:
             segment_by_key[key] = "single_visit_30d"
+            segment_guest_keys_by_code["single_visit_30d"].add(key)
             segment_totals["single_visit_30d"] += 1
             continue
         if visits_30 == 0 and visits_60 > 0:
             segment_by_key[key] = "cooling_30_60d"
+            segment_guest_keys_by_code["cooling_30_60d"].add(key)
             segment_totals["cooling_30_60d"] += 1
             continue
         if visits_60 == 0 and visits_180 > 0:
             segment_by_key[key] = "lost_60d_plus"
+            segment_guest_keys_by_code["lost_60d_plus"].add(key)
             segment_totals["lost_60d_plus"] += 1
 
     bot_segment_keys = _collect_bot_active_no_visits_guest_keys(
@@ -1218,9 +1250,80 @@ def _build_segmentation_state(
         if key in segment_by_key:
             continue
         segment_by_key[key] = BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE
+        segment_guest_keys_by_code[BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE].add(key)
         segment_totals[BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE] += 1
 
-    return segment_totals, segment_by_key
+    new_segment_keys = _collect_new_in_venue_guest_keys(
+        scope_qs=scope_qs,
+        as_of_date=as_of_date,
+        selected_window_days=selected_window_days,
+        selected_department_id=selected_department_id,
+        allowed_guest_keys=allowed_guest_keys,
+        audience_channel_filter=audience_channel_filter,
+    )
+    for key in sorted(new_segment_keys):
+        segment_guest_keys_by_code[NEW_IN_VENUE_SEGMENT_CODE].add(key)
+        if key not in segment_by_key:
+            segment_by_key[key] = NEW_IN_VENUE_SEGMENT_CODE
+    segment_totals[NEW_IN_VENUE_SEGMENT_CODE] = len(
+        segment_guest_keys_by_code[NEW_IN_VENUE_SEGMENT_CODE]
+    )
+
+    return segment_totals, segment_by_key, segment_guest_keys_by_code
+
+
+def _collect_new_in_venue_guest_keys(
+    *,
+    scope_qs,
+    as_of_date: date,
+    selected_window_days: int,
+    selected_department_id: str,
+    allowed_guest_keys: set[tuple[int, str]] | None = None,
+    audience_channel_filter: dict[str, set[int] | None] | None = None,
+) -> set[tuple[int, str]]:
+    """
+    Возвращает пары (гость, заведение), где первая покупка гостя в выбранном
+    заведении пришлась на выбранный период.
+    """
+    target_department_id = (selected_department_id or "").strip()
+    if not target_department_id:
+        return set()
+
+    scope_keys = {
+        (int(row["guest_id"]), _normalize_department_id(row.get("department_id")))
+        for row in scope_qs.values("guest_id", "department_id").distinct()
+        if row.get("guest_id") is not None
+    }
+    if allowed_guest_keys is not None:
+        scope_keys &= allowed_guest_keys
+    if not scope_keys:
+        return set()
+
+    guest_ids = {guest_id for guest_id, _ in scope_keys}
+    range_start = as_of_date - timedelta(days=max(int(selected_window_days), 1) - 1)
+    first_purchase_rows = (
+        GuestRestaurantDailyOrderFact.objects.filter(
+            department_id=target_department_id,
+            guest_id__in=guest_ids,
+            orders_count__gt=0,
+        )
+        .values("guest_id", "department_id")
+        .annotate(first_purchase_date=Min("business_date"))
+        .filter(
+            first_purchase_date__gte=range_start,
+            first_purchase_date__lte=as_of_date,
+        )
+    )
+
+    result: set[tuple[int, str]] = set()
+    for row in first_purchase_rows:
+        key = (int(row["guest_id"]), _normalize_department_id(row.get("department_id")))
+        if key not in scope_keys:
+            continue
+        if not _guest_key_allowed_by_audience_filter(key, audience_channel_filter):
+            continue
+        result.add(key)
+    return result
 
 
 def _build_segment_focus_matrix(
@@ -1228,7 +1331,7 @@ def _build_segment_focus_matrix(
     as_of_date: date,
     selected_window_days: int,
     selected_department_id: str,
-    segment_by_key: dict[tuple[int, str], str],
+    segment_guest_keys_by_code: dict[str, set[tuple[int, str]]],
     segment_totals: dict[str, int],
     allowed_guest_keys: set[tuple[int, str]] | None = None,
 ) -> tuple[dict[str, Any], dict[str, set[tuple[int, str]]]]:
@@ -1283,11 +1386,16 @@ def _build_segment_focus_matrix(
         guest_key = (guest_id, department_id)
         if allowed_guest_keys is not None and guest_key not in allowed_guest_keys:
             continue
-        segment_code = segment_by_key.get((guest_id, department_id))
-        if not segment_code:
+        matched_segment_codes = [
+            code
+            for code, guest_keys in segment_guest_keys_by_code.items()
+            if guest_key in guest_keys
+        ]
+        if not matched_segment_codes:
             continue
         focus_id = int(row["focus_category_id"])
-        cell_sets[(segment_code, focus_id)].add(guest_key)
+        for segment_code in matched_segment_codes:
+            cell_sets[(segment_code, focus_id)].add(guest_key)
         category_sets[focus_id].add(guest_key)
 
     columns: list[dict[str, Any]] = []
@@ -1388,6 +1496,7 @@ def _collect_selected_guest_rows(
     base_scope,
     selected_window_days: int,
     segment_by_key: dict[tuple[int, str], str],
+    segment_guest_keys_by_code: dict[str, set[tuple[int, str]]],
     focus_guest_keys_by_code: dict[str, set[tuple[int, str]]],
     segment_code: str,
     focus_category_code: str,
@@ -1408,12 +1517,21 @@ def _collect_selected_guest_rows(
     selected_keys: set[tuple[int, str]] = set()
     for row in representative_rows:
         key = (int(row.guest_id), _normalize_department_id(row.department_id))
-        row_segment_code = segment_by_key.get(key, "")
+        primary_segment_code = segment_by_key.get(key, "")
 
-        if not row_segment_code:
-            continue
-        if segment_code and row_segment_code != segment_code:
-            continue
+        if segment_code:
+            if key not in segment_guest_keys_by_code.get(segment_code, set()):
+                continue
+            row_segment_code = segment_code
+        else:
+            row_segment_code = primary_segment_code
+            if not row_segment_code:
+                row_segment_code = _find_first_segment_for_key(
+                    key,
+                    segment_guest_keys_by_code,
+                )
+            if not row_segment_code:
+                continue
         if focus_keys is not None and key not in focus_keys:
             continue
 
@@ -1423,8 +1541,8 @@ def _collect_selected_guest_rows(
     if segment_code == BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE:
         synthetic_keys = [
             key
-            for key, row_segment_code in segment_by_key.items()
-            if row_segment_code == BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE and key not in selected_keys
+            for key in segment_guest_keys_by_code.get(BOT_ACTIVE_NO_VISITS_180D_SEGMENT_CODE, set())
+            if key not in selected_keys
         ]
         if focus_keys is not None:
             synthetic_keys = [key for key in synthetic_keys if key in focus_keys]
@@ -1468,11 +1586,25 @@ def _collect_selected_guest_rows(
     return selected
 
 
+def _find_first_segment_for_key(
+    key: tuple[int, str],
+    segment_guest_keys_by_code: dict[str, set[tuple[int, str]]],
+) -> str:
+    """
+    Возвращает первый сегмент из общего порядка SEGMENT_DEFINITIONS для гостевого ключа.
+    """
+    for code, _ in SEGMENT_DEFINITIONS:
+        if key in segment_guest_keys_by_code.get(code, set()):
+            return code
+    return ""
+
+
 def _build_selected_guests_rows(
     *,
     base_scope,
     selected_window_days: int,
     segment_by_key: dict[tuple[int, str], str],
+    segment_guest_keys_by_code: dict[str, set[tuple[int, str]]],
     focus_guest_keys_by_code: dict[str, set[tuple[int, str]]],
     segment_code: str,
     focus_category_code: str,
@@ -1490,6 +1622,7 @@ def _build_selected_guests_rows(
             base_scope=base_scope,
             selected_window_days=selected_window_days,
             segment_by_key=segment_by_key,
+            segment_guest_keys_by_code=segment_guest_keys_by_code,
             focus_guest_keys_by_code=focus_guest_keys_by_code,
             segment_code=segment_code,
             focus_category_code=focus_category_code,

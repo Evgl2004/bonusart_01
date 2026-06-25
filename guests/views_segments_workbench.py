@@ -23,6 +23,7 @@ from guests.services.guest_workbench import (
 )
 
 SEGMENT_CHART_LABELS = {
+    "new_in_venue": "Новые",
     "active_30d": "Активные 30д",
     "single_visit_30d": "1 визит за 30д",
     "cooling_30_60d": "Остывшие 30-60д",
@@ -30,6 +31,7 @@ SEGMENT_CHART_LABELS = {
     "bot_active_no_visits_180d": "Активен в боте, без визитов 180д",
 }
 SEGMENT_CHART_COLORS = {
+    "new_in_venue": "#0891b2",
     "active_30d": "#0e9f6e",
     "single_visit_30d": "#2563eb",
     "cooling_30_60d": "#f59e0b",
