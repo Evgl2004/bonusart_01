@@ -699,9 +699,42 @@ class WebhookGuestAndCategoryTests(TestCase):
         OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
         OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
     )
-    def test_handle_api_webhook_notification_type_1_bridge_skips_staff_events(self):
+    def test_handle_api_webhook_notification_type_1_bridge_survives_visit_history_missing_guest(self):
         """
-        Для staff-уведомления (customerId без phone) мост не должен создавать OLAP-задачу.
+        OLAP-задача должна создаваться по orderNumber, даже если VisitHistory не смог найти гостя.
+        """
+        assigned, reason = webhooks.handle_api_webhook(
+            {
+                "id": "wh-nt1-without-guest",
+                "parsed_body": {
+                    "id": "evt-without-guest-1",
+                    "notificationType": 1,
+                    "phone": None,
+                    "terminalGroupId": self.restaurant.iiko_id,
+                    "changedOn": "2026-03-18T13:05:00+05:00",
+                    "orderNumber": 53111,
+                    "orderId": "order-without-guest-1",
+                    "transactionId": "tx-without-guest-1",
+                    "organizationId": "org-without-guest-1",
+                },
+            }
+        )
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertIn("Гость не найден", reason)
+        self.assertIn("OLAP:", reason)
+        self.assertEqual(VisitHistory.objects.count(), 0)
+        row = OlapCheckSyncJournal.objects.get(order_number=53111)
+        self.assertIsNone(row.guest_id)
+        self.assertEqual(row.source_webhook_id, "wh-nt1-without-guest")
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_creates_journal_for_customer_id_without_phone(self):
+        """
+        Событие без phone, но с orderNumber не должно терять OLAP-задачу из-за старой staff-эвристики VisitHistory.
         """
         assigned, reason = webhooks.handle_api_webhook(
             {
@@ -721,7 +754,9 @@ class WebhookGuestAndCategoryTests(TestCase):
         self.assertTrue(assigned, msg=reason)
         self.assertIn("сотрудник", reason.lower())
         self.assertEqual(VisitHistory.objects.count(), 0)
-        self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
+        row = OlapCheckSyncJournal.objects.get(order_number=53110)
+        self.assertIsNone(row.guest_id)
+        self.assertEqual(row.source_webhook_id, "wh-nt1-staff")
 
 
 class WebhookProcessRecentTests(SimpleTestCase):

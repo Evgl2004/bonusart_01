@@ -693,23 +693,11 @@ def _join_webhook_reasons(*reasons: str) -> str:
 def _process_notification_type_1_webhook(webhook: dict, event: dict) -> tuple[bool, str]:
     """
     Обрабатывает iikoCard notificationType=1:
-    обновляет историю посещений и, при включённом флаге, ставит OLAP-задачу.
+    независимо ставит OLAP-задачу и обновляет историю посещений.
     """
     webhook_id = webhook.get("id")
-    logger.info(
-        "Webhook id=%s: notificationType=1, обновляем историю посещений",
-        webhook_id,
-    )
-    success, reason = update_visit_history_from_event(event)
-    if not success:
-        return success, reason
-    if reason:
-        logger.info(
-            "Webhook id=%s: VisitHistory обработан без постановки OLAP-задачи (%s)",
-            webhook_id,
-            reason,
-        )
-        return success, reason
+    bridge_reason = ""
+    bridge_row_id: int | None = None
 
     if _is_live_olap_bridge_enabled_for_notification(1):
         try:
@@ -731,8 +719,26 @@ def _process_notification_type_1_webhook(webhook: dict, event: dict) -> tuple[bo
                 bridge_result.row_id,
                 bridge_result.reason,
             )
+            bridge_row_id = bridge_result.row_id
+            bridge_reason = f"OLAP: {bridge_result.reason}"
 
-    return success, reason
+    logger.info(
+        "Webhook id=%s: notificationType=1, обновляем историю посещений",
+        webhook_id,
+    )
+    visit_success, visit_reason = update_visit_history_from_event(event)
+    reason = _join_webhook_reasons(visit_reason, bridge_reason)
+    if not visit_success:
+        if bridge_row_id is not None:
+            logger.info(
+                "Webhook id=%s: VisitHistory не обновлён, но OLAP-задача поставлена или уже существовала (%s)",
+                webhook_id,
+                visit_reason,
+            )
+            return True, reason
+        return False, reason
+
+    return True, reason
 
 
 def handle_api_webhook(
