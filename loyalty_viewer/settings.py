@@ -571,6 +571,75 @@ VTELEMAX_COUPON_SYNC_SCHEDULE_MINUTES = _env_int(
     min_value=1,
 )
 
+# Очередь синхронизации общей категории iikoCard «Активный купон SAGUR».
+# По умолчанию выключена, чтобы сохранить прежний поток рассылок до явного включения.
+IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED = _env_bool("IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED", False)
+IIKO_ACTIVE_COUPON_CATEGORY_ID = str(
+    os.getenv("IIKO_ACTIVE_COUPON_CATEGORY_ID", os.getenv("IIKO_CUSTOMER_CATEGORY_ID", ""))
+    or ""
+).strip()
+IIKO_ACTIVE_COUPON_CATEGORY_NAME = str(
+    os.getenv("IIKO_ACTIVE_COUPON_CATEGORY_NAME", "Активный купон SAGUR")
+    or "Активный купон SAGUR"
+).strip()
+IIKO_CUSTOMER_CATEGORY_GATE_REQUIRE_ACK = _env_bool(
+    "IIKO_CUSTOMER_CATEGORY_GATE_REQUIRE_ACK",
+    True,
+)
+try:
+    IIKO_CUSTOMER_CATEGORY_SYNC_HTTP_TIMEOUT_SECONDS = float(
+        os.getenv("IIKO_CUSTOMER_CATEGORY_SYNC_HTTP_TIMEOUT_SECONDS", "15") or "15"
+    )
+except ValueError:
+    IIKO_CUSTOMER_CATEGORY_SYNC_HTTP_TIMEOUT_SECONDS = 15.0
+IIKO_CUSTOMER_CATEGORY_SYNC_MAX_ATTEMPTS = _env_int(
+    "IIKO_CUSTOMER_CATEGORY_SYNC_MAX_ATTEMPTS",
+    8,
+    min_value=1,
+)
+IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_BASE_SECONDS = _env_int(
+    "IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_BASE_SECONDS",
+    30,
+    min_value=1,
+)
+IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_MAX_SECONDS = _env_int(
+    "IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_MAX_SECONDS",
+    3600,
+    min_value=1,
+)
+if IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_MAX_SECONDS < IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_BASE_SECONDS:
+    IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_MAX_SECONDS = IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_BASE_SECONDS
+IIKO_CUSTOMER_CATEGORY_SYNC_BATCH_SIZE = _env_int(
+    "IIKO_CUSTOMER_CATEGORY_SYNC_BATCH_SIZE",
+    100,
+    min_value=1,
+)
+try:
+    IIKO_CUSTOMER_CATEGORY_SYNC_LOOP_SLEEP_SECONDS = float(
+        os.getenv("IIKO_CUSTOMER_CATEGORY_SYNC_LOOP_SLEEP_SECONDS", "5") or "5"
+    )
+except ValueError:
+    IIKO_CUSTOMER_CATEGORY_SYNC_LOOP_SLEEP_SECONDS = 5.0
+if IIKO_CUSTOMER_CATEGORY_SYNC_LOOP_SLEEP_SECONDS < 0.1:
+    IIKO_CUSTOMER_CATEGORY_SYNC_LOOP_SLEEP_SECONDS = 0.1
+try:
+    IIKO_CUSTOMER_CATEGORY_SYNC_REQUEST_INTERVAL_SECONDS = float(
+        os.getenv("IIKO_CUSTOMER_CATEGORY_SYNC_REQUEST_INTERVAL_SECONDS", "0") or "0"
+    )
+except ValueError:
+    IIKO_CUSTOMER_CATEGORY_SYNC_REQUEST_INTERVAL_SECONDS = 0.0
+if IIKO_CUSTOMER_CATEGORY_SYNC_REQUEST_INTERVAL_SECONDS < 0:
+    IIKO_CUSTOMER_CATEGORY_SYNC_REQUEST_INTERVAL_SECONDS = 0.0
+IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_ENABLED = _env_bool(
+    "IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_ENABLED",
+    False,
+)
+IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_MINUTES = _env_int(
+    "IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_MINUTES",
+    1,
+    min_value=1,
+)
+
 # Плановый запуск купонных автосценариев.
 # По умолчанию выключен: включение требует отдельного env-флага и настроек сценариев в UI.
 COUPON_AUTOSCENARIO_SCHEDULE_ENABLED = _env_bool("COUPON_AUTOSCENARIO_SCHEDULE_ENABLED", False)
@@ -1045,6 +1114,14 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_vtelemax_coupon_sync_queue", None)
+
+    if IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED and IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_ENABLED:
+        schedule_map["run_iiko_customer_category_sync_queue"] = {
+            "func": "guests.tasks.run_iiko_customer_category_sync_queue_task",
+            "minutes": IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_iiko_customer_category_sync_queue", None)
 
     if COUPON_AUTOSCENARIO_SCHEDULE_ENABLED:
         schedule_map["run_coupon_autoscenarios"] = {

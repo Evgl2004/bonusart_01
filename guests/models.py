@@ -2839,6 +2839,12 @@ class CouponCampaignAssignment(models.Model):
         OK = "ok", "Синхронизирован"
         ERROR = "error", "Ошибка синхронизации"
 
+    class IikoCategorySyncStatus(models.TextChoices):
+        DISABLED = "disabled", "Контур iikoCard отключён"
+        PENDING = "pending", "Ожидает iikoCard"
+        OK = "ok", "Подтверждено iikoCard"
+        ERROR = "error", "Ошибка iikoCard"
+
     campaign = models.ForeignKey(
         "Mailing",
         on_delete=models.CASCADE,
@@ -2903,6 +2909,15 @@ class CouponCampaignAssignment(models.Model):
     )
     vtelemax_synced_at = models.DateTimeField(blank=True, null=True)
     vtelemax_sync_error = models.TextField(blank=True, null=True)
+    iiko_category_add_status = models.CharField(
+        max_length=16,
+        choices=IikoCategorySyncStatus.choices,
+        default=IikoCategorySyncStatus.DISABLED,
+        db_index=True,
+        help_text="Статус добавления гостя в категорию iikoCard, разрешающую применение купона.",
+    )
+    iiko_category_add_synced_at = models.DateTimeField(blank=True, null=True)
+    iiko_category_add_error = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -2929,6 +2944,7 @@ class CouponCampaignAssignment(models.Model):
             models.Index(fields=["campaign", "status"], name="cpass_campaign_status_idx"),
             models.Index(fields=["campaign", "venue_code", "status"], name="cpass_camp_venue_st_idx"),
             models.Index(fields=["status", "vtelemax_sync_status"], name="cpass_sync_status_idx"),
+            models.Index(fields=["status", "iiko_category_add_status"], name="cpass_iiko_status_idx"),
         ]
 
     def __str__(self):
@@ -3022,6 +3038,12 @@ class CouponAutoscenarioAssignment(models.Model):
         OK = CouponCampaignAssignment.VtelemaxSyncStatus.OK, "Синхронизирован"
         ERROR = CouponCampaignAssignment.VtelemaxSyncStatus.ERROR, "Ошибка синхронизации"
 
+    class IikoCategorySyncStatus(models.TextChoices):
+        DISABLED = CouponCampaignAssignment.IikoCategorySyncStatus.DISABLED, "Контур iikoCard отключён"
+        PENDING = CouponCampaignAssignment.IikoCategorySyncStatus.PENDING, "Ожидает iikoCard"
+        OK = CouponCampaignAssignment.IikoCategorySyncStatus.OK, "Подтверждено iikoCard"
+        ERROR = CouponCampaignAssignment.IikoCategorySyncStatus.ERROR, "Ошибка iikoCard"
+
     run = models.ForeignKey(
         "CouponAutoscenarioRun",
         on_delete=models.CASCADE,
@@ -3087,6 +3109,15 @@ class CouponAutoscenarioAssignment(models.Model):
     )
     vtelemax_synced_at = models.DateTimeField(blank=True, null=True)
     vtelemax_sync_error = models.TextField(blank=True, null=True)
+    iiko_category_add_status = models.CharField(
+        max_length=16,
+        choices=IikoCategorySyncStatus.choices,
+        default=IikoCategorySyncStatus.DISABLED,
+        db_index=True,
+        help_text="Статус добавления гостя в категорию iikoCard, разрешающую применение купона.",
+    )
+    iiko_category_add_synced_at = models.DateTimeField(blank=True, null=True)
+    iiko_category_add_error = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -3119,6 +3150,7 @@ class CouponAutoscenarioAssignment(models.Model):
             models.Index(fields=["status", "vtelemax_sync_status"], name="cautoass_sync_status_idx"),
             models.Index(fields=["coupon_series", "status"], name="cautoass_series_status_idx"),
             models.Index(fields=["scenario", "trigger_key"], name="cautoass_scen_trigger_idx"),
+            models.Index(fields=["status", "iiko_category_add_status"], name="cautoass_iiko_status_idx"),
         ]
 
     def __str__(self):
@@ -3268,6 +3300,105 @@ class CouponVtelemaxSyncQueue(models.Model):
 
     def __str__(self):
         return f"event={self.event_id} direction={self.direction} status={self.status}"
+
+
+class IikoCustomerCategorySyncEvent(models.Model):
+    """
+    Очередь синхронизации общей категории iikoCard для гостей с активным купоном SAGUR.
+
+    Событие `add` является обязательным pre-send gate при включённом контуре:
+    сообщение с купоном не уходит гостю, пока iikoCard не подтвердил добавление
+    категории. Событие `remove` всегда проверяет, что у гостя не осталось других
+    живых купонов, чтобы не снять общую категорию преждевременно.
+    """
+
+    class Action(models.TextChoices):
+        ADD = "add", "Добавить категорию"
+        REMOVE = "remove", "Удалить категорию"
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Ожидает отправки"
+        SENT = "sent", "Отправлено"
+        ACKED = "acked", "Подтверждено"
+        ERROR = "error", "Ошибка"
+        SKIPPED = "skipped", "Пропущено"
+
+    class SourceType(models.TextChoices):
+        CAMPAIGN = "campaign", "Купонная кампания"
+        AUTOSCENARIO = "autoscenario", "Купонный автосценарий"
+        MANUAL = "manual", "Ручная операция"
+
+    event_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True)
+    action = models.CharField(max_length=16, choices=Action.choices, db_index=True)
+    source_type = models.CharField(
+        max_length=32,
+        choices=SourceType.choices,
+        default=SourceType.MANUAL,
+        db_index=True,
+    )
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="iiko_category_sync_events",
+    )
+    campaign_assignment = models.ForeignKey(
+        "CouponCampaignAssignment",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="iiko_category_sync_events",
+    )
+    autoscenario_assignment = models.ForeignKey(
+        "CouponAutoscenarioAssignment",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="iiko_category_sync_events",
+    )
+    iiko_customer_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    category_id = models.CharField(max_length=64, db_index=True)
+    organization_id = models.CharField(max_length=64, blank=True, null=True)
+    payload_json = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    next_retry_at = models.DateTimeField(default=timezone.now, db_index=True)
+    last_error = models.TextField(blank=True, null=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
+    ack_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "iiko_customer_category_sync_events"
+        verbose_name = "Событие синхронизации категории гостя iikoCard"
+        verbose_name_plural = "События синхронизации категорий гостей iikoCard"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["campaign_assignment", "action", "category_id"],
+                condition=models.Q(campaign_assignment__isnull=False),
+                name="iikocat_cpass_action_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["autoscenario_assignment", "action", "category_id"],
+                condition=models.Q(autoscenario_assignment__isnull=False),
+                name="iikocat_cauto_action_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["status", "next_retry_at"], name="iikocat_status_retry_idx"),
+            models.Index(fields=["action", "status"], name="iikocat_action_status_idx"),
+            models.Index(fields=["guest", "category_id", "status"], name="iikocat_guest_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"event={self.event_id} action={self.action} status={self.status}"
 
 
 
