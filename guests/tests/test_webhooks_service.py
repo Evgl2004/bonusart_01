@@ -394,6 +394,30 @@ class WebhookGuestAndCategoryTests(TestCase):
         self.assertFalse(assigned)
         self.assertIn("Неизвестный notificationType", reason)
 
+    def test_handle_api_webhook_balance_non_visit_event_keeps_old_short_path(self):
+        """
+        Balance-событие без notificationType=1 должно идти по старому короткому пути
+        и не ставить OLAP-задачу.
+        """
+        webhook = {
+            "id": "wh-balance-non-visit",
+            "category_id_ext": webhooks.BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID,
+            "parsed_body": {
+                "notificationType": 9,
+                "phone": self.guest.phone,
+                "changeSum": "100",
+            },
+        }
+
+        with patch("guests.services.webhooks.run_webhook_scenario_by_code", return_value=1) as mocked_balance:
+            assigned, reason = webhooks.handle_api_webhook(webhook)
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(reason, "balance webhook processed, enqueued=1")
+        mocked_balance.assert_called_once()
+        self.assertEqual(VisitHistory.objects.count(), 0)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
+
     @override_settings(
         OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=False,
         OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
@@ -460,6 +484,82 @@ class WebhookGuestAndCategoryTests(TestCase):
         self.assertEqual(row.organization_id, "org-on-1")
         self.assertEqual(row.source_webhook_id, "wh-nt1-on")
         self.assertEqual(row.status, OlapCheckSyncJournal.Status.NEW)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_balance_notification_type_1_also_creates_olap_journal(self):
+        """
+        Событие из подписки «Баланс» с notificationType=1 должно пройти обе обработки:
+        balance-сценарий и постановку OLAP-задачи.
+        """
+        webhook = {
+            "id": "wh-balance-nt1",
+            "category_id_ext": webhooks.BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID,
+            "parsed_body": {
+                "id": "evt-balance-nt1",
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": self.restaurant.iiko_id,
+                "changedOn": "2026-03-18T11:10:00+05:00",
+                "orderNumber": 698699,
+                "orderId": "order-balance-nt1",
+                "transactionId": "tx-balance-nt1",
+                "organizationId": "org-balance-nt1",
+                "changeSum": "50",
+            },
+        }
+
+        with patch("guests.services.webhooks.run_webhook_scenario_by_code", return_value=0) as mocked_balance:
+            assigned, reason = webhooks.handle_api_webhook(
+                webhook,
+                send_balance_notification=False,
+            )
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertIn("balance webhook processed", reason)
+        mocked_balance.assert_called_once()
+        self.assertEqual(VisitHistory.objects.count(), 1)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 1)
+
+        row = OlapCheckSyncJournal.objects.get()
+        self.assertEqual(row.order_number, 698699)
+        self.assertEqual(row.source_webhook_id, "wh-balance-nt1")
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+    )
+    def test_handle_api_webhook_notification_type_1_bridge_error_does_not_fail_event(self):
+        """
+        Ошибка постановки OLAP-задачи не должна переводить входящий webhook в failed.
+        """
+        webhook = {
+            "id": "wh-nt1-bridge-error",
+            "parsed_body": {
+                "id": "evt-bridge-error",
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": self.restaurant.iiko_id,
+                "changedOn": "2026-03-18T11:20:00+05:00",
+                "orderNumber": 698700,
+                "orderId": "order-bridge-error",
+                "transactionId": "tx-bridge-error",
+                "organizationId": "org-bridge-error",
+            },
+        }
+
+        with patch(
+            "guests.services.webhooks.enqueue_olap_sync_from_webhook",
+            side_effect=RuntimeError("db unavailable"),
+        ) as mocked_bridge:
+            assigned, reason = webhooks.handle_api_webhook(webhook)
+
+        self.assertTrue(assigned, msg=reason)
+        mocked_bridge.assert_called_once()
+        self.assertEqual(VisitHistory.objects.count(), 1)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 0)
 
     @override_settings(
         OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,

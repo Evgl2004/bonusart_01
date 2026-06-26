@@ -683,6 +683,58 @@ def _is_live_olap_bridge_enabled_for_notification(notification_type: int | None)
     return notification_type in normalized_types
 
 
+def _join_webhook_reasons(*reasons: str) -> str:
+    """
+    Собирает человекочитаемое описание результата, пропуская пустые части.
+    """
+    return "; ".join(reason for reason in reasons if reason)
+
+
+def _process_notification_type_1_webhook(webhook: dict, event: dict) -> tuple[bool, str]:
+    """
+    Обрабатывает iikoCard notificationType=1:
+    обновляет историю посещений и, при включённом флаге, ставит OLAP-задачу.
+    """
+    webhook_id = webhook.get("id")
+    logger.info(
+        "Webhook id=%s: notificationType=1, обновляем историю посещений",
+        webhook_id,
+    )
+    success, reason = update_visit_history_from_event(event)
+    if not success:
+        return success, reason
+    if reason:
+        logger.info(
+            "Webhook id=%s: VisitHistory обработан без постановки OLAP-задачи (%s)",
+            webhook_id,
+            reason,
+        )
+        return success, reason
+
+    if _is_live_olap_bridge_enabled_for_notification(1):
+        try:
+            bridge_result = enqueue_olap_sync_from_webhook(
+                webhook=webhook,
+                guest=find_guest(event),
+            )
+        except Exception:
+            logger.exception(
+                "Webhook id=%s: ошибка постановки OLAP-задачи по notificationType=1; "
+                "входящее событие остаётся обработанным.",
+                webhook_id,
+            )
+        else:
+            logger.info(
+                "Webhook id=%s: оперативный мост OLAP выполнен (created=%s, row_id=%s, reason=%s)",
+                webhook_id,
+                bridge_result.created,
+                bridge_result.row_id,
+                bridge_result.reason,
+            )
+
+    return success, reason
+
+
 def handle_api_webhook(
     webhook: dict,
     *,
@@ -697,6 +749,10 @@ def handle_api_webhook(
     2. `notificationType=1` -> обновляем историю посещений (VisitHistory).
     3. `notificationType=5` -> назначаем категорию гостю.
     4. Остальные типы пока не обрабатываем.
+
+    Важно: событие из подписки «Баланс» может одновременно иметь
+    `notificationType=1`. В этом случае выполняем обе независимые обработки:
+    уведомление о балансе и постановку OLAP-задачи для быстрой догрузки чека.
 
     Возвращает:
         True  - webhook обработан успешно, можно ставить `business_status=complete`.
@@ -728,7 +784,7 @@ def handle_api_webhook(
                 BALANCE_NOTIFICATION_CATEGORY_EXTERNAL_ID,
                 enqueued_tasks,
             )
-            return True, f"balance webhook processed, enqueued={enqueued_tasks}"
+            balance_reason = f"balance webhook processed, enqueued={enqueued_tasks}"
         except Exception:
             logger.exception(
                 "Webhook id=%s: ошибка постановки balance-задач в universal queue.",
@@ -736,36 +792,14 @@ def handle_api_webhook(
             )
             return False, "balance enqueue error"
 
+        if notif_type != 1:
+            return True, balance_reason
+
     # --- notificationType = 1: обновляем историю посещений (+ live-мост в OLAP при включённом флаге) ---
     if notif_type == 1:
-        logger.info(
-            "Webhook id=%s: notificationType=1, обновляем историю посещений",
-            webhook_id,
-        )
-        success, reason = update_visit_history_from_event(event)
-        if not success:
-            return success, reason
-        if reason:
-            logger.info(
-                "Webhook id=%s: VisitHistory обработан без постановки OLAP-задачи (%s)",
-                webhook_id,
-                reason,
-            )
-            return success, reason
-
-        if _is_live_olap_bridge_enabled_for_notification(notif_type):
-            bridge_result = enqueue_olap_sync_from_webhook(
-                webhook=webhook,
-                guest=find_guest(event),
-            )
-            logger.info(
-                "Webhook id=%s: live-мост OLAP выполнен (created=%s, row_id=%s, reason=%s)",
-                webhook_id,
-                bridge_result.created,
-                bridge_result.row_id,
-                bridge_result.reason,
-            )
-
+        success, reason = _process_notification_type_1_webhook(webhook, event)
+        if is_balance_event and success:
+            return True, _join_webhook_reasons(balance_reason, reason)
         return success, reason
 
     # --- notificationType = 5: назначаем категорию ---
