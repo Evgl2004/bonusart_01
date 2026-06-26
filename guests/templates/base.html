@@ -203,10 +203,25 @@
 
         <a
           href="{% url 'virtual_categories' %}"
-          class="{% if current == 'virtual_categories' %}active{% endif %}"
+          class="{% if current == 'virtual_categories' or current == 'segment_purchase_analysis' %}active{% endif %}"
         >
           Конструктор категорий
         </a>
+
+        {% if current == 'virtual_categories' or current == 'segment_purchase_analysis' %}
+          <a
+            href="{% url 'virtual_categories' %}"
+            class="submenu-link {% if current == 'virtual_categories' %}active{% endif %}"
+          >
+            Номенклатура
+          </a>
+          <a
+            href="{% url 'segment_purchase_analysis' %}"
+            class="submenu-link {% if current == 'segment_purchase_analysis' %}active{% endif %}"
+          >
+            Анализ покупок
+          </a>
+        {% endif %}
 
         {% if request.user.is_staff %}
           <div class="menu-divider"></div>

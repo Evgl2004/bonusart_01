@@ -23,6 +23,7 @@ from .views_guest_workbench_actions import GuestsWorkbenchActionsView
 from .views_focus_categories_workbench import FocusCategoriesWorkbenchView
 from .views_focus_categories_actions import FocusCategoriesActionsView
 from .views_segments_workbench import SegmentsWorkbenchView
+from .views_segment_purchase_analysis import SegmentPurchaseAnalysisView
 from .views_virtual_categories_workbench import VirtualCategoriesWorkbenchView
 from .views_reports import (
     CouponAutoscenarioReportsView,
@@ -69,6 +70,11 @@ urlpatterns = [
     path("segments/", SegmentsWorkbenchView.as_view(), name="segments"),
     path("focus-categories/", FocusCategoriesWorkbenchView.as_view(), name="focus_categories"),
     path("virtual-categories/", VirtualCategoriesWorkbenchView.as_view(), name="virtual_categories"),
+    path(
+        "virtual-categories/segment-purchases/",
+        SegmentPurchaseAnalysisView.as_view(),
+        name="segment_purchase_analysis",
+    ),
     path("focus-categories/actions/", FocusCategoriesActionsView.as_view(), name="focus_categories_actions"),
     path("reports/", ReportsWorkbenchView.as_view(), name="reports"),
     path(

@@ -31,6 +31,7 @@ class NavigationMenuTests(TestCase):
             "segments",
             "focus_categories",
             "virtual_categories",
+            "segment_purchase_analysis",
             "reports",
             "guests_workbench",
             "mailings_v2_campaigns",
@@ -73,6 +74,14 @@ class NavigationMenuTests(TestCase):
         self.assertContains(response_mailings, f'href="{reverse("mailings_v2_scenarios")}"', html=False)
         self.assertContains(response_mailings, f'href="{reverse("mailings_v2_templates")}"', html=False)
         self.assertContains(response_mailings, "Шаблоны")
+
+        response_virtual = self.client.get(reverse("virtual_categories"), secure=True)
+        self.assertEqual(response_virtual.status_code, 200)
+        self.assertContains(response_virtual, f'href="{reverse("segment_purchase_analysis")}"', html=False)
+
+        response_segment_purchases = self.client.get(reverse("segment_purchase_analysis"), secure=True)
+        self.assertEqual(response_segment_purchases.status_code, 200)
+        self.assertContains(response_segment_purchases, f'href="{reverse("virtual_categories")}"', html=False)
 
         self.assertNotContains(response, f'href="{reverse("mailings")}"', html=False)
 

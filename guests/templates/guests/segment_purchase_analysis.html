@@ -1,0 +1,395 @@
+{% extends "base.html" %}
+
+{% block title %}Анализ покупок сегмента{% endblock %}
+
+{% block extra_css %}
+<style>
+  .spa-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.85rem;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+  }
+
+  .spa-card .card-body {
+    padding: 1rem 1.1rem;
+  }
+
+  .spa-filter-grid {
+    display: grid;
+    grid-template-columns: minmax(220px, 1.25fr) minmax(240px, 1.35fr) minmax(160px, 0.8fr) minmax(140px, 0.7fr) auto;
+    gap: 0.7rem;
+    align-items: end;
+  }
+
+  .spa-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .spa-kpi {
+    min-height: 5.3rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.65rem;
+    background: #fff;
+    padding: 0.75rem 0.85rem;
+    display: grid;
+    align-content: center;
+    gap: 0.15rem;
+  }
+
+  .spa-kpi-label {
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .spa-kpi-value {
+    color: #0f172a;
+    font-size: 1.45rem;
+    line-height: 1.1;
+    font-weight: 760;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .spa-kpi-hint {
+    color: #64748b;
+    font-size: 0.78rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .spa-table-wrap {
+    max-height: 570px;
+    overflow: auto;
+    border: 1px solid #e5e7eb;
+    border-radius: 0.65rem;
+  }
+
+  .spa-table {
+    min-width: 1160px;
+  }
+
+  .spa-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #fff;
+    color: #475569;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .spa-table th[data-sort-key] {
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .spa-sort-indicator {
+    display: inline-block;
+    width: 0.75rem;
+    color: #2563eb;
+    font-size: 0.72rem;
+    text-align: center;
+  }
+
+  .spa-code {
+    color: #be185d;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.8rem;
+    word-break: break-all;
+  }
+
+  .spa-empty {
+    border: 1px dashed #cbd5e1;
+    border-radius: 0.65rem;
+    padding: 1rem;
+    color: #64748b;
+    text-align: center;
+    background: #f8fafc;
+  }
+
+  .spa-tech {
+    border: 1px dashed #d1d5db;
+    border-radius: 0.65rem;
+    padding: 0.5rem 0.65rem;
+    background: #f8fafc;
+  }
+
+  .spa-tech > summary {
+    cursor: pointer;
+    color: #374151;
+    font-size: 0.88rem;
+    font-weight: 600;
+  }
+
+  @media (max-width: 1199.98px) {
+    .spa-filter-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .spa-filter-grid .btn {
+      width: 100%;
+    }
+
+    .spa-kpi-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 767.98px) {
+    .spa-filter-grid,
+    .spa-kpi-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start gap-3 flex-wrap mb-3">
+  <div>
+    <h1 class="h3 mb-1">Анализ покупок сегмента</h1>
+    <div class="text-muted small">
+      Топ номенклатуры строится по выбранному заведению и гостям текущего сегмента.
+    </div>
+  </div>
+  {% if payload.filters.as_of_date %}
+    <span class="badge text-bg-light border">Витрина: {{ payload.filters.as_of_date }}</span>
+  {% endif %}
+</div>
+
+<form method="get" class="spa-card mb-3">
+  <div class="card-body">
+    <div class="spa-filter-grid">
+      <div>
+        <label for="department_id" class="form-label small fw-semibold text-muted">Заведение</label>
+        <select id="department_id" name="department_id" class="form-select">
+          <option value="" {% if not selected_department_id %}selected{% endif %}>Выберите заведение</option>
+          {% for department in payload.filters.department_options %}
+            <option value="{{ department.id }}" {% if department.id == selected_department_id %}selected{% endif %}>
+              {{ department.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label for="segment_code" class="form-label small fw-semibold text-muted">Сегмент</label>
+        <select id="segment_code" name="segment_code" class="form-select">
+          {% for segment in payload.filters.segment_options %}
+            <option value="{{ segment.code }}" {% if segment.code == selected_segment_code %}selected{% endif %}>
+              {{ segment.name }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label for="period_days" class="form-label small fw-semibold text-muted">Период покупок</label>
+        <select id="period_days" name="period_days" class="form-select">
+          {% for option in payload.filters.period_options %}
+            <option value="{{ option }}" {% if option == selected_period_days %}selected{% endif %}>{{ option }} дней</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <label for="top_limit" class="form-label small fw-semibold text-muted">Строк</label>
+        <select id="top_limit" name="top_limit" class="form-select">
+          {% for option in payload.filters.top_limit_options %}
+            <option value="{{ option }}" {% if option == selected_top_limit %}selected{% endif %}>{{ option }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Показать</button>
+    </div>
+  </div>
+</form>
+
+{% for warning in payload.warnings %}
+  <div class="alert alert-warning py-2 mb-3">{{ warning }}</div>
+{% endfor %}
+
+<div class="spa-kpi-grid mb-3">
+  <div class="spa-kpi">
+    <div class="spa-kpi-label">Гостей в сегменте</div>
+    <div class="spa-kpi-value">{{ payload.stats.segment_size }}</div>
+    <div class="spa-kpi-hint">{{ payload.filters.segment_name }}</div>
+  </div>
+  <div class="spa-kpi">
+    <div class="spa-kpi-label">С покупками</div>
+    <div class="spa-kpi-value">{{ payload.stats.guests_with_purchases }}</div>
+    <div class="spa-kpi-hint">за выбранный период</div>
+  </div>
+  <div class="spa-kpi">
+    <div class="spa-kpi-label">Чеков</div>
+    <div class="spa-kpi-value">{{ payload.stats.orders_count }}</div>
+    <div class="spa-kpi-hint">с позициями из топа</div>
+  </div>
+  <div class="spa-kpi">
+    <div class="spa-kpi-label">Строк OLAP</div>
+    <div class="spa-kpi-value">{{ payload.stats.raw_lines_count }}</div>
+    <div class="spa-kpi-hint">после фильтров</div>
+  </div>
+  <div class="spa-kpi">
+    <div class="spa-kpi-label">Выручка</div>
+    <div class="spa-kpi-value">{{ payload.stats.sales_total }}</div>
+    <div class="spa-kpi-hint">нетто</div>
+  </div>
+</div>
+
+<div class="spa-card mb-3">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-2">
+      <div>
+        <h2 class="h5 mb-1">Топ номенклатуры</h2>
+        <div class="text-muted small">
+          {{ payload.filters.department_name|default:"Заведение не выбрано" }} · {{ payload.filters.period_days }} дней · топ {{ payload.filters.top_limit }}
+        </div>
+      </div>
+      {% if payload.rows %}
+        <span class="badge text-bg-light border">Сортировка по шапке таблицы</span>
+      {% endif %}
+    </div>
+
+    {% if payload.rows %}
+      <div class="spa-table-wrap">
+        <table class="table table-sm table-hover align-middle mb-0 spa-table" data-spa-sortable>
+          <thead>
+            <tr>
+              <th data-sort-key="rank" data-sort-type="number"># <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="dish_name" data-sort-type="text">Номенклатура <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="category_name" data-sort-type="text">Категория <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="group_name" data-sort-type="text">Группа <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="quantity_total" data-sort-type="number" class="text-end">Кол-во <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="guests_count" data-sort-type="number" class="text-end">Гости <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="orders_count" data-sort-type="number" class="text-end">Чеки <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="share_of_segment" data-sort-type="number" class="text-end">Доля <span class="spa-sort-indicator"></span></th>
+              <th data-sort-key="sales_sum" data-sort-type="number" class="text-end">Выручка <span class="spa-sort-indicator"></span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in payload.rows %}
+              <tr>
+                <td data-sort-key="rank" data-sort-value="{{ row.rank }}">{{ row.rank }}</td>
+                <td data-sort-key="dish_name" data-sort-value="{{ row.dish_name }}">
+                  <div class="fw-semibold">{{ row.dish_name }}</div>
+                  <div class="spa-code">{{ row.dish_code }}</div>
+                </td>
+                <td data-sort-key="category_name" data-sort-value="{{ row.category_name }}">{{ row.category_name }}</td>
+                <td data-sort-key="group_name" data-sort-value="{{ row.group_name }}">{{ row.group_name }}</td>
+                <td data-sort-key="quantity_total" data-sort-value="{{ row.quantity_total_value }}" class="text-end">{{ row.quantity_total }}</td>
+                <td data-sort-key="guests_count" data-sort-value="{{ row.guests_count }}" class="text-end">{{ row.guests_count }}</td>
+                <td data-sort-key="orders_count" data-sort-value="{{ row.orders_count }}" class="text-end">{{ row.orders_count }}</td>
+                <td data-sort-key="share_of_segment" data-sort-value="{{ row.share_of_segment_value }}" class="text-end">{{ row.share_of_segment }}%</td>
+                <td data-sort-key="sales_sum" data-sort-value="{{ row.sales_sum_value }}" class="text-end">{{ row.sales_sum }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="spa-empty">Нет строк для отображения.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% if payload.technical %}
+  <details class="spa-tech">
+    <summary>Технические параметры расчёта</summary>
+    <div class="table-responsive mt-2">
+      <table class="table table-sm mb-0">
+        <tbody>
+          {% for item in payload.technical %}
+            <tr>
+              <th class="text-muted fw-semibold" style="width: 260px;">{{ item.label }}</th>
+              <td>{{ item.value }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+{% endif %}
+
+<script>
+  (function () {
+    const table = document.querySelector("[data-spa-sortable]");
+    if (!table) {
+      return;
+    }
+
+    const tbody = table.tBodies[0];
+    const headers = Array.from(table.querySelectorAll("th[data-sort-key]"));
+    const collator = new Intl.Collator("ru", { numeric: true, sensitivity: "base" });
+    let activeKey = "quantity_total";
+    let activeDirection = "desc";
+
+    function cellValue(row, key, type) {
+      const cell = row.querySelector('[data-sort-key="' + key + '"]');
+      if (!cell) {
+        return type === "number" ? 0 : "";
+      }
+      const raw = cell.dataset.sortValue || cell.textContent || "";
+      if (type === "number") {
+        const value = Number(String(raw).replace(",", ".").replace(/\s/g, ""));
+        return Number.isFinite(value) ? value : 0;
+      }
+      return String(raw).trim();
+    }
+
+    function updateIndicators() {
+      headers.forEach(function (header) {
+        const indicator = header.querySelector(".spa-sort-indicator");
+        if (!indicator) {
+          return;
+        }
+        indicator.textContent = header.dataset.sortKey === activeKey
+          ? (activeDirection === "asc" ? "▲" : "▼")
+          : "";
+      });
+    }
+
+    function sortRows(key, type) {
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const direction = activeDirection === "asc" ? 1 : -1;
+      rows.sort(function (left, right) {
+        const leftValue = cellValue(left, key, type);
+        const rightValue = cellValue(right, key, type);
+        if (type === "number") {
+          return (leftValue - rightValue) * direction;
+        }
+        return collator.compare(leftValue, rightValue) * direction;
+      });
+      rows.forEach(function (row) {
+        tbody.appendChild(row);
+      });
+      updateIndicators();
+    }
+
+    headers.forEach(function (header) {
+      header.addEventListener("click", function () {
+        const key = header.dataset.sortKey;
+        const type = header.dataset.sortType || "text";
+        if (activeKey === key) {
+          activeDirection = activeDirection === "asc" ? "desc" : "asc";
+        } else {
+          activeKey = key;
+          activeDirection = type === "number" ? "desc" : "asc";
+        }
+        sortRows(key, type);
+      });
+    });
+
+    updateIndicators();
+  })();
+</script>
+{% endblock %}
