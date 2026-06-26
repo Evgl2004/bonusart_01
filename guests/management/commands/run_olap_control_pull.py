@@ -158,6 +158,10 @@ class Command(BaseCommand):
             (
                 "[control_pull] departments={departments} failed_departments={failed_departments} "
                 "olap_rows={rows} with_phone={with_phone} without_phone={without_phone} "
+                "without_phone_with_coupon={without_phone_with_coupon} "
+                "without_phone_coupon_matched={without_phone_coupon_matched} "
+                "without_phone_coupon_without_guest={without_phone_coupon_without_guest} "
+                "without_phone_coupon_missing_assignment={without_phone_coupon_missing_assignment} "
                 "skipped_deleted={skipped_deleted} skipped_blacklist={skipped_blacklist} "
                 "unknown_guest_phone={unknown_guest_phone} phone_fields={phone_fields} "
                 "distinct_orders={orders} skipped_invalid={skipped} "
@@ -168,6 +172,28 @@ class Command(BaseCommand):
                 rows=stats.olap_rows_seen,
                 with_phone=stats.olap_rows_with_phone,
                 without_phone=stats.olap_rows_without_phone,
+                without_phone_with_coupon=getattr(
+                    stats,
+                    "olap_rows_without_phone_with_coupon",
+                    0,
+                ),
+                without_phone_coupon_matched=getattr(
+                    stats,
+                    "olap_rows_without_phone_coupon_matched",
+                    0,
+                ),
+                without_phone_coupon_without_guest=getattr(
+                    stats,
+                    "olap_rows_without_phone_coupon_without_guest",
+                    0,
+                ),
+                without_phone_coupon_missing_assignment=(
+                    getattr(
+                        stats,
+                        "olap_rows_without_phone_coupon_missing_assignment",
+                        0,
+                    )
+                ),
                 skipped_deleted=stats.olap_rows_deleted_with_writeoff,
                 skipped_blacklist=stats.olap_rows_blacklisted_phone,
                 unknown_guest_phone=stats.olap_rows_phone_without_guest,

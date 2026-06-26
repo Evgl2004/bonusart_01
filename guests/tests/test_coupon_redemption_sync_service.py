@@ -15,6 +15,8 @@ from guests.models import (
     Guest,
     Mailing,
     MessageTemplate,
+    OlapCheckSyncJournal,
+    OlapSalesRawLine,
     NotificationScenario,
     OrderFact,
 )
@@ -91,6 +93,48 @@ class CouponRedemptionSyncServiceTests(TestCase):
             coupon_series=coupon_series,
             coupon_number=coupon_number,
             first_seen_at=first_seen_at or self.now,
+        )
+
+    def _create_coupon_raw_line_from_without_phone_source(
+        self,
+        *,
+        guest: Guest,
+        order_number: int,
+        coupon_series: str,
+        coupon_number: str,
+        uniq_suffix: str,
+    ) -> OlapSalesRawLine:
+        journal = OlapCheckSyncJournal.objects.create(
+            idempotency_key=f"journal-{uniq_suffix}",
+            status=OlapCheckSyncJournal.Status.LOADED,
+            guest=guest,
+            source_webhook_id="control_pull_coupon_without_phone",
+            order_number=order_number,
+            order_external_id=f"uniq-{uniq_suffix}",
+            event_at=self.now,
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            loaded_at=self.now,
+        )
+        return OlapSalesRawLine.objects.create(
+            row_fingerprint=f"raw-{uniq_suffix}",
+            sync_journal=journal,
+            guest=guest,
+            business_date=self.now.date(),
+            department_id="DEP_1",
+            department_name="Тестовое заведение",
+            order_number=order_number,
+            uniq_order_id=f"uniq-{uniq_suffix}",
+            item_sale_event_id=f"item-{uniq_suffix}",
+            dish_code="dish-1",
+            dish_name="Тестовая позиция",
+            dish_sum_before_discount="1000.00",
+            dish_sum_after_discount="900.00",
+            discount_sum="100.00",
+            bonus_sum="0.00",
+            coupon_series=coupon_series,
+            coupon_number=coupon_number,
+            raw_payload={},
         )
 
     def _create_assignment(self, *, guest: Guest, code: str) -> CouponCampaignAssignment:
@@ -239,6 +283,66 @@ class CouponRedemptionSyncServiceTests(TestCase):
         self.assertEqual(stats.assignments_marked_used_after_campaign, 0)
         self.assertEqual(stats.queue_events_created, 1)
         self.assertEqual(stats.registry_marked_used, 1)
+
+    def test_marks_assignment_used_when_coupon_fact_has_no_olap_guest(self):
+        guest = self._create_guest("1211")
+        assignment = self._create_assignment(guest=guest, code="TST-NO-GUEST-1")
+        self._create_order_fact(
+            guest=None,
+            order_number=112,
+            coupon_series="TEST",
+            coupon_number="TST-NO-GUEST-1",
+            uniq_suffix="no-guest-1",
+        )
+
+        stats = CouponRedemptionSyncService().sync_from_order_facts()
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.USED)
+        self.assertEqual(assignment.used_order_id, 112)
+        self.assertEqual(assignment.vtelemax_sync_status, CouponCampaignAssignment.VtelemaxSyncStatus.PENDING)
+
+        event = CouponVtelemaxSyncQueue.objects.get(
+            assignment=assignment,
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+        )
+        self.assertEqual(event.payload_json.get("guest_id"), guest.id)
+        self.assertEqual(event.payload_json.get("phone_e164"), guest.phone)
+        self.assertEqual(event.payload_json.get("used_order_id"), 112)
+
+        self.assertEqual(stats.order_facts_with_coupon, 1)
+        self.assertEqual(stats.order_facts_with_coupon_without_guest, 1)
+        self.assertEqual(stats.assignments_matched, 1)
+        self.assertEqual(stats.assignments_matched_without_olap_guest, 1)
+        self.assertEqual(stats.assignments_guest_mismatch, 0)
+        self.assertEqual(stats.queue_events_created, 1)
+
+    def test_marks_without_olap_guest_when_guest_was_restored_from_coupon_source(self):
+        guest = self._create_guest("1212")
+        assignment = self._create_assignment(guest=guest, code="TST-RESTORED-1")
+        self._create_order_fact(
+            guest=guest,
+            order_number=113,
+            coupon_series="TEST",
+            coupon_number="TST-RESTORED-1",
+            uniq_suffix="restored-1",
+        )
+        self._create_coupon_raw_line_from_without_phone_source(
+            guest=guest,
+            order_number=113,
+            coupon_series="TEST",
+            coupon_number="TST-RESTORED-1",
+            uniq_suffix="restored-1",
+        )
+
+        stats = CouponRedemptionSyncService().sync_from_order_facts()
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponCampaignAssignment.Status.USED)
+        self.assertEqual(stats.order_facts_with_coupon, 1)
+        self.assertEqual(stats.order_facts_with_coupon_without_guest, 1)
+        self.assertEqual(stats.assignments_matched, 1)
+        self.assertEqual(stats.assignments_matched_without_olap_guest, 1)
 
     def test_marks_autoscenario_assignment_as_used_and_creates_queue_event(self):
         guest = self._create_guest("6111")

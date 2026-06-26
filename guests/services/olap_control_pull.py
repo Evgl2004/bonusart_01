@@ -14,15 +14,48 @@ from datetime import date, datetime, time as dt_time
 import hashlib
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from django.db import transaction
 from django.utils import timezone
 
-from guests.models import Guest, OlapCheckSyncJournal, TerminalDepartmentMap
+from guests.models import (
+    CouponAutoscenarioAssignment,
+    CouponCampaignAssignment,
+    Guest,
+    OlapCheckSyncJournal,
+    TerminalDepartmentMap,
+)
 from guests.services.iiko_olap_client import IikoOlapClient
 
 logger = logging.getLogger(__name__)
+
+
+CouponAssignmentKind = Literal["campaign", "autoscenario"]
+CouponAssignment = CouponCampaignAssignment | CouponAutoscenarioAssignment
+
+
+_REDEEMABLE_ASSIGNMENT_STATUSES = [
+    CouponCampaignAssignment.Status.RESERVED,
+    CouponCampaignAssignment.Status.SENT,
+    CouponCampaignAssignment.Status.EXPIRED,
+    CouponCampaignAssignment.Status.USED,
+    CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN,
+]
+
+_ASSIGNMENT_STATUS_PRIORITY = {
+    CouponCampaignAssignment.Status.SENT: 0,
+    CouponCampaignAssignment.Status.RESERVED: 1,
+    CouponCampaignAssignment.Status.EXPIRED: 2,
+    CouponCampaignAssignment.Status.USED: 3,
+    CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN: 3,
+}
+
+
+@dataclass(slots=True)
+class _AssignedCouponCandidate:
+    kind: CouponAssignmentKind
+    assignment: CouponAssignment
 
 
 @dataclass(frozen=True)
@@ -48,6 +81,10 @@ class OlapControlPullStats:
     olap_rows_seen: int = 0
     olap_rows_with_phone: int = 0
     olap_rows_without_phone: int = 0
+    olap_rows_without_phone_with_coupon: int = 0
+    olap_rows_without_phone_coupon_matched: int = 0
+    olap_rows_without_phone_coupon_without_guest: int = 0
+    olap_rows_without_phone_coupon_missing_assignment: int = 0
     olap_rows_deleted_with_writeoff: int = 0
     olap_rows_blacklisted_phone: int = 0
     olap_rows_phone_without_guest: int = 0
@@ -177,11 +214,14 @@ class OlapControlPullService:
     ]
     DELETED_WITH_WRITEOFF_FIELD = "DeletedWithWriteoff"
     DELETED_WITH_WRITEOFF_NOT_DELETED = "NOT_DELETED"
+    COUPON_WITHOUT_PHONE_SOURCE = "control_pull_coupon_without_phone"
     # Берем идентификацию гостя по телефону клиента из доставки.
     PHONE_FIELD = "Delivery.CustomerPhone"
     # Техполе карты клиента из OLAP (для диагностики/будущего использования).
     # В текущие модели это поле не сохраняется.
     CARD_FIELD = "Delivery.CustomerCardNumber"
+    COUPON_SERIES_FIELD = "CouponInfo.Series"
+    COUPON_NUMBER_FIELD = "CouponInfo.Number"
     ORDER_AGG_FIELDS = ["DishSumInt"]
 
     def __init__(
@@ -236,7 +276,13 @@ class OlapControlPullService:
         business_date_from: date,
         business_date_to: date,
     ) -> tuple[list[dict[str, Any]], str]:
-        group_fields = [*self.ORDER_GROUP_FIELDS, self.PHONE_FIELD, self.CARD_FIELD]
+        group_fields = [
+            *self.ORDER_GROUP_FIELDS,
+            self.PHONE_FIELD,
+            self.CARD_FIELD,
+            self.COUPON_SERIES_FIELD,
+            self.COUPON_NUMBER_FIELD,
+        ]
         payload = self.client.build_sales_payload_for_department_window(
             date_from=business_date_from,
             date_to=business_date_to,
@@ -253,6 +299,14 @@ class OlapControlPullService:
     @staticmethod
     def _extract_row_phone(*, payload: dict[str, Any], phone_field: str) -> str | None:
         return _normalize_phone(_row_value(payload, phone_field))
+
+    @classmethod
+    def _extract_coupon_key(cls, *, payload: dict[str, Any]) -> tuple[str, str] | None:
+        series = _normalize_text(_row_value(payload, cls.COUPON_SERIES_FIELD))
+        number = _normalize_text(_row_value(payload, cls.COUPON_NUMBER_FIELD))
+        if not series or not number:
+            return None
+        return series, number
 
     @classmethod
     def _is_deleted_with_writeoff_row(cls, *, payload: dict[str, Any]) -> bool:
@@ -295,7 +349,8 @@ class OlapControlPullService:
     def _build_journal_defaults(
         *,
         scope_row: dict[str, Any],
-        guest_id: int,
+        guest_id: int | None,
+        source_webhook_id: str,
         business_day: date,
         order_number: int,
         uniq_order_id: str | None,
@@ -310,7 +365,7 @@ class OlapControlPullService:
         return {
             "guest_id": guest_id,
             "status": OlapCheckSyncJournal.Status.NEW,
-            "source_webhook_id": "control_pull",
+            "source_webhook_id": source_webhook_id,
             "organization_id": _normalize_text(scope_row.get("organization_id")),
             "terminal_group_id": _normalize_text(scope_row.get("terminal_group_id")),
             "order_number": order_number,
@@ -322,6 +377,79 @@ class OlapControlPullService:
             "department_code": department_code,
             "restoraunt_group_id": restoraunt_group_id,
         }
+
+    @staticmethod
+    def _load_assigned_coupon_candidates(
+        *,
+        coupon_keys: set[tuple[str, str]],
+    ) -> dict[tuple[str, str], _AssignedCouponCandidate]:
+        """
+        Возвращает назначения купонов, которые SAGUR действительно выдавал гостям.
+
+        Если OLAP показывает купон, но не показывает телефон или карту гостя,
+        гостя восстанавливаем по назначению купона. Отдельный `source_webhook_id`
+        сохраняет аудит: в исходном OLAP-срезе гость отсутствовал.
+        """
+        if not coupon_keys:
+            return {}
+
+        series_values = sorted({series for series, _ in coupon_keys if series})
+        code_values = sorted({code for _, code in coupon_keys if code})
+        if not series_values or not code_values:
+            return {}
+
+        candidates: list[_AssignedCouponCandidate] = []
+        campaign_assignments = (
+            CouponCampaignAssignment.objects.filter(
+                coupon_series__in=series_values,
+                coupon_code__in=code_values,
+                status__in=_REDEEMABLE_ASSIGNMENT_STATUSES,
+            )
+            .select_related("guest")
+            .order_by("id")
+        )
+        candidates.extend(
+            _AssignedCouponCandidate(kind="campaign", assignment=assignment)
+            for assignment in campaign_assignments
+        )
+
+        autoscenario_assignments = (
+            CouponAutoscenarioAssignment.objects.filter(
+                coupon_series__in=series_values,
+                coupon_code__in=code_values,
+                status__in=_REDEEMABLE_ASSIGNMENT_STATUSES,
+            )
+            .select_related("guest")
+            .order_by("id")
+        )
+        candidates.extend(
+            _AssignedCouponCandidate(kind="autoscenario", assignment=assignment)
+            for assignment in autoscenario_assignments
+        )
+
+        result: dict[tuple[str, str], _AssignedCouponCandidate] = {}
+        for candidate in candidates:
+            assignment = candidate.assignment
+            key = (
+                str(assignment.coupon_series or "").strip(),
+                str(assignment.coupon_code or "").strip(),
+            )
+            if key not in coupon_keys:
+                continue
+            current = result.get(key)
+            if current is None or OlapControlPullService._candidate_rank(
+                candidate
+            ) < OlapControlPullService._candidate_rank(current):
+                result[key] = candidate
+        return result
+
+    @staticmethod
+    def _candidate_rank(candidate: _AssignedCouponCandidate) -> tuple[int, float, int]:
+        assignment = candidate.assignment
+        priority = _ASSIGNMENT_STATUS_PRIORITY.get(assignment.status, 99)
+        assigned_at = assignment.assigned_at
+        timestamp = assigned_at.timestamp() if assigned_at else 0.0
+        return (priority, -timestamp, -int(assignment.id or 0))
 
     def run_cycle(self, *, options: OlapControlPullOptions) -> OlapControlPullStats:
         stats = OlapControlPullStats()
@@ -355,6 +483,22 @@ class OlapControlPullService:
             stats.olap_rows_seen += len(data_rows)
             stats.phone_fields_used.add(used_phone_field)
             pending_create: dict[str, OlapCheckSyncJournal] = {}
+            coupon_keys_without_phone: set[tuple[str, str]] = set()
+            for payload in data_rows:
+                if self._is_deleted_with_writeoff_row(payload=payload):
+                    continue
+                normalized_phone = self._extract_row_phone(
+                    payload=payload,
+                    phone_field=used_phone_field,
+                )
+                if normalized_phone:
+                    continue
+                coupon_key = self._extract_coupon_key(payload=payload)
+                if coupon_key is not None:
+                    coupon_keys_without_phone.add(coupon_key)
+            assigned_coupon_candidates = self._load_assigned_coupon_candidates(
+                coupon_keys=coupon_keys_without_phone
+            )
 
             for payload in data_rows:
                 order_number = _to_int(_row_value(payload, "OrderNum"))
@@ -384,24 +528,40 @@ class OlapControlPullService:
                     payload=payload,
                     phone_field=used_phone_field,
                 )
+                source_webhook_id = "control_pull"
+                guest_id: int | None = None
                 if not normalized_phone:
                     stats.olap_rows_without_phone += 1
-                    continue
-
-                stats.olap_rows_with_phone += 1
-                if self._is_phone_denied(normalized_phone):
-                    stats.olap_rows_blacklisted_phone += 1
-                    continue
-                phone10 = _phone10(normalized_phone)
-                guest_id = guest_phone10_map.get(phone10 or "")
-                if guest_id is None:
-                    # fallback: если гостя нет локально, пробуем создать/обновить из iikoCard.
-                    guest_id = self._get_or_create_guest_id_by_phone(normalized_phone)
-                    if guest_id is not None and phone10:
-                        guest_phone10_map[phone10] = int(guest_id)
-                    else:
-                        stats.olap_rows_phone_without_guest += 1
+                    coupon_key = self._extract_coupon_key(payload=payload)
+                    if coupon_key is None:
                         continue
+                    stats.olap_rows_without_phone_with_coupon += 1
+                    coupon_candidate = assigned_coupon_candidates.get(coupon_key)
+                    if coupon_candidate is not None and coupon_candidate.assignment.guest_id:
+                        stats.olap_rows_without_phone_coupon_matched += 1
+                        source_webhook_id = self.COUPON_WITHOUT_PHONE_SOURCE
+                        guest_id = int(coupon_candidate.assignment.guest_id)
+                    elif coupon_candidate is not None:
+                        stats.olap_rows_without_phone_coupon_without_guest += 1
+                        continue
+                    else:
+                        stats.olap_rows_without_phone_coupon_missing_assignment += 1
+                        continue
+                else:
+                    stats.olap_rows_with_phone += 1
+                    if self._is_phone_denied(normalized_phone):
+                        stats.olap_rows_blacklisted_phone += 1
+                        continue
+                    phone10 = _phone10(normalized_phone)
+                    guest_id = guest_phone10_map.get(phone10 or "")
+                    if guest_id is None:
+                        # fallback: если гостя нет локально, пробуем создать/обновить из iikoCard.
+                        guest_id = self._get_or_create_guest_id_by_phone(normalized_phone)
+                        if guest_id is not None and phone10:
+                            guest_phone10_map[phone10] = int(guest_id)
+                        else:
+                            stats.olap_rows_phone_without_guest += 1
+                            continue
 
                 idempotency_key = _build_control_pull_idempotency_key(
                     department_id=row_department_id,
@@ -416,7 +576,8 @@ class OlapControlPullService:
                     idempotency_key=idempotency_key,
                     **self._build_journal_defaults(
                         scope_row=scope_row,
-                        guest_id=int(guest_id),
+                        guest_id=int(guest_id) if guest_id is not None else None,
+                        source_webhook_id=source_webhook_id,
                         business_day=business_day,
                         order_number=order_number,
                         uniq_order_id=uniq_order_id,

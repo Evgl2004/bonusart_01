@@ -899,6 +899,7 @@ class OlapSalesRawLine(models.Model):
             models.Index(fields=["order_number", "business_date"], name="osrl_ord_date_idx"),
             models.Index(fields=["dish_category_id", "business_date"], name="osrl_cat_date_idx"),
             models.Index(fields=["business_date", "department_id", "dish_code"], name="osrl_date_dep_dish_idx"),
+            models.Index(fields=["coupon_series", "coupon_number"], name="osrl_coupon_key_idx"),
         ]
 
     def __str__(self):
@@ -981,6 +982,7 @@ class OrderFact(models.Model):
             models.Index(fields=["guest", "business_date"], name="of_guest_date_idx"),
             models.Index(fields=["department_id", "business_date"], name="of_dept_date_idx"),
             models.Index(fields=["business_date", "order_number"], name="of_date_order_idx"),
+            models.Index(fields=["coupon_used", "coupon_series", "coupon_number"], name="of_coupon_used_key_idx"),
         ]
 
     def __str__(self):
@@ -2945,6 +2947,7 @@ class CouponCampaignAssignment(models.Model):
             models.Index(fields=["campaign", "venue_code", "status"], name="cpass_camp_venue_st_idx"),
             models.Index(fields=["status", "vtelemax_sync_status"], name="cpass_sync_status_idx"),
             models.Index(fields=["status", "iiko_category_add_status"], name="cpass_iiko_status_idx"),
+            models.Index(fields=["coupon_series", "coupon_code", "status"], name="cpass_coupon_status_idx"),
         ]
 
     def __str__(self):
@@ -3149,6 +3152,7 @@ class CouponAutoscenarioAssignment(models.Model):
             models.Index(fields=["scenario", "status"], name="cautoass_scen_status_idx"),
             models.Index(fields=["status", "vtelemax_sync_status"], name="cautoass_sync_status_idx"),
             models.Index(fields=["coupon_series", "status"], name="cautoass_series_status_idx"),
+            models.Index(fields=["coupon_series", "coupon_code", "status"], name="cautoass_coupon_status_idx"),
             models.Index(fields=["scenario", "trigger_key"], name="cautoass_scen_trigger_idx"),
             models.Index(fields=["status", "iiko_category_add_status"], name="cautoass_iiko_status_idx"),
         ]

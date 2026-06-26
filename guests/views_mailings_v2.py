@@ -52,6 +52,7 @@ from guests.models import (
     MessageTemplate,
     NotificationEvent,
     NotificationScenario,
+    OlapSalesRawLine,
 )
 from guests.services.mailing_delivery_targets import build_mailing_delivery_plan
 from guests.services.template_render import render_message_for_guest
@@ -2167,6 +2168,56 @@ class MailingsV2ScenariosView(TemplateView):
                 if selected_bots
                 else "боты не выбраны"
             )
+
+        config_ids = [int(config.id) for config in coupon_configs]
+        anonymous_coupon_keys_by_config: dict[int, set[tuple[str, str]]] = {
+            int(config.id): set() for config in coupon_configs
+        }
+        if config_ids:
+            used_assignment_rows = (
+                CouponAutoscenarioAssignment.objects.filter(
+                    config_id__in=config_ids,
+                    status__in=[
+                        CouponAutoscenarioAssignment.Status.USED,
+                        CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+                    ],
+                )
+                .exclude(coupon_series="")
+                .exclude(coupon_code="")
+                .values("config_id", "coupon_series", "coupon_code")
+            )
+            all_coupon_keys: set[tuple[str, str]] = set()
+            for row in used_assignment_rows:
+                key = (
+                    str(row.get("coupon_series") or "").strip(),
+                    str(row.get("coupon_code") or "").strip(),
+                )
+                if not key[0] or not key[1]:
+                    continue
+                anonymous_coupon_keys_by_config.setdefault(int(row["config_id"]), set()).add(key)
+                all_coupon_keys.add(key)
+
+            anonymous_olap_coupon_keys: set[tuple[str, str]] = set()
+            if all_coupon_keys:
+                series_values = sorted({series for series, _ in all_coupon_keys})
+                code_values = sorted({code for _, code in all_coupon_keys})
+                anonymous_olap_coupon_keys = {
+                    (
+                        str(series or "").strip(),
+                        str(number or "").strip(),
+                    )
+                    for series, number in OlapSalesRawLine.objects.filter(
+                        sync_journal__source_webhook_id="control_pull_coupon_without_phone",
+                        coupon_series__in=series_values,
+                        coupon_number__in=code_values,
+                    ).values_list("coupon_series", "coupon_number")
+                }
+
+            for config in coupon_configs:
+                config.assignments_used_without_olap_guest = len(
+                    anonymous_coupon_keys_by_config.get(int(config.id), set())
+                    & anonymous_olap_coupon_keys
+                )
 
         selected_coupon_config = next(
             (

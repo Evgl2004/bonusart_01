@@ -101,7 +101,11 @@ class Command(BaseCommand):
                 [
                     f"order_facts_total={metrics['order_facts_total']}",
                     f"order_facts_with_coupon={metrics['order_facts_with_coupon']}",
+                    "order_facts_with_coupon_without_guest="
+                    f"{metrics['order_facts_with_coupon_without_guest']}",
                     f"assignments_matched={metrics['assignments_matched']}",
+                    "assignments_matched_without_olap_guest="
+                    f"{metrics['assignments_matched_without_olap_guest']}",
                     f"campaign_assignments_matched={metrics['campaign_assignments_matched']}",
                     f"autoscenario_assignments_matched={metrics['autoscenario_assignments_matched']}",
                     f"assignments_marked_used={metrics['assignments_marked_used']}",

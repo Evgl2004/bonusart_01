@@ -12,6 +12,7 @@ from guests.models import (
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
+    OlapSalesRawLine,
     OrderFact,
 )
 from guests.services.iiko_customer_category_sync import enqueue_iiko_category_remove_if_last_coupon
@@ -36,6 +37,8 @@ _ASSIGNMENT_STATUS_PRIORITY = {
     CouponCampaignAssignment.Status.USED_AFTER_CAMPAIGN: 3,
 }
 
+_COUPON_WITHOUT_PHONE_SOURCE = "control_pull_coupon_without_phone"
+
 
 @dataclass(slots=True)
 class CouponRedemptionSyncStats:
@@ -45,7 +48,9 @@ class CouponRedemptionSyncStats:
 
     order_facts_total: int = 0
     order_facts_with_coupon: int = 0
+    order_facts_with_coupon_without_guest: int = 0
     assignments_matched: int = 0
+    assignments_matched_without_olap_guest: int = 0
     campaign_assignments_matched: int = 0
     autoscenario_assignments_matched: int = 0
     assignments_marked_used: int = 0
@@ -63,7 +68,13 @@ class CouponRedemptionSyncStats:
         return {
             "order_facts_total": int(self.order_facts_total),
             "order_facts_with_coupon": int(self.order_facts_with_coupon),
+            "order_facts_with_coupon_without_guest": int(
+                self.order_facts_with_coupon_without_guest
+            ),
             "assignments_matched": int(self.assignments_matched),
+            "assignments_matched_without_olap_guest": int(
+                self.assignments_matched_without_olap_guest
+            ),
             "campaign_assignments_matched": int(self.campaign_assignments_matched),
             "autoscenario_assignments_matched": int(self.autoscenario_assignments_matched),
             "assignments_marked_used": int(self.assignments_marked_used),
@@ -142,6 +153,9 @@ class CouponRedemptionSyncService:
 
         coupon_facts = list(coupon_facts_query)
         stats.order_facts_with_coupon = int(len(coupon_facts))
+        stats.order_facts_with_coupon_without_guest = sum(
+            1 for fact in coupon_facts if not fact.get("guest_id")
+        )
         if not coupon_facts:
             return stats
 
@@ -157,6 +171,21 @@ class CouponRedemptionSyncService:
 
         series_values = sorted({item[0] for item in keys})
         code_values = sorted({item[1] for item in keys})
+
+        coupon_keys_without_olap_guest = self._load_coupon_keys_without_olap_guest(
+            series_values=series_values,
+            code_values=code_values,
+        )
+        stats.order_facts_with_coupon_without_guest = sum(
+            1
+            for fact in coupon_facts
+            if not fact.get("guest_id")
+            or (
+                str(fact.get("coupon_series") or "").strip(),
+                str(fact.get("coupon_number") or "").strip(),
+            )
+            in coupon_keys_without_olap_guest
+        )
 
         assignment_by_key = self._load_assignment_candidates(
             series_values=series_values,
@@ -187,6 +216,8 @@ class CouponRedemptionSyncService:
                     stats.campaign_assignments_matched += 1
 
                 fact_guest_id = fact.get("guest_id")
+                if not fact_guest_id or key in coupon_keys_without_olap_guest:
+                    stats.assignments_matched_without_olap_guest += 1
                 if assignment.guest_id and fact_guest_id and int(assignment.guest_id) != int(fact_guest_id):
                     stats.assignments_guest_mismatch += 1
 
@@ -276,6 +307,27 @@ class CouponRedemptionSyncService:
                     stats.iiko_category_events_skipped += 1
 
         return stats
+
+    @staticmethod
+    def _load_coupon_keys_without_olap_guest(
+        *,
+        series_values: list[str],
+        code_values: list[str],
+    ) -> set[tuple[str, str]]:
+        if not series_values or not code_values:
+            return set()
+        return {
+            (
+                str(series or "").strip(),
+                str(number or "").strip(),
+            )
+            for series, number in OlapSalesRawLine.objects.filter(
+                sync_journal__source_webhook_id=_COUPON_WITHOUT_PHONE_SOURCE,
+                coupon_series__in=series_values,
+                coupon_number__in=code_values,
+            ).values_list("coupon_series", "coupon_number")
+            if str(series or "").strip() and str(number or "").strip()
+        }
 
     @staticmethod
     def _load_assignment_candidates(

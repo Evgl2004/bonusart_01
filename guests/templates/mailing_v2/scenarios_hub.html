@@ -180,6 +180,9 @@
                   <td>
                     всего {{ config.assignments_total }}
                     <div class="small text-muted">отправлено {{ config.assignments_sent }}, использовано {{ config.assignments_used }}, ошибок {{ config.assignments_error }}</div>
+                    {% if config.assignments_used_without_olap_guest %}
+                      <div class="small text-warning">использовано без гостя в OLAP: {{ config.assignments_used_without_olap_guest }}</div>
+                    {% endif %}
                   </td>
                   <td>
                     {% if config.scenario.template %}
