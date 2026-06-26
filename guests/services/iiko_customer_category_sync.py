@@ -29,6 +29,7 @@ LIVE_COUPON_ASSIGNMENT_STATUSES = [
     CouponCampaignAssignment.Status.RESERVED,
     CouponCampaignAssignment.Status.SENT,
 ]
+IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE = "Customer_CustomerHasNoCategory"
 
 
 class IikoCustomerCategorySyncError(Exception):
@@ -502,6 +503,27 @@ class IikoCustomerCategorySyncService:
             else:
                 result["remove_acked"] = 1
             return result
+        except IikoCustomerCategoryApiError as exc:
+            if (
+                event.action == IikoCustomerCategorySyncEvent.Action.REMOVE
+                and _is_customer_has_no_category_error(exc)
+            ):
+                self._mark_event_skipped(
+                    event_id=event_id,
+                    reason=(
+                        "Удаление категории пропущено: iikoCard сообщил "
+                        f"{IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE}, у гостя уже нет категории "
+                        f"{event.category_id}."
+                    ),
+                    skipped_at=attempt_time,
+                )
+                result["skipped"] = 1
+                return result
+
+            error_text = self._truncate_error(str(exc))
+            self._mark_event_error(event_id=event_id, error_text=error_text, failed_at=attempt_time)
+            result["failed"] = 1
+            return result
         except Exception as exc:
             error_text = self._truncate_error(str(exc))
             self._mark_event_error(event_id=event_id, error_text=error_text, failed_at=attempt_time)
@@ -669,6 +691,26 @@ def _find_existing_event(
     else:
         query = query.filter(campaign_assignment=assignment)
     return query.order_by("-id").first()
+
+
+def _is_customer_has_no_category_error(exc: IikoCustomerCategoryApiError) -> bool:
+    """
+    Проверяет ответ iikoCard: категория уже отсутствует у гостя.
+
+    Для операции `remove` это конечное состояние без повторов, но не полноценный
+    ACK: событие переводим в `skipped` и сохраняем причину для диагностики.
+    """
+    error_code = str(getattr(exc, "error_code", "") or "").strip()
+    if error_code == IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE:
+        return True
+
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        body_code = str(body.get("errorCode") or body.get("code") or "").strip()
+        if body_code == IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE:
+            return True
+
+    return IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE in str(exc)
 
 
 def _assignment_source_type(assignment: CouponAssignment) -> str:

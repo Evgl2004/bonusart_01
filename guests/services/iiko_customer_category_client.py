@@ -9,6 +9,21 @@ import requests
 class IikoCustomerCategoryApiError(Exception):
     """Ошибка работы с API категорий гостей iikoCard."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        path: str = "",
+        body: Any | None = None,
+        error_code: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.path = str(path or "").strip()
+        self.body = body
+        self.error_code = str(error_code or "").strip()
+
 
 class IikoCustomerCategoryClient:
     """
@@ -115,8 +130,23 @@ class IikoCustomerCategoryClient:
             raise IikoCustomerCategoryApiError(f"Сетевая ошибка iikoCard API `{path}`: {exc}") from exc
 
         if response.status_code != 200:
+            error_body = None
+            error_code = ""
+            if str(response.text or "").strip():
+                try:
+                    error_body = response.json()
+                except ValueError:
+                    error_body = None
+            if isinstance(error_body, dict):
+                error_code = str(
+                    error_body.get("errorCode") or error_body.get("code") or ""
+                ).strip()
             raise IikoCustomerCategoryApiError(
-                f"iikoCard API `{path}` вернул status={response.status_code}, body={response.text[:500]}"
+                f"iikoCard API `{path}` вернул status={response.status_code}, body={response.text[:500]}",
+                status_code=response.status_code,
+                path=path,
+                body=error_body,
+                error_code=error_code,
             )
         if not str(response.text or "").strip():
             return {}

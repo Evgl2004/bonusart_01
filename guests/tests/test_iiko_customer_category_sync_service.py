@@ -18,7 +18,10 @@ from guests.services.iiko_customer_category_sync import (
     enqueue_iiko_category_add_for_assignment,
     enqueue_iiko_category_remove_if_last_coupon,
 )
-from guests.services.iiko_customer_category_client import IikoCustomerCategoryClient
+from guests.services.iiko_customer_category_client import (
+    IikoCustomerCategoryApiError,
+    IikoCustomerCategoryClient,
+)
 
 
 class _FakeIikoHttpResponse:
@@ -92,10 +95,11 @@ class _FakeIikoCategoryClient:
     Тестовый клиент iikoCard без сетевых запросов.
     """
 
-    def __init__(self):
+    def __init__(self, *, remove_error: Exception | None = None):
         self.add_calls: list[dict[str, str]] = []
         self.remove_calls: list[dict[str, str]] = []
         self.customer_by_phone_calls: list[str] = []
+        self.remove_error = remove_error
 
     def get_customer_by_phone(self, *, phone: str):
         self.customer_by_phone_calls.append(phone)
@@ -107,6 +111,8 @@ class _FakeIikoCategoryClient:
 
     def remove_customer_category(self, *, customer_id: str, category_id: str):
         self.remove_calls.append({"customer_id": customer_id, "category_id": category_id})
+        if self.remove_error is not None:
+            raise self.remove_error
         return {"ok": True}
 
 
@@ -350,6 +356,50 @@ class IikoCustomerCategorySyncServiceTests(TestCase):
         self.assertEqual(client.remove_calls, [])
         event = IikoCustomerCategorySyncEvent.objects.get(id=remove_result.event.id)
         self.assertEqual(event.status, IikoCustomerCategorySyncEvent.Status.SKIPPED)
+
+    @override_settings(
+        IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED=True,
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="cat-active-coupon",
+        IIKO_ORGANIZATION_ID="org-1",
+    )
+    def test_worker_skips_remove_when_iiko_reports_customer_has_no_category(self):
+        """
+        Если iikoCard сообщает, что категории у гостя уже нет, remove не должен
+        уходить в повторные ошибки: целевое состояние достигнуто, но причина
+        сохраняется в очереди для диагностики.
+        """
+        closed_assignment = self._assignment(
+            code="IIKO-NO-CATEGORY",
+            status=CouponCampaignAssignment.Status.USED,
+        )
+        remove_result = enqueue_iiko_category_remove_if_last_coupon(
+            assignment=closed_assignment,
+            now=self.now,
+        )
+        self.assertTrue(remove_result.created)
+
+        client = _FakeIikoCategoryClient(
+            remove_error=IikoCustomerCategoryApiError(
+                "iikoCard API `/loyalty/iiko/customer_category/remove` вернул status=400",
+                status_code=400,
+                path="/loyalty/iiko/customer_category/remove",
+                body={"errorCode": "Customer_CustomerHasNoCategory"},
+                error_code="Customer_CustomerHasNoCategory",
+            )
+        )
+        stats = self._service(client).process_batch(limit=10, now=self.now + timedelta(seconds=1))
+
+        summary = stats.to_dict()
+        self.assertEqual(summary["processed"], 1)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertEqual(summary["failed"], 0)
+        self.assertEqual(
+            client.remove_calls,
+            [{"customer_id": "iiko-guest-1", "category_id": "cat-active-coupon"}],
+        )
+        event = IikoCustomerCategorySyncEvent.objects.get(id=remove_result.event.id)
+        self.assertEqual(event.status, IikoCustomerCategorySyncEvent.Status.SKIPPED)
+        self.assertIn("Customer_CustomerHasNoCategory", event.last_error)
 
     @override_settings(
         IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED=True,

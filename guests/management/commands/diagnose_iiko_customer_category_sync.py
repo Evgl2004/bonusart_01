@@ -108,20 +108,21 @@ class Command(BaseCommand):
             )
 
         self.stdout.write("")
-        self.stdout.write(f"Последние проблемные события (limit={limit}):")
+        self.stdout.write(f"Последние проблемные или пропущенные события (limit={limit}):")
         problem_events = (
             queryset.filter(
                 status__in=[
                     IikoCustomerCategorySyncEvent.Status.ERROR,
                     IikoCustomerCategorySyncEvent.Status.SENT,
                     IikoCustomerCategorySyncEvent.Status.PENDING,
+                    IikoCustomerCategorySyncEvent.Status.SKIPPED,
                 ]
             )
             .select_related("guest", "campaign_assignment", "autoscenario_assignment")
             .order_by("-updated_at", "-id")[:limit]
         )
         if not problem_events:
-            self.stdout.write("  проблемных событий нет")
+            self.stdout.write("  проблемных или пропущенных событий нет")
         for event in problem_events:
             assignment_ref = "-"
             if event.campaign_assignment_id:
