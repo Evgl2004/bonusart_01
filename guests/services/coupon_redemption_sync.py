@@ -14,6 +14,7 @@ from guests.models import (
     CouponVtelemaxSyncQueue,
     OrderFact,
 )
+from guests.services.iiko_customer_category_sync import enqueue_iiko_category_remove_if_last_coupon
 
 RedemptionAssignmentKind = Literal["campaign", "autoscenario"]
 RedemptionAssignment = CouponCampaignAssignment | CouponAutoscenarioAssignment
@@ -54,6 +55,8 @@ class CouponRedemptionSyncStats:
     assignments_missing: int = 0
     queue_events_created: int = 0
     queue_events_updated: int = 0
+    iiko_category_events_created: int = 0
+    iiko_category_events_skipped: int = 0
     registry_marked_used: int = 0
 
     def to_dict(self) -> dict[str, int]:
@@ -70,6 +73,8 @@ class CouponRedemptionSyncStats:
             "assignments_missing": int(self.assignments_missing),
             "queue_events_created": int(self.queue_events_created),
             "queue_events_updated": int(self.queue_events_updated),
+            "iiko_category_events_created": int(self.iiko_category_events_created),
+            "iiko_category_events_skipped": int(self.iiko_category_events_skipped),
             "registry_marked_used": int(self.registry_marked_used),
         }
 
@@ -259,6 +264,16 @@ class CouponRedemptionSyncService:
                     stats.queue_events_created += 1
                 elif queue_result is False:
                     stats.queue_events_updated += 1
+
+                iiko_result = enqueue_iiko_category_remove_if_last_coupon(
+                    assignment=assignment,
+                    now=now,
+                    dry_run=dry_run,
+                )
+                if iiko_result.created:
+                    stats.iiko_category_events_created += 1
+                elif iiko_result.skipped and iiko_result.reason == "guest_has_another_live_coupon":
+                    stats.iiko_category_events_skipped += 1
 
         return stats
 

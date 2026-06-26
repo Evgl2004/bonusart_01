@@ -15,6 +15,7 @@ from guests.models import (
     Mailing,
     MailingGuest,
 )
+from guests.services.iiko_customer_category_sync import enqueue_iiko_category_remove_if_last_coupon
 
 
 @dataclass(slots=True)
@@ -40,6 +41,8 @@ class CouponCampaignLifecycleStats:
 
     queue_events_created: int = 0
     queue_events_updated: int = 0
+    iiko_category_events_created: int = 0
+    iiko_category_events_skipped: int = 0
 
     def to_dict(self) -> dict[str, int]:
         return {
@@ -55,6 +58,8 @@ class CouponCampaignLifecycleStats:
             "assignments_released_to_pool": int(self.assignments_released_to_pool),
             "queue_events_created": int(self.queue_events_created),
             "queue_events_updated": int(self.queue_events_updated),
+            "iiko_category_events_created": int(self.iiko_category_events_created),
+            "iiko_category_events_skipped": int(self.iiko_category_events_skipped),
         }
 
 
@@ -180,6 +185,16 @@ class CouponCampaignLifecycleService:
                     else:
                         stats.queue_events_updated += 1
 
+                    iiko_result = enqueue_iiko_category_remove_if_last_coupon(
+                        assignment=assignment,
+                        now=now_value,
+                        dry_run=dry_run,
+                    )
+                    if iiko_result.created:
+                        stats.iiko_category_events_created += 1
+                    elif iiko_result.skipped and iiko_result.reason == "guest_has_another_live_coupon":
+                        stats.iiko_category_events_skipped += 1
+
         stats.campaigns_processed = 1
         return stats
 
@@ -298,6 +313,16 @@ class CouponCampaignLifecycleService:
                         stats.queue_events_created += 1
                     else:
                         stats.queue_events_updated += 1
+
+                    iiko_result = enqueue_iiko_category_remove_if_last_coupon(
+                        assignment=assignment,
+                        now=cutoff,
+                        dry_run=dry_run,
+                    )
+                    if iiko_result.created:
+                        stats.iiko_category_events_created += 1
+                    elif iiko_result.skipped and iiko_result.reason == "guest_has_another_live_coupon":
+                        stats.iiko_category_events_skipped += 1
 
         return stats
 

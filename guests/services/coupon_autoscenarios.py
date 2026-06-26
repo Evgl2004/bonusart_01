@@ -27,6 +27,11 @@ from guests.models import (
     VtelemaxRecipientChannel,
 )
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, is_coupon_global_venue
+from guests.services.iiko_customer_category_sync import (
+    enqueue_iiko_category_add_for_assignment,
+    enqueue_iiko_category_remove_if_last_coupon,
+    iiko_customer_category_gate_required,
+)
 from guests.services.notification_events import ScenarioNotConfiguredError, create_notification_event
 from guests.services.notification_scenarios import _extract_inactive_days
 from guests.services.notification_registry import (
@@ -1175,6 +1180,11 @@ def _create_coupon_autoscenario_run_from_plan(
                 next_retry_at=current_now,
             )
             queue_events_created += 1
+            enqueue_iiko_category_add_for_assignment(
+                assignment=assignment,
+                now=current_now,
+                dry_run=False,
+            )
 
         run.created_assignments = created_assignments
         run.queue_events_created = queue_events_created
@@ -1302,6 +1312,11 @@ def cleanup_coupon_autoscenario_pilot_assignment(
                     ]
                 )
         _refresh_autoscenario_run_status(run_id=assignment.run_id)
+        enqueue_iiko_category_remove_if_last_coupon(
+            assignment=assignment,
+            now=current_now,
+            dry_run=False,
+        )
 
     return CouponAutoscenarioCleanupResult(
         assignment_id=int(assignment.id),
@@ -1432,6 +1447,12 @@ def close_expired_coupon_autoscenario_assignments(
             if assignment.run_id:
                 run_ids_to_refresh.add(int(assignment.run_id))
 
+            enqueue_iiko_category_remove_if_last_coupon(
+                assignment=assignment,
+                now=current_now,
+                dry_run=False,
+            )
+
         if not dry_run:
             for run_id in sorted(run_ids_to_refresh):
                 _refresh_autoscenario_run_status(run_id=run_id)
@@ -1452,11 +1473,12 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
     days_without_visits: int | None = None,
 ) -> int:
     """
-    Создаёт задачу отправки гостю после подтверждения события назначения во vtelemax.
+    Создаёт задачу отправки гостю после подтверждения внешних sync-gate.
 
-    До подтверждения купон уже зарезервирован в SAGUR, но сообщение гостю не ставится в
-    очередь. Эта функция является вторым шагом: vtelemax подтвердил карточку
-    купона, значит гостю можно отправлять уведомление.
+    До подтверждения купон уже зарезервирован в SAGUR, но сообщение гостю не
+    ставится в очередь. Если включён контур iikoCard, ждём два ACK:
+    1. карточка купона подтверждена во vtelemax;
+    2. гость добавлен в категорию iikoCard «Активный купон SAGUR».
     """
     try:
         safe_assignment_id = int(assignment_id)
@@ -1479,6 +1501,14 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             _refresh_autoscenario_run_status(run_id=assignment.run_id)
             return 0
         if assignment.vtelemax_sync_status != CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK:
+            return 0
+        if (
+            iiko_customer_category_gate_required()
+            and assignment.iiko_category_add_status
+            != CouponAutoscenarioAssignment.IikoCategorySyncStatus.OK
+        ):
+            return 0
+        if iiko_customer_category_gate_required() and assignment.iiko_category_add_synced_at is None:
             return 0
         if assignment.guest_id is None or assignment.guest is None:
             _mark_autoscenario_assignment_dispatch_error(
@@ -3071,6 +3101,11 @@ def _mark_autoscenario_assignment_dispatch_error(
     assignment.status = CouponAutoscenarioAssignment.Status.ERROR
     assignment.vtelemax_sync_error = str(error_text or "").strip()[:2000]
     assignment.save(update_fields=["status", "vtelemax_sync_error", "updated_at"])
+    enqueue_iiko_category_remove_if_last_coupon(
+        assignment=assignment,
+        now=timezone.now(),
+        dry_run=False,
+    )
     _refresh_autoscenario_run_status(run_id=assignment.run_id)
 
 

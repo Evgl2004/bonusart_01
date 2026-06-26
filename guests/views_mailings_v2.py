@@ -43,8 +43,10 @@ from guests.models import (
     CouponAutomationConfig,
     CouponAutomationRule,
     CouponAutoscenarioAssignment,
+    CouponCampaignAssignment,
     DispatchTask,
     Guest,
+    IikoCustomerCategorySyncEvent,
     Mailing,
     MailingGuest,
     MessageTemplate,
@@ -557,6 +559,11 @@ class MailingsV2CampaignStatusView(TemplateView):
                 )
         context["coupon_campaign_report"] = coupon_campaign_report
         context["coupon_campaign_report_error"] = coupon_campaign_report_error
+        context["coupon_iiko_category_stats"] = (
+            _build_coupon_iiko_category_stats(mailing)
+            if str(getattr(mailing, "coupon_series", "") or "").strip()
+            else None
+        )
         return context
 
 
@@ -3369,6 +3376,65 @@ def _build_mailing_dispatch_stats(mailing: Mailing) -> dict[str, int]:
     result = _empty_dispatch_stats()
     for key in result.keys():
         result[key] = int(stats.get(key) or 0)
+    return result
+
+
+def _build_coupon_iiko_category_stats(mailing: Mailing) -> dict[str, int]:
+    """
+    Сводка pre-send gate iikoCard для купонной кампании.
+    """
+    assignments = CouponCampaignAssignment.objects.filter(campaign=mailing)
+    assignment_stats = assignments.aggregate(
+        total=Count("id"),
+        disabled=Count(
+            "id",
+            filter=Q(
+                iiko_category_add_status=CouponCampaignAssignment.IikoCategorySyncStatus.DISABLED
+            ),
+        ),
+        pending=Count(
+            "id",
+            filter=Q(
+                iiko_category_add_status=CouponCampaignAssignment.IikoCategorySyncStatus.PENDING
+            ),
+        ),
+        ok=Count(
+            "id",
+            filter=Q(iiko_category_add_status=CouponCampaignAssignment.IikoCategorySyncStatus.OK),
+        ),
+        error=Count(
+            "id",
+            filter=Q(
+                iiko_category_add_status=CouponCampaignAssignment.IikoCategorySyncStatus.ERROR
+            ),
+        ),
+    )
+    events = IikoCustomerCategorySyncEvent.objects.filter(campaign_assignment__campaign=mailing)
+    event_stats = events.aggregate(
+        events_total=Count("id"),
+        events_pending=Count("id", filter=Q(status=IikoCustomerCategorySyncEvent.Status.PENDING)),
+        events_sent=Count("id", filter=Q(status=IikoCustomerCategorySyncEvent.Status.SENT)),
+        events_acked=Count("id", filter=Q(status=IikoCustomerCategorySyncEvent.Status.ACKED)),
+        events_error=Count("id", filter=Q(status=IikoCustomerCategorySyncEvent.Status.ERROR)),
+        events_skipped=Count("id", filter=Q(status=IikoCustomerCategorySyncEvent.Status.SKIPPED)),
+        add_pending=Count(
+            "id",
+            filter=Q(
+                action=IikoCustomerCategorySyncEvent.Action.ADD,
+                status=IikoCustomerCategorySyncEvent.Status.PENDING,
+            ),
+        ),
+        remove_pending=Count(
+            "id",
+            filter=Q(
+                action=IikoCustomerCategorySyncEvent.Action.REMOVE,
+                status=IikoCustomerCategorySyncEvent.Status.PENDING,
+            ),
+        ),
+    )
+    result: dict[str, int] = {}
+    for key, value in {**assignment_stats, **event_stats}.items():
+        result[str(key)] = int(value or 0)
     return result
 
 

@@ -38,6 +38,11 @@ COUPON_GATE_SOFT_BLOCK_CODES = {
     "coupon_sync_event_sent_wait_ack",
     "coupon_sync_status_pending",
     "coupon_sync_synced_at_missing",
+    "iiko_category_event_missing",
+    "iiko_category_event_pending",
+    "iiko_category_event_sent_wait_ack",
+    "iiko_category_status_pending",
+    "iiko_category_synced_at_missing",
 }
 
 

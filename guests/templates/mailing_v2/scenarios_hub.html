@@ -533,6 +533,7 @@
               <th>Купон</th>
               <th>Статус</th>
               <th>vtelemax</th>
+              <th>iikoCard</th>
               <th>Создано</th>
               <th class="text-end">Действие</th>
             </tr>
@@ -552,6 +553,12 @@
                 <td><code>{{ assignment.coupon_series }}:{{ assignment.coupon_code }}</code></td>
                 <td>{{ assignment.get_status_display }}</td>
                 <td>{{ assignment.get_vtelemax_sync_status_display }}</td>
+                <td>
+                  {{ assignment.get_iiko_category_add_status_display }}
+                  {% if assignment.iiko_category_add_error %}
+                    <div class="small text-danger">{{ assignment.iiko_category_add_error|truncatechars:120 }}</div>
+                  {% endif %}
+                </td>
                 <td>{{ assignment.created_at|date:"Y-m-d H:i" }}</td>
                 <td class="text-end">
                   {% if assignment.can_cleanup_from_ui %}
@@ -569,7 +576,7 @@
               </tr>
             {% empty %}
               <tr>
-                <td colspan="8" class="text-center text-muted py-3">Назначений автосценариев пока нет.</td>
+                <td colspan="9" class="text-center text-muted py-3">Назначений автосценариев пока нет.</td>
               </tr>
             {% endfor %}
           </tbody>

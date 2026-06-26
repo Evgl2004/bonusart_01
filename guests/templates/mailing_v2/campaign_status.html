@@ -150,6 +150,17 @@
           {% elif coupon_campaign_report_error %}
             <div class="alert alert-warning small mt-3 mb-0">{{ coupon_campaign_report_error }}</div>
           {% endif %}
+
+          {% if coupon_iiko_category_stats %}
+            <div class="mail-section-title mt-3">iikoCard категория купона</div>
+            <div class="mail-status-row"><span>Назначений всего</span><b>{{ coupon_iiko_category_stats.total }}</b></div>
+            <div class="mail-status-row"><span>Ожидают ACK iikoCard</span><b>{{ coupon_iiko_category_stats.pending }}</b></div>
+            <div class="mail-status-row"><span>Подтверждены iikoCard</span><b>{{ coupon_iiko_category_stats.ok }}</b></div>
+            <div class="mail-status-row"><span>Ошибки iikoCard</span><b>{{ coupon_iiko_category_stats.error }}</b></div>
+            <div class="mail-status-row"><span>Контур отключён для назначения</span><b>{{ coupon_iiko_category_stats.disabled }}</b></div>
+            <div class="mail-status-row"><span>Событий очереди pending/sent</span><b>{{ coupon_iiko_category_stats.events_pending }}/{{ coupon_iiko_category_stats.events_sent }}</b></div>
+            <div class="mail-status-row"><span>Событий очереди ack/error/skipped</span><b>{{ coupon_iiko_category_stats.events_acked }}/{{ coupon_iiko_category_stats.events_error }}/{{ coupon_iiko_category_stats.events_skipped }}</b></div>
+          {% endif %}
         </div>
       </div>
     </div>

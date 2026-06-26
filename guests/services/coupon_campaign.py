@@ -12,6 +12,7 @@ from guests.models import (
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
+    IikoCustomerCategorySyncEvent,
     Mailing,
     MailingGuest,
     VtelemaxRecipientChannel,
@@ -22,6 +23,14 @@ from guests.services.coupon_constants import (
     COUPON_VENUE_GLOBAL_CODE,
     COUPON_VENUE_GLOBAL_NAME,
     is_coupon_global_venue,
+)
+from guests.services.iiko_customer_category_sync import (
+    build_iiko_category_add_events_map,
+    enqueue_iiko_category_add_for_assignment,
+    enqueue_iiko_category_remove_if_last_coupon,
+    get_iiko_active_coupon_category_id,
+    iiko_customer_category_gate_required,
+    iiko_customer_category_sync_enabled,
 )
 from guests.services.template_render import render_message_for_guest
 
@@ -173,6 +182,10 @@ class CouponGateReport:
     queue_events_created: int = 0
     sync_ok: int = 0
     sync_error: int = 0
+    iiko_category_gate_enabled: bool = False
+    iiko_category_events_created: int = 0
+    iiko_category_ok: int = 0
+    iiko_category_error: int = 0
     global_blockers: list[str] = field(default_factory=list)
     issues: list[CouponGateIssue] = field(default_factory=list)
 
@@ -195,6 +208,10 @@ class CouponGateReport:
             "queue_events_created": self.queue_events_created,
             "sync_ok": self.sync_ok,
             "sync_error": self.sync_error,
+            "iiko_category_gate_enabled": self.iiko_category_gate_enabled,
+            "iiko_category_events_created": self.iiko_category_events_created,
+            "iiko_category_ok": self.iiko_category_ok,
+            "iiko_category_error": self.iiko_category_error,
             "issues_by_code": self.issues_by_code(),
             "global_blockers": list(self.global_blockers),
             "issues": [
@@ -235,6 +252,8 @@ class CouponCampaignGateService:
         self.require_fresh_vtelemax_sync = bool(
             getattr(settings, "VTELEMAX_COUPON_SYNC_GATE_REQUIRE_FRESH_STATE", True)
         )
+        self.iiko_category_sync_enabled = iiko_customer_category_sync_enabled()
+        self.require_iiko_category_gate = iiko_customer_category_gate_required()
 
     def prepare_rows_for_dispatch(
         self,
@@ -269,10 +288,17 @@ class CouponCampaignGateService:
             coupon_venue_name = COUPON_VENUE_GLOBAL_NAME
 
         report.coupon_mode = True
+        report.iiko_category_gate_enabled = self.require_iiko_category_gate
         report.coupon_series = coupon_series
         report.coupon_venue_code = coupon_venue_code
         report.coupon_venue_name = coupon_venue_name
         now = now or timezone.now()
+
+        if self.require_iiko_category_gate and not get_iiko_active_coupon_category_id():
+            report.global_blockers.append(
+                "Контур iikoCard включён, но не задан IIKO_ACTIVE_COUPON_CATEGORY_ID для категории «Активный купон SAGUR»."
+            )
+            return self._finalize_ready_rows(rows=rows, ready_guest_ids=set(), report=report)
 
         if not coupon_venue_code:
             report.global_blockers.append(
@@ -416,6 +442,13 @@ class CouponCampaignGateService:
                         status=CouponVtelemaxSyncQueue.Status.PENDING,
                         last_error=None,
                     )
+                    iiko_result = enqueue_iiko_category_add_for_assignment(
+                        assignment=assignment,
+                        now=now,
+                        dry_run=False,
+                    )
+                    if iiko_result.created:
+                        report.iiko_category_events_created += 1
 
             report.created_assignments = created_assignments
             report.queue_events_created += created_events
@@ -455,6 +488,22 @@ class CouponCampaignGateService:
         channels_by_guest_id = self._build_channels_map(guest_ids=guest_ids)
         sync_events_by_assignment_id = self._build_latest_sync_events_map(
             assignment_ids=[int(assignment.id) for assignment in assignment_by_guest_id.values() if assignment.id]
+        )
+        if self.iiko_category_sync_enabled:
+            for assignment in assignment_by_guest_id.values():
+                if assignment.status not in COUPON_ASSIGNMENT_DISPATCHABLE_STATUSES:
+                    continue
+                iiko_result = enqueue_iiko_category_add_for_assignment(
+                    assignment=assignment,
+                    now=now,
+                    dry_run=dry_run,
+                )
+                if iiko_result.created:
+                    report.iiko_category_events_created += 1
+        iiko_events_by_assignment_id = build_iiko_category_add_events_map(
+            campaign_assignment_ids=[
+                int(assignment.id) for assignment in assignment_by_guest_id.values() if assignment.id
+            ]
         )
         ready_guest_ids: set[int] = set()
         text_rows_to_update: list[MailingGuest] = []
@@ -554,6 +603,11 @@ class CouponCampaignGateService:
                         now=now,
                         status=CouponVtelemaxSyncQueue.Status.ERROR,
                         last_error="Несовпадение заведения купона и кампании.",
+                    )
+                    enqueue_iiko_category_remove_if_last_coupon(
+                        assignment=assignment,
+                        now=now,
+                        dry_run=False,
                     )
                 continue
 
@@ -706,6 +760,130 @@ class CouponCampaignGateService:
                     )
                 )
                 continue
+
+            if self.require_iiko_category_gate:
+                iiko_event = (
+                    iiko_events_by_assignment_id.get(("campaign", int(assignment.id)))
+                    if assignment.id
+                    else None
+                )
+                if iiko_event is None:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_event_missing",
+                            message=(
+                                "Для назначения не найдено событие добавления гостя в категорию iikoCard. "
+                                "Требуется постановка add-события."
+                            ),
+                        )
+                    )
+                    if not dry_run:
+                        iiko_result = enqueue_iiko_category_add_for_assignment(
+                            assignment=assignment,
+                            now=now,
+                            dry_run=False,
+                        )
+                        if iiko_result.created:
+                            report.iiko_category_events_created += 1
+                    continue
+
+                if iiko_event.status == IikoCustomerCategorySyncEvent.Status.ERROR:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_event_error",
+                            message=(
+                                "Добавление гостя в категорию iikoCard завершилось ошибкой. "
+                                f"Последняя ошибка: {str(iiko_event.last_error or 'неизвестно')[:300]}"
+                            ),
+                        )
+                    )
+                    continue
+
+                if iiko_event.status == IikoCustomerCategorySyncEvent.Status.PENDING:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_event_pending",
+                            message=(
+                                "Добавление гостя в категорию iikoCard ещё не подтверждено "
+                                "(ожидает обработки очередью)."
+                            ),
+                        )
+                    )
+                    continue
+
+                if iiko_event.status == IikoCustomerCategorySyncEvent.Status.SENT:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_event_sent_wait_ack",
+                            message="Запрос добавления категории отправлен в iikoCard, но ещё не получен ACK.",
+                        )
+                    )
+                    continue
+
+                if iiko_event.status != IikoCustomerCategorySyncEvent.Status.ACKED:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_event_unknown_status",
+                            message=f"Событие iikoCard находится в неизвестном статусе: `{iiko_event.status}`.",
+                        )
+                    )
+                    continue
+
+                if assignment.iiko_category_add_status == CouponCampaignAssignment.IikoCategorySyncStatus.ERROR:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_status_error",
+                            message=(
+                                "Назначение купона помечено ошибкой добавления категории iikoCard. "
+                                f"Ошибка: {str(assignment.iiko_category_add_error or 'неизвестно')[:300]}"
+                            ),
+                        )
+                    )
+                    continue
+
+                if assignment.iiko_category_add_status != CouponCampaignAssignment.IikoCategorySyncStatus.OK:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_status_pending",
+                            message="Назначение купона ещё не переведено в статус `ok` после ACK iikoCard.",
+                        )
+                    )
+                    continue
+
+                if assignment.iiko_category_add_synced_at is None:
+                    report.iiko_category_error += 1
+                    report.issues.append(
+                        CouponGateIssue(
+                            row_id=int(row.id),
+                            guest_id=guest_id,
+                            code="iiko_category_synced_at_missing",
+                            message="Для назначения отсутствует время подтверждения iikoCard.",
+                        )
+                    )
+                    continue
+
+                report.iiko_category_ok += 1
 
             report.sync_ok += 1
             ready_guest_ids.add(guest_id)
