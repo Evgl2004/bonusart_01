@@ -55,6 +55,7 @@ class SegmentPurchaseAnalysisTests(TestCase):
         self.assertEqual(payload["filters"]["segment_code"], DEFAULT_SEGMENT_CODE)
         self.assertEqual(payload["filters"]["period_days"], 60)
         self.assertEqual(payload["filters"]["top_limit"], 15)
+        self.assertTrue(payload["filters"]["hide_zero_revenue"])
         self.assertEqual(payload["rows"], [])
 
         segment_codes = {item["code"] for item in payload["filters"]["segment_options"]}
@@ -95,6 +96,16 @@ class SegmentPurchaseAnalysisTests(TestCase):
             dish_code="dish-tea",
             dish_amount="1",
             net_sum="100.00",
+        )
+        self._create_raw_line(
+            fingerprint="cooling-free-modifier",
+            guest=cooling_guest,
+            business_date=date(2026, 2, 18),
+            department_id=self.department_id,
+            order_number=107,
+            dish_code="dish-free",
+            dish_amount="99",
+            net_sum="0.00",
         )
         self._create_raw_line(
             fingerprint="active-burger",
@@ -144,6 +155,7 @@ class SegmentPurchaseAnalysisTests(TestCase):
         self.assertEqual(payload["stats"]["guests_with_purchases"], 1)
         self.assertEqual(payload["stats"]["orders_count"], 3)
         self.assertEqual(payload["stats"]["raw_lines_count"], 3)
+        self.assertTrue(payload["filters"]["hide_zero_revenue"])
 
         self.assertEqual(len(payload["rows"]), 2)
         first_row = payload["rows"][0]
@@ -159,6 +171,27 @@ class SegmentPurchaseAnalysisTests(TestCase):
         second_row = payload["rows"][1]
         self.assertEqual(second_row["dish_code"], "dish-tea")
         self.assertEqual(Decimal(second_row["quantity_total_value"]), Decimal("1"))
+
+        response_with_free_items = self.client.get(
+            reverse("segment_purchase_analysis"),
+            {
+                "department_id": self.department_id,
+                "segment_code": DEFAULT_SEGMENT_CODE,
+                "period_days": 60,
+                "top_limit": 10,
+                "hide_zero_revenue": 0,
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response_with_free_items.status_code, 200)
+        payload_with_free_items = response_with_free_items.context["payload"]
+        self.assertFalse(payload_with_free_items["filters"]["hide_zero_revenue"])
+        self.assertEqual(payload_with_free_items["stats"]["orders_count"], 4)
+        self.assertEqual(payload_with_free_items["stats"]["raw_lines_count"], 4)
+        self.assertEqual(payload_with_free_items["rows"][0]["dish_code"], "dish-free")
+        self.assertEqual(Decimal(payload_with_free_items["rows"][0]["quantity_total_value"]), Decimal("99"))
+        self.assertEqual(Decimal(payload_with_free_items["rows"][0]["sales_sum_value"]), Decimal("0.00"))
 
     def test_new_segment_uses_only_first_purchase_date_rows(self):
         guest = self._create_guest("003")

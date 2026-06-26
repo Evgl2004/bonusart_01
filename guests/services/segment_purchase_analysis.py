@@ -29,6 +29,7 @@ TOP_LIMIT_OPTIONS = (10, 15, 30)
 DEFAULT_PURCHASE_PERIOD_DAYS = 60
 DEFAULT_TOP_LIMIT = 15
 DEFAULT_SEGMENT_CODE = "cooling_30_60d"
+DEFAULT_HIDE_ZERO_REVENUE = True
 
 ANALYSIS_SEGMENT_DEFINITIONS = tuple(
     (code, name)
@@ -44,11 +45,13 @@ def build_segment_purchase_analysis_payload(
     segment_code: str | None = None,
     period_days: int | str | None = None,
     top_limit: int | str | None = None,
+    hide_zero_revenue: bool | int | str | None = None,
 ) -> dict[str, Any]:
     selected_department_id = (department_id or "").strip()
     selected_segment_code = normalize_analysis_segment_code(segment_code)
     selected_period_days = normalize_purchase_period_days(period_days)
     selected_top_limit = normalize_top_limit(top_limit)
+    selected_hide_zero_revenue = normalize_hide_zero_revenue(hide_zero_revenue)
 
     target_as_of = GuestRestaurantWindowMetrics.objects.aggregate(v=Max("as_of_date")).get("v")
     department_options = _build_department_options()
@@ -62,6 +65,7 @@ def build_segment_purchase_analysis_payload(
         selected_segment_code=selected_segment_code,
         selected_period_days=selected_period_days,
         selected_top_limit=selected_top_limit,
+        selected_hide_zero_revenue=selected_hide_zero_revenue,
     )
 
     if target_as_of is None:
@@ -99,6 +103,7 @@ def build_segment_purchase_analysis_payload(
         range_start=range_start,
         range_end=target_as_of,
         first_purchase_dates=first_purchase_dates,
+        hide_zero_revenue=selected_hide_zero_revenue,
     )
     rows = _build_rows(
         aggregate["items"],
@@ -125,6 +130,7 @@ def build_segment_purchase_analysis_payload(
         selected_segment_code=selected_segment_code,
         selected_period_days=selected_period_days,
         selected_top_limit=selected_top_limit,
+        selected_hide_zero_revenue=selected_hide_zero_revenue,
         segment_size=len(segment_guest_ids),
         raw_lines_count=aggregate["raw_lines_count"],
     )
@@ -156,6 +162,17 @@ def normalize_analysis_segment_code(raw_value: str | None) -> str:
     if value in ANALYSIS_SEGMENT_NAMES_MAP:
         return value
     return DEFAULT_SEGMENT_CODE
+
+
+def normalize_hide_zero_revenue(raw_value: bool | int | str | None) -> bool:
+    if raw_value is None:
+        return DEFAULT_HIDE_ZERO_REVENUE
+    value = str(raw_value).strip().lower()
+    if value in {"0", "false", "off", "no"}:
+        return False
+    if value in {"1", "true", "on", "yes"}:
+        return True
+    return DEFAULT_HIDE_ZERO_REVENUE
 
 
 def _collect_segment_guest_keys(
@@ -208,6 +225,7 @@ def _aggregate_raw_lines(
     range_start: date,
     range_end: date,
     first_purchase_dates: dict[int, date] | None,
+    hide_zero_revenue: bool,
 ) -> dict[str, Any]:
     item_aggregate: dict[str, dict[str, Any]] = {}
     guest_ids_with_purchases: set[int] = set()
@@ -252,6 +270,10 @@ def _aggregate_raw_lines(
         if not dish_code:
             continue
 
+        line_sum = _raw_line_net_sum(row)
+        if hide_zero_revenue and line_sum == Decimal("0"):
+            continue
+
         raw_lines_count += 1
         guest_ids_with_purchases.add(guest_id)
         order_key = _build_order_key(row)
@@ -277,7 +299,6 @@ def _aggregate_raw_lines(
         if not item["group_name"] and row.get("dish_group_name"):
             item["group_name"] = str(row["dish_group_name"]).strip()
 
-        line_sum = _raw_line_net_sum(row)
         item["guest_ids"].add(guest_id)
         item["order_keys"].add(order_key)
         item["quantity_total"] += _raw_line_quantity(row)
@@ -375,6 +396,7 @@ def _build_base_payload(
     selected_segment_code: str,
     selected_period_days: int,
     selected_top_limit: int,
+    selected_hide_zero_revenue: bool,
 ) -> dict[str, Any]:
     return {
         "filters": {
@@ -389,6 +411,7 @@ def _build_base_payload(
             "period_options": list(PURCHASE_PERIOD_OPTIONS),
             "top_limit": selected_top_limit,
             "top_limit_options": list(TOP_LIMIT_OPTIONS),
+            "hide_zero_revenue": selected_hide_zero_revenue,
         },
         "stats": {
             "segment_size": 0,
@@ -425,6 +448,7 @@ def _build_technical_rows(
     selected_segment_code: str,
     selected_period_days: int,
     selected_top_limit: int,
+    selected_hide_zero_revenue: bool,
     segment_size: int,
     raw_lines_count: int,
 ) -> list[dict[str, str]]:
@@ -435,6 +459,7 @@ def _build_technical_rows(
         {"label": "Сегмент", "value": ANALYSIS_SEGMENT_NAMES_MAP.get(selected_segment_code, selected_segment_code)},
         {"label": "Глубина", "value": f"{selected_period_days} дней"},
         {"label": "Лимит строк", "value": str(selected_top_limit)},
+        {"label": "Скрывать 0 выручку", "value": "да" if selected_hide_zero_revenue else "нет"},
         {"label": "Гостей в сегменте", "value": str(segment_size)},
         {"label": "Строк OLAP после фильтров", "value": str(raw_lines_count)},
     ]

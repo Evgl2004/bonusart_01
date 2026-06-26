@@ -17,9 +17,16 @@
 
   .spa-filter-grid {
     display: grid;
-    grid-template-columns: minmax(220px, 1.25fr) minmax(240px, 1.35fr) minmax(160px, 0.8fr) minmax(140px, 0.7fr) auto;
+    grid-template-columns: minmax(220px, 1.25fr) minmax(240px, 1.35fr) minmax(160px, 0.8fr) minmax(140px, 0.7fr) minmax(170px, 0.8fr) auto;
     gap: 0.7rem;
     align-items: end;
+  }
+
+  .spa-filter-check {
+    min-height: 38px;
+    display: flex;
+    align-items: center;
+    padding-bottom: 0.35rem;
   }
 
   .spa-kpi-grid {
@@ -207,6 +214,23 @@
             <option value="{{ option }}" {% if option == selected_top_limit %}selected{% endif %}>{{ option }}</option>
           {% endfor %}
         </select>
+      </div>
+
+      <div class="spa-filter-check">
+        <input type="hidden" name="hide_zero_revenue" value="0">
+        <div class="form-check mb-0">
+          <input
+            class="form-check-input"
+            type="checkbox"
+            value="1"
+            id="hide_zero_revenue"
+            name="hide_zero_revenue"
+            {% if selected_hide_zero_revenue %}checked{% endif %}
+          >
+          <label class="form-check-label small fw-semibold text-muted" for="hide_zero_revenue">
+            Скрывать 0 выручку
+          </label>
+        </div>
       </div>
 
       <button type="submit" class="btn btn-primary">Показать</button>

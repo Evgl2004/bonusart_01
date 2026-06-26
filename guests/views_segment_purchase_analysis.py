@@ -15,10 +15,12 @@ class SegmentPurchaseAnalysisView(TemplateView):
             segment_code=self.request.GET.get("segment_code"),
             period_days=self.request.GET.get("period_days"),
             top_limit=self.request.GET.get("top_limit"),
+            hide_zero_revenue=self.request.GET.get("hide_zero_revenue"),
         )
         context["payload"] = payload
         context["selected_department_id"] = payload["filters"]["department_id"]
         context["selected_segment_code"] = payload["filters"]["segment_code"]
         context["selected_period_days"] = int(payload["filters"]["period_days"])
         context["selected_top_limit"] = int(payload["filters"]["top_limit"])
+        context["selected_hide_zero_revenue"] = bool(payload["filters"]["hide_zero_revenue"])
         return context
