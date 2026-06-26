@@ -1707,6 +1707,72 @@ class CouponAutoscenarioPreviewTests(TestCase):
         self.assertIn("45 дней", task.message_text)
         self.assertNotIn("days_without_visits", task.message_text)
 
+    @override_settings(
+        IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED=True,
+        IIKO_CUSTOMER_CATEGORY_GATE_REQUIRE_ACK=True,
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="cat-active-coupon",
+    )
+    def test_autoscenario_dispatch_waits_for_iiko_category_ack_when_gate_enabled(self):
+        self.config.execution_mode = CouponAutomationConfig.ExecutionMode.PILOT
+        self.config.max_recipients_per_run = 1
+        self.config.settings = {"pilot_phones": ["+79990000155"]}
+        self.config.save(
+            update_fields=[
+                "execution_mode",
+                "max_recipients_per_run",
+                "settings",
+                "updated_at",
+            ]
+        )
+        guest = self._guest(phone="+79990000155", first_name="WaitIiko")
+        self._visit(guest=guest, days_ago=45)
+        self._sendable_channel(guest=guest, with_binding=False)
+        bot = BotProfile.objects.create(
+            code="tg_autoscenario_wait_iiko",
+            name="Telegram autoscenario wait iiko",
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            is_active=True,
+        )
+        self.scenario.bot_profiles.add(bot)
+        GuestBotBinding.objects.create(
+            guest=guest,
+            bot=bot,
+            external_chat_id="wait-iiko-chat-155",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+        self._available_coupon(code="AUTO-WAIT-IIKO")
+        result = execute_coupon_autoscenario_pilot(
+            scenario_code=self.scenario.code,
+            scan_limit=20,
+            confirm=True,
+            now=self.now,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.get(run_id=result.run_id)
+        ack_time = self.now + timedelta(minutes=5)
+        assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        assignment.vtelemax_synced_at = ack_time
+        assignment.iiko_category_add_status = CouponAutoscenarioAssignment.IikoCategorySyncStatus.PENDING
+        assignment.save(
+            update_fields=[
+                "vtelemax_sync_status",
+                "vtelemax_synced_at",
+                "iiko_category_add_status",
+                "updated_at",
+            ]
+        )
+
+        created_tasks = create_autoscenario_dispatch_after_vtelemax_ack(
+            assignment_id=assignment.id,
+            now=ack_time,
+        )
+
+        self.assertEqual(created_tasks, 0)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+
     def test_autoscenario_dispatch_after_ack_uses_guest_name_from_card(self):
         self.template.message_text = "{{ first_name }}: скоро день рождения. Купон {coupon_code}"
         self.template.save(update_fields=["message_text", "updated_at"])

@@ -26,3 +26,26 @@ class EnvSampleDocumentationTests(SimpleTestCase):
 
         self.assertNotIn("COUPON_AUTOSCENARIO_SCHEDULE_MINUTES=", env_sample)
         self.assertNotIn("COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_MINUTES=", env_sample)
+
+    def test_iiko_customer_category_sync_variables_are_documented(self):
+        root_dir = Path(__file__).resolve().parents[2]
+        env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
+
+        expected_variables = (
+            "IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED",
+            "IIKO_ACTIVE_COUPON_CATEGORY_ID",
+            "IIKO_ACTIVE_COUPON_CATEGORY_NAME",
+            "IIKO_CUSTOMER_CATEGORY_GATE_REQUIRE_ACK",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_HTTP_TIMEOUT_SECONDS",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_MAX_ATTEMPTS",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_BASE_SECONDS",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_RETRY_MAX_SECONDS",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_BATCH_SIZE",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_REQUEST_INTERVAL_SECONDS",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_ENABLED",
+            "IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_MINUTES",
+        )
+
+        for variable_name in expected_variables:
+            with self.subTest(variable_name=variable_name):
+                self.assertIn(f"{variable_name}=", env_sample)

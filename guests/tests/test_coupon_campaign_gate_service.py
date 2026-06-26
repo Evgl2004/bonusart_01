@@ -10,6 +10,7 @@ from guests.models import (
     BotProfile,
     CouponCampaignAssignment,
     CouponRegistryEntry,
+    IikoCustomerCategorySyncEvent,
     CouponVtelemaxSyncQueue,
     Guest,
     Mailing,
@@ -214,6 +215,158 @@ class CouponCampaignGateServiceTests(TestCase):
             row.text_mailing_list,
             f"Ваш персональный купон: TST-AAA112\n\n{COUPON_MESSAGE_FOOTER}",
         )
+
+    @override_settings(
+        IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED=True,
+        IIKO_CUSTOMER_CATEGORY_GATE_REQUIRE_ACK=True,
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="cat-active-coupon",
+        IIKO_ORGANIZATION_ID="org-1",
+    )
+    def test_prepare_rows_blocks_until_iiko_category_ack_when_enabled(self):
+        """
+        При включённом iikoCard-gate одного ACK от vtelemax недостаточно.
+        """
+        row = self._create_row("2235")
+        row.guest.iiko_id = "iiko-guest-2235"
+        row.guest.save(update_fields=["iiko_id"])
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900002235")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-IIKO-PENDING",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=row.guest,
+            coupon=coupon,
+            phone_e164=row.guest.phone,
+            coupon_series="TEST",
+            coupon_code="TST-IIKO-PENDING",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            promo_text="Скидка 20% на сет по купону.",
+            assigned_at=self.now,
+            status=CouponCampaignAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+            iiko_category_add_status=CouponCampaignAssignment.IikoCategorySyncStatus.PENDING,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            assignment=assignment,
+            payload_json={"coupon_code": "TST-IIKO-PENDING"},
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            attempts=1,
+            next_retry_at=self.now,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+        IikoCustomerCategorySyncEvent.objects.create(
+            action=IikoCustomerCategorySyncEvent.Action.ADD,
+            source_type=IikoCustomerCategorySyncEvent.SourceType.CAMPAIGN,
+            guest=row.guest,
+            campaign_assignment=assignment,
+            iiko_customer_id=row.guest.iiko_id,
+            category_id="cat-active-coupon",
+            organization_id="org-1",
+            payload_json={"coupon_code": "TST-IIKO-PENDING"},
+            status=IikoCustomerCategorySyncEvent.Status.PENDING,
+            next_retry_at=self.now,
+        )
+
+        ready_rows, report = CouponCampaignGateService().prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(ready_rows, [])
+        self.assertEqual(report.rows_blocked, 1)
+        self.assertEqual(report.issues_by_code().get("iiko_category_event_pending"), 1)
+        self.assertEqual(report.iiko_category_ok, 0)
+
+    @override_settings(
+        IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED=True,
+        IIKO_CUSTOMER_CATEGORY_GATE_REQUIRE_ACK=True,
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="cat-active-coupon",
+        IIKO_ORGANIZATION_ID="org-1",
+    )
+    def test_prepare_rows_allows_dispatch_after_vtelemax_and_iiko_ack(self):
+        """
+        При включённом iikoCard-gate строка проходит только после двух ACK.
+        """
+        row = self._create_row("2236")
+        row.guest.iiko_id = "iiko-guest-2236"
+        row.guest.save(update_fields=["iiko_id"])
+        self._create_valid_channel(guest=row.guest, phone_e164="+799900002236")
+        coupon = CouponRegistryEntry.objects.create(
+            series="TEST",
+            code="TST-IIKO-ACK",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment = CouponCampaignAssignment.objects.create(
+            campaign=self.mailing,
+            guest=row.guest,
+            coupon=coupon,
+            phone_e164=row.guest.phone,
+            coupon_series="TEST",
+            coupon_code="TST-IIKO-ACK",
+            venue_code="DEP_1",
+            venue_name="Тестовое заведение",
+            promo_text="Скидка 20% на сет по купону.",
+            assigned_at=self.now,
+            status=CouponCampaignAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponCampaignAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+            iiko_category_add_status=CouponCampaignAssignment.IikoCategorySyncStatus.OK,
+            iiko_category_add_synced_at=self.now,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            assignment=assignment,
+            payload_json={"coupon_code": "TST-IIKO-ACK"},
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            attempts=1,
+            next_retry_at=self.now,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+        IikoCustomerCategorySyncEvent.objects.create(
+            action=IikoCustomerCategorySyncEvent.Action.ADD,
+            source_type=IikoCustomerCategorySyncEvent.SourceType.CAMPAIGN,
+            guest=row.guest,
+            campaign_assignment=assignment,
+            iiko_customer_id=row.guest.iiko_id,
+            category_id="cat-active-coupon",
+            organization_id="org-1",
+            payload_json={"coupon_code": "TST-IIKO-ACK"},
+            status=IikoCustomerCategorySyncEvent.Status.ACKED,
+            attempts=1,
+            next_retry_at=self.now,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+
+        ready_rows, report = CouponCampaignGateService().prepare_rows_for_dispatch(
+            mailing=self.mailing,
+            rows=[row],
+            now=self.now,
+            dry_run=False,
+        )
+
+        self.assertEqual(len(ready_rows), 1)
+        self.assertEqual(report.rows_blocked, 0)
+        self.assertEqual(report.sync_ok, 1)
+        self.assertEqual(report.iiko_category_ok, 1)
 
     def test_prepare_rows_blocks_finished_assignment_status(self):
         """
