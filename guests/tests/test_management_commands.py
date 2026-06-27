@@ -376,6 +376,7 @@ class RunOlapSyncWorkerCommandTests(SimpleTestCase):
                 "--max-attempts=6",
                 "--retry-base-seconds=30",
                 "--lock-timeout-seconds=1200",
+                "--print-row-details-limit=0",
                 stdout=output,
             )
 
@@ -395,6 +396,67 @@ class RunOlapSyncWorkerCommandTests(SimpleTestCase):
         Обработчик сигнала должен выставлять флаг should_stop.
         """
         from guests.management.commands.run_olap_sync_worker import Command
+
+        command = Command()
+        self.assertFalse(command.should_stop)
+        command._signal_handler(signal.SIGTERM, None)
+        self.assertTrue(command.should_stop)
+
+
+class RunOlapLivePipelineWorkerCommandTests(SimpleTestCase):
+    """
+    Тесты команды run_olap_live_pipeline_worker.
+    """
+
+    @override_settings(OLAP_LIVE_PIPELINE_ENABLED=True)
+    def test_handle_once_runs_single_batch_and_closes_client(self):
+        """
+        В режиме --once команда должна выполнить один проход оперативной очереди и закрыть OLAP-клиент.
+        """
+        output = io.StringIO()
+        fake_client = Mock()
+        fake_service = Mock()
+        fake_service.process_batch.return_value = SimpleNamespace(
+            to_dict=lambda: {
+                "claimed": 4,
+                "processed": 3,
+                "waiting_olap": 1,
+                "facts_built": 2,
+                "coupon_synced": 1,
+                "done": 1,
+                "retried": 1,
+                "failed": 0,
+            }
+        )
+
+        with (
+            patch("guests.management.commands.run_olap_live_pipeline_worker.signal.signal"),
+            patch(
+                "guests.management.commands.run_olap_live_pipeline_worker.build_iiko_olap_client_from_settings",
+                return_value=fake_client,
+            ),
+            patch(
+                "guests.management.commands.run_olap_live_pipeline_worker.OlapLivePipelineService"
+            ) as mocked_service_cls,
+        ):
+            mocked_service_cls.from_settings.return_value = fake_service
+            call_command(
+                "run_olap_live_pipeline_worker",
+                "--once",
+                "--batch-size=7",
+                stdout=output,
+            )
+
+        mocked_service_cls.from_settings.assert_called_once_with(client=fake_client)
+        self.assertEqual(fake_service.batch_size, 7)
+        fake_service.process_batch.assert_called_once()
+        fake_client.close.assert_called_once()
+
+    def test_signal_handler_sets_stop_flag(self):
+        """
+        Обработчик сигнала должен выставлять флаг should_stop.
+        """
+        from guests.management.commands.run_olap_live_pipeline_worker import Command
 
         command = Command()
         self.assertFalse(command.should_stop)

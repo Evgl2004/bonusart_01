@@ -21,6 +21,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 
 from guests.models import Guest, OlapCheckSyncJournal, TerminalDepartmentMap
+from guests.services.olap_live_pipeline import ensure_live_pipeline_task_for_journal
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +245,8 @@ def enqueue_olap_sync_from_webhook(
         )
     except IntegrityError:
         row = OlapCheckSyncJournal.objects.filter(idempotency_key=idempotency_key).first()
+        if row is not None:
+            ensure_live_pipeline_task_for_journal(journal=row)
         return OlapWebhookBridgeResult(
             created=False,
             row_id=getattr(row, "id", None),
@@ -251,6 +254,7 @@ def enqueue_olap_sync_from_webhook(
         )
 
     if created:
+        ensure_live_pipeline_task_for_journal(journal=row)
         if resolved_department.get("mapping_used"):
             logger.info(
                 "OLAP bridge: department_id восстановлен по mapping "
@@ -270,6 +274,7 @@ def enqueue_olap_sync_from_webhook(
             reason="Задача создана",
         )
 
+    ensure_live_pipeline_task_for_journal(journal=row)
     logger.info(
         "OLAP bridge: дубль задачи, пропуск (id=%s, webhook_id=%s, order_number=%s)",
         row.id,

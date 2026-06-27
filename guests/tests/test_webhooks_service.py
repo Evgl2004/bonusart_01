@@ -19,6 +19,7 @@ from guests.models import (
     GuestCategory,
     GuestCategoryAssignment,
     OlapCheckSyncJournal,
+    OlapLivePipelineQueue,
     Restaurant,
     TerminalDepartmentMap,
     VisitHistory,
@@ -484,6 +485,41 @@ class WebhookGuestAndCategoryTests(TestCase):
         self.assertEqual(row.organization_id, "org-on-1")
         self.assertEqual(row.source_webhook_id, "wh-nt1-on")
         self.assertEqual(row.status, OlapCheckSyncJournal.Status.NEW)
+
+    @override_settings(
+        OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,
+        OLAP_BRIDGE_ALLOWED_NOTIFICATION_TYPES={1},
+        OLAP_LIVE_PIPELINE_ENABLED=True,
+    )
+    def test_handle_api_webhook_notification_type_1_creates_live_pipeline_task(self):
+        """
+        При включённом оперативном конвейере webhook должен создать связанную задачу постобработки.
+        """
+        webhook = {
+            "id": "wh-nt1-live-pipeline",
+            "parsed_body": {
+                "id": "evt-live-pipeline",
+                "notificationType": 1,
+                "phone": self.guest.phone,
+                "terminalGroupId": self.restaurant.iiko_id,
+                "changedOn": "2026-03-18T11:05:00+05:00",
+                "orderNumber": 698701,
+                "orderId": "order-live-pipeline",
+                "transactionId": "tx-live-pipeline",
+                "organizationId": "org-live-pipeline",
+            },
+        }
+
+        assigned, reason = webhooks.handle_api_webhook(webhook)
+
+        self.assertTrue(assigned, msg=reason)
+        self.assertEqual(OlapCheckSyncJournal.objects.count(), 1)
+        self.assertEqual(OlapLivePipelineQueue.objects.count(), 1)
+        row = OlapCheckSyncJournal.objects.get()
+        task = OlapLivePipelineQueue.objects.get()
+        self.assertEqual(task.sync_journal_id, row.id)
+        self.assertEqual(task.status, OlapLivePipelineQueue.Status.NEW)
+        self.assertEqual(task.order_number, 698701)
 
     @override_settings(
         OLAP_BRIDGE_ENABLE_LIVE_WEBHOOK_ENQUEUE=True,

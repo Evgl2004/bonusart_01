@@ -854,7 +854,53 @@ OLAP_SYNC_SCHEDULE_LOCK_TIMEOUT_SECONDS = _env_int(
     min_value=60,
 )
 
-# Плановый пересчет витрин OLAP (one-shot) через Django Q.
+# Оперативный OLAP-конвейер после входящих webhook iikoCard:
+# загрузка конкретного чека из OLAP -> сборка OrderFact -> обработка применённого купона.
+OLAP_LIVE_PIPELINE_ENABLED = _env_bool("OLAP_LIVE_PIPELINE_ENABLED", False)
+OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED = _env_bool("OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED", False)
+OLAP_LIVE_PIPELINE_SCHEDULE_MINUTES = _env_int(
+    "OLAP_LIVE_PIPELINE_SCHEDULE_MINUTES",
+    1,
+    min_value=1,
+)
+OLAP_LIVE_PIPELINE_BATCH_SIZE = _env_int(
+    "OLAP_LIVE_PIPELINE_BATCH_SIZE",
+    20,
+    min_value=1,
+)
+OLAP_LIVE_PIPELINE_ORDER_FACT_BATCH_SIZE = _env_int(
+    "OLAP_LIVE_PIPELINE_ORDER_FACT_BATCH_SIZE",
+    2000,
+    min_value=100,
+)
+OLAP_LIVE_PIPELINE_OLAP_PORTION_SIZE = _env_int(
+    "OLAP_LIVE_PIPELINE_OLAP_PORTION_SIZE",
+    20,
+    min_value=1,
+)
+OLAP_LIVE_PIPELINE_MAX_ATTEMPTS = _env_int(
+    "OLAP_LIVE_PIPELINE_MAX_ATTEMPTS",
+    10,
+    min_value=1,
+)
+OLAP_LIVE_PIPELINE_RETRY_BASE_SECONDS = _env_int(
+    "OLAP_LIVE_PIPELINE_RETRY_BASE_SECONDS",
+    30,
+    min_value=1,
+)
+OLAP_LIVE_PIPELINE_RETRY_MAX_SECONDS = _env_int(
+    "OLAP_LIVE_PIPELINE_RETRY_MAX_SECONDS",
+    600,
+    min_value=1,
+)
+if OLAP_LIVE_PIPELINE_RETRY_MAX_SECONDS < OLAP_LIVE_PIPELINE_RETRY_BASE_SECONDS:
+    OLAP_LIVE_PIPELINE_RETRY_MAX_SECONDS = OLAP_LIVE_PIPELINE_RETRY_BASE_SECONDS
+OLAP_LIVE_PIPELINE_LOCK_TIMEOUT_SECONDS = _env_int(
+    "OLAP_LIVE_PIPELINE_LOCK_TIMEOUT_SECONDS",
+    300,
+    min_value=60,
+)
+
 OLAP_REBUILD_SCHEDULE_ENABLED = _env_bool("OLAP_REBUILD_SCHEDULE_ENABLED", False)
 OLAP_REBUILD_SCHEDULE_CRON = str(
     os.getenv("OLAP_REBUILD_SCHEDULE_CRON", "30 2 * * *") or "30 2 * * *"
@@ -1163,6 +1209,14 @@ def _register_olap_schedule_tasks() -> None:
             }
     else:
         schedule_map.pop("run_olap_sync_windowed", None)
+
+    if OLAP_LIVE_PIPELINE_ENABLED and OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED:
+        schedule_map["run_olap_live_pipeline_queue"] = {
+            "func": "guests.tasks.run_olap_live_pipeline_queue_task",
+            "minutes": OLAP_LIVE_PIPELINE_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_olap_live_pipeline_queue", None)
 
     if OLAP_REBUILD_SCHEDULE_ENABLED:
         schedule_map["run_olap_rebuild_nightly"] = {

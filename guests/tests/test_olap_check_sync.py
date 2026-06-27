@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from guests.models import Guest, OlapCheckSyncJournal, OlapSalesRawLine
 from guests.services.iiko_olap_client import IikoOlapRequestError, OlapPortionLoadStats
-from guests.services.olap_check_sync import OlapCheckSyncWorkerService
+from guests.services.olap_check_sync import OlapCheckSyncWorkerService, OlapSyncIterationStats
 
 
 class _FakeOlapClient:
@@ -151,6 +151,56 @@ class OlapCheckSyncWorkerServiceTests(TestCase):
         self.assertEqual(stats.claimed_rows, 1)
         self.assertEqual(stats.loaded_rows, 1)
         self.assertEqual(stats.raw_rows_created, 1)
+
+    def test_bulk_create_raw_lines_treats_existing_fingerprint_as_duplicate(self):
+        """
+        Параллельно вставленный fingerprint не должен ронять OLAP-проход.
+        """
+        row = self._create_journal_row(
+            key="raw-race-1",
+            order_number=698699,
+            business_day=date(2026, 3, 18),
+        )
+        OlapSalesRawLine.objects.create(
+            row_fingerprint="race-fingerprint",
+            sync_journal=row,
+            guest=self.guest,
+            business_date=date(2026, 3, 18),
+            department_id="dept-1",
+            order_number=698699,
+            uniq_order_id="race-order",
+            item_sale_event_id="race-item",
+            dish_code="race-dish",
+            dish_name="Race dish",
+            raw_payload={},
+        )
+        duplicate = OlapSalesRawLine(
+            row_fingerprint="race-fingerprint",
+            sync_journal=row,
+            guest=self.guest,
+            business_date=date(2026, 3, 18),
+            department_id="dept-1",
+            order_number=698699,
+            uniq_order_id="race-order",
+            item_sale_event_id="race-item",
+            dish_code="race-dish",
+            dish_name="Race dish",
+            raw_payload={},
+        )
+        stats = OlapSyncIterationStats()
+        service = OlapCheckSyncWorkerService(
+            client=_FakeOlapClient(),
+            claim_limit=20,
+            portion_size=10,
+            max_attempts=3,
+            retry_base_seconds=1,
+        )
+
+        service._bulk_create_raw_lines(raw_lines_to_create=[duplicate], stats=stats)
+
+        self.assertEqual(OlapSalesRawLine.objects.filter(row_fingerprint="race-fingerprint").count(), 1)
+        self.assertEqual(stats.raw_rows_created, 0)
+        self.assertEqual(stats.raw_rows_duplicates, 1)
 
     def test_run_iteration_skips_deleted_rows_and_sets_retry_when_no_active_lines(self):
         """

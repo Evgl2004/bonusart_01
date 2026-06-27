@@ -99,6 +99,59 @@ class OlapScheduleTasksTests(SimpleTestCase):
         )
         mocked_client.close.assert_called_once()
 
+    @override_settings(OLAP_LIVE_PIPELINE_ENABLED=False, OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED=True)
+    @patch("guests.tasks.build_iiko_olap_client_from_settings")
+    def test_live_pipeline_task_returns_zero_when_disabled(self, mocked_builder):
+        """
+        Если оперативный конвейер выключен, задача не должна открывать OLAP-клиент.
+        """
+        result = tasks.run_olap_live_pipeline_queue_task()
+
+        self.assertEqual(result, 0)
+        mocked_builder.assert_not_called()
+
+    @override_settings(OLAP_LIVE_PIPELINE_ENABLED=True, OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED=False)
+    @patch("guests.tasks.build_iiko_olap_client_from_settings")
+    def test_live_pipeline_task_returns_zero_when_schedule_disabled(self, mocked_builder):
+        """
+        Создание очереди и плановая обработка включаются разными флагами.
+        """
+        result = tasks.run_olap_live_pipeline_queue_task()
+
+        self.assertEqual(result, 0)
+        mocked_builder.assert_not_called()
+
+    @override_settings(OLAP_LIVE_PIPELINE_ENABLED=True, OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED=True)
+    @patch("guests.tasks.OlapLivePipelineService")
+    @patch("guests.tasks.build_iiko_olap_client_from_settings")
+    def test_live_pipeline_task_runs_one_batch(self, mocked_builder, mocked_service_cls):
+        """
+        Плановая задача должна выполнить один короткий проход оперативного конвейера.
+        """
+        mocked_client = MagicMock()
+        mocked_builder.return_value = mocked_client
+        mocked_service = MagicMock()
+        mocked_service.process_batch.return_value = SimpleNamespace(
+            to_dict=lambda: {
+                "claimed": 3,
+                "processed": 2,
+                "waiting_olap": 1,
+                "facts_built": 2,
+                "coupon_synced": 1,
+                "done": 1,
+                "retried": 1,
+                "failed": 0,
+            }
+        )
+        mocked_service_cls.from_settings.return_value = mocked_service
+
+        result = tasks.run_olap_live_pipeline_queue_task()
+
+        self.assertEqual(result, 2)
+        mocked_service_cls.from_settings.assert_called_once_with(client=mocked_client)
+        mocked_service.process_batch.assert_called_once()
+        mocked_client.close.assert_called_once()
+
     @override_settings(OLAP_REBUILD_SCHEDULE_ENABLED=False)
     @patch("guests.tasks.call_command")
     def test_rebuild_task_returns_zero_when_disabled(self, mocked_call_command):

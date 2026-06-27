@@ -114,12 +114,16 @@ class CouponRedemptionSyncService:
         business_date_to: date | None = None,
         order_fact_id_from: int | None = None,
         order_fact_id_to: int | None = None,
+        order_fact_ids: list[int] | tuple[int, ...] | set[int] | None = None,
         limit: int = 0,
         dry_run: bool = False,
     ) -> CouponRedemptionSyncStats:
         stats = CouponRedemptionSyncStats()
 
         facts_query = OrderFact.objects.all()
+        if order_fact_ids is not None:
+            safe_ids = sorted({int(item) for item in order_fact_ids if item})
+            facts_query = facts_query.filter(id__in=safe_ids) if safe_ids else facts_query.none()
         if order_fact_id_from is not None:
             facts_query = facts_query.filter(id__gte=int(order_fact_id_from))
         if order_fact_id_to is not None:
@@ -215,6 +219,17 @@ class CouponRedemptionSyncService:
                 else:
                     stats.campaign_assignments_matched += 1
 
+                if not dry_run:
+                    locked_assignment = self._lock_assignment_for_redemption(assignment=assignment)
+                    if locked_assignment is None:
+                        stats.assignments_missing += 1
+                        continue
+                    assignment = locked_assignment
+                    candidate = _RedemptionAssignmentCandidate(
+                        kind=candidate.kind,
+                        assignment=assignment,
+                    )
+
                 fact_guest_id = fact.get("guest_id")
                 if not fact_guest_id or key in coupon_keys_without_olap_guest:
                     stats.assignments_matched_without_olap_guest += 1
@@ -307,6 +322,32 @@ class CouponRedemptionSyncService:
                     stats.iiko_category_events_skipped += 1
 
         return stats
+
+    @staticmethod
+    def _lock_assignment_for_redemption(
+        *,
+        assignment: RedemptionAssignment,
+    ) -> RedemptionAssignment | None:
+        """
+        Блокирует назначение купона на время обработки применения.
+
+        Это защищает от параллельного запуска оперативного и регламентного
+        контуров: второй процесс увидит уже обновлённое назначение и не создаст
+        второй `status_update` для vtelemax.
+        """
+        if isinstance(assignment, CouponAutoscenarioAssignment):
+            return (
+                CouponAutoscenarioAssignment.objects.select_for_update(of=("self",))
+                .select_related("coupon", "run", "scenario", "config")
+                .filter(id=int(assignment.id))
+                .first()
+            )
+        return (
+            CouponCampaignAssignment.objects.select_for_update(of=("self",))
+            .select_related("coupon", "campaign")
+            .filter(id=int(assignment.id))
+            .first()
+        )
 
     @staticmethod
     def _load_coupon_keys_without_olap_guest(
@@ -469,7 +510,7 @@ class CouponRedemptionSyncService:
         )
 
         existing = (
-            CouponRedemptionSyncService._status_update_event_query(assignment=assignment)
+            CouponRedemptionSyncService._status_update_event_query(assignment=assignment, for_update=not dry_run)
             .order_by("-id")
             .first()
         )
@@ -577,16 +618,20 @@ class CouponRedemptionSyncService:
         return payload
 
     @staticmethod
-    def _status_update_event_query(*, assignment: RedemptionAssignment):
+    def _status_update_event_query(*, assignment: RedemptionAssignment, for_update: bool = False):
         if isinstance(assignment, CouponAutoscenarioAssignment):
-            return CouponVtelemaxSyncQueue.objects.filter(
+            queryset = CouponVtelemaxSyncQueue.objects.filter(
                 autoscenario_assignment=assignment,
                 direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
             )
-        return CouponVtelemaxSyncQueue.objects.filter(
-            assignment=assignment,
-            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
-        )
+        else:
+            queryset = CouponVtelemaxSyncQueue.objects.filter(
+                assignment=assignment,
+                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            )
+        if for_update:
+            queryset = queryset.select_for_update(of=("self",))
+        return queryset
 
     @staticmethod
     def _status_update_event_create_kwargs(*, assignment: RedemptionAssignment) -> dict[str, Any]:

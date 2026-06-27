@@ -14,6 +14,7 @@ from .services.iiko_olap_client import build_iiko_olap_client_from_settings
 from .services.iiko_customer_category_sync import IikoCustomerCategorySyncService
 from .services.olap_check_sync import OlapCheckSyncWorkerService
 from .services.olap_control_pull import OlapControlPullOptions, OlapControlPullService
+from .services.olap_live_pipeline import OlapLivePipelineService
 from .services.vtelemax_coupon_sync import VtelemaxCouponSyncService
 from .services.webhooks import process_recent_webhooks
 
@@ -444,6 +445,47 @@ def run_olap_sync_scheduled_task() -> int:
         return int(stats.claimed_rows)
     except Exception as err:
         logger.exception("OLAP sync (schedule): ошибка one-shot прохода: %s", err)
+        return 0
+    finally:
+        client.close()
+
+
+def run_olap_live_pipeline_queue_task() -> int:
+    """
+    Плановая задача оперативного OLAP-конвейера.
+
+    Обрабатывает только свежую очередь `olap_live_pipeline_queue`, не запускает
+    полный пересчёт аналитических витрин и общий хвост `order_fact`.
+    """
+    if not bool(getattr(settings, "OLAP_LIVE_PIPELINE_ENABLED", False)):
+        logger.info("Оперативный OLAP-конвейер: выключен флагом OLAP_LIVE_PIPELINE_ENABLED.")
+        return 0
+    if not bool(getattr(settings, "OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED", False)):
+        logger.info("Оперативный OLAP-конвейер: плановый запуск выключен флагом OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED.")
+        return 0
+
+    client = build_iiko_olap_client_from_settings()
+    try:
+        service = OlapLivePipelineService.from_settings(client=client)
+        stats = service.process_batch()
+        summary = stats.to_dict()
+        logger.info(
+            (
+                "Оперативный OLAP-конвейер: claimed=%s processed=%s waiting_olap=%s "
+                "facts_built=%s coupon_synced=%s done=%s retry=%s failed=%s"
+            ),
+            summary["claimed"],
+            summary["processed"],
+            summary["waiting_olap"],
+            summary["facts_built"],
+            summary["coupon_synced"],
+            summary["done"],
+            summary["retried"],
+            summary["failed"],
+        )
+        return int(summary["processed"])
+    except Exception as err:  # noqa: BLE001
+        logger.exception("Оперативный OLAP-конвейер: ошибка планового прохода: %s", err)
         return 0
     finally:
         client.close()

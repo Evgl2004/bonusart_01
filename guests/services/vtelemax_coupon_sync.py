@@ -236,17 +236,29 @@ class VtelemaxCouponSyncService:
             )
             send_events: list[CouponVtelemaxSyncQueue] = []
             for locked in locked_events:
+                if locked.status not in [
+                    CouponVtelemaxSyncQueue.Status.PENDING,
+                    CouponVtelemaxSyncQueue.Status.ERROR,
+                    CouponVtelemaxSyncQueue.Status.SENT,
+                ]:
+                    continue
+                if locked.next_retry_at and locked.next_retry_at > attempt_time:
+                    continue
                 if int(locked.attempts or 0) >= self.max_attempts:
                     continue
-                locked.attempts = int(locked.attempts or 0) + 1
+                next_attempt = int(locked.attempts or 0) + 1
+                retry_seconds = self._calculate_retry_seconds(attempt_no=next_attempt)
+                locked.attempts = next_attempt
                 locked.status = CouponVtelemaxSyncQueue.Status.SENT
                 locked.sent_at = attempt_time
+                locked.next_retry_at = attempt_time + timedelta(seconds=retry_seconds)
                 locked.last_error = None
                 locked.save(
                     update_fields=[
                         "attempts",
                         "status",
                         "sent_at",
+                        "next_retry_at",
                         "last_error",
                         "updated_at",
                     ]

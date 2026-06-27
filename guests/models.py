@@ -824,6 +824,73 @@ class OlapCheckSyncJournal(models.Model):
         return f"sync={self.id} status={self.status} order={self.order_number}"
 
 
+class OlapLivePipelineQueue(models.Model):
+    """
+    Очередь оперативной обработки OLAP-события.
+
+    Таблица хранит состояние короткого конвейера после входящего webhook:
+    загрузка OLAP -> сборка OrderFact -> обработка применённого купона.
+    `OlapCheckSyncJournal` при этом остаётся журналом только OLAP-загрузки.
+    """
+
+    class Status(models.TextChoices):
+        NEW = "new", "Новая"
+        IN_PROGRESS = "in_progress", "В работе"
+        WAITING_OLAP = "waiting_olap", "Ожидает OLAP"
+        OLAP_LOADED = "olap_loaded", "OLAP загружен"
+        FACT_BUILT = "fact_built", "Факт чека собран"
+        DONE = "done", "Завершена"
+        RETRY = "retry", "Повторить позже"
+        SKIPPED = "skipped", "Пропущена"
+        FAILED = "failed", "Ошибка"
+
+    sync_journal = models.OneToOneField(
+        "OlapCheckSyncJournal",
+        on_delete=models.CASCADE,
+        related_name="live_pipeline",
+        help_text="Связанная задача загрузки чека из OLAP.",
+    )
+
+    source_webhook_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+    business_date = models.DateField(blank=True, null=True, db_index=True)
+    department_id = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    order_number = models.BigIntegerField(blank=True, null=True, db_index=True)
+    order_external_id = models.CharField(max_length=100, blank=True, null=True, db_index=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.NEW,
+        db_index=True,
+    )
+    attempt_count = models.PositiveIntegerField(default=0)
+    next_retry_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    locked_at = models.DateTimeField(blank=True, null=True)
+    last_error = models.TextField(blank=True, null=True)
+    last_step_result = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Последняя техническая сводка по стадиям оперативного конвейера.",
+    )
+    processed_at = models.DateTimeField(blank=True, null=True, db_index=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "olap_live_pipeline_queue"
+        verbose_name = "Очередь оперативного OLAP-конвейера"
+        verbose_name_plural = "Очередь оперативного OLAP-конвейера"
+        indexes = [
+            models.Index(fields=["status", "next_retry_at", "created_at"], name="olpq_status_next_idx"),
+            models.Index(fields=["business_date", "department_id", "order_number"], name="olpq_order_key_idx"),
+            models.Index(fields=["source_webhook_id", "status"], name="olpq_source_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"live_pipeline={self.id} status={self.status} journal={self.sync_journal_id}"
+
+
 class OlapSalesRawLine(models.Model):
     """
     Сырые строки OLAP по позициям чека.

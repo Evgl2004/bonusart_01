@@ -174,6 +174,32 @@ class OlapCheckSyncWorkerService:
         stats.recovered_stale_rows = self._recover_stale_rows(now=now)
 
         claimed_rows = self._claim_rows(now=now)
+        return self._process_claimed_rows(claimed_rows=claimed_rows, stats=stats, now=now)
+
+    def run_for_journal_ids(self, *, journal_ids: Sequence[int]) -> OlapSyncIterationStats:
+        """
+        Выполняет один проход только по явно указанным записям `olap_check_sync_journal`.
+
+        Метод нужен оперативному конвейеру, чтобы не забирать первую попавшуюся
+        старую задачу из общей очереди при `claim_limit=1`.
+        """
+
+        stats = OlapSyncIterationStats()
+        row_ids = sorted({int(item) for item in journal_ids if item})
+        if not row_ids:
+            return stats
+
+        now = timezone.now()
+        claimed_rows = self._claim_rows(now=now, journal_ids=row_ids)
+        return self._process_claimed_rows(claimed_rows=claimed_rows, stats=stats, now=now)
+
+    def _process_claimed_rows(
+        self,
+        *,
+        claimed_rows: Sequence[OlapCheckSyncJournal],
+        stats: OlapSyncIterationStats,
+        now: datetime,
+    ) -> OlapSyncIterationStats:
         stats.claimed_rows = len(claimed_rows)
         if not claimed_rows:
             return stats
@@ -258,12 +284,19 @@ class OlapCheckSyncWorkerService:
             updated_at=now,
         )
 
-    def _claim_rows(self, *, now: datetime) -> list[OlapCheckSyncJournal]:
+    def _claim_rows(
+        self,
+        *,
+        now: datetime,
+        journal_ids: Sequence[int] | None = None,
+    ) -> list[OlapCheckSyncJournal]:
         claim_filter = (
             Q(status=OlapCheckSyncJournal.Status.NEW)
             | Q(status=OlapCheckSyncJournal.Status.RETRY, next_try_at__isnull=True)
             | Q(status=OlapCheckSyncJournal.Status.RETRY, next_try_at__lte=now)
         )
+        if journal_ids is not None:
+            claim_filter &= Q(id__in=list(journal_ids))
 
         with transaction.atomic():
             rows = list(
@@ -699,14 +732,24 @@ class OlapCheckSyncWorkerService:
         ]
 
         if create_payload:
+            # Параллельный OLAP-проход может вставить тот же fingerprint между
+            # предварительной проверкой и bulk_create. Уникальный ключ защищает
+            # данные, а ignore_conflicts превращает такую гонку в идемпотентный дубль.
             OlapSalesRawLine.objects.bulk_create(
                 create_payload,
                 batch_size=1000,
-                ignore_conflicts=False,
+                ignore_conflicts=True,
             )
 
-        stats.raw_rows_created += len(create_payload)
-        stats.raw_rows_duplicates += len(unique_by_fingerprint) - len(create_payload)
+        existing_after = set(
+            OlapSalesRawLine.objects.filter(row_fingerprint__in=fingerprints).values_list(
+                "row_fingerprint",
+                flat=True,
+            )
+        )
+        created_or_became_visible = len(existing_after - existing_fingerprints)
+        stats.raw_rows_created += created_or_became_visible
+        stats.raw_rows_duplicates += len(unique_by_fingerprint) - created_or_became_visible
 
     def _mark_loaded(self, *, row: OlapCheckSyncJournal, now: datetime) -> None:
         row.status = OlapCheckSyncJournal.Status.LOADED

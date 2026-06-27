@@ -11,7 +11,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.models import Guest, OlapCheckSyncJournal, OlapSalesRawLine, OrderFact
-from guests.services.order_fact import rebuild_order_fact_from_raw_lines
+from guests.services.order_fact import rebuild_order_fact_for_order_keys, rebuild_order_fact_from_raw_lines
 
 
 class OrderFactServiceTests(TestCase):
@@ -45,16 +45,19 @@ class OrderFactServiceTests(TestCase):
         sum_value: str,
         discount: str = "0",
         coupon_number: str | None = None,
+        order_number: int = 123456,
+        uniq_order_id: str = "uniq-order-1",
+        department_id: str = "dept-1",
     ) -> OlapSalesRawLine:
         return OlapSalesRawLine.objects.create(
             row_fingerprint=fingerprint,
             sync_journal=self.journal,
             guest=self.guest,
             business_date=date(2026, 3, 18),
-            department_id="dept-1",
+            department_id=department_id,
             department_name="Узбечка",
-            order_number=123456,
-            uniq_order_id="uniq-order-1",
+            order_number=order_number,
+            uniq_order_id=uniq_order_id,
             item_sale_event_id=f"event-{dish_code}",
             dish_code=dish_code,
             dish_name=f"Блюдо {dish_code}",
@@ -142,3 +145,44 @@ class OrderFactServiceTests(TestCase):
         self.assertEqual(fact.items_count, 2)
         self.assertEqual(fact.categories_count, 1)
 
+    def test_rebuild_order_fact_for_order_keys_aggregates_only_exact_full_order(self):
+        """
+        Точечный пересчёт должен брать весь чек по ключу, но не затрагивать соседние чеки той же даты.
+        """
+        self._create_raw_line(
+            fingerprint="of-key-fp-1",
+            dish_code="91001",
+            dish_category_id="cat-1",
+            sum_value="100",
+        )
+        self._create_raw_line(
+            fingerprint="of-key-fp-2",
+            dish_code="91002",
+            dish_category_id="cat-2",
+            sum_value="500",
+            coupon_number="KEY-111",
+        )
+        self._create_raw_line(
+            fingerprint="of-key-other",
+            dish_code="92001",
+            dish_category_id="cat-3",
+            sum_value="900",
+            order_number=123457,
+            uniq_order_id="uniq-order-other",
+        )
+
+        stats = rebuild_order_fact_for_order_keys(
+            order_keys=[(date(2026, 3, 18), "dept-1", 123456, "uniq-order-1")]
+        )
+
+        self.assertEqual(stats.scanned_raw_lines, 2)
+        self.assertEqual(stats.grouped_orders, 1)
+        self.assertEqual(stats.created_facts, 1)
+        self.assertEqual(OrderFact.objects.count(), 1)
+
+        fact = OrderFact.objects.get()
+        self.assertEqual(fact.order_number, 123456)
+        self.assertEqual(fact.gross_sum, Decimal("600"))
+        self.assertEqual(fact.items_count, 2)
+        self.assertTrue(fact.coupon_used)
+        self.assertEqual(fact.coupon_number, "KEY-111")

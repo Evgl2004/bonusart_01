@@ -312,6 +312,27 @@ class VtelemaxCouponSyncServiceTests(TestCase):
         self.assertEqual(queryset.query.select_for_update_of, ("self",))
 
     @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
+    def test_process_event_batch_rechecks_status_under_lock_before_send(self, mocked_client_cls):
+        """
+        Если другой проход уже подтвердил событие, vtelemax не должен получить повторную отправку.
+        """
+        _assignment, event = self._create_assignment_with_event()
+        stale_event = event
+        event.status = CouponVtelemaxSyncQueue.Status.ACKED
+        event.ack_at = self.now
+        event.save(update_fields=["status", "ack_at", "updated_at"])
+
+        stats = self._build_service()._process_event_batch(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            events=[stale_event],
+            now=self.now,
+        )
+
+        self.assertEqual(stats["processed"], 0)
+        self.assertEqual(stats["acked"], 0)
+        mocked_client_cls.assert_not_called()
+
+    @patch("guests.services.vtelemax_coupon_sync.httpx.Client")
     def test_process_batch_sends_assignments_as_single_batch_and_marks_items_acked(self, mocked_client_cls):
         assignment, event = self._create_assignment_with_event()
         second_assignment, second_event = self._create_assignment_with_event()

@@ -49,3 +49,24 @@ class EnvSampleDocumentationTests(SimpleTestCase):
         for variable_name in expected_variables:
             with self.subTest(variable_name=variable_name):
                 self.assertIn(f"{variable_name}=", env_sample)
+
+    def test_olap_live_pipeline_variables_are_documented(self):
+        root_dir = Path(__file__).resolve().parents[2]
+        env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
+
+        expected_variables = (
+            "OLAP_LIVE_PIPELINE_ENABLED",
+            "OLAP_LIVE_PIPELINE_SCHEDULE_ENABLED",
+            "OLAP_LIVE_PIPELINE_SCHEDULE_MINUTES",
+            "OLAP_LIVE_PIPELINE_BATCH_SIZE",
+            "OLAP_LIVE_PIPELINE_ORDER_FACT_BATCH_SIZE",
+            "OLAP_LIVE_PIPELINE_OLAP_PORTION_SIZE",
+            "OLAP_LIVE_PIPELINE_MAX_ATTEMPTS",
+            "OLAP_LIVE_PIPELINE_RETRY_BASE_SECONDS",
+            "OLAP_LIVE_PIPELINE_RETRY_MAX_SECONDS",
+            "OLAP_LIVE_PIPELINE_LOCK_TIMEOUT_SECONDS",
+        )
+
+        for variable_name in expected_variables:
+            with self.subTest(variable_name=variable_name):
+                self.assertIn(f"{variable_name}=", env_sample)

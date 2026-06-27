@@ -13,9 +13,10 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 import logging
-from typing import Any
+from typing import Any, Iterable
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from guests.models import OrderFact, OlapSalesRawLine
@@ -98,10 +99,25 @@ def _aggregate_order_rows(
     raw_line_id_to: int | None,
     business_date_from: date | None,
     business_date_to: date | None,
+    order_keys: Iterable[tuple[date, str, int, str]] | None,
     batch_size: int,
 ) -> tuple[dict[tuple[date, str, int, str], _OrderAggregate], OrderFactBuildStats]:
     stats = OrderFactBuildStats()
     aggregates: dict[tuple[date, str, int, str], _OrderAggregate] = {}
+    normalized_order_keys: set[tuple[date, str, int, str]] | None = None
+    if order_keys is not None:
+        normalized_order_keys = {
+            (
+                key[0],
+                _normalize_text(key[1]),
+                int(key[2]),
+                _normalize_text(key[3]),
+            )
+            for key in order_keys
+            if key and key[0] is not None and key[2] is not None
+        }
+        if not normalized_order_keys:
+            return aggregates, stats
 
     query = (
         OlapSalesRawLine.objects.all()
@@ -134,6 +150,16 @@ def _aggregate_order_rows(
         query = query.filter(business_date__gte=business_date_from)
     if business_date_to is not None:
         query = query.filter(business_date__lte=business_date_to)
+    if normalized_order_keys is not None:
+        key_filter = Q()
+        for business_day, department_id, order_number, uniq_order_id in normalized_order_keys:
+            key_filter |= Q(
+                business_date=business_day,
+                department_id=department_id,
+                order_number=order_number,
+                uniq_order_id=uniq_order_id,
+            )
+        query = query.filter(key_filter)
 
     for row in query.iterator(chunk_size=max(100, int(batch_size))):
         stats.scanned_raw_lines += 1
@@ -196,32 +222,16 @@ def _aggregate_order_rows(
     return aggregates, stats
 
 
-def rebuild_order_fact_from_raw_lines(
+def _upsert_order_fact_aggregates(
     *,
-    raw_line_id_from: int | None = None,
-    raw_line_id_to: int | None = None,
-    business_date_from: date | None = None,
-    business_date_to: date | None = None,
-    batch_size: int = 2000,
+    aggregates: dict[tuple[date, str, int, str], _OrderAggregate],
+    stats: OrderFactBuildStats,
+    batch_size: int,
+    log_source: str,
 ) -> OrderFactBuildStats:
     """
-    Пересобирает `order_fact` по данным `olap_sales_raw_line`.
-
-    Если факт заказа уже существует, запись обновляется (идемпотентный upsert).
+    Идемпотентно создаёт или обновляет `OrderFact` по заранее собранным агрегатам.
     """
-
-    aggregates, stats = _aggregate_order_rows(
-        raw_line_id_from=raw_line_id_from,
-        raw_line_id_to=raw_line_id_to,
-        business_date_from=business_date_from,
-        business_date_to=business_date_to,
-        batch_size=batch_size,
-    )
-
-    if not aggregates:
-        logger.info("rebuild_order_fact_from_raw_lines: нет данных для обработки")
-        return stats
-
     business_dates = {key[0] for key in aggregates.keys()}
     department_ids = {key[1] for key in aggregates.keys()}
     order_numbers = {key[2] for key in aggregates.keys()}
@@ -243,34 +253,65 @@ def rebuild_order_fact_from_raw_lines(
             for item in existing_rows
         }
 
+        aggregate_keys = set(aggregates.keys())
+        existing_keys_before = set(existing_by_key.keys()) & aggregate_keys
         to_create: list[OrderFact] = []
+
+        for key, aggregate in aggregates.items():
+            if key in existing_by_key:
+                continue
+            to_create.append(
+                OrderFact(
+                    guest_id=aggregate.guest_id,
+                    business_date=aggregate.business_date,
+                    department_id=aggregate.department_id,
+                    department_name=aggregate.department_name,
+                    order_number=aggregate.order_number,
+                    uniq_order_id=aggregate.uniq_order_id,
+                    gross_sum=aggregate.gross_sum,
+                    net_sum=aggregate.net_sum,
+                    discount_sum=aggregate.discount_sum,
+                    bonus_sum=aggregate.bonus_sum,
+                    items_count=aggregate.items_count,
+                    categories_count=aggregate.categories_count,
+                    coupon_used=aggregate.coupon_used,
+                    coupon_series=aggregate.coupon_series or None,
+                    coupon_number=aggregate.coupon_number or None,
+                    order_type=aggregate.order_type or None,
+                    is_delivery=aggregate.is_delivery,
+                    first_seen_at=aggregate.first_seen_at,
+                )
+            )
+
+        if to_create:
+            # Если оперативный и регламентный проход одновременно создают один
+            # факт чека, уникальный ключ сохраняет единственную строку.
+            OrderFact.objects.bulk_create(
+                to_create,
+                batch_size=max(100, int(batch_size)),
+                ignore_conflicts=True,
+            )
+            existing_rows = OrderFact.objects.filter(
+                business_date__in=business_dates,
+                department_id__in=department_ids,
+                order_number__in=order_numbers,
+            )
+            existing_by_key = {
+                (
+                    item.business_date,
+                    item.department_id or "",
+                    int(item.order_number),
+                    item.uniq_order_id or "",
+                ): item
+                for item in existing_rows
+            }
+
+        existing_keys_after = set(existing_by_key.keys()) & aggregate_keys
         to_update: list[OrderFact] = []
 
         for key, aggregate in aggregates.items():
             existing = existing_by_key.get(key)
             if existing is None:
-                to_create.append(
-                    OrderFact(
-                        guest_id=aggregate.guest_id,
-                        business_date=aggregate.business_date,
-                        department_id=aggregate.department_id,
-                        department_name=aggregate.department_name,
-                        order_number=aggregate.order_number,
-                        uniq_order_id=aggregate.uniq_order_id,
-                        gross_sum=aggregate.gross_sum,
-                        net_sum=aggregate.net_sum,
-                        discount_sum=aggregate.discount_sum,
-                        bonus_sum=aggregate.bonus_sum,
-                        items_count=aggregate.items_count,
-                        categories_count=aggregate.categories_count,
-                        coupon_used=aggregate.coupon_used,
-                        coupon_series=aggregate.coupon_series or None,
-                        coupon_number=aggregate.coupon_number or None,
-                        order_type=aggregate.order_type or None,
-                        is_delivery=aggregate.is_delivery,
-                        first_seen_at=aggregate.first_seen_at,
-                    )
-                )
                 continue
 
             changed = False
@@ -304,8 +345,6 @@ def rebuild_order_fact_from_raw_lines(
                 existing.updated_at = now
                 to_update.append(existing)
 
-        if to_create:
-            OrderFact.objects.bulk_create(to_create, batch_size=max(100, int(batch_size)))
         if to_update:
             OrderFact.objects.bulk_update(
                 to_update,
@@ -329,14 +368,15 @@ def rebuild_order_fact_from_raw_lines(
                 batch_size=max(100, int(batch_size)),
             )
 
-        stats.created_facts = len(to_create)
+        stats.created_facts = len(existing_keys_after - existing_keys_before)
         stats.updated_facts = len(to_update)
 
     logger.info(
         (
-            "rebuild_order_fact_from_raw_lines: scanned=%s grouped=%s skipped=%s "
+            "%s: scanned=%s grouped=%s skipped=%s "
             "created=%s updated=%s"
         ),
+        log_source,
         stats.scanned_raw_lines,
         stats.grouped_orders,
         stats.skipped_invalid_lines,
@@ -345,3 +385,70 @@ def rebuild_order_fact_from_raw_lines(
     )
     return stats
 
+
+def rebuild_order_fact_from_raw_lines(
+    *,
+    raw_line_id_from: int | None = None,
+    raw_line_id_to: int | None = None,
+    business_date_from: date | None = None,
+    business_date_to: date | None = None,
+    batch_size: int = 2000,
+) -> OrderFactBuildStats:
+    """
+    Пересобирает `order_fact` по данным `olap_sales_raw_line`.
+
+    Если факт заказа уже существует, запись обновляется (идемпотентный upsert).
+    """
+
+    aggregates, stats = _aggregate_order_rows(
+        raw_line_id_from=raw_line_id_from,
+        raw_line_id_to=raw_line_id_to,
+        business_date_from=business_date_from,
+        business_date_to=business_date_to,
+        order_keys=None,
+        batch_size=batch_size,
+    )
+
+    if not aggregates:
+        logger.info("rebuild_order_fact_from_raw_lines: нет данных для обработки")
+        return stats
+
+    return _upsert_order_fact_aggregates(
+        aggregates=aggregates,
+        stats=stats,
+        batch_size=batch_size,
+        log_source="rebuild_order_fact_from_raw_lines",
+    )
+
+
+def rebuild_order_fact_for_order_keys(
+    *,
+    order_keys: Iterable[tuple[date, str, int, str]],
+    batch_size: int = 2000,
+) -> OrderFactBuildStats:
+    """
+    Пересобирает `order_fact` только по точным ключам чеков.
+
+    Используется оперативным OLAP-конвейером, чтобы не читать весь хвост дат и
+    не собирать неполный чек только по диапазону новых `raw_line_id`.
+    """
+
+    aggregates, stats = _aggregate_order_rows(
+        raw_line_id_from=None,
+        raw_line_id_to=None,
+        business_date_from=None,
+        business_date_to=None,
+        order_keys=order_keys,
+        batch_size=batch_size,
+    )
+
+    if not aggregates:
+        logger.info("rebuild_order_fact_for_order_keys: нет данных для обработки")
+        return stats
+
+    return _upsert_order_fact_aggregates(
+        aggregates=aggregates,
+        stats=stats,
+        batch_size=batch_size,
+        log_source="rebuild_order_fact_for_order_keys",
+    )

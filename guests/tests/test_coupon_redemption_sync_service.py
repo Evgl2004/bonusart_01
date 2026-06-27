@@ -166,6 +166,20 @@ class CouponRedemptionSyncServiceTests(TestCase):
             vtelemax_synced_at=self.now,
         )
 
+    def test_status_update_event_query_locks_queue_row_when_requested(self):
+        """
+        При боевой обработке событие статуса vtelemax должно читаться под блокировкой строки.
+        """
+        guest = self._create_guest("1111")
+        assignment = self._create_assignment(guest=guest, code="TST-LOCK-1")
+
+        queryset = CouponRedemptionSyncService._status_update_event_query(
+            assignment=assignment,
+            for_update=True,
+        )
+
+        self.assertEqual(queryset.query.select_for_update_of, ("self",))
+
     def _create_autoscenario_assignment(
         self,
         *,
@@ -847,3 +861,31 @@ class CouponRedemptionSyncServiceTests(TestCase):
             0,
         )
         self.assertEqual(stats.assignments_marked_used, 1)
+
+    def test_sync_from_order_facts_filters_by_exact_order_fact_ids(self):
+        """
+        Оперативный конвейер должен запускать синхронизацию только по найденным фактам чеков.
+        """
+        guest = self._create_guest("8888")
+        selected_fact = self._create_order_fact(
+            guest=guest,
+            order_number=8801,
+            coupon_series="SER-EXACT",
+            coupon_number="CODE-SELECTED",
+            uniq_suffix="selected",
+        )
+        self._create_order_fact(
+            guest=guest,
+            order_number=8802,
+            coupon_series="SER-EXACT",
+            coupon_number="CODE-OTHER",
+            uniq_suffix="other",
+        )
+
+        stats = CouponRedemptionSyncService().sync_from_order_facts(
+            order_fact_ids=[selected_fact.id],
+        )
+
+        self.assertEqual(stats.order_facts_total, 1)
+        self.assertEqual(stats.order_facts_with_coupon, 1)
+        self.assertEqual(stats.assignments_missing, 1)
