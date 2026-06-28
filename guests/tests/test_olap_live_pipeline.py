@@ -202,3 +202,31 @@ class OlapLivePipelineServiceTests(TestCase):
         self.assertEqual(task.status, OlapLivePipelineQueue.Status.WAITING_OLAP)
         self.assertEqual(task.next_retry_at, next_try_at)
         self.assertEqual(fake_client.calls, [])
+
+    @override_settings(OLAP_LIVE_PIPELINE_ENABLED=True)
+    def test_process_batch_marks_skipped_when_olap_journal_skipped(self):
+        journal = self._create_journal(
+            key="live-pipeline-skipped-1",
+            status=OlapCheckSyncJournal.Status.SKIPPED,
+        )
+        journal.last_error = "Чек 113: в OLAP нет строк по строгому фильтру."
+        journal.save(update_fields=["last_error", "updated_at"])
+        task, _created = ensure_live_pipeline_task_for_journal(journal=journal)
+        fake_client = _FakeOlapClient(rows=[])
+
+        stats = OlapLivePipelineService(
+            client=fake_client,
+            batch_size=10,
+            retry_base_seconds=1,
+        ).process_batch()
+
+        task.refresh_from_db()
+        self.assertEqual(stats.skipped, 1)
+        self.assertEqual(stats.failed, 0)
+        self.assertEqual(task.status, OlapLivePipelineQueue.Status.SKIPPED)
+        self.assertEqual(
+            task.last_step_result,
+            {"journal_status": OlapCheckSyncJournal.Status.SKIPPED},
+        )
+        self.assertIn("строгому фильтру", task.last_error or "")
+        self.assertEqual(fake_client.calls, [])

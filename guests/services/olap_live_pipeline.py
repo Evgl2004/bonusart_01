@@ -380,6 +380,15 @@ class OlapLivePipelineService:
             stats.waiting_olap += 1
             return False
 
+        if journal.status == OlapCheckSyncJournal.Status.SKIPPED:
+            self._mark_skipped(
+                task=task,
+                error_text=journal.last_error or "OLAP-журнал пропущен: чек не найден или не подходит под фильтры.",
+                result={"journal_status": journal.status},
+            )
+            stats.skipped += 1
+            return False
+
         self._mark_failed(
             task=task,
             error_text=journal.last_error or f"OLAP-журнал завершён статусом {journal.status}.",
