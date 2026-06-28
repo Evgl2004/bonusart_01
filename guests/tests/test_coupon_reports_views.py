@@ -524,6 +524,175 @@ class CouponReportsViewsTests(TestCase):
         self.assertEqual(revenue["product_rank_rows"], [])
         self.assertContains(response, "Срез по заведению")
 
+    def test_coupon_autoscenario_report_counts_delivery_rate_by_assignments(self):
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_delivery_report",
+            name="Inactive 30 delivery report",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            is_active=True,
+            is_system=True,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            coupon_series="AUTO_DELIVERY_REPORT",
+            max_recipients_per_run=2,
+            cooldown_days=30,
+        )
+        run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            status=CouponAutoscenarioRun.Status.COMPLETED,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            scanned_guests=2,
+            matched_guests=2,
+            sendable_guests=2,
+            eligible_guests=2,
+            planned_assignments=2,
+            created_assignments=2,
+            queue_events_created=2,
+        )
+        delivered_guest = Guest.objects.create(
+            phone="+79990000001",
+            first_name="Delivered",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        blocked_guest = Guest.objects.create(
+            phone="+79990000002",
+            first_name="Blocked",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        delivered_coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_DELIVERY_REPORT",
+            code="DELIVERED",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        blocked_coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_DELIVERY_REPORT",
+            code="BLOCKED",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+
+        delivered_assignment = CouponAutoscenarioAssignment.objects.create(
+            run=run,
+            scenario=scenario,
+            config=config,
+            guest=delivered_guest,
+            coupon=delivered_coupon,
+            person_id=uuid4(),
+            phone_e164=delivered_guest.phone,
+            coupon_series=delivered_coupon.series,
+            coupon_code=delivered_coupon.code,
+            assigned_at=self.now,
+            sent_at=self.now,
+            status=CouponAutoscenarioAssignment.Status.SENT,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            iiko_category_add_status=CouponAutoscenarioAssignment.IikoCategorySyncStatus.OK,
+        )
+        blocked_assignment = CouponAutoscenarioAssignment.objects.create(
+            run=run,
+            scenario=scenario,
+            config=config,
+            guest=blocked_guest,
+            coupon=blocked_coupon,
+            person_id=uuid4(),
+            phone_e164=blocked_guest.phone,
+            coupon_series=blocked_coupon.series,
+            coupon_code=blocked_coupon.code,
+            assigned_at=self.now,
+            sent_at=self.now,
+            status=CouponAutoscenarioAssignment.Status.SENT,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            iiko_category_add_status=CouponAutoscenarioAssignment.IikoCategorySyncStatus.OK,
+        )
+        delivered_event = NotificationEvent.objects.create(
+            scenario=scenario,
+            guest=delivered_guest,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            source_ref=f"coupon_autoscenario_assignment:{delivered_assignment.id}",
+            dedupe_key=f"coupon_autoscenario_assignment:{delivered_assignment.id}",
+            status=NotificationEvent.Status.TASK_CREATED,
+            planned_send_at=self.now,
+            coupon_code=delivered_coupon.code,
+            coupon_external_id=f"{delivered_coupon.series}:{delivered_coupon.code}",
+        )
+        blocked_event = NotificationEvent.objects.create(
+            scenario=scenario,
+            guest=blocked_guest,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            source_ref=f"coupon_autoscenario_assignment:{blocked_assignment.id}",
+            dedupe_key=f"coupon_autoscenario_assignment:{blocked_assignment.id}",
+            status=NotificationEvent.Status.TASK_CREATED,
+            planned_send_at=self.now,
+            coupon_code=blocked_coupon.code,
+            coupon_external_id=f"{blocked_coupon.series}:{blocked_coupon.code}",
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type="telegram",
+            priority=DispatchTask.Priority.NORMAL,
+            status=DispatchTask.Status.DONE,
+            guest=delivered_guest,
+            notification_scenario=scenario,
+            notification_event=delivered_event,
+            external_chat_id="1001",
+            message_text="delivered",
+            idempotency_key=f"coupon-autoscenario-delivered-{delivered_assignment.id}",
+            available_at=self.now,
+            scheduled_at=self.now,
+            enqueued_at=self.now,
+            started_at=self.now,
+            finished_at=self.now,
+            attempt=1,
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type="telegram",
+            priority=DispatchTask.Priority.NORMAL,
+            status=DispatchTask.Status.FAILED,
+            guest=blocked_guest,
+            notification_scenario=scenario,
+            notification_event=blocked_event,
+            external_chat_id="1002",
+            message_text="blocked",
+            idempotency_key=f"coupon-autoscenario-blocked-{blocked_assignment.id}",
+            available_at=self.now,
+            scheduled_at=self.now,
+            enqueued_at=self.now,
+            started_at=self.now,
+            finished_at=self.now,
+            attempt=1,
+            last_error="blocked: Telegram сообщает, что пользователь недоступен/заблокировал бота.",
+        )
+
+        response = self.client.get(
+            reverse("reports_coupon_autoscenarios"),
+            {"scenario_code": scenario.code},
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        report = response.context["autoscenario_report"]
+        self.assertEqual(report["assignments_total"], 2)
+        self.assertEqual(report["dispatch_total"], 2)
+        self.assertEqual(report["dispatch_done"], 1)
+        self.assertEqual(report["delivered_assignments"], 1)
+        self.assertEqual(report["dispatch_final_failed_assignments"], 1)
+        self.assertEqual(report["dispatch_blocked"], 1)
+        self.assertEqual(report["delivery_rate_percent"], 50.0)
+        self.assertContains(response, "Есть купоны, которые были выданы, но сообщение гостю не доставлено")
+        self.assertContains(response, "Бот заблокирован или недоступен")
+        self.assertContains(response, "Почему гости не попали в выдачу")
+        self.assertNotContains(response, "5000,0%")
+        self.assertNotContains(response, "5000.0%")
+
     def test_coupon_autoscenario_report_keeps_pilot_runs_out_of_marketing_kpi(self):
         guest = Guest.objects.create(
             phone="+79990001122",

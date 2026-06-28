@@ -312,11 +312,25 @@ class CouponAutoscenarioReportsView(TemplateView):
             row["vtelemax_sync_status"]: int(row["total"])
             for row in assignments_qs.values("vtelemax_sync_status").annotate(total=Count("id"))
         }
+        iiko_status_counts = {
+            row["iiko_category_add_status"]: int(row["total"])
+            for row in assignments_qs.values("iiko_category_add_status").annotate(total=Count("id"))
+        }
 
         assignment_ids = list(assignments_qs.values_list("id", flat=True))
+        assignment_state_by_id = {
+            int(row["id"]): row
+            for row in assignments_qs.values(
+                "id",
+                "status",
+                "vtelemax_sync_status",
+                "iiko_category_add_status",
+            )
+        }
         delivery_context = self._build_assignment_delivery_context(
             scenario=scenario,
             assignment_ids=assignment_ids,
+            assignment_state_by_id=assignment_state_by_id,
         )
 
         visible_assignments = list(assignments_qs[: self.assignments_limit])
@@ -326,9 +340,19 @@ class CouponAutoscenarioReportsView(TemplateView):
         )
 
         pilot_assignment_ids = list(pilot_assignments_qs.values_list("id", flat=True))
+        pilot_assignment_state_by_id = {
+            int(row["id"]): row
+            for row in pilot_assignments_qs.values(
+                "id",
+                "status",
+                "vtelemax_sync_status",
+                "iiko_category_add_status",
+            )
+        }
         pilot_delivery_context = self._build_assignment_delivery_context(
             scenario=scenario,
             assignment_ids=pilot_assignment_ids,
+            assignment_state_by_id=pilot_assignment_state_by_id,
         )
         visible_pilot_assignments = list(pilot_assignments_qs[: self.assignments_limit])
         self._attach_delivery_context(
@@ -357,9 +381,11 @@ class CouponAutoscenarioReportsView(TemplateView):
         sent_total = status_counts.get(CouponAutoscenarioAssignment.Status.SENT, 0)
         used_total = status_counts.get(CouponAutoscenarioAssignment.Status.USED, 0)
         used_after_total = status_counts.get(CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN, 0)
-        delivered_total = int(delivery_context["tasks_qs"].filter(status=DispatchTask.Status.DONE).count())
-        delivery_base = sent_total or assignments_total
-        delivery_rate = round(delivered_total * 100 / delivery_base, 2) if delivery_base else 0
+        delivery_summary = delivery_context["summary"]
+        delivered_total = delivery_summary["tasks_done"]
+        delivered_assignments = delivery_summary["assignments_delivered"]
+        delivery_base = assignments_total
+        delivery_rate = round(delivered_assignments * 100 / delivery_base, 2) if delivery_base else 0
         usage_base = sent_total or assignments_total
         usage_rate = round((used_total + used_after_total) * 100 / usage_base, 2) if usage_base else 0
 
@@ -448,14 +474,29 @@ class CouponAutoscenarioReportsView(TemplateView):
             "assignments_rows": visible_assignments,
             "status_counts": status_counts,
             "sync_status_counts": sync_status_counts,
+            "iiko_status_counts": iiko_status_counts,
             "events_total": len(delivery_context["event_rows"]),
-            "dispatch_total": int(delivery_context["tasks_qs"].count()),
+            "dispatch_total": delivery_summary["tasks_total"],
             "dispatch_done": delivered_total,
-            "dispatch_failed": int(delivery_context["tasks_qs"].filter(status=DispatchTask.Status.FAILED).count()),
-            "dispatch_pending": int(delivery_context["tasks_qs"].filter(status=DispatchTask.Status.PENDING).count()),
+            "dispatch_failed": delivery_summary["tasks_failed"],
+            "dispatch_pending": delivery_summary["tasks_pending"],
+            "dispatch_queued": delivery_summary["tasks_queued"],
+            "dispatch_in_progress": delivery_summary["tasks_in_progress"],
+            "dispatch_canceled": delivery_summary["tasks_canceled"],
+            "dispatch_blocked": delivery_summary["tasks_failed_blocked"],
+            "dispatch_failed_other": delivery_summary["tasks_failed_other"],
+            "dispatch_final_failed_assignments": delivery_summary["assignments_final_failed"],
+            "dispatch_waiting_assignments": delivery_summary["assignments_waiting"],
+            "dispatch_without_event_assignments": delivery_summary["assignments_without_event"],
+            "dispatch_without_task_assignments": delivery_summary["assignments_without_task"],
+            "dispatch_problem_assignments": delivery_summary["assignments_problem"],
             "vtelemax_ok": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK, 0),
             "vtelemax_pending": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING, 0),
             "vtelemax_error": sync_status_counts.get(CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR, 0),
+            "iiko_ok": iiko_status_counts.get(CouponAutoscenarioAssignment.IikoCategorySyncStatus.OK, 0),
+            "iiko_pending": iiko_status_counts.get(CouponAutoscenarioAssignment.IikoCategorySyncStatus.PENDING, 0),
+            "iiko_error": iiko_status_counts.get(CouponAutoscenarioAssignment.IikoCategorySyncStatus.ERROR, 0),
+            "iiko_disabled": iiko_status_counts.get(CouponAutoscenarioAssignment.IikoCategorySyncStatus.DISABLED, 0),
             "reserved_total": status_counts.get(CouponAutoscenarioAssignment.Status.RESERVED, 0),
             "sent_total": sent_total,
             "used_total": used_total,
@@ -467,6 +508,8 @@ class CouponAutoscenarioReportsView(TemplateView):
             "error_total": status_counts.get(CouponAutoscenarioAssignment.Status.ERROR, 0),
             "usage_rate_percent": usage_rate,
             "delivery_rate_percent": delivery_rate,
+            "delivery_assignment_base": delivery_base,
+            "delivered_assignments": delivered_assignments,
             "run_totals": {key: int(value or 0) for key, value in run_totals.items()},
             "funnel_rows": funnel_rows,
             "summary": {
@@ -487,7 +530,13 @@ class CouponAutoscenarioReportsView(TemplateView):
             "pilot": pilot_summary,
         }
 
-    def _build_assignment_delivery_context(self, *, scenario: NotificationScenario, assignment_ids: list[int]) -> dict:
+    def _build_assignment_delivery_context(
+        self,
+        *,
+        scenario: NotificationScenario,
+        assignment_ids: list[int],
+        assignment_state_by_id: dict[int, dict] | None = None,
+    ) -> dict:
         source_refs = [self._assignment_source_ref(assignment_id) for assignment_id in assignment_ids]
         events_qs = NotificationEvent.objects.filter(scenario=scenario, source_ref__in=source_refs)
         tasks_qs = DispatchTask.objects.filter(notification_event__source_ref__in=source_refs)
@@ -498,12 +547,126 @@ class CouponAutoscenarioReportsView(TemplateView):
         for task in task_rows:
             if task.notification_event_id and task.notification_event_id not in latest_task_by_event_id:
                 latest_task_by_event_id[task.notification_event_id] = task
+        summary = self._build_assignment_delivery_summary(
+            assignment_ids=assignment_ids,
+            assignment_state_by_id=assignment_state_by_id or {},
+            event_by_source_ref=event_by_source_ref,
+            task_rows=task_rows,
+        )
         return {
             "tasks_qs": tasks_qs,
             "event_rows": event_rows,
             "event_by_source_ref": event_by_source_ref,
             "latest_task_by_event_id": latest_task_by_event_id,
+            "summary": summary,
         }
+
+    def _build_assignment_delivery_summary(
+        self,
+        *,
+        assignment_ids: list[int],
+        assignment_state_by_id: dict[int, dict],
+        event_by_source_ref: dict[str, NotificationEvent],
+        task_rows: list[DispatchTask],
+    ) -> dict:
+        tasks_by_event_id = defaultdict(list)
+        task_status_counts = defaultdict(int)
+        failed_blocked = 0
+        for task in task_rows:
+            task_status_counts[task.status] += 1
+            if task.notification_event_id:
+                tasks_by_event_id[task.notification_event_id].append(task)
+            if task.status == DispatchTask.Status.FAILED and self._is_permanent_blocked_delivery(task):
+                failed_blocked += 1
+
+        assignment_counts = defaultdict(int)
+        waiting_statuses = {
+            DispatchTask.Status.PENDING,
+            DispatchTask.Status.QUEUED,
+            DispatchTask.Status.IN_PROGRESS,
+        }
+        for assignment_id in assignment_ids:
+            assignment_state = assignment_state_by_id.get(int(assignment_id)) or {}
+            event = event_by_source_ref.get(self._assignment_source_ref(assignment_id))
+            if not event:
+                if self._assignment_waits_before_dispatch(assignment_state):
+                    assignment_counts["waiting"] += 1
+                else:
+                    assignment_counts["without_event"] += 1
+                continue
+
+            event_tasks = tasks_by_event_id.get(event.id) or []
+            if not event_tasks:
+                if self._assignment_waits_before_dispatch(assignment_state):
+                    assignment_counts["waiting"] += 1
+                else:
+                    assignment_counts["without_task"] += 1
+                continue
+
+            statuses = {task.status for task in event_tasks}
+            if DispatchTask.Status.DONE in statuses:
+                assignment_counts["delivered"] += 1
+            elif statuses & waiting_statuses:
+                assignment_counts["waiting"] += 1
+            elif DispatchTask.Status.FAILED in statuses:
+                assignment_counts["final_failed"] += 1
+            elif DispatchTask.Status.CANCELED in statuses:
+                assignment_counts["canceled"] += 1
+            else:
+                assignment_counts["unknown"] += 1
+
+        tasks_failed = int(task_status_counts.get(DispatchTask.Status.FAILED, 0))
+        assignments_problem = (
+            assignment_counts["final_failed"]
+            + assignment_counts["without_event"]
+            + assignment_counts["without_task"]
+            + assignment_counts["unknown"]
+        )
+        return {
+            "tasks_total": len(task_rows),
+            "tasks_done": int(task_status_counts.get(DispatchTask.Status.DONE, 0)),
+            "tasks_failed": tasks_failed,
+            "tasks_pending": int(task_status_counts.get(DispatchTask.Status.PENDING, 0)),
+            "tasks_queued": int(task_status_counts.get(DispatchTask.Status.QUEUED, 0)),
+            "tasks_in_progress": int(task_status_counts.get(DispatchTask.Status.IN_PROGRESS, 0)),
+            "tasks_canceled": int(task_status_counts.get(DispatchTask.Status.CANCELED, 0)),
+            "tasks_failed_blocked": failed_blocked,
+            "tasks_failed_other": max(tasks_failed - failed_blocked, 0),
+            "assignments_delivered": int(assignment_counts["delivered"]),
+            "assignments_final_failed": int(assignment_counts["final_failed"]),
+            "assignments_waiting": int(assignment_counts["waiting"]),
+            "assignments_canceled": int(assignment_counts["canceled"]),
+            "assignments_without_event": int(assignment_counts["without_event"]),
+            "assignments_without_task": int(assignment_counts["without_task"]),
+            "assignments_unknown": int(assignment_counts["unknown"]),
+            "assignments_problem": int(assignments_problem),
+        }
+
+    @staticmethod
+    def _assignment_waits_before_dispatch(assignment_state: dict) -> bool:
+        status = assignment_state.get("status")
+        vtelemax_status = assignment_state.get("vtelemax_sync_status")
+        iiko_status = assignment_state.get("iiko_category_add_status")
+        if status == CouponAutoscenarioAssignment.Status.RESERVED:
+            return True
+        if vtelemax_status == CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING:
+            return True
+        if iiko_status == CouponAutoscenarioAssignment.IikoCategorySyncStatus.PENDING:
+            return True
+        return False
+
+    @staticmethod
+    def _is_permanent_blocked_delivery(task: DispatchTask) -> bool:
+        error_text = str(task.last_error or "").lower()
+        return any(
+            marker in error_text
+            for marker in (
+                "blocked",
+                "forbidden",
+                "недоступ",
+                "заблок",
+            )
+        )
 
     def _attach_delivery_context(self, *, assignments, delivery_context: dict) -> None:
         for assignment in assignments:

@@ -243,15 +243,31 @@
       </div>
     </details>
 
+    {% if autoscenario_report.dispatch_problem_assignments %}
+      <div class="alert alert-warning mb-3">
+        <div class="fw-semibold mb-1">Есть купоны, которые были выданы, но сообщение гостю не доставлено</div>
+        <div>
+          Таких назначений: <b>{{ autoscenario_report.dispatch_problem_assignments }}</b>.
+          Из них окончательно не доставлено: <b>{{ autoscenario_report.dispatch_final_failed_assignments }}</b>,
+          заблокирован или недоступен бот: <b>{{ autoscenario_report.dispatch_blocked }}</b>.
+          Это отдельная стадия после выдачи купона: такие случаи не входят в причины отбора аудитории ниже.
+        </div>
+      </div>
+    {% endif %}
+
     <div class="row g-3 mb-3">
-      <div class="col-12 col-xl-6">
+      <div class="col-12 col-xl-4">
         <div class="card border-0 shadow-sm h-100">
-          <div class="card-header bg-white fw-semibold">Доставка и статусы</div>
+          <div class="card-header bg-white fw-semibold">Купонный контур</div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
               <tbody>
                 <tr>
-                  <th>Синхронизировано с vtelemax</th>
+                  <th>Назначено купонов</th>
+                  <td class="text-end">{{ autoscenario_report.assignments_total }}</td>
+                </tr>
+                <tr>
+                  <th>vtelemax подтверждён</th>
                   <td class="text-end">{{ autoscenario_report.vtelemax_ok }}</td>
                 </tr>
                 <tr>
@@ -263,15 +279,59 @@
                   <td class="text-end">{{ autoscenario_report.vtelemax_error }}</td>
                 </tr>
                 <tr>
+                  <th>iikoCard подтверждён</th>
+                  <td class="text-end">{{ autoscenario_report.iiko_ok }}</td>
+                </tr>
+                <tr>
+                  <th>Ожидает iikoCard</th>
+                  <td class="text-end">{{ autoscenario_report.iiko_pending }}</td>
+                </tr>
+                <tr>
+                  <th>Ошибок iikoCard</th>
+                  <td class="text-end">{{ autoscenario_report.iiko_error }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 col-xl-4">
+        <div class="card border-0 shadow-sm h-100">
+          <div class="card-header bg-white fw-semibold">Доставка сообщений</div>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <tbody>
+                <tr>
                   <th>Задач доставки</th>
                   <td class="text-end">{{ autoscenario_report.dispatch_total }}</td>
                 </tr>
                 <tr>
-                  <th>Успешно доставлено</th>
+                  <th>Доставлено гостям</th>
+                  <td class="text-end">{{ autoscenario_report.delivered_assignments }}</td>
+                </tr>
+                <tr>
+                  <th>Успешных задач</th>
                   <td class="text-end">{{ autoscenario_report.dispatch_done }}</td>
                 </tr>
                 <tr>
-                  <th>Ошибок доставки</th>
+                  <th>Окончательно не доставлено</th>
+                  <td class="text-end">{{ autoscenario_report.dispatch_final_failed_assignments }}</td>
+                </tr>
+                <tr>
+                  <th>Бот заблокирован или недоступен</th>
+                  <td class="text-end">{{ autoscenario_report.dispatch_blocked }}</td>
+                </tr>
+                <tr>
+                  <th>Прочие ошибки доставки</th>
+                  <td class="text-end">{{ autoscenario_report.dispatch_failed_other }}</td>
+                </tr>
+                <tr>
+                  <th>Ожидает обработки</th>
+                  <td class="text-end">{{ autoscenario_report.dispatch_waiting_assignments }}</td>
+                </tr>
+                <tr>
+                  <th>Технических ошибок задач</th>
                   <td class="text-end">{{ autoscenario_report.dispatch_failed }}</td>
                 </tr>
                 <tr>
@@ -284,9 +344,9 @@
         </div>
       </div>
 
-      <div class="col-12 col-xl-6">
+      <div class="col-12 col-xl-4">
         <div class="card border-0 shadow-sm h-100">
-          <div class="card-header bg-white fw-semibold">Почему часть гостей не получила купон</div>
+          <div class="card-header bg-white fw-semibold">Почему гости не попали в выдачу</div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
               <tbody>
