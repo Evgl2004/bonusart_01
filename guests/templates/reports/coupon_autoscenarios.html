@@ -15,6 +15,30 @@
     margin-bottom: 0.35rem;
   }
 
+  .autoscenario-report-label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .autoscenario-report-label-row .form-label {
+    margin-bottom: 0;
+  }
+
+  .autoscenario-report-help-btn {
+    width: 1.5rem;
+    height: 1.5rem;
+    border-radius: 999px;
+    line-height: 1;
+    padding: 0;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+  }
+
   .autoscenario-report-filter__button {
     display: flex;
     align-items: flex-end;
@@ -83,15 +107,24 @@
           <input class="form-control" type="date" name="date_to" value="{{ filters.date_to }}">
         </div>
         <div class="autoscenario-report-filter__venue">
-          <label class="form-label">Заведение по заказу</label>
-          <select class="form-select" name="venue_code">
+          <div class="autoscenario-report-label-row">
+            <label class="form-label" for="autoscenario-report-venue-code">Заведение по заказу</label>
+            <button
+              type="button"
+              class="btn btn-outline-secondary autoscenario-report-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Фильтр применяется только к показателям по заказам: выручке, среднему чеку и позициям из OLAP. Воронка выдачи купонов считается по выбранному автосценарию целиком."
+              aria-label="Подсказка по фильтру заведения"
+            >?</button>
+          </div>
+          <select class="form-select" id="autoscenario-report-venue-code" name="venue_code">
             {% for venue_choice in report_venue_choices %}
               <option value="{{ venue_choice.code }}" {% if venue_choice.selected %}selected{% endif %}>
                 {{ venue_choice.label }}
               </option>
             {% endfor %}
           </select>
-          <div class="form-text">Для выручки, среднего чека и позиций.</div>
         </div>
         <div class="autoscenario-report-filter__button">
           <button class="btn btn-primary" type="submit">Показать</button>
@@ -933,4 +966,19 @@
     </script>
   {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    if (!window.bootstrap || !window.bootstrap.Tooltip) {
+      return;
+    }
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function (node) {
+      if (!window.bootstrap.Tooltip.getInstance(node)) {
+        new window.bootstrap.Tooltip(node);
+      }
+    });
+  });
+</script>
 {% endblock %}

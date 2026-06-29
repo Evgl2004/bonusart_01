@@ -889,6 +889,8 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, 'value="5395f53e-a932-4b39-a272-4786544c8c38"', html=False)
         self.assertContains(response, "Грузинка")
         self.assertNotContains(response, "Грузинка (5395f53e-a932-4b39-a272-4786544c8c38)")
+        self.assertContains(response, "Подсказка по фильтру заведения")
+        self.assertNotContains(response, "Для выручки, среднего чека и позиций.")
         self.assertNotContains(response, "Попали под сценарий")
         self.assertNotContains(response, "Есть канал доставки")
 
