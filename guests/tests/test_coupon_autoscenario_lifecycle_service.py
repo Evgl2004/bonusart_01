@@ -518,6 +518,19 @@ class CouponAutoscenarioLifecycleServiceTests(TestCase):
         self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.SENT)
 
     def test_management_command_delivery_guard_health_check(self):
+        old_assignment = self._create_assignment(
+            code="OLDH01",
+            status=CouponAutoscenarioAssignment.Status.CANCELED,
+        )
+        old_assignment.status_reason = COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED
+        old_assignment.save(update_fields=["status_reason"])
+        old_event = self._create_delivery_event(assignment=old_assignment)
+        self._create_delivery_task(event=old_event, assignment=old_assignment)
+
+        live_assignment = self._create_assignment(code="LIVEHC")
+        live_event = self._create_delivery_event(assignment=live_assignment)
+        self._create_delivery_task(event=live_event, assignment=live_assignment)
+
         stdout = StringIO()
 
         call_command(
@@ -529,4 +542,9 @@ class CouponAutoscenarioLifecycleServiceTests(TestCase):
 
         output = stdout.getvalue()
         self.assertIn("status=healthy", output)
+        self.assertIn("failed_events_total=2", output)
+        self.assertIn("live_assignments_to_check=1", output)
+        self.assertIn("canceled_by_guard=1", output)
+        self.assertIn("Исторических событий с финальной ошибкой доставки: 2", output)
+        self.assertIn("Живых назначений, ожидающих отмены из-за недоставки: 1", output)
         self.assertIn("контроль недоставки купонных автосценариев", output)

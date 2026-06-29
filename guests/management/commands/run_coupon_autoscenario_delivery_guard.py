@@ -12,6 +12,9 @@ from guests.services.coupon_autoscenarios import (
 )
 
 
+AUTOSCENARIO_ASSIGNMENT_REF_PREFIX = "coupon_autoscenario_assignment:"
+
+
 class Command(BaseCommand):
     """
     Контроль полной недоставки купонных автосценариев.
@@ -51,10 +54,10 @@ class Command(BaseCommand):
         )
 
     @staticmethod
-    def _candidate_event_count() -> int:
+    def _failed_event_count() -> int:
         return int(
             NotificationEvent.objects.filter(
-                source_ref__startswith="coupon_autoscenario_assignment:",
+                source_ref__startswith=AUTOSCENARIO_ASSIGNMENT_REF_PREFIX,
                 dispatch_tasks__status=DispatchTask.Status.FAILED,
             )
             .values("source_ref")
@@ -63,10 +66,71 @@ class Command(BaseCommand):
         )
 
     @staticmethod
+    def _failed_assignment_ids() -> set[int]:
+        refs = (
+            NotificationEvent.objects.filter(
+                source_ref__startswith=AUTOSCENARIO_ASSIGNMENT_REF_PREFIX,
+                dispatch_tasks__status=DispatchTask.Status.FAILED,
+            )
+            .values_list("source_ref", flat=True)
+            .distinct()
+        )
+        assignment_ids: set[int] = set()
+        for source_ref in refs:
+            try:
+                assignment_ids.add(int(str(source_ref).removeprefix(AUTOSCENARIO_ASSIGNMENT_REF_PREFIX)))
+            except (TypeError, ValueError):
+                continue
+        return assignment_ids
+
+    @classmethod
+    def _live_assignment_delivery_counts(cls) -> dict[str, int]:
+        assignment_ids = cls._failed_assignment_ids()
+        counters = {
+            "live_assignments_to_check": 0,
+            "live_assignments_delivered": 0,
+            "live_assignments_waiting": 0,
+            "live_assignments_without_tasks": 0,
+            "live_assignments_not_final_failed": 0,
+        }
+        if not assignment_ids:
+            return counters
+
+        live_assignment_ids = list(
+            CouponAutoscenarioAssignment.objects.filter(
+                id__in=assignment_ids,
+                status=CouponAutoscenarioAssignment.Status.SENT,
+                vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            ).values_list("id", flat=True)
+        )
+        waiting_statuses = {
+            DispatchTask.Status.PENDING,
+            DispatchTask.Status.QUEUED,
+            DispatchTask.Status.IN_PROGRESS,
+        }
+        for assignment_id in live_assignment_ids:
+            task_statuses = list(
+                DispatchTask.objects.filter(
+                    notification_event__source_ref=f"{AUTOSCENARIO_ASSIGNMENT_REF_PREFIX}{assignment_id}"
+                ).values_list("status", flat=True)
+            )
+            if not task_statuses:
+                counters["live_assignments_without_tasks"] += 1
+            elif DispatchTask.Status.DONE in task_statuses:
+                counters["live_assignments_delivered"] += 1
+            elif any(status in waiting_statuses for status in task_statuses):
+                counters["live_assignments_waiting"] += 1
+            elif all(status == DispatchTask.Status.FAILED for status in task_statuses):
+                counters["live_assignments_to_check"] += 1
+            else:
+                counters["live_assignments_not_final_failed"] += 1
+        return counters
+
+    @staticmethod
     def _failed_task_counts() -> dict[str, int]:
         rows = (
             DispatchTask.objects.filter(
-                notification_event__source_ref__startswith="coupon_autoscenario_assignment:",
+                notification_event__source_ref__startswith=AUTOSCENARIO_ASSIGNMENT_REF_PREFIX,
                 status=DispatchTask.Status.FAILED,
             )
             .values("provider_type")
@@ -86,17 +150,26 @@ class Command(BaseCommand):
         schedule_enabled = bool(
             getattr(settings, "COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED", False)
         )
-        candidate_events = self._candidate_event_count()
+        failed_events_total = self._failed_event_count()
+        live_counts = self._live_assignment_delivery_counts()
         canceled_by_guard = CouponAutoscenarioAssignment.objects.filter(
             status=CouponAutoscenarioAssignment.Status.CANCELED,
             status_reason=COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED,
         ).count()
+
         self.stdout.write(
             self.style.SUCCESS("[health] status=healthy component=run_coupon_autoscenario_delivery_guard")
         )
         self.stdout.write(
-            "[health] delivery_guard_enabled=%s schedule_enabled=%s candidate_events=%s canceled_by_guard=%s"
-            % (enabled, schedule_enabled, candidate_events, canceled_by_guard)
+            "[health] delivery_guard_enabled=%s schedule_enabled=%s "
+            "failed_events_total=%s live_assignments_to_check=%s canceled_by_guard=%s"
+            % (
+                enabled,
+                schedule_enabled,
+                failed_events_total,
+                live_counts["live_assignments_to_check"],
+                canceled_by_guard,
+            )
         )
         if verbose:
             self.stdout.write("Статус: здоров (status=healthy)")
@@ -113,7 +186,32 @@ class Command(BaseCommand):
                 "Плановый запуск включён: %s (schedule_enabled=%s)"
                 % ("да" if schedule_enabled else "нет", schedule_enabled)
             )
-            self.stdout.write(f"Событий-кандидатов с failed-задачами: {candidate_events}")
+            self.stdout.write(
+                f"Исторических событий с финальной ошибкой доставки: {failed_events_total}"
+            )
+            self.stdout.write(
+                "Живых назначений, ожидающих отмены из-за недоставки: "
+                f"{live_counts['live_assignments_to_check']}"
+            )
+            if live_counts["live_assignments_delivered"]:
+                self.stdout.write(
+                    "Живых назначений с failed-задачами, но с успешной доставкой по другому каналу: "
+                    f"{live_counts['live_assignments_delivered']}"
+                )
+            if live_counts["live_assignments_waiting"]:
+                self.stdout.write(
+                    "Живых назначений с failed-задачами, но ещё не завершёнными попытками доставки: "
+                    f"{live_counts['live_assignments_waiting']}"
+                )
+            incomplete_total = (
+                live_counts["live_assignments_without_tasks"]
+                + live_counts["live_assignments_not_final_failed"]
+            )
+            if incomplete_total:
+                self.stdout.write(
+                    "Живых назначений с неполной картиной задач доставки: "
+                    f"{incomplete_total}"
+                )
             self.stdout.write(f"Уже отменено этим контуром: {canceled_by_guard}")
             failed_by_provider = self._failed_task_counts()
             if failed_by_provider:
