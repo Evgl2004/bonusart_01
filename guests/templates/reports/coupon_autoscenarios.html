@@ -254,6 +254,16 @@
         </div>
       </div>
     {% endif %}
+    {% if autoscenario_report.canceled_delivery_failed_total %}
+      <div class="alert alert-info mb-3">
+        <div class="fw-semibold mb-1">Часть купонов автоматически отменена из-за недоставки</div>
+        <div>
+          Таких назначений: <b>{{ autoscenario_report.canceled_delivery_failed_total }}</b>.
+          Система поставила отмену в vtelemax, возвращает купон в пул SAGUR только после подтверждения vtelemax
+          и снимает категорию iikoCard через проверку, что у гостя не осталось другого живого купона SAGUR.
+        </div>
+      </div>
+    {% endif %}
 
     <div class="row g-3 mb-3">
       <div class="col-12 col-xl-4">
@@ -265,6 +275,10 @@
                 <tr>
                   <th>Назначено купонов</th>
                   <td class="text-end">{{ autoscenario_report.assignments_total }}</td>
+                </tr>
+                <tr>
+                  <th>Отменено из-за недоставки</th>
+                  <td class="text-end">{{ autoscenario_report.canceled_delivery_failed_total }}</td>
                 </tr>
                 <tr>
                   <th>vtelemax подтверждён</th>

@@ -36,6 +36,7 @@ DEFAULT_MANAGED_SCHEDULE_NAMES: tuple[str, ...] = (
     "run_coupon_campaign_close",
     "run_coupon_autoscenarios",
     "run_coupon_autoscenario_close",
+    "run_coupon_autoscenario_delivery_guard",
     "run_olap_sync_windowed",
     "run_olap_rebuild_nightly",
     "run_order_fact_tail",

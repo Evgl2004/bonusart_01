@@ -43,6 +43,7 @@ from guests.models import (
     OrderFact,
 )
 from guests.services.coupon_campaign_reporting import build_coupon_campaign_performance_snapshot
+from guests.services.coupon_autoscenarios import COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED
 from guests.services.coupon_pool import CouponPoolGenerationError, CouponPoolService
 from guests.services.coupon_venues import build_coupon_venue_choices
 
@@ -308,6 +309,12 @@ class CouponAutoscenarioReportsView(TemplateView):
             row["status"]: int(row["total"])
             for row in assignments_qs.values("status").annotate(total=Count("id"))
         }
+        canceled_delivery_failed_total = int(
+            assignments_qs.filter(
+                status=CouponAutoscenarioAssignment.Status.CANCELED,
+                status_reason=COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED,
+            ).count()
+        )
         sync_status_counts = {
             row["vtelemax_sync_status"]: int(row["total"])
             for row in assignments_qs.values("vtelemax_sync_status").annotate(total=Count("id"))
@@ -504,6 +511,7 @@ class CouponAutoscenarioReportsView(TemplateView):
             "applied_total": applied_total,
             "expired_total": status_counts.get(CouponAutoscenarioAssignment.Status.EXPIRED, 0),
             "canceled_total": status_counts.get(CouponAutoscenarioAssignment.Status.CANCELED, 0),
+            "canceled_delivery_failed_total": canceled_delivery_failed_total,
             "active_assignments": active_assignments,
             "error_total": status_counts.get(CouponAutoscenarioAssignment.Status.ERROR, 0),
             "usage_rate_percent": usage_rate,

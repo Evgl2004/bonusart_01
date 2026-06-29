@@ -4,7 +4,7 @@ from datetime import timedelta
 from io import StringIO
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from guests.models import (
@@ -13,11 +13,18 @@ from guests.models import (
     CouponAutomationConfig,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
+    DispatchTask,
     Guest,
+    IikoCustomerCategorySyncEvent,
     MessageTemplate,
+    NotificationEvent,
     NotificationScenario,
 )
-from guests.services.coupon_autoscenarios import close_expired_coupon_autoscenario_assignments
+from guests.services.coupon_autoscenarios import (
+    COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED,
+    cancel_coupon_autoscenario_assignments_after_delivery_failure,
+    close_expired_coupon_autoscenario_assignments,
+)
 
 
 class CouponAutoscenarioLifecycleServiceTests(TestCase):
@@ -265,3 +272,261 @@ class CouponAutoscenarioLifecycleServiceTests(TestCase):
         self.assertIn("assignments_scanned=1", output)
         self.assertIn("assignments_expired=1", output)
         self.assertEqual(CouponVtelemaxSyncQueue.objects.count(), 1)
+
+    def _create_delivery_event(
+        self,
+        *,
+        assignment: CouponAutoscenarioAssignment,
+    ) -> NotificationEvent:
+        source_ref = f"coupon_autoscenario_assignment:{assignment.id}"
+        return NotificationEvent.objects.create(
+            scenario=assignment.scenario,
+            guest=assignment.guest,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            source_ref=source_ref,
+            dedupe_key=f"delivery-event-{assignment.id}",
+            status=NotificationEvent.Status.TASK_CREATED,
+            event_at=self.now,
+            planned_send_at=self.now,
+            payload={"assignment_id": int(assignment.id)},
+        )
+
+    def _create_delivery_task(
+        self,
+        *,
+        event: NotificationEvent,
+        assignment: CouponAutoscenarioAssignment,
+        provider: str = "telegram",
+        status: str = DispatchTask.Status.FAILED,
+        error: str = "blocked: Telegram сообщает, что пользователь недоступен/заблокировал бота.",
+    ) -> DispatchTask:
+        return DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type=provider,
+            priority=DispatchTask.Priority.BULK,
+            status=status,
+            guest=assignment.guest,
+            notification_scenario=assignment.scenario,
+            notification_event=event,
+            message_text="Coupon text",
+            idempotency_key=(
+                f"system:{assignment.scenario.code}:coupon_autoscenario_assignment:"
+                f"{assignment.id}:guest:{assignment.guest_id}:provider:{provider}"
+            ),
+            available_at=self.now,
+            scheduled_at=self.now,
+            started_at=self.now,
+            finished_at=self.now if status in {DispatchTask.Status.DONE, DispatchTask.Status.FAILED} else None,
+            attempt=1,
+            max_attempts=5,
+            last_error=error if status == DispatchTask.Status.FAILED else None,
+        )
+
+    @override_settings(
+        IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED=True,
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="cat-active-coupon",
+        IIKO_ACTIVE_COUPON_CATEGORY_NAME="Активный купон SAGUR",
+        IIKO_ORGANIZATION_ID="org-test",
+    )
+    def test_delivery_guard_cancels_assignment_when_all_channels_final_failed(self):
+        assignment = self._create_assignment(code="FAIL01")
+        assignment.guest.iiko_id = "iiko-guest-1"
+        assignment.guest.save(update_fields=["iiko_id"])
+        event = self._create_delivery_event(assignment=assignment)
+        self._create_delivery_task(event=event, assignment=assignment, provider="telegram")
+
+        stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=10,
+            dry_run=False,
+            now=self.now,
+        ).as_dict()
+
+        self.assertEqual(stats["assignments_scanned"], 1)
+        self.assertEqual(stats["assignments_canceled"], 1)
+        self.assertEqual(stats["queue_events_created"], 1)
+        self.assertEqual(stats["iiko_remove_events_created"], 1)
+
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.CANCELED)
+        self.assertEqual(assignment.status_reason, COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED)
+        self.assertIn("не доставлено", assignment.status_details)
+        self.assertEqual(
+            assignment.vtelemax_sync_status,
+            CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+        )
+
+        queue_event = CouponVtelemaxSyncQueue.objects.get(autoscenario_assignment=assignment)
+        self.assertEqual(queue_event.direction, CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE)
+        self.assertEqual(queue_event.status, CouponVtelemaxSyncQueue.Status.PENDING)
+        self.assertEqual(queue_event.payload_json["status"], CouponAutoscenarioAssignment.Status.CANCELED)
+        self.assertEqual(
+            queue_event.payload_json["meta"]["cancel_reason"],
+            COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED,
+        )
+        self.assertTrue(queue_event.payload_json["meta"]["remove_from_guest"])
+        self.assertTrue(queue_event.payload_json["meta"]["release_to_pool"])
+
+        assignment.coupon.refresh_from_db()
+        self.assertEqual(assignment.coupon.pool_status, CouponRegistryEntry.PoolStatus.ASSIGNED)
+        self.assertFalse(assignment.coupon.is_active)
+
+        iiko_event = IikoCustomerCategorySyncEvent.objects.get(autoscenario_assignment=assignment)
+        self.assertEqual(iiko_event.action, IikoCustomerCategorySyncEvent.Action.REMOVE)
+        self.assertEqual(iiko_event.status, IikoCustomerCategorySyncEvent.Status.PENDING)
+        self.assertEqual(iiko_event.iiko_customer_id, "iiko-guest-1")
+
+    def test_delivery_guard_keeps_coupon_when_any_channel_delivered(self):
+        assignment = self._create_assignment(code="DONE01")
+        event = self._create_delivery_event(assignment=assignment)
+        self._create_delivery_task(event=event, assignment=assignment, provider="telegram")
+        self._create_delivery_task(
+            event=event,
+            assignment=assignment,
+            provider="vk",
+            status=DispatchTask.Status.DONE,
+            error="",
+        )
+
+        stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=10,
+            dry_run=False,
+            now=self.now,
+        ).as_dict()
+
+        self.assertEqual(stats["assignments_scanned"], 1)
+        self.assertEqual(stats["assignments_delivered"], 1)
+        self.assertEqual(stats["assignments_canceled"], 0)
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.count(), 0)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.SENT)
+
+    def test_delivery_guard_waits_when_any_task_still_pending(self):
+        assignment = self._create_assignment(code="WAIT01")
+        event = self._create_delivery_event(assignment=assignment)
+        self._create_delivery_task(event=event, assignment=assignment, provider="telegram")
+        self._create_delivery_task(
+            event=event,
+            assignment=assignment,
+            provider="max",
+            status=DispatchTask.Status.PENDING,
+            error="",
+        )
+
+        stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=10,
+            dry_run=False,
+            now=self.now,
+        ).as_dict()
+
+        self.assertEqual(stats["assignments_scanned"], 1)
+        self.assertEqual(stats["assignments_waiting"], 1)
+        self.assertEqual(stats["assignments_canceled"], 0)
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.count(), 0)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.SENT)
+
+    def test_delivery_guard_dry_run_does_not_write(self):
+        assignment = self._create_assignment(code="DRY001")
+        event = self._create_delivery_event(assignment=assignment)
+        self._create_delivery_task(event=event, assignment=assignment)
+
+        stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=10,
+            dry_run=True,
+            now=self.now,
+        ).as_dict()
+
+        self.assertTrue(stats["dry_run"])
+        self.assertEqual(stats["assignments_scanned"], 1)
+        self.assertEqual(stats["assignments_canceled"], 1)
+        self.assertEqual(stats["queue_events_created"], 1)
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.count(), 0)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.SENT)
+
+    @override_settings(
+        IIKO_CUSTOMER_CATEGORY_SYNC_ENABLED=True,
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="cat-active-coupon",
+    )
+    def test_delivery_guard_is_idempotent_after_cancellation(self):
+        assignment = self._create_assignment(code="IDEMP1")
+        event = self._create_delivery_event(assignment=assignment)
+        self._create_delivery_task(event=event, assignment=assignment)
+
+        first_stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=10,
+            dry_run=False,
+            now=self.now,
+        ).as_dict()
+        second_stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=10,
+            dry_run=False,
+            now=self.now,
+        ).as_dict()
+
+        self.assertEqual(first_stats["assignments_canceled"], 1)
+        self.assertEqual(second_stats["assignments_scanned"], 0)
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.count(), 1)
+
+    def test_delivery_guard_skips_old_canceled_failures_and_processes_live_candidate(self):
+        old_assignment = self._create_assignment(
+            code="OLDFAIL",
+            status=CouponAutoscenarioAssignment.Status.CANCELED,
+        )
+        old_event = self._create_delivery_event(assignment=old_assignment)
+        self._create_delivery_task(event=old_event, assignment=old_assignment)
+
+        live_assignment = self._create_assignment(code="LIVE01")
+        live_event = self._create_delivery_event(assignment=live_assignment)
+        self._create_delivery_task(event=live_event, assignment=live_assignment)
+
+        stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=1,
+            dry_run=False,
+            now=self.now,
+        ).as_dict()
+
+        self.assertEqual(stats["assignments_scanned"], 1)
+        self.assertEqual(stats["assignments_canceled"], 1)
+
+        old_assignment.refresh_from_db()
+        self.assertEqual(old_assignment.status, CouponAutoscenarioAssignment.Status.CANCELED)
+        live_assignment.refresh_from_db()
+        self.assertEqual(live_assignment.status, CouponAutoscenarioAssignment.Status.CANCELED)
+        self.assertEqual(live_assignment.status_reason, COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED)
+
+    def test_management_command_delivery_guard_dry_run_reports_stats(self):
+        assignment = self._create_assignment(code="CMDFAIL")
+        event = self._create_delivery_event(assignment=assignment)
+        self._create_delivery_task(event=event, assignment=assignment)
+        stdout = StringIO()
+
+        call_command(
+            "run_coupon_autoscenario_delivery_guard",
+            limit=10,
+            dry_run=True,
+            force_run=True,
+            stdout=stdout,
+        )
+
+        output = stdout.getvalue()
+        self.assertIn("Контроль недоставки купонных автосценариев", output)
+        self.assertIn("assignments_canceled=1", output)
+        self.assertIn("queue_events_created=1", output)
+        self.assertEqual(CouponVtelemaxSyncQueue.objects.count(), 0)
+        assignment.refresh_from_db()
+        self.assertEqual(assignment.status, CouponAutoscenarioAssignment.Status.SENT)
+
+    def test_management_command_delivery_guard_health_check(self):
+        stdout = StringIO()
+
+        call_command(
+            "run_coupon_autoscenario_delivery_guard",
+            health_check=True,
+            verbose=True,
+            stdout=stdout,
+        )
+
+        output = stdout.getvalue()
+        self.assertIn("status=healthy", output)
+        self.assertIn("контроль недоставки купонных автосценариев", output)

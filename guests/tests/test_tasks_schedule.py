@@ -348,6 +348,65 @@ class CouponAutoscenarioCloseScheduleTaskTests(SimpleTestCase):
         mocked_call_command.assert_called_once()
 
 
+class CouponAutoscenarioDeliveryGuardScheduleTaskTests(SimpleTestCase):
+    @override_settings(
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED=False,
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.services.coupon_autoscenarios.cancel_coupon_autoscenario_assignments_after_delivery_failure")
+    def test_delivery_guard_task_returns_zero_when_globally_disabled(self, mocked_guard):
+        result = tasks.run_coupon_autoscenario_delivery_guard_task()
+        self.assertEqual(result, 0)
+        mocked_guard.assert_not_called()
+
+    @override_settings(
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED=True,
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED=False,
+    )
+    @patch("guests.services.coupon_autoscenarios.cancel_coupon_autoscenario_assignments_after_delivery_failure")
+    def test_delivery_guard_task_returns_zero_when_schedule_disabled(self, mocked_guard):
+        result = tasks.run_coupon_autoscenario_delivery_guard_task()
+        self.assertEqual(result, 0)
+        mocked_guard.assert_not_called()
+
+    @override_settings(
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED=True,
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED=True,
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_BATCH_SIZE=37,
+    )
+    @patch("guests.services.coupon_autoscenarios.cancel_coupon_autoscenario_assignments_after_delivery_failure")
+    def test_delivery_guard_task_calls_service(self, mocked_guard):
+        stats = MagicMock()
+        stats.as_dict.return_value = {
+            "candidate_events_scanned": 3,
+            "assignments_scanned": 2,
+            "assignments_delivered": 0,
+            "assignments_waiting": 1,
+            "assignments_canceled": 1,
+            "queue_events_created": 1,
+            "queue_events_updated": 0,
+        }
+        mocked_guard.return_value = stats
+
+        result = tasks.run_coupon_autoscenario_delivery_guard_task()
+
+        self.assertEqual(result, 2)
+        mocked_guard.assert_called_once_with(limit=37, dry_run=False)
+
+    @override_settings(
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED=True,
+        COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED=True,
+    )
+    @patch(
+        "guests.services.coupon_autoscenarios.cancel_coupon_autoscenario_assignments_after_delivery_failure",
+        side_effect=RuntimeError("delivery guard failed"),
+    )
+    def test_delivery_guard_task_returns_zero_on_error(self, mocked_guard):
+        result = tasks.run_coupon_autoscenario_delivery_guard_task()
+        self.assertEqual(result, 0)
+        mocked_guard.assert_called_once()
+
+
 class OlapDerivedScheduleTasksTests(SimpleTestCase):
     """
     Проверяет расписание инкрементальных витрин (order/daily/window).

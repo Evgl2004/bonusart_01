@@ -27,6 +27,7 @@ from guests.models import (
     TerminalDepartmentMap,
 )
 from guests.views_reports import CouponAutoscenarioReportsView
+from guests.services.coupon_autoscenarios import COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED
 
 
 class CouponReportsViewsTests(TestCase):
@@ -608,8 +609,10 @@ class CouponReportsViewsTests(TestCase):
             coupon_code=blocked_coupon.code,
             assigned_at=self.now,
             sent_at=self.now,
-            status=CouponAutoscenarioAssignment.Status.SENT,
-            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            status=CouponAutoscenarioAssignment.Status.CANCELED,
+            status_reason=COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED,
+            status_details="Сообщение с купоном не доставлено ни по одному доступному каналу.",
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
             iiko_category_add_status=CouponAutoscenarioAssignment.IikoCategorySyncStatus.OK,
         )
         delivered_event = NotificationEvent.objects.create(
@@ -686,7 +689,10 @@ class CouponReportsViewsTests(TestCase):
         self.assertEqual(report["delivered_assignments"], 1)
         self.assertEqual(report["dispatch_final_failed_assignments"], 1)
         self.assertEqual(report["dispatch_blocked"], 1)
+        self.assertEqual(report["canceled_delivery_failed_total"], 1)
         self.assertEqual(report["delivery_rate_percent"], 50.0)
+        self.assertContains(response, "Отменено из-за недоставки")
+        self.assertContains(response, "Часть купонов автоматически отменена из-за недоставки")
         self.assertContains(response, "Есть купоны, которые были выданы, но сообщение гостю не доставлено")
         self.assertContains(response, "Бот заблокирован или недоступен")
         self.assertContains(response, "Почему гости не попали в выдачу")

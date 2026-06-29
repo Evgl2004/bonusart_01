@@ -18,6 +18,10 @@ class EnvSampleDocumentationTests(SimpleTestCase):
             "COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_ENABLED",
             "COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_CRON",
             "COUPON_AUTOSCENARIO_CLOSE_LIMIT",
+            "COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED",
+            "COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED",
+            "COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_CRON",
+            "COUPON_AUTOSCENARIO_DELIVERY_GUARD_BATCH_SIZE",
         )
 
         for variable_name in expected_variables:
@@ -26,6 +30,7 @@ class EnvSampleDocumentationTests(SimpleTestCase):
 
         self.assertNotIn("COUPON_AUTOSCENARIO_SCHEDULE_MINUTES=", env_sample)
         self.assertNotIn("COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_MINUTES=", env_sample)
+        self.assertNotIn("COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_MINUTES=", env_sample)
 
     def test_iiko_customer_category_sync_variables_are_documented(self):
         root_dir = Path(__file__).resolve().parents[2]

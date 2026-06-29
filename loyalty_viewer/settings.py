@@ -681,6 +681,27 @@ COUPON_AUTOSCENARIO_CLOSE_SCHEDULE_CRON = str(
 ).strip()
 COUPON_AUTOSCENARIO_CLOSE_LIMIT = _env_int("COUPON_AUTOSCENARIO_CLOSE_LIMIT", 100, min_value=1)
 
+# Контроль доставки купонных автосценариев.
+# Если сообщение с купоном окончательно не доставлено ни по одному доступному
+# каналу, назначение отменяется через безопасный контур vtelemax/iikoCard.
+COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED = _env_bool(
+    "COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED",
+    False,
+)
+COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED = _env_bool(
+    "COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED",
+    False,
+)
+COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_CRON = str(
+    os.getenv("COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_CRON", "*/20 10-22 * * *")
+    or "*/20 10-22 * * *"
+).strip()
+COUPON_AUTOSCENARIO_DELIVERY_GUARD_BATCH_SIZE = _env_int(
+    "COUPON_AUTOSCENARIO_DELIVERY_GUARD_BATCH_SIZE",
+    100,
+    min_value=1,
+)
+
 # Pre-send gate для купонных кампаний.
 VTELEMAX_COUPON_SYNC_GATE_REQUIRE_FRESH_STATE = _env_bool(
     "VTELEMAX_COUPON_SYNC_GATE_REQUIRE_FRESH_STATE",
@@ -725,6 +746,7 @@ DJANGO_Q_SCHEDULE_MANAGED_NAMES = (
     "run_coupon_autoscenarios",
     "run_coupon_campaign_close",
     "run_coupon_autoscenario_close",
+    "run_coupon_autoscenario_delivery_guard",
     "run_olap_sync_windowed",
     "run_olap_rebuild_nightly",
     "run_order_fact_tail",
@@ -1194,6 +1216,15 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_coupon_autoscenario_close", None)
+
+    if COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED and COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED:
+        schedule_map["run_coupon_autoscenario_delivery_guard"] = {
+            "func": "guests.tasks.run_coupon_autoscenario_delivery_guard_task",
+            "schedule_type": "C",
+            "cron": COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_CRON,
+        }
+    else:
+        schedule_map.pop("run_coupon_autoscenario_delivery_guard", None)
 
     if OLAP_SYNC_SCHEDULE_ENABLED:
         if OLAP_SCHEDULE_USE_HOURLY_CRON_WAVES:

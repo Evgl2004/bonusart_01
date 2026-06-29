@@ -309,6 +309,55 @@ def run_coupon_autoscenario_close_task() -> int:
         return 0
 
 
+def run_coupon_autoscenario_delivery_guard_task() -> int:
+    """
+    Плановый контроль недоставленных купонных автосценариев.
+
+    Если у назначения купона все задачи доставки завершились финальной ошибкой
+    и ни один канал не доставил сообщение, назначение отменяется через штатные
+    очереди vtelemax и iikoCard.
+    """
+    if not bool(getattr(settings, "COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED", False)):
+        logger.info(
+            "Контроль недоставки купонных автосценариев: выключен флагом "
+            "COUPON_AUTOSCENARIO_DELIVERY_GUARD_ENABLED."
+        )
+        return 0
+    if not bool(getattr(settings, "COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED", False)):
+        logger.info(
+            "Контроль недоставки купонных автосценариев: плановый запуск выключен флагом "
+            "COUPON_AUTOSCENARIO_DELIVERY_GUARD_SCHEDULE_ENABLED."
+        )
+        return 0
+
+    from .services.coupon_autoscenarios import cancel_coupon_autoscenario_assignments_after_delivery_failure
+
+    limit = max(1, int(getattr(settings, "COUPON_AUTOSCENARIO_DELIVERY_GUARD_BATCH_SIZE", 100) or 100))
+    try:
+        stats = cancel_coupon_autoscenario_assignments_after_delivery_failure(
+            limit=limit,
+            dry_run=False,
+        )
+        summary = stats.as_dict()
+        logger.info(
+            (
+                "Контроль недоставки купонных автосценариев: candidates=%s scanned=%s "
+                "canceled=%s waiting=%s delivered=%s queue_created=%s queue_updated=%s"
+            ),
+            summary["candidate_events_scanned"],
+            summary["assignments_scanned"],
+            summary["assignments_canceled"],
+            summary["assignments_waiting"],
+            summary["assignments_delivered"],
+            summary["queue_events_created"],
+            summary["queue_events_updated"],
+        )
+        return int(summary["assignments_scanned"])
+    except Exception as err:
+        logger.exception("Контроль недоставки купонных автосценариев: ошибка прохода: %s", err)
+        return 0
+
+
 def _parse_hhmm(value: str, *, default: dt_time) -> dt_time:
     """
     Возвращает время в формате HH:MM.

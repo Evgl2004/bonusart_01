@@ -3172,6 +3172,18 @@ class CouponAutoscenarioAssignment(models.Model):
         default=Status.RESERVED,
         db_index=True,
     )
+    status_reason = models.CharField(
+        max_length=80,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Техническая причина текущего статуса назначения купона.",
+    )
+    status_details = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Человекочитаемое пояснение к причине текущего статуса назначения купона.",
+    )
     used_at = models.DateTimeField(blank=True, null=True)
     used_order_id = models.BigIntegerField(blank=True, null=True, db_index=True)
     used_business_date = models.DateField(blank=True, null=True, db_index=True)

@@ -82,10 +82,22 @@ COUPON_AUTOSCENARIO_EXECUTION_MODE_LABELS = {
     CouponAutomationConfig.ExecutionMode.AUTOMATIC: "Активен",
     CouponAutomationConfig.ExecutionMode.PAUSED: "Пауза",
 }
+COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED = "delivery_failed"
+COUPON_AUTOSCENARIO_STATUS_REASON_DISPATCH_ERROR = "dispatch_error"
+COUPON_AUTOSCENARIO_STATUS_REASON_EXPIRED = "expired_lifetime"
+COUPON_AUTOSCENARIO_STATUS_REASON_PILOT_CLEANUP = "pilot_cleanup"
 
 
 class CouponAutoscenarioPreviewError(ValueError):
     """Ошибка подготовки безопасного расчёта купонного автосценария."""
+
+
+@dataclass(frozen=True, slots=True)
+class _AutoscenarioCancellationQueueResult:
+    event: CouponVtelemaxSyncQueue
+    created: bool
+    updated: bool
+    iiko_remove_created: bool
 
 
 def format_coupon_autoscenario_execution_mode(value: str | None) -> str:
@@ -413,6 +425,40 @@ class CouponAutoscenarioCloseStats:
             "registry_marked_expired": int(self.registry_marked_expired),
             "queue_events_created": int(self.queue_events_created),
             "queue_events_updated": int(self.queue_events_updated),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class CouponAutoscenarioDeliveryFailureStats:
+    candidate_events_scanned: int = 0
+    assignments_scanned: int = 0
+    assignments_delivered: int = 0
+    assignments_waiting: int = 0
+    assignments_without_tasks: int = 0
+    assignments_not_final_failed: int = 0
+    assignments_canceled: int = 0
+    queue_events_created: int = 0
+    queue_events_updated: int = 0
+    iiko_remove_events_created: int = 0
+    dry_run: bool = False
+
+    @property
+    def processed(self) -> int:
+        return int(self.assignments_scanned)
+
+    def as_dict(self) -> dict:
+        return {
+            "candidate_events_scanned": int(self.candidate_events_scanned),
+            "assignments_scanned": int(self.assignments_scanned),
+            "assignments_delivered": int(self.assignments_delivered),
+            "assignments_waiting": int(self.assignments_waiting),
+            "assignments_without_tasks": int(self.assignments_without_tasks),
+            "assignments_not_final_failed": int(self.assignments_not_final_failed),
+            "assignments_canceled": int(self.assignments_canceled),
+            "queue_events_created": int(self.queue_events_created),
+            "queue_events_updated": int(self.queue_events_updated),
+            "iiko_remove_events_created": int(self.iiko_remove_events_created),
+            "dry_run": bool(self.dry_run),
         }
 
 
@@ -1193,6 +1239,113 @@ def _create_coupon_autoscenario_run_from_plan(
     return int(run.id), created_assignments, queue_events_created
 
 
+def _queue_autoscenario_assignment_cancellation(
+    *,
+    assignment: CouponAutoscenarioAssignment,
+    reason_key: str,
+    reason_details: str,
+    now: datetime,
+    dry_run: bool = False,
+) -> _AutoscenarioCancellationQueueResult | None:
+    """
+    Ставит отмену назначения автосценария в безопасный купонный контур.
+
+    Купон не возвращается в пул напрямую. Возврат произойдёт только после ACK
+    от vtelemax по событию `status_update:canceled` с `release_to_pool=true`.
+    """
+    safe_reason_key = str(reason_key or "").strip()[:80] or "manual_cancel"
+    safe_reason_details = str(reason_details or "").strip()[:2000]
+    payload = _build_autoscenario_status_update_payload(
+        assignment=assignment,
+        status=CouponAutoscenarioAssignment.Status.CANCELED,
+        now=now,
+        meta={
+            "cancel_reason": safe_reason_key,
+            "cancel_details": safe_reason_details,
+            "remove_from_guest": True,
+            "release_to_pool": True,
+        },
+    )
+    existing_event = _find_autoscenario_status_update_event(
+        assignment=assignment,
+        status=CouponAutoscenarioAssignment.Status.CANCELED,
+    )
+
+    if dry_run:
+        if existing_event is None:
+            return None
+        return _AutoscenarioCancellationQueueResult(
+            event=existing_event,
+            created=False,
+            updated=False,
+            iiko_remove_created=False,
+        )
+
+    assignment.status = CouponAutoscenarioAssignment.Status.CANCELED
+    assignment.status_reason = safe_reason_key
+    assignment.status_details = safe_reason_details
+    assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING
+    assignment.vtelemax_synced_at = None
+    assignment.vtelemax_sync_error = None
+    assignment.save(
+        update_fields=[
+            "status",
+            "status_reason",
+            "status_details",
+            "vtelemax_sync_status",
+            "vtelemax_synced_at",
+            "vtelemax_sync_error",
+            "updated_at",
+        ]
+    )
+
+    event_created = False
+    event_updated = False
+    if existing_event is None:
+        event = CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            autoscenario_assignment=assignment,
+            payload_json=payload,
+            status=CouponVtelemaxSyncQueue.Status.PENDING,
+            next_retry_at=now,
+        )
+        event_created = True
+    else:
+        event = existing_event
+        if event.status != CouponVtelemaxSyncQueue.Status.ACKED:
+            event.payload_json = payload
+            event.status = CouponVtelemaxSyncQueue.Status.PENDING
+            event.last_error = None
+            event.next_retry_at = now
+            event.sent_at = None
+            event.ack_at = None
+            event.save(
+                update_fields=[
+                    "payload_json",
+                    "status",
+                    "last_error",
+                    "next_retry_at",
+                    "sent_at",
+                    "ack_at",
+                    "updated_at",
+                ]
+            )
+            event_updated = True
+
+    iiko_result = enqueue_iiko_category_remove_if_last_coupon(
+        assignment=assignment,
+        now=now,
+        dry_run=False,
+    )
+    _refresh_autoscenario_run_status(run_id=assignment.run_id)
+    return _AutoscenarioCancellationQueueResult(
+        event=event,
+        created=event_created,
+        updated=event_updated,
+        iiko_remove_created=bool(iiko_result.created),
+    )
+
+
 def cleanup_coupon_autoscenario_pilot_assignment(
     *,
     assignment_id: int,
@@ -1252,71 +1405,17 @@ def cleanup_coupon_autoscenario_pilot_assignment(
                 "Нельзя отменить пилот: событие назначения купона ещё не подтверждено vtelemax."
             )
 
-        if assignment.status != CouponAutoscenarioAssignment.Status.CANCELED:
-            assignment.status = CouponAutoscenarioAssignment.Status.CANCELED
-            assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING
-            assignment.vtelemax_synced_at = None
-            assignment.vtelemax_sync_error = None
-            assignment.save(
-                update_fields=[
-                    "status",
-                    "vtelemax_sync_status",
-                    "vtelemax_synced_at",
-                    "vtelemax_sync_error",
-                    "updated_at",
-                ]
-            )
-
-        payload = _build_autoscenario_status_update_payload(
+        cancellation = _queue_autoscenario_assignment_cancellation(
             assignment=assignment,
-            status=CouponAutoscenarioAssignment.Status.CANCELED,
-            now=current_now,
-            meta={
-                "cancel_reason": str(reason or "pilot_cleanup_from_ui"),
-                "remove_from_guest": True,
-                "release_to_pool": True,
-            },
-        )
-        existing_event = _find_autoscenario_status_update_event(
-            assignment=assignment,
-            status=CouponAutoscenarioAssignment.Status.CANCELED,
-        )
-        if existing_event is None:
-            event = CouponVtelemaxSyncQueue.objects.create(
-                direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
-                autoscenario_assignment=assignment,
-                payload_json=payload,
-                status=CouponVtelemaxSyncQueue.Status.PENDING,
-                next_retry_at=current_now,
-            )
-            created = True
-        else:
-            event = existing_event
-            created = False
-            if event.status != CouponVtelemaxSyncQueue.Status.ACKED:
-                event.payload_json = payload
-                event.status = CouponVtelemaxSyncQueue.Status.PENDING
-                event.last_error = None
-                event.next_retry_at = current_now
-                event.sent_at = None
-                event.ack_at = None
-                event.save(
-                    update_fields=[
-                        "payload_json",
-                        "status",
-                        "last_error",
-                        "next_retry_at",
-                        "sent_at",
-                        "ack_at",
-                        "updated_at",
-                    ]
-                )
-        _refresh_autoscenario_run_status(run_id=assignment.run_id)
-        enqueue_iiko_category_remove_if_last_coupon(
-            assignment=assignment,
+            reason_key=str(reason or "pilot_cleanup_from_ui"),
+            reason_details="Пилотный купон поставлен на отмену из интерфейса автосценария.",
             now=current_now,
             dry_run=False,
         )
+        if cancellation is None:
+            raise CouponAutoscenarioPreviewError("Не удалось поставить пилотный купон на отмену.")
+        event = cancellation.event
+        created = cancellation.created
 
     return CouponAutoscenarioCleanupResult(
         assignment_id=int(assignment.id),
@@ -1400,6 +1499,8 @@ def close_expired_coupon_autoscenario_assignments(
                 coupon.save(update_fields=["is_active", "pool_status", "updated_at"])
 
             assignment.status = CouponAutoscenarioAssignment.Status.EXPIRED
+            assignment.status_reason = COUPON_AUTOSCENARIO_STATUS_REASON_EXPIRED
+            assignment.status_details = "Срок действия купона автосценария истёк."
             if existing_event_acked:
                 assignment.vtelemax_sync_status = CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
                 assignment.vtelemax_synced_at = existing_event.ack_at
@@ -1410,6 +1511,8 @@ def close_expired_coupon_autoscenario_assignments(
             assignment.save(
                 update_fields=[
                     "status",
+                    "status_reason",
+                    "status_details",
                     "vtelemax_sync_status",
                     "vtelemax_synced_at",
                     "vtelemax_sync_error",
@@ -1463,6 +1566,115 @@ def close_expired_coupon_autoscenario_assignments(
         registry_marked_expired=registry_marked_expired,
         queue_events_created=queue_events_created,
         queue_events_updated=queue_events_updated,
+    )
+
+
+def cancel_coupon_autoscenario_assignments_after_delivery_failure(
+    *,
+    limit: int = 100,
+    dry_run: bool = False,
+    now: datetime | None = None,
+) -> CouponAutoscenarioDeliveryFailureStats:
+    """
+    Отменяет купоны автосценариев, если сообщение не доставлено ни по одному каналу.
+
+    Правило намеренно работает на уровне назначения купона, а не на уровне одной
+    задачи доставки:
+    1. успешная отправка хотя бы по одному каналу сохраняет купон живым;
+    2. pending/queued/in_progress означают ожидание штатной обработки или retry;
+    3. отмена запускается только когда все созданные задачи доставки завершились
+       финальной ошибкой.
+    """
+    current_now = now or timezone.now()
+    safe_limit = max(1, int(limit or 100))
+    candidate_assignment_ids, candidate_events_scanned = _delivery_failure_candidate_assignment_ids(
+        limit=safe_limit,
+    )
+
+    counters = {
+        "candidate_events_scanned": candidate_events_scanned,
+        "assignments_scanned": 0,
+        "assignments_delivered": 0,
+        "assignments_waiting": 0,
+        "assignments_without_tasks": 0,
+        "assignments_not_final_failed": 0,
+        "assignments_canceled": 0,
+        "queue_events_created": 0,
+        "queue_events_updated": 0,
+        "iiko_remove_events_created": 0,
+    }
+
+    for assignment_id in candidate_assignment_ids:
+        with transaction.atomic():
+            assignment = (
+                _autoscenario_assignments_for_update_queryset()
+                .select_related("coupon", "scenario", "run", "config", "guest")
+                .filter(
+                    id=int(assignment_id),
+                    status=CouponAutoscenarioAssignment.Status.SENT,
+                    vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+                )
+                .first()
+            )
+            if assignment is None:
+                continue
+
+            counters["assignments_scanned"] += 1
+            task_state = _evaluate_autoscenario_assignment_delivery_state(assignment=assignment)
+            if task_state["has_success"]:
+                counters["assignments_delivered"] += 1
+                continue
+            if task_state["has_waiting"]:
+                counters["assignments_waiting"] += 1
+                continue
+            if task_state["tasks_total"] <= 0:
+                counters["assignments_without_tasks"] += 1
+                continue
+            if not task_state["all_failed"]:
+                counters["assignments_not_final_failed"] += 1
+                continue
+
+            reason_details = _build_delivery_failed_status_details(task_state=task_state)
+            existing_event = _find_autoscenario_status_update_event(
+                assignment=assignment,
+                status=CouponAutoscenarioAssignment.Status.CANCELED,
+            )
+            counters["assignments_canceled"] += 1
+            if dry_run:
+                if existing_event is None:
+                    counters["queue_events_created"] += 1
+                elif existing_event.status != CouponVtelemaxSyncQueue.Status.ACKED:
+                    counters["queue_events_updated"] += 1
+                continue
+
+            cancellation = _queue_autoscenario_assignment_cancellation(
+                assignment=assignment,
+                reason_key=COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED,
+                reason_details=reason_details,
+                now=current_now,
+                dry_run=False,
+            )
+            if cancellation is None:
+                continue
+            if cancellation.created:
+                counters["queue_events_created"] += 1
+            if cancellation.updated:
+                counters["queue_events_updated"] += 1
+            if cancellation.iiko_remove_created:
+                counters["iiko_remove_events_created"] += 1
+
+    return CouponAutoscenarioDeliveryFailureStats(
+        candidate_events_scanned=counters["candidate_events_scanned"],
+        assignments_scanned=counters["assignments_scanned"],
+        assignments_delivered=counters["assignments_delivered"],
+        assignments_waiting=counters["assignments_waiting"],
+        assignments_without_tasks=counters["assignments_without_tasks"],
+        assignments_not_final_failed=counters["assignments_not_final_failed"],
+        assignments_canceled=counters["assignments_canceled"],
+        queue_events_created=counters["queue_events_created"],
+        queue_events_updated=counters["queue_events_updated"],
+        iiko_remove_events_created=counters["iiko_remove_events_created"],
+        dry_run=dry_run,
     )
 
 
@@ -3052,6 +3264,75 @@ def _autoscenario_dispatch_dedupe_key(*, assignment_id: int) -> str:
     return f"coupon_autoscenario_assignment:{int(assignment_id)}"
 
 
+def _parse_autoscenario_assignment_id_from_source_ref(source_ref: str | None) -> int | None:
+    prefix = "coupon_autoscenario_assignment:"
+    raw_value = str(source_ref or "").strip()
+    if not raw_value.startswith(prefix):
+        return None
+    try:
+        value = int(raw_value[len(prefix) :])
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _delivery_failure_candidate_assignment_ids(*, limit: int) -> tuple[list[int], int]:
+    """
+    Возвращает назначения, где уже есть финально упавшие задачи доставки.
+
+    Это дешевле, чем каждую минуту сканировать все живые купоны в статусе
+    `sent`: обработчик просыпается только вокруг фактов failed-доставки.
+    """
+    safe_limit = max(1, int(limit or 100))
+    page_size = max(100, safe_limit * 5)
+    max_scanned_rows = max(1000, safe_limit * 50)
+    source_ref_qs = (
+        NotificationEvent.objects.filter(
+            source_ref__startswith="coupon_autoscenario_assignment:",
+            dispatch_tasks__status=DispatchTask.Status.FAILED,
+        )
+        .values("source_ref")
+        .annotate(last_task_updated=Max("dispatch_tasks__updated_at"))
+        .order_by("-last_task_updated")
+    )
+
+    assignment_ids: list[int] = []
+    seen_ids: set[int] = set()
+    scanned_rows = 0
+    offset = 0
+    while len(assignment_ids) < safe_limit and scanned_rows < max_scanned_rows:
+        rows = list(source_ref_qs[offset : offset + page_size])
+        if not rows:
+            break
+        scanned_rows += len(rows)
+        offset += page_size
+
+        page_ids: list[int] = []
+        for row in rows:
+            assignment_id = _parse_autoscenario_assignment_id_from_source_ref(row.get("source_ref"))
+            if assignment_id is None or assignment_id in seen_ids:
+                continue
+            seen_ids.add(assignment_id)
+            page_ids.append(assignment_id)
+        if not page_ids:
+            continue
+
+        live_ids = set(
+            CouponAutoscenarioAssignment.objects.filter(
+                id__in=page_ids,
+                status=CouponAutoscenarioAssignment.Status.SENT,
+                vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            ).values_list("id", flat=True)
+        )
+        for assignment_id in page_ids:
+            if assignment_id not in live_ids:
+                continue
+            assignment_ids.append(assignment_id)
+            if len(assignment_ids) >= safe_limit:
+                break
+    return assignment_ids, scanned_rows
+
+
 def _autoscenario_dispatch_task_count(
     *,
     scenario: NotificationScenario,
@@ -3063,6 +3344,62 @@ def _autoscenario_dispatch_task_count(
         source_type=DispatchTask.SourceType.SYSTEM,
         idempotency_key__contains=source_key_fragment,
     ).count()
+
+
+def _evaluate_autoscenario_assignment_delivery_state(
+    *,
+    assignment: CouponAutoscenarioAssignment,
+) -> dict:
+    source_ref = _autoscenario_dispatch_dedupe_key(assignment_id=int(assignment.id))
+    tasks = list(
+        DispatchTask.objects.filter(
+            notification_event__scenario=assignment.scenario,
+            notification_event__source_ref=source_ref,
+        )
+        .values(
+            "id",
+            "provider_type",
+            "status",
+            "attempt",
+            "max_attempts",
+            "last_error",
+            "updated_at",
+        )
+        .order_by("id")
+    )
+    active_statuses = {
+        DispatchTask.Status.PENDING,
+        DispatchTask.Status.QUEUED,
+        DispatchTask.Status.IN_PROGRESS,
+    }
+    task_statuses = [str(task.get("status") or "") for task in tasks]
+    failed_tasks = [task for task in tasks if task.get("status") == DispatchTask.Status.FAILED]
+    return {
+        "tasks": tasks,
+        "tasks_total": len(tasks),
+        "failed_tasks": failed_tasks,
+        "failed_total": len(failed_tasks),
+        "has_success": DispatchTask.Status.DONE in task_statuses,
+        "has_waiting": any(status in active_statuses for status in task_statuses),
+        "all_failed": bool(tasks) and len(failed_tasks) == len(tasks),
+    }
+
+
+def _build_delivery_failed_status_details(*, task_state: dict) -> str:
+    failed_tasks = list(task_state.get("failed_tasks") or [])
+    details: list[str] = []
+    for task in failed_tasks:
+        provider = str(task.get("provider_type") or "unknown").strip() or "unknown"
+        attempts = int(task.get("attempt") or 0)
+        max_attempts = int(task.get("max_attempts") or 0)
+        error_text = str(task.get("last_error") or "ошибка без текста").strip()
+        details.append(f"{provider}: попытки {attempts}/{max_attempts}, ошибка: {error_text[:240]}")
+
+    suffix = "; ".join(details)
+    base_text = "Сообщение с купоном не доставлено ни по одному доступному каналу."
+    if suffix:
+        return f"{base_text} {suffix}"[:2000]
+    return base_text
 
 
 def _build_autoscenario_dispatch_payload(*, assignment: CouponAutoscenarioAssignment) -> dict:
@@ -3089,8 +3426,10 @@ def _mark_autoscenario_assignment_sent(
     sent_at: datetime,
 ) -> None:
     assignment.status = CouponAutoscenarioAssignment.Status.SENT
+    assignment.status_reason = None
+    assignment.status_details = None
     assignment.sent_at = sent_at
-    assignment.save(update_fields=["status", "sent_at", "updated_at"])
+    assignment.save(update_fields=["status", "status_reason", "status_details", "sent_at", "updated_at"])
 
 
 def _mark_autoscenario_assignment_dispatch_error(
@@ -3099,8 +3438,18 @@ def _mark_autoscenario_assignment_dispatch_error(
     error_text: str,
 ) -> None:
     assignment.status = CouponAutoscenarioAssignment.Status.ERROR
+    assignment.status_reason = COUPON_AUTOSCENARIO_STATUS_REASON_DISPATCH_ERROR
+    assignment.status_details = str(error_text or "").strip()[:2000]
     assignment.vtelemax_sync_error = str(error_text or "").strip()[:2000]
-    assignment.save(update_fields=["status", "vtelemax_sync_error", "updated_at"])
+    assignment.save(
+        update_fields=[
+            "status",
+            "status_reason",
+            "status_details",
+            "vtelemax_sync_error",
+            "updated_at",
+        ]
+    )
     enqueue_iiko_category_remove_if_last_coupon(
         assignment=assignment,
         now=timezone.now(),
