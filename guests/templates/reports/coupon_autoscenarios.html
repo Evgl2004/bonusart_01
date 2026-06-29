@@ -2,6 +2,50 @@
 
 {% block title %}Отчёты: автосценарии{% endblock %}
 
+{% block extra_css %}
+<style>
+  .autoscenario-report-filter {
+    display: grid;
+    grid-template-columns: minmax(280px, 1.35fr) minmax(150px, 0.6fr) minmax(150px, 0.6fr) minmax(260px, 1fr) minmax(150px, 0.45fr);
+    gap: 1rem;
+    align-items: end;
+  }
+
+  .autoscenario-report-filter .form-label {
+    margin-bottom: 0.35rem;
+  }
+
+  .autoscenario-report-filter__button {
+    display: flex;
+    align-items: flex-end;
+  }
+
+  .autoscenario-report-filter__button .btn {
+    width: 100%;
+  }
+
+  @media (max-width: 1399.98px) {
+    .autoscenario-report-filter {
+      grid-template-columns: minmax(260px, 1fr) minmax(150px, 0.5fr) minmax(150px, 0.5fr);
+    }
+
+    .autoscenario-report-filter__venue {
+      grid-column: span 2;
+    }
+  }
+
+  @media (max-width: 767.98px) {
+    .autoscenario-report-filter {
+      grid-template-columns: 1fr;
+    }
+
+    .autoscenario-report-filter__venue {
+      grid-column: auto;
+    }
+  }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="container-fluid">
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
@@ -19,8 +63,8 @@
 
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">
-      <form method="get" class="row g-3 align-items-end">
-        <div class="col-12 col-xl-3">
+      <form method="get" class="autoscenario-report-filter">
+        <div>
           <label class="form-label">Автосценарий</label>
           <select class="form-select" name="scenario_code">
             {% for scenario in scenarios %}
@@ -30,15 +74,15 @@
             {% endfor %}
           </select>
         </div>
-        <div class="col-12 col-sm-6 col-xl-2">
+        <div>
           <label class="form-label">Период с</label>
           <input class="form-control" type="date" name="date_from" value="{{ filters.date_from }}">
         </div>
-        <div class="col-12 col-sm-6 col-xl-2">
+        <div>
           <label class="form-label">Период по</label>
           <input class="form-control" type="date" name="date_to" value="{{ filters.date_to }}">
         </div>
-        <div class="col-12 col-sm-6 col-xl-3">
+        <div class="autoscenario-report-filter__venue">
           <label class="form-label">Заведение по заказу</label>
           <select class="form-select" name="venue_code">
             {% for venue_choice in report_venue_choices %}
@@ -49,7 +93,7 @@
           </select>
           <div class="form-text">Для выручки, среднего чека и позиций.</div>
         </div>
-        <div class="col-12 col-sm-6 col-xl-2 d-grid">
+        <div class="autoscenario-report-filter__button">
           <button class="btn btn-primary" type="submit">Показать</button>
         </div>
       </form>

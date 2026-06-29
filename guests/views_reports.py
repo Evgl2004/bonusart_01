@@ -295,7 +295,7 @@ class CouponAutoscenarioReportsView(TemplateView):
             safe_code = _normalize_report_text(code)
             if not safe_code or safe_code == "__global__" or safe_code in seen:
                 return
-            safe_label = _normalize_report_text(label) or safe_code
+            safe_label = CouponAutoscenarioReportsView._human_venue_label(code=safe_code, label=label)
             choices.append(
                 {
                     "code": safe_code,
@@ -312,8 +312,9 @@ class CouponAutoscenarioReportsView(TemplateView):
             for rule in config.coupon_rules.filter(is_active=True).order_by("scope_type", "priority", "venue_name"):
                 add_choice(rule.venue_code, rule.venue_name)
 
-        for code, label in build_coupon_venue_choices(include_empty=False)[0]:
-            add_choice(code, label)
+        venue_choices, venue_map = build_coupon_venue_choices(include_empty=False)
+        for code, _label in venue_choices:
+            add_choice(code, venue_map.get(code))
 
         for section_name in ("revenue", "followup"):
             section = (report or {}).get(section_name) or {}
@@ -326,6 +327,15 @@ class CouponAutoscenarioReportsView(TemplateView):
                 choice["selected"] = choice["code"] == selected_code
 
         return choices
+
+    @staticmethod
+    def _human_venue_label(*, code: str, label: str | None = None) -> str:
+        safe_code = _normalize_report_text(code)
+        safe_label = _normalize_report_text(label) or safe_code
+        suffix = f" ({safe_code})"
+        if safe_label.endswith(suffix):
+            safe_label = safe_label[: -len(suffix)].strip()
+        return safe_label or safe_code
 
     def _build_report(self, *, scenario: NotificationScenario, date_from, date_to, venue_code: str = "") -> dict:
         all_runs_qs = (

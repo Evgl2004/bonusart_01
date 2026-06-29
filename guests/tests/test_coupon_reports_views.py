@@ -706,6 +706,12 @@ class CouponReportsViewsTests(TestCase):
             department_name="Сами Сусами",
             is_active=True,
         )
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-gruzinka",
+            department_id="5395f53e-a932-4b39-a272-4786544c8c38",
+            department_name="Грузинка",
+            is_active=True,
+        )
         scenario = NotificationScenario.objects.create(
             code="inactive_30d_coupon_real_funnel",
             name="Inactive 30 real funnel",
@@ -869,8 +875,20 @@ class CouponReportsViewsTests(TestCase):
         self.assertEqual(report_day["issue_runs_count"], 1)
         self.assertEqual(report_day["issued_coupons"], 2)
         self.assertEqual(report_day["delivered_coupons"], 1)
+        venue_choices = response.context["report_venue_choices"]
+        self.assertIn(
+            {
+                "code": "5395f53e-a932-4b39-a272-4786544c8c38",
+                "label": "Грузинка",
+                "selected": False,
+            },
+            venue_choices,
+        )
         self.assertContains(response, "Сами Сусами")
         self.assertContains(response, 'value="DEP_SUSAMI"', html=False)
+        self.assertContains(response, 'value="5395f53e-a932-4b39-a272-4786544c8c38"', html=False)
+        self.assertContains(response, "Грузинка")
+        self.assertNotContains(response, "Грузинка (5395f53e-a932-4b39-a272-4786544c8c38)")
         self.assertNotContains(response, "Попали под сценарий")
         self.assertNotContains(response, "Есть канал доставки")
 
