@@ -97,11 +97,6 @@ def build_segment_dynamics_dashboard_payload(
     _finalize_rows(rows)
 
     visible_segments = _build_visible_segment_defs(selected_segment_code)
-    kpi_source_code = (
-        visible_segments[0]["code"]
-        if selected_segment_code != "all" and visible_segments
-        else ""
-    )
     needs_department_hint = (
         not selected_department_id
         and selected_segment_code in {"all", NEW_IN_VENUE_SEGMENT_CODE}
@@ -133,7 +128,11 @@ def build_segment_dynamics_dashboard_payload(
             "Без выбранного заведения ряд «Новые за день» показан нулями."
         ),
         "segments": visible_segments,
-        "kpis": _build_kpis(rows=rows, segment_code=kpi_source_code),
+        "kpis": _build_kpis(
+            rows=rows,
+            selected_segment_code=selected_segment_code,
+            selected_department_id=selected_department_id,
+        ),
         "rows": rows,
     }
 
@@ -324,47 +323,156 @@ def _build_visible_segment_defs(selected_segment_code: str) -> list[dict[str, st
 def _build_kpis(
     *,
     rows: list[dict[str, Any]],
-    segment_code: str,
+    selected_segment_code: str,
+    selected_department_id: str,
 ) -> list[dict[str, str]]:
     if not rows:
         return []
 
+    if selected_segment_code == "all":
+        return _build_all_segments_kpis(
+            rows=rows,
+            selected_department_id=selected_department_id,
+        )
+    if selected_segment_code == NEW_IN_VENUE_SEGMENT_CODE:
+        return _build_new_in_venue_kpis(rows)
+    return _build_single_segment_kpis(rows=rows, segment_code=selected_segment_code)
+
+
+def _build_all_segments_kpis(
+    *,
+    rows: list[dict[str, Any]],
+    selected_department_id: str,
+) -> list[dict[str, str]]:
     first = rows[0]
     current = rows[-1]
-    previous = rows[-2] if len(rows) > 1 else current
+
+    current_active_base = _active_base_value(current)
+    first_active_base = _active_base_value(first)
+    current_core = _row_value(current, ACTIVE_30D_SEGMENT_CODE)
+    current_risk_zone = _risk_zone_value(current)
+    first_risk_zone = _risk_zone_value(first)
+    new_guests_total = sum(_row_value(row, NEW_IN_VENUE_SEGMENT_CODE) for row in rows)
+
+    if selected_department_id:
+        new_guests_value = _format_int(new_guests_total)
+        new_guests_description = "Первые покупки в выбранном заведении за период"
+    else:
+        new_guests_value = "—"
+        new_guests_description = "Выберите конкретное заведение для расчёта новых гостей"
+
+    return [
+        {
+            "title": "Активная база 30д",
+            "value": _format_int(current_active_base),
+            "description": (
+                "2+ визита и 1 визит за 30 дней; "
+                f"за период: {_format_signed_int(current_active_base - first_active_base)}"
+            ),
+        },
+        {
+            "title": "Ядро 30д",
+            "value": _format_int(current_core),
+            "description": (
+                "Гости с 2+ визитами за 30 дней; "
+                f"доля активной базы: {_format_percent(current_core, current_active_base)}"
+            ),
+        },
+        {
+            "title": "Зона риска",
+            "value": _format_int(current_risk_zone),
+            "description": (
+                "Остывшие 30-60д и потерянные 60+д; "
+                f"за период: {_format_signed_int(current_risk_zone - first_risk_zone)}"
+            ),
+        },
+        {
+            "title": "Новые за период",
+            "value": new_guests_value,
+            "description": new_guests_description,
+        },
+    ]
+
+
+def _build_new_in_venue_kpis(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
+    current = rows[-1]
+    values = [_row_value(row, NEW_IN_VENUE_SEGMENT_CODE) for row in rows]
+    period_total = sum(values)
+    peak_index, peak_value = max(enumerate(values), key=lambda item: item[1])
+    peak_day = rows[peak_index]["day"]
+
+    return [
+        {
+            "title": "Новые за период",
+            "value": _format_int(period_total),
+            "description": "Сумма первых покупок за дни графика",
+        },
+        {
+            "title": "Последний день",
+            "value": _format_int(_row_value(current, NEW_IN_VENUE_SEGMENT_CODE)),
+            "description": current["day"],
+        },
+        {
+            "title": "Среднее в день",
+            "value": _format_decimal(period_total / len(rows)),
+            "description": f"{rows[0]['day']} - {current['day']}",
+        },
+        {
+            "title": "Пиковый день",
+            "value": _format_int(peak_value),
+            "description": peak_day,
+        },
+    ]
+
+
+def _build_single_segment_kpis(
+    *,
+    rows: list[dict[str, Any]],
+    segment_code: str,
+) -> list[dict[str, str]]:
+    first = rows[0]
+    current = rows[-1]
     week_ago = rows[-8] if len(rows) >= 8 else first
 
-    def value(row: dict[str, Any]) -> int:
-        if segment_code:
-            return int(row.get(segment_code) or 0)
-        return int(row.get("technical_total") or 0)
-
-    current_value = value(current)
-    first_value = value(first)
+    values = [_row_value(row, segment_code) for row in rows]
+    current_value = _row_value(current, segment_code)
+    first_value = _row_value(first, segment_code)
+    week_ago_value = _row_value(week_ago, segment_code)
     delta = current_value - first_value
-    target_title = _find_segment_name(segment_code) if segment_code else "Сумма рядов на графике"
     return [
         {
             "title": "На конец периода",
             "value": _format_int(current_value),
-            "description": target_title,
-        },
-        {
-            "title": "Предыдущий день",
-            "value": _format_int(value(previous)),
-            "description": previous["day"],
-        },
-        {
-            "title": "7 дней назад",
-            "value": _format_int(value(week_ago)),
-            "description": week_ago["day"],
+            "description": _find_segment_name(segment_code),
         },
         {
             "title": "Изменение за период",
             "value": _format_signed_int(delta),
             "description": f"{first['day']} - {current['day']}",
         },
+        {
+            "title": "Изменение за 7 дней",
+            "value": _format_signed_int(current_value - week_ago_value),
+            "description": week_ago["day"],
+        },
+        {
+            "title": "Среднее за период",
+            "value": _format_decimal(sum(values) / len(values)),
+            "description": f"{first['day']} - {current['day']}",
+        },
     ]
+
+
+def _row_value(row: dict[str, Any], code: str) -> int:
+    return int(row.get(code) or 0)
+
+
+def _active_base_value(row: dict[str, Any]) -> int:
+    return _row_value(row, ACTIVE_30D_SEGMENT_CODE) + _row_value(row, SINGLE_VISIT_30D_SEGMENT_CODE)
+
+
+def _risk_zone_value(row: dict[str, Any]) -> int:
+    return _row_value(row, COOLING_30_60D_SEGMENT_CODE) + _row_value(row, LOST_60D_PLUS_SEGMENT_CODE)
 
 
 def _build_department_options() -> list[dict[str, str]]:
@@ -419,3 +527,13 @@ def _format_signed_int(value: int) -> str:
     if value < 0:
         return f"-{_format_int(abs(value))}"
     return "0"
+
+
+def _format_decimal(value: float) -> str:
+    return f"{value:,.1f}".replace(",", " ").replace(".", ",")
+
+
+def _format_percent(numerator: int, denominator: int) -> str:
+    if denominator <= 0:
+        return "0,0%"
+    return f"{(numerator / denominator * 100):.1f}%".replace(".", ",")

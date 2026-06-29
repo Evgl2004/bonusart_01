@@ -114,6 +114,83 @@ class SegmentDynamicsDashboardServiceTests(TestCase):
         self.assertEqual(row["lost_60d_plus"], 1)
         self.assertTrue(row["has_window_metrics"])
 
+    def test_all_segments_kpis_show_business_indicators_instead_of_row_sum(self):
+        first_date = date(2026, 6, 18)
+        current_date = self.as_of_date
+
+        active_first = self._create_guest("Активный в начале")
+        single_first = self._create_guest("Один визит в начале")
+        cooling_first = self._create_guest("Остывающий в начале")
+        lost_first = self._create_guest("Потерянный в начале")
+        self._create_window(active_first, first_date, 30, 2)
+        self._create_window(single_first, first_date, 30, 1)
+        self._create_window(cooling_first, first_date, 60, 1)
+        self._create_window(lost_first, first_date, 180, 1)
+
+        active_current_1 = self._create_guest("Активный сейчас 1")
+        active_current_2 = self._create_guest("Активный сейчас 2")
+        single_current = self._create_guest("Один визит сейчас")
+        cooling_current = self._create_guest("Остывающий сейчас")
+        lost_current_1 = self._create_guest("Потерянный сейчас 1")
+        lost_current_2 = self._create_guest("Потерянный сейчас 2")
+        self._create_window(active_current_1, current_date, 30, 2)
+        self._create_window(active_current_2, current_date, 30, 3)
+        self._create_window(single_current, current_date, 30, 1)
+        self._create_window(cooling_current, current_date, 60, 1)
+        self._create_window(lost_current_1, current_date, 180, 1)
+        self._create_window(lost_current_2, current_date, 180, 1)
+
+        self._create_daily_order(self._create_guest("Новый 22"), date(2026, 6, 22), self.department_id)
+        self._create_daily_order(self._create_guest("Новый 24"), current_date, self.department_id)
+
+        payload = build_segment_dynamics_dashboard_payload(
+            period_days=7,
+            department_id=self.department_id,
+            segment_code="all",
+            date_to=current_date,
+        )
+        kpis = {item["title"]: item for item in payload["kpis"]}
+
+        self.assertEqual(kpis["Активная база 30д"]["value"], "3")
+        self.assertIn("за период: +1", kpis["Активная база 30д"]["description"])
+        self.assertEqual(kpis["Ядро 30д"]["value"], "2")
+        self.assertIn("66,7%", kpis["Ядро 30д"]["description"])
+        self.assertEqual(kpis["Зона риска"]["value"], "3")
+        self.assertIn("за период: +1", kpis["Зона риска"]["description"])
+        self.assertEqual(kpis["Новые за период"]["value"], "2")
+        self.assertNotIn("Сумма рядов", {item["description"] for item in payload["kpis"]})
+
+    def test_all_segments_kpis_require_department_for_new_guests_period_total(self):
+        self._create_daily_order(self._create_guest("Новый без фильтра"), self.as_of_date, self.department_id)
+
+        payload = build_segment_dynamics_dashboard_payload(
+            period_days=7,
+            department_id="",
+            segment_code="all",
+            date_to=self.as_of_date,
+        )
+        kpis = {item["title"]: item for item in payload["kpis"]}
+
+        self.assertEqual(kpis["Новые за период"]["value"], "—")
+        self.assertIn("Выберите конкретное заведение", kpis["Новые за период"]["description"])
+
+    def test_new_in_venue_kpis_use_period_total_and_daily_context(self):
+        self._create_daily_order(self._create_guest("Новый 23"), date(2026, 6, 23), self.department_id)
+        self._create_daily_order(self._create_guest("Новый 24"), self.as_of_date, self.department_id)
+
+        payload = build_segment_dynamics_dashboard_payload(
+            period_days=7,
+            department_id=self.department_id,
+            segment_code="new_in_venue",
+            date_to=self.as_of_date,
+        )
+        kpis = {item["title"]: item for item in payload["kpis"]}
+
+        self.assertEqual(kpis["Новые за период"]["value"], "2")
+        self.assertEqual(kpis["Последний день"]["value"], "1")
+        self.assertEqual(kpis["Среднее в день"]["value"], "0,3")
+        self.assertEqual(kpis["Пиковый день"]["value"], "1")
+
     def test_bot_active_no_visits_180d_uses_recent_visits_window(self):
         idle_guest = self._create_guest("Бот без визитов")
         recent_guest = self._create_guest("Бот с визитом")
