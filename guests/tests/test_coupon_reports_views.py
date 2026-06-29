@@ -503,14 +503,14 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Пицца")
         self.assertContains(response, "Чай")
         self.assertContains(response, "Паста")
-        self.assertContains(response, "Воронка боевых запусков")
+        self.assertContains(response, "Купонная воронка")
         self.assertContains(response, "Динамика по дням")
-        self.assertContains(response, "Попали под сценарий")
-        self.assertContains(response, "Есть канал")
-        self.assertContains(response, "Получили купон")
+        self.assertContains(response, "Назначено купонов")
+        self.assertContains(response, "Доставлено гостям")
+        self.assertContains(response, "Отменено из-за недоставки")
         self.assertContains(response, "Применили купон")
         self.assertContains(response, "Выходные дни подсвечены")
-        self.assertContains(response, "Применения считаются по дате заказа из OLAP")
+        self.assertContains(response, "Назначения и доставки считаются по дате выдачи")
         self.assertContains(response, "Журнал пилотов")
 
         response = self.client.get(
@@ -695,9 +695,184 @@ class CouponReportsViewsTests(TestCase):
         self.assertContains(response, "Часть купонов автоматически отменена из-за недоставки")
         self.assertContains(response, "Есть купоны, которые были выданы, но сообщение гостю не доставлено")
         self.assertContains(response, "Бот заблокирован или недоступен")
-        self.assertContains(response, "Почему гости не попали в выдачу")
+        self.assertContains(response, "Технические отсечения аудитории")
         self.assertNotContains(response, "5000,0%")
         self.assertNotContains(response, "5000.0%")
+
+    def test_coupon_autoscenario_report_uses_real_assignments_not_repeated_audience_scans(self):
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-susami",
+            department_id="DEP_SUSAMI",
+            department_name="Сами Сусами",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_real_funnel",
+            name="Inactive 30 real funnel",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            is_active=True,
+            is_system=True,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            coupon_series="AUTO_REAL_FUNNEL",
+            audience_venue_filter_mode=CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE,
+            audience_venue_code="DEP_SUSAMI",
+            audience_venue_name="Сами Сусами",
+            max_recipients_per_run=100,
+            cooldown_days=30,
+        )
+        issue_run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            status=CouponAutoscenarioRun.Status.COMPLETED,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            scanned_guests=2600,
+            matched_guests=2500,
+            sendable_guests=128,
+            eligible_guests=128,
+            planned_assignments=100,
+            created_assignments=2,
+            queue_events_created=2,
+            blocked_without_channel=2372,
+        )
+        CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            status=CouponAutoscenarioRun.Status.COMPLETED,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            scanned_guests=2600,
+            matched_guests=2500,
+            sendable_guests=128,
+            eligible_guests=0,
+            planned_assignments=0,
+            created_assignments=0,
+            queue_events_created=0,
+            blocked_without_channel=2372,
+            blocked_existing_active_coupon=128,
+        )
+        guest_one = Guest.objects.create(
+            phone="+79990002001",
+            first_name="One",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        guest_two = Guest.objects.create(
+            phone="+79990002002",
+            first_name="Two",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        coupon_one = CouponRegistryEntry.objects.create(
+            series="AUTO_REAL_FUNNEL",
+            code="REAL-1",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        coupon_two = CouponRegistryEntry.objects.create(
+            series="AUTO_REAL_FUNNEL",
+            code="REAL-2",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=True,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+        )
+        assignment_one = CouponAutoscenarioAssignment.objects.create(
+            run=issue_run,
+            scenario=scenario,
+            config=config,
+            guest=guest_one,
+            coupon=coupon_one,
+            person_id=uuid4(),
+            phone_e164=guest_one.phone,
+            coupon_series=coupon_one.series,
+            coupon_code=coupon_one.code,
+            venue_code="DEP_SUSAMI",
+            venue_name="Сами Сусами",
+            assigned_at=self.now,
+            sent_at=self.now,
+            status=CouponAutoscenarioAssignment.Status.SENT,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+        )
+        CouponAutoscenarioAssignment.objects.create(
+            run=issue_run,
+            scenario=scenario,
+            config=config,
+            guest=guest_two,
+            coupon=coupon_two,
+            person_id=uuid4(),
+            phone_e164=guest_two.phone,
+            coupon_series=coupon_two.series,
+            coupon_code=coupon_two.code,
+            venue_code="DEP_SUSAMI",
+            venue_name="Сами Сусами",
+            assigned_at=self.now,
+            sent_at=self.now,
+            status=CouponAutoscenarioAssignment.Status.SENT,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+        )
+        event = NotificationEvent.objects.create(
+            scenario=scenario,
+            guest=guest_one,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            source_ref=f"coupon_autoscenario_assignment:{assignment_one.id}",
+            dedupe_key=f"coupon_autoscenario_assignment:{assignment_one.id}",
+            status=NotificationEvent.Status.TASK_CREATED,
+            planned_send_at=self.now,
+            coupon_code=coupon_one.code,
+            coupon_external_id=f"{coupon_one.series}:{coupon_one.code}",
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type="telegram",
+            priority=DispatchTask.Priority.NORMAL,
+            status=DispatchTask.Status.DONE,
+            guest=guest_one,
+            notification_scenario=scenario,
+            notification_event=event,
+            external_chat_id="1001",
+            message_text="delivered",
+            idempotency_key=f"coupon-autoscenario-real-funnel-{assignment_one.id}",
+            available_at=self.now,
+            scheduled_at=self.now,
+            enqueued_at=self.now,
+            started_at=self.now,
+            finished_at=self.now,
+            attempt=1,
+        )
+
+        response = self.client.get(
+            reverse("reports_coupon_autoscenarios"),
+            {
+                "scenario_code": scenario.code,
+                "date_from": self.now.date().isoformat(),
+                "date_to": self.now.date().isoformat(),
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        report = response.context["autoscenario_report"]
+        self.assertEqual(report["runs_total"], 2)
+        self.assertEqual(report["issue_runs_total"], 1)
+        self.assertEqual(report["assignments_total"], 2)
+        self.assertEqual(report["delivered_assignments"], 1)
+        self.assertEqual(report["funnel_rows"][0]["label"], "Назначено купонов")
+        self.assertEqual(report["funnel_rows"][0]["value"], 2)
+        self.assertEqual(report["funnel_rows"][1]["label"], "Доставлено гостям")
+        self.assertEqual(report["funnel_rows"][1]["value"], 1)
+        self.assertEqual(report["decision_run_totals"]["matched_guests"], 2500)
+        self.assertNotEqual(report["decision_run_totals"]["matched_guests"], 5000)
+        report_day = next(row for row in report["daily_rows"] if row["date"] == self.now.date().isoformat())
+        self.assertEqual(report_day["issue_runs_count"], 1)
+        self.assertEqual(report_day["issued_coupons"], 2)
+        self.assertEqual(report_day["delivered_coupons"], 1)
+        self.assertContains(response, "Сами Сусами")
+        self.assertContains(response, 'value="DEP_SUSAMI"', html=False)
+        self.assertNotContains(response, "Попали под сценарий")
+        self.assertNotContains(response, "Есть канал доставки")
 
     def test_coupon_autoscenario_report_keeps_pilot_runs_out_of_marketing_kpi(self):
         guest = Guest.objects.create(

@@ -20,7 +20,7 @@
   <div class="card border-0 shadow-sm mb-3">
     <div class="card-body">
       <form method="get" class="row g-3 align-items-end">
-        <div class="col-12 col-xl-4">
+        <div class="col-12 col-xl-3">
           <label class="form-label">Автосценарий</label>
           <select class="form-select" name="scenario_code">
             {% for scenario in scenarios %}
@@ -38,19 +38,14 @@
           <label class="form-label">Период по</label>
           <input class="form-control" type="date" name="date_to" value="{{ filters.date_to }}">
         </div>
-        <div class="col-12 col-sm-6 col-xl-2">
+        <div class="col-12 col-sm-6 col-xl-3">
           <label class="form-label">Заведение по заказу</label>
           <select class="form-select" name="venue_code">
-            <option value="">Все заведения</option>
-            {% if autoscenario_report.revenue.venue_rows %}
-              {% for row in autoscenario_report.revenue.venue_rows %}
-                <option value="{{ row.venue_code }}" {% if filters.venue_code == row.venue_code %}selected{% endif %}>
-                  {{ row.venue_name }}
-                </option>
-              {% endfor %}
-            {% elif filters.venue_code %}
-              <option value="{{ filters.venue_code }}" selected>{{ filters.venue_code }}</option>
-            {% endif %}
+            {% for venue_choice in report_venue_choices %}
+              <option value="{{ venue_choice.code }}" {% if venue_choice.selected %}selected{% endif %}>
+                {{ venue_choice.label }}
+              </option>
+            {% endfor %}
           </select>
           <div class="form-text">Для выручки, среднего чека и позиций.</div>
         </div>
@@ -102,9 +97,9 @@
           <div class="col-12 col-lg-6">
             <div class="text-secondary small mb-1">Что показывает этот отчёт</div>
             <div>
-              Исторические результаты боевых запусков: сколько реальных гостей попало под сценарий,
-              сколько из них доступны для отправки, сколько получили купон, сколько применили купон
-              и какую оплаченную сумму дали заказы с купоном.
+              Исторические результаты купонного контура: сколько купонов реально назначено,
+              сколько сообщений доставлено, сколько купонов отменено из-за недоставки,
+              сколько применено и какую оплаченную сумму дали заказы с купоном.
             </div>
           </div>
           <div class="col-12 col-lg-6">
@@ -119,18 +114,18 @@
       <div class="col-12 col-md-6 col-xl-3">
         <div class="card border-0 shadow-sm h-100">
           <div class="card-body">
-            <div class="text-secondary small mb-1">Боевых запусков</div>
-            <div class="h3 mb-0">{{ autoscenario_report.runs_total }}</div>
-            <div class="text-muted small">Только состояние «Активен», без пилотов.</div>
+            <div class="text-secondary small mb-1">Запусков с выдачей</div>
+            <div class="h3 mb-0">{{ autoscenario_report.issue_runs_total }}</div>
+            <div class="text-muted small">Всего боевых запусков: {{ autoscenario_report.runs_total }}.</div>
           </div>
         </div>
       </div>
       <div class="col-12 col-md-6 col-xl-3">
         <div class="card border-0 shadow-sm h-100">
           <div class="card-body">
-            <div class="text-secondary small mb-1">Выдано купонов</div>
+            <div class="text-secondary small mb-1">Назначено купонов</div>
             <div class="h3 mb-0">{{ autoscenario_report.assignments_total }}</div>
-            <div class="text-muted small">Реальным гостям, без контрольных номеров.</div>
+            <div class="text-muted small">Фактические назначения, без пилотов.</div>
           </div>
         </div>
       </div>
@@ -139,7 +134,7 @@
           <div class="card-body">
             <div class="text-secondary small mb-1">Использовано купонов</div>
             <div class="h3 mb-0">{{ autoscenario_report.applied_total }}</div>
-            <div class="text-muted small">{{ autoscenario_report.usage_rate_percent }}% от выданных.</div>
+            <div class="text-muted small">{{ autoscenario_report.usage_rate_percent }}% от назначенных.</div>
           </div>
         </div>
       </div>
@@ -157,7 +152,7 @@
     <div class="row g-3 mb-3">
       <div class="col-12 col-xl-5">
         <div class="card border-0 shadow-sm h-100">
-          <div class="card-header bg-white fw-semibold">Воронка боевых запусков</div>
+          <div class="card-header bg-white fw-semibold">Купонная воронка</div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
               <thead>
@@ -189,8 +184,8 @@
           <div class="card-body">
             {% if autoscenario_report.daily_has_data %}
               <div class="text-muted small mb-2">
-                График показывает только боевые запуски: аудитория и выдача отражаются в день запуска,
-                применения распределяются по датам заказов из OLAP. Выходные дни подсвечены.
+                График показывает фактический купонный путь по дням: назначения, доставки, автоматические отмены из-за недоставки
+                и применения из OLAP. Выходные дни подсвечены.
               </div>
               <div id="autoscenarioDailyChart" style="height: 340px; min-height: 340px;"></div>
             {% else %}
@@ -208,8 +203,8 @@
       <summary class="card-header bg-white fw-semibold">Данные по дням</summary>
       <div class="card-body border-bottom">
         <div class="text-muted small">
-          Это техническая детализация боевых запусков за выбранный период. Если запусков не было,
-          строки периода будут нулевыми, а текущую аудиторию нужно смотреть через предпросмотр автосценария.
+          Это техническая детализация фактического купонного пути за выбранный период. Текущий размер аудитории
+          смотрите через предпросмотр автосценария, потому что ежедневные пересчёты сегмента не являются новой выдачей купонов.
         </div>
       </div>
       <div class="table-responsive" style="max-height: 340px; overflow-y: auto;">
@@ -217,10 +212,11 @@
           <thead>
             <tr>
               <th>Дата</th>
-              <th>Попали под сценарий</th>
-              <th>Есть канал</th>
-              <th>Получили купон</th>
-              <th>Применили</th>
+              <th>Запусков с выдачей</th>
+              <th>Назначено</th>
+              <th>Доставлено</th>
+              <th>Отменено из-за недоставки</th>
+              <th>Применено</th>
               <th>Конверсия применения</th>
             </tr>
           </thead>
@@ -231,9 +227,10 @@
                   {{ row.display_date|default:row.date }}
                   <div class="text-muted small">{{ row.weekday_short }}</div>
                 </td>
-                <td>{{ row.matched_guests }}</td>
-                <td>{{ row.sendable_guests }}</td>
+                <td>{{ row.issue_runs_count }}</td>
                 <td>{{ row.issued_coupons }}</td>
+                <td>{{ row.delivered_coupons }}</td>
+                <td>{{ row.canceled_delivery_failed_coupons }}</td>
                 <td>{{ row.used_coupons }}</td>
                 <td>{{ row.usage_rate_percent }}%</td>
               </tr>
@@ -360,29 +357,34 @@
 
       <div class="col-12 col-xl-4">
         <div class="card border-0 shadow-sm h-100">
-          <div class="card-header bg-white fw-semibold">Почему гости не попали в выдачу</div>
+          <div class="card-header bg-white fw-semibold">Технические отсечения аудитории</div>
           <div class="table-responsive">
             <table class="table table-sm align-middle mb-0">
               <tbody>
                 <tr>
+                  <th colspan="2" class="text-muted fw-normal">
+                    Показано по {{ autoscenario_report.decision_run_totals_label }}: {{ autoscenario_report.decision_runs_total }}.
+                  </th>
+                </tr>
+                <tr>
                   <th>Нет канала доставки</th>
-                  <td class="text-end">{{ autoscenario_report.run_totals.blocked_without_channel }}</td>
+                  <td class="text-end">{{ autoscenario_report.decision_run_totals.blocked_without_channel }}</td>
                 </tr>
                 <tr>
                   <th>Уже есть активный купон</th>
-                  <td class="text-end">{{ autoscenario_report.run_totals.blocked_existing_active_coupon }}</td>
+                  <td class="text-end">{{ autoscenario_report.decision_run_totals.blocked_existing_active_coupon }}</td>
                 </tr>
                 <tr>
                   <th>Уже получал купон ко дню рождения</th>
-                  <td class="text-end">{{ autoscenario_report.run_totals.blocked_existing_trigger|default:0 }}</td>
+                  <td class="text-end">{{ autoscenario_report.decision_run_totals.blocked_existing_trigger|default:0 }}</td>
                 </tr>
                 <tr>
                   <th>Пауза перед повтором</th>
-                  <td class="text-end">{{ autoscenario_report.run_totals.blocked_by_cooldown }}</td>
+                  <td class="text-end">{{ autoscenario_report.decision_run_totals.blocked_by_cooldown }}</td>
                 </tr>
                 <tr>
                   <th>Дефицит купонов</th>
-                  <td class="text-end">{{ autoscenario_report.run_totals.coupon_shortage }}</td>
+                  <td class="text-end">{{ autoscenario_report.decision_run_totals.coupon_shortage }}</td>
                 </tr>
               </tbody>
             </table>
@@ -818,9 +820,10 @@
         const weekendAreas = rows
           .filter((row) => row.is_weekend)
           .map((row) => [{ xAxis: row.date }, { xAxis: row.date }]);
-        const matchedGuests = rows.map((row) => Number(row.matched_guests || 0));
-        const sendableGuests = rows.map((row) => Number(row.sendable_guests || 0));
+        const issueRuns = rows.map((row) => Number(row.issue_runs_count || 0));
         const issuedCoupons = rows.map((row) => Number(row.issued_coupons || 0));
+        const deliveredCoupons = rows.map((row) => Number(row.delivered_coupons || 0));
+        const canceledCoupons = rows.map((row) => Number(row.canceled_delivery_failed_coupons || 0));
         const usedCoupons = rows.map((row) => Number(row.used_coupons || 0));
         const formatInt = (value) => Number(value || 0).toLocaleString("ru-RU");
         const weekendMarkArea = weekendAreas.length
@@ -849,12 +852,12 @@
               params.forEach((item) => {
                 lines.push(`${item.marker}${item.seriesName}: ${formatInt(item.value)}`);
               });
-              lines.push('<span style="color:#64748b">Применения считаются по дате заказа из OLAP.</span>');
+              lines.push('<span style="color:#64748b">Назначения и доставки считаются по дате выдачи, применения — по дате заказа из OLAP.</span>');
               return lines.join("<br/>");
             }
           },
           legend: { top: 0 },
-          grid: { left: 56, right: 56, top: 52, bottom: 54 },
+          grid: { left: 56, right: 24, top: 52, bottom: 54 },
           xAxis: {
             type: "category",
             data: dates,
@@ -864,21 +867,18 @@
               formatter: (value, index) => axisLabels[index] || value
             }
           },
-          yAxis: [
-            { type: "value", name: "Гостей", minInterval: 1 },
-            { type: "value", name: "Купонов", minInterval: 1 }
-          ],
+          yAxis: { type: "value", name: "Кол-во", minInterval: 1 },
           series: [
             {
-              name: "Попали под сценарий",
+              name: "Назначено купонов",
               type: "bar",
-              yAxisIndex: 0,
-              data: matchedGuests,
+              data: issuedCoupons,
               ...(weekendMarkArea ? { markArea: weekendMarkArea } : {})
             },
-            { name: "Есть канал", type: "bar", yAxisIndex: 0, data: sendableGuests },
-            { name: "Получили купон", type: "line", yAxisIndex: 1, smooth: true, data: issuedCoupons },
-            { name: "Применили купон", type: "line", yAxisIndex: 1, smooth: true, data: usedCoupons }
+            { name: "Доставлено", type: "bar", data: deliveredCoupons },
+            { name: "Отменено из-за недоставки", type: "bar", data: canceledCoupons },
+            { name: "Применили купон", type: "line", smooth: true, data: usedCoupons },
+            { name: "Запусков с выдачей", type: "line", smooth: true, data: issueRuns }
           ]
         });
 

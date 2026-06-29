@@ -221,6 +221,11 @@ class CouponAutoscenarioReportsView(TemplateView):
         context["scenarios"] = scenarios
         context["selected_scenario"] = selected_scenario
         context["autoscenario_report"] = report
+        context["report_venue_choices"] = self._build_venue_filter_choices(
+            scenario=selected_scenario,
+            report=report,
+            selected_venue_code=venue_code,
+        )
         context["filters"] = {
             "scenario_code": selected_scenario.code if selected_scenario else scenario_code,
             "date_from": date_from_raw,
@@ -265,6 +270,63 @@ class CouponAutoscenarioReportsView(TemplateView):
             )
         return result
 
+    @staticmethod
+    def _build_venue_filter_choices(*, scenario: NotificationScenario | None, report: dict | None, selected_venue_code: str = "") -> list[dict]:
+        """
+        Собирает список заведений для фильтра отчёта.
+
+        Фильтр нельзя строить только по выручке: до первого применения купона
+        строк OLAP ещё нет, но пользователю уже нужно выбрать заведение.
+        Поэтому берём общий справочник заведений, настройки сценария и
+        фактические строки отчёта, если они появились.
+        """
+
+        selected_code = _normalize_report_text(selected_venue_code)
+        choices: list[dict[str, object]] = [
+            {
+                "code": "",
+                "label": "Все заведения",
+                "selected": selected_code == "",
+            }
+        ]
+        seen = {""}
+
+        def add_choice(code: str | None, label: str | None = None):
+            safe_code = _normalize_report_text(code)
+            if not safe_code or safe_code == "__global__" or safe_code in seen:
+                return
+            safe_label = _normalize_report_text(label) or safe_code
+            choices.append(
+                {
+                    "code": safe_code,
+                    "label": safe_label,
+                    "selected": selected_code == safe_code,
+                }
+            )
+            seen.add(safe_code)
+
+        if scenario is not None and hasattr(scenario, "coupon_automation_config"):
+            config = scenario.coupon_automation_config
+            add_choice(config.audience_venue_code, config.audience_venue_name)
+            add_choice(config.venue_code, config.venue_name)
+            for rule in config.coupon_rules.filter(is_active=True).order_by("scope_type", "priority", "venue_name"):
+                add_choice(rule.venue_code, rule.venue_name)
+
+        for code, label in build_coupon_venue_choices(include_empty=False)[0]:
+            add_choice(code, label)
+
+        for section_name in ("revenue", "followup"):
+            section = (report or {}).get(section_name) or {}
+            for row in section.get("venue_rows") or []:
+                add_choice(row.get("venue_code"), row.get("venue_name"))
+
+        if selected_code and selected_code not in seen:
+            add_choice(selected_code, selected_code)
+            for choice in choices:
+                choice["selected"] = choice["code"] == selected_code
+
+        return choices
+
     def _build_report(self, *, scenario: NotificationScenario, date_from, date_to, venue_code: str = "") -> dict:
         all_runs_qs = (
             CouponAutoscenarioRun.objects.filter(scenario=scenario)
@@ -292,6 +354,22 @@ class CouponAutoscenarioReportsView(TemplateView):
         pilot_assignments_qs = all_assignments_qs.filter(run__execution_mode=pilot_mode)
 
         run_totals = runs_qs.aggregate(
+            scanned_guests=Sum("scanned_guests"),
+            matched_guests=Sum("matched_guests"),
+            sendable_guests=Sum("sendable_guests"),
+            eligible_guests=Sum("eligible_guests"),
+            planned_assignments=Sum("planned_assignments"),
+            created_assignments=Sum("created_assignments"),
+            queue_events_created=Sum("queue_events_created"),
+            coupon_shortage=Sum("coupon_shortage"),
+            blocked_without_channel=Sum("blocked_without_channel"),
+            blocked_existing_active_coupon=Sum("blocked_existing_active_coupon"),
+            blocked_existing_trigger=Sum("blocked_existing_trigger"),
+            blocked_by_cooldown=Sum("blocked_by_cooldown"),
+        )
+        issue_runs_qs = runs_qs.filter(created_assignments__gt=0)
+        decision_runs_qs = issue_runs_qs if issue_runs_qs.exists() else runs_qs
+        decision_run_totals = decision_runs_qs.aggregate(
             scanned_guests=Sum("scanned_guests"),
             matched_guests=Sum("matched_guests"),
             sendable_guests=Sum("sendable_guests"),
@@ -380,6 +458,7 @@ class CouponAutoscenarioReportsView(TemplateView):
         daily_rows = self._build_daily_rows(
             runs_qs=runs_qs,
             assignments_qs=assignments_qs,
+            delivery_context=delivery_context,
             date_from=date_from,
             date_to=date_to,
         )
@@ -401,26 +480,26 @@ class CouponAutoscenarioReportsView(TemplateView):
         active_assignments = sent_total + status_counts.get(CouponAutoscenarioAssignment.Status.RESERVED, 0)
         applied_total = used_total + used_after_total
         runs_total = int(runs_qs.count())
-        matched_total = int(run_totals.get("matched_guests") or 0)
-        sendable_total = int(run_totals.get("sendable_guests") or 0)
+        issue_runs_total = int(issue_runs_qs.count())
+        decision_runs_total = int(decision_runs_qs.count())
         funnel_rows = [
             {
-                "label": "Попали под сценарий",
-                "value": matched_total,
-                "percent": "100,0" if matched_total else "0,0",
-                "note": "Гости, которые подошли под условие автосценария в боевых запусках.",
-            },
-            {
-                "label": "Есть канал доставки",
-                "value": sendable_total,
-                "percent": self._format_percent(sendable_total, matched_total),
-                "note": "Есть подтверждённый Telegram/VK/MAX канал для отправки.",
-            },
-            {
-                "label": "Получили купон",
+                "label": "Назначено купонов",
                 "value": assignments_total,
-                "percent": self._format_percent(assignments_total, sendable_total),
-                "note": "Купон назначен реальному гостю, без пилотных проверок.",
+                "percent": "100,0" if assignments_total else "0,0",
+                "note": "Фактические назначения купонов реальным гостям, без пилотных проверок.",
+            },
+            {
+                "label": "Доставлено гостям",
+                "value": delivered_assignments,
+                "percent": self._format_percent(delivered_assignments, assignments_total),
+                "note": "Хотя бы один канал доставки подтвердил отправку сообщения гостю.",
+            },
+            {
+                "label": "Отменено из-за недоставки",
+                "value": canceled_delivery_failed_total,
+                "percent": self._format_percent(canceled_delivery_failed_total, assignments_total),
+                "note": "Все доступные каналы дали окончательную ошибку, купон поставлен на безопасную отмену.",
             },
             {
                 "label": "Применили купон",
@@ -478,6 +557,8 @@ class CouponAutoscenarioReportsView(TemplateView):
             "runs_rows": runs_rows,
             "latest_run": latest_run,
             "assignments_total": assignments_total,
+            "issue_runs_total": issue_runs_total,
+            "decision_runs_total": decision_runs_total,
             "assignments_rows": visible_assignments,
             "status_counts": status_counts,
             "sync_status_counts": sync_status_counts,
@@ -519,6 +600,10 @@ class CouponAutoscenarioReportsView(TemplateView):
             "delivery_assignment_base": delivery_base,
             "delivered_assignments": delivered_assignments,
             "run_totals": {key: int(value or 0) for key, value in run_totals.items()},
+            "decision_run_totals": {key: int(value or 0) for key, value in decision_run_totals.items()},
+            "decision_run_totals_label": (
+                "запусках с выдачей купонов" if issue_runs_total else "запусках без выдачи купонов"
+            ),
             "funnel_rows": funnel_rows,
             "summary": {
                 "conclusion": conclusion,
@@ -529,9 +614,11 @@ class CouponAutoscenarioReportsView(TemplateView):
             "followup": followup,
             "daily_rows": daily_rows,
             "daily_has_data": any(
-                row["matched_guests"]
-                or row["sendable_guests"]
+                row["runs_count"]
+                or row["issue_runs_count"]
                 or row["issued_coupons"]
+                or row["delivered_coupons"]
+                or row["canceled_delivery_failed_coupons"]
                 or row["used_coupons"]
                 for row in daily_rows
             ),
@@ -563,6 +650,7 @@ class CouponAutoscenarioReportsView(TemplateView):
         )
         return {
             "tasks_qs": tasks_qs,
+            "task_rows": task_rows,
             "event_rows": event_rows,
             "event_by_source_ref": event_by_source_ref,
             "latest_task_by_event_id": latest_task_by_event_id,
@@ -686,7 +774,7 @@ class CouponAutoscenarioReportsView(TemplateView):
                 else None
             )
 
-    def _build_daily_rows(self, *, runs_qs, assignments_qs, date_from, date_to) -> list[dict]:
+    def _build_daily_rows(self, *, runs_qs, assignments_qs, delivery_context, date_from, date_to) -> list[dict]:
         period_start, period_end = self._resolve_daily_period(date_from=date_from, date_to=date_to)
         daily = {
             current_date: {
@@ -695,9 +783,11 @@ class CouponAutoscenarioReportsView(TemplateView):
                 "axis_label": self._daily_axis_label(current_date),
                 "weekday_short": self.weekday_short_labels[current_date.weekday()],
                 "is_weekend": current_date.weekday() >= 5,
-                "matched_guests": 0,
-                "sendable_guests": 0,
+                "runs_count": 0,
+                "issue_runs_count": 0,
                 "issued_coupons": 0,
+                "delivered_coupons": 0,
+                "canceled_delivery_failed_coupons": 0,
                 "used_coupons": 0,
                 "usage_rate_percent": "0,0",
             }
@@ -708,23 +798,53 @@ class CouponAutoscenarioReportsView(TemplateView):
             runs_qs.filter(created_at__date__gte=period_start, created_at__date__lte=period_end)
             .values("created_at__date")
             .annotate(
-                matched_guests=Sum("matched_guests"),
-                sendable_guests=Sum("sendable_guests"),
+                runs_count=Count("id"),
+                issue_runs_count=Count("id", filter=Q(created_assignments__gt=0)),
             )
         ):
             row_date = row["created_at__date"]
             if row_date in daily:
-                daily[row_date]["matched_guests"] = int(row["matched_guests"] or 0)
-                daily[row_date]["sendable_guests"] = int(row["sendable_guests"] or 0)
+                daily[row_date]["runs_count"] = int(row["runs_count"] or 0)
+                daily[row_date]["issue_runs_count"] = int(row["issue_runs_count"] or 0)
 
-        for row in (
+        assignment_rows = list(
             assignments_qs.filter(assigned_at__date__gte=period_start, assigned_at__date__lte=period_end)
-            .values("assigned_at__date")
-            .annotate(total=Count("id"))
-        ):
-            row_date = row["assigned_at__date"]
+            .values("id", "assigned_at", "status", "status_reason")
+            .order_by("assigned_at", "id")
+        )
+        assignment_date_by_id: dict[int, object] = {}
+        canceled_by_delivery_failure = {
+            CouponAutoscenarioAssignment.Status.CANCELED,
+        }
+        for row in assignment_rows:
+            row_date = self._local_report_date(row.get("assigned_at"))
             if row_date in daily:
-                daily[row_date]["issued_coupons"] = int(row["total"] or 0)
+                daily[row_date]["issued_coupons"] += 1
+            assignment_id = int(row["id"])
+            assignment_date_by_id[assignment_id] = row_date
+            if (
+                row_date in daily
+                and row.get("status") in canceled_by_delivery_failure
+                and row.get("status_reason") == COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED
+            ):
+                daily[row_date]["canceled_delivery_failed_coupons"] += 1
+
+        delivered_assignment_ids: set[int] = set()
+        event_id_to_assignment_id: dict[int, int] = {}
+        for source_ref, event in delivery_context.get("event_by_source_ref", {}).items():
+            assignment_id = self._assignment_id_from_source_ref(source_ref)
+            if assignment_id is not None:
+                event_id_to_assignment_id[int(event.id)] = assignment_id
+        for task in delivery_context.get("task_rows", []):
+            if task.status != DispatchTask.Status.DONE or not task.notification_event_id:
+                continue
+            assignment_id = event_id_to_assignment_id.get(int(task.notification_event_id))
+            if assignment_id is not None:
+                delivered_assignment_ids.add(assignment_id)
+        for assignment_id in delivered_assignment_ids:
+            row_date = assignment_date_by_id.get(int(assignment_id))
+            if row_date in daily:
+                daily[row_date]["delivered_coupons"] += 1
 
         used_statuses = [
             CouponAutoscenarioAssignment.Status.USED,
@@ -780,6 +900,14 @@ class CouponAutoscenarioReportsView(TemplateView):
         return f"{current_date.strftime('%d.%m')}\n{cls.weekday_short_labels[current_date.weekday()]}"
 
     @staticmethod
+    def _local_report_date(value):
+        if value is None:
+            return None
+        if timezone.is_aware(value):
+            return timezone.localtime(value).date()
+        return value.date()
+
+    @staticmethod
     def _format_percent(numerator: int, denominator: int) -> str:
         if not denominator:
             return "0,0"
@@ -788,6 +916,17 @@ class CouponAutoscenarioReportsView(TemplateView):
     @staticmethod
     def _assignment_source_ref(assignment_id: int) -> str:
         return f"coupon_autoscenario_assignment:{int(assignment_id)}"
+
+    @staticmethod
+    def _assignment_id_from_source_ref(source_ref: str | None) -> int | None:
+        prefix = "coupon_autoscenario_assignment:"
+        raw = str(source_ref or "").strip()
+        if not raw.startswith(prefix):
+            return None
+        suffix = raw[len(prefix) :].strip()
+        if not suffix.isdigit():
+            return None
+        return int(suffix)
 
     @classmethod
     def _build_empty_followup_snapshot(cls, *, venue_code: str = "") -> dict:
