@@ -44,6 +44,10 @@
     background: #f8fafc;
     width: 100%;
   }
+
+  .coupon-settings-tab-pane[hidden] {
+    display: none !important;
+  }
 </style>
 
 <div class="container-fluid">
@@ -172,7 +176,7 @@
     </div>
   </div>
 
-  <form method="post" class="card border-0 shadow-sm">
+  <form method="post" class="card border-0 shadow-sm" novalidate>
     <div class="card-body">
       {% csrf_token %}
 
@@ -183,6 +187,33 @@
         </div>
       {% endif %}
 
+      <div class="border-bottom pb-3 mb-4">
+        <div class="text-muted small mb-2">Разделы настроек автосценария</div>
+        <nav class="nav nav-pills flex-wrap gap-2 coupon-settings-tabs" aria-label="Разделы настроек автосценария">
+          <button class="nav-link active" type="button" data-settings-tab-target="state" aria-selected="true">
+            Состояние
+          </button>
+          <button class="nav-link" type="button" data-settings-tab-target="messages" aria-selected="false">
+            Сообщения
+          </button>
+          {% if fill_birthday_request_form %}
+            <button class="nav-link" type="button" data-settings-tab-target="chain" aria-selected="false">
+              Цепочка
+            </button>
+          {% endif %}
+          <button class="nav-link" type="button" data-settings-tab-target="coupons" aria-selected="false">
+            Купоны
+          </button>
+          <button class="nav-link" type="button" data-settings-tab-target="pilot" aria-selected="false">
+            Пилот
+          </button>
+          <button class="nav-link" type="button" data-settings-tab-target="advanced" aria-selected="false">
+            Дополнительно
+          </button>
+        </nav>
+      </div>
+
+      <div class="coupon-settings-tab-pane" data-settings-tab-pane="state">
       <h2 class="h6 mb-3">Состояние и ограничения</h2>
       <div class="row g-3">
         <div class="col-12 col-lg-3">
@@ -231,7 +262,9 @@
           </div>
         </div>
       {% endif %}
+      </div>
 
+      <div class="coupon-settings-tab-pane" data-settings-tab-pane="messages">
       <hr class="my-4">
 
       <h2 class="h6 mb-3">Окно отправки сообщений</h2>
@@ -341,8 +374,10 @@
           в каждый выбранный бот, где у гостя есть активная привязка и разрешение на сообщения.
         </div>
       </details>
+      </div>
 
       {% if fill_birthday_request_form %}
+        <div class="coupon-settings-tab-pane" data-settings-tab-pane="chain">
         <hr class="my-4">
 
         <section class="border rounded p-3">
@@ -451,8 +486,10 @@
             </div>
           </div>
         </section>
+        </div>
       {% endif %}
 
+      <div class="coupon-settings-tab-pane" data-settings-tab-pane="coupons">
       <hr class="my-4">
 
       <h2 class="h6 mb-3">Выбор заведений для купонов</h2>
@@ -655,7 +692,9 @@
           </td>
         </tr>
       </template>
+      </div>
 
+      <div class="coupon-settings-tab-pane" data-settings-tab-pane="pilot">
       <hr class="my-4">
 
       <h2 class="h6 mb-3">Пилотная проверка</h2>
@@ -680,7 +719,9 @@
           </div>
         </div>
       </div>
+      </div>
 
+      <div class="coupon-settings-tab-pane" data-settings-tab-pane="advanced">
       <hr class="my-4">
 
       <details class="border rounded p-3">
@@ -748,6 +789,7 @@
           </div>
         </div>
       </details>
+      </div>
     </div>
     <div class="card-footer bg-white d-flex justify-content-end gap-2">
       <a class="btn btn-outline-secondary" href="{{ scenarios_url }}">Отмена</a>
@@ -762,6 +804,52 @@
     var rowTemplate = document.getElementById("coupon-rule-empty-row-template");
     var rowsContainer = document.getElementById("coupon-rule-rows");
     var totalFormsInput = document.querySelector('input[name="coupon_rules-TOTAL_FORMS"]');
+    var settingsTabButtons = document.querySelectorAll("[data-settings-tab-target]");
+    var settingsTabPanes = document.querySelectorAll("[data-settings-tab-pane]");
+
+    var activateSettingsTab = function (tabName) {
+      settingsTabButtons.forEach(function (button) {
+        var isActive = button.dataset.settingsTabTarget === tabName;
+        button.classList.toggle("active", isActive);
+        button.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      settingsTabPanes.forEach(function (pane) {
+        pane.hidden = pane.dataset.settingsTabPane !== tabName;
+      });
+    };
+
+    if (settingsTabButtons.length && settingsTabPanes.length) {
+      var initialSettingsTab = "state";
+      if (window.location.hash.indexOf("#settings-") === 0) {
+        initialSettingsTab = window.location.hash.replace("#settings-", "");
+      }
+      var firstErrorNode = document.querySelector(
+        "[data-settings-tab-pane] .text-danger, [data-settings-tab-pane] .alert-danger"
+      );
+      if (firstErrorNode) {
+        var firstErrorPane = firstErrorNode.closest("[data-settings-tab-pane]");
+        if (firstErrorPane) {
+          initialSettingsTab = firstErrorPane.dataset.settingsTabPane;
+        }
+      }
+      var hasInitialSettingsTab = Array.prototype.some.call(settingsTabButtons, function (button) {
+        return button.dataset.settingsTabTarget === initialSettingsTab;
+      });
+      if (!hasInitialSettingsTab) {
+        initialSettingsTab = "state";
+      }
+      activateSettingsTab(initialSettingsTab);
+
+      settingsTabButtons.forEach(function (button) {
+        button.addEventListener("click", function () {
+          var tabName = button.dataset.settingsTabTarget;
+          activateSettingsTab(tabName);
+          if (window.history && window.history.replaceState) {
+            window.history.replaceState(null, "", "#settings-" + tabName);
+          }
+        });
+      });
+    }
 
     if (addButton && rowTemplate && rowsContainer && totalFormsInput) {
       addButton.addEventListener("click", function () {
