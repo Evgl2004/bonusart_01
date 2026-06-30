@@ -74,6 +74,20 @@
     </div>
   {% endif %}
 
+  {% if source_config %}
+    <div class="alert alert-info" role="status">
+      <div class="fw-semibold mb-1">Создание на основе существующего автосценария</div>
+      <div>
+        Основа:
+        <code>{{ source_config.scenario.code }}</code>
+        · {{ source_config.scenario.name }}
+      </div>
+      <div class="small mt-1">
+        Мастер создаст отдельный черновик: исходный автосценарий, его запуски и назначения не изменятся.
+      </div>
+    </div>
+  {% endif %}
+
   <form method="post" class="card border-0 shadow-sm">
     <div class="card-body">
       {% csrf_token %}

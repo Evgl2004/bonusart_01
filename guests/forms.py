@@ -1,4 +1,6 @@
-﻿from django import forms
+﻿from copy import deepcopy
+
+from django import forms
 from django.db import transaction
 from django.utils import timezone
 
@@ -172,7 +174,54 @@ class CouponAutomationScenarioCreateForm(forms.Form):
         },
     )
 
+    @staticmethod
+    def _build_unique_copy_code(source_code: str) -> str:
+        source_code = str(source_code or "coupon_autoscenario").strip().lower() or "coupon_autoscenario"
+        base = f"{source_code}_copy"
+        candidate = base[:80]
+        index = 2
+        while NotificationScenario.objects.filter(code=candidate).exists():
+            suffix = f"_{index}"
+            candidate = f"{base[:80 - len(suffix)]}{suffix}"
+            index += 1
+        return candidate
+
+    @classmethod
+    def _build_initial_from_source(cls, source_config: CouponAutomationConfig) -> dict:
+        source_scenario = source_config.scenario
+        source_template = getattr(source_scenario, "template", None)
+        scenario_settings = source_scenario.settings if isinstance(source_scenario.settings, dict) else {}
+        config_settings = source_config.settings if isinstance(source_config.settings, dict) else {}
+        source_bot_ids = list(
+            source_scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True)
+        )
+
+        return {
+            "code": cls._build_unique_copy_code(source_scenario.code),
+            "name": f"{source_scenario.name} (копия)",
+            "scenario_type": source_config.scenario_type,
+            "inactive_days": scenario_settings.get("inactive_days") or source_config.cooldown_days or 30,
+            "birthday_preparation_window_days": config_settings.get("birthday_preparation_window_days") or 7,
+            "template_mode": COUPON_TEMPLATE_MODE_CREATE,
+            "template_name": f"{getattr(source_template, 'name', 'Шаблон автосценария')} (копия)",
+            "template_description": (
+                f"На основе шаблона ID {source_template.pk}"
+                if source_template is not None and source_template.pk
+                else ""
+            ),
+            "template_text": str(getattr(source_template, "message_text", "") or ""),
+            "notification_bot_profiles": source_bot_ids,
+        }
+
     def __init__(self, *args, **kwargs):
+        self.source_config: CouponAutomationConfig | None = kwargs.pop("source_config", None)
+        initial = dict(kwargs.pop("initial", {}) or {})
+        if self.source_config is not None:
+            source_initial = self._build_initial_from_source(self.source_config)
+            source_initial.update(initial)
+            initial = source_initial
+        if initial:
+            kwargs["initial"] = initial
         super().__init__(*args, **kwargs)
         self.fields["notification_bot_profiles"].queryset = BotProfile.objects.filter(
             is_active=True
@@ -199,6 +248,12 @@ class CouponAutomationScenarioCreateForm(forms.Form):
         scenario_type = cleaned_data.get("scenario_type")
         template_mode = cleaned_data.get("template_mode") or COUPON_TEMPLATE_MODE_CREATE
         cleaned_data["template_mode"] = template_mode
+
+        if self.source_config is not None and scenario_type != self.source_config.scenario_type:
+            self.add_error(
+                "scenario_type",
+                "При создании на основе типовая основа должна совпадать с исходным автосценарием.",
+            )
 
         if scenario_type == CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON:
             if cleaned_data.get("inactive_days") is None:
@@ -265,6 +320,7 @@ class CouponAutomationScenarioCreateForm(forms.Form):
 
     def save(self) -> CouponAutomationConfig:
         with transaction.atomic():
+            source_scenario = self.source_config.scenario if self.source_config is not None else None
             if self.cleaned_data["template_mode"] == COUPON_TEMPLATE_MODE_EXISTING:
                 template = self.cleaned_data["existing_template"]
             else:
@@ -274,6 +330,8 @@ class CouponAutomationScenarioCreateForm(forms.Form):
                 description_parts.append(
                     f"Создано для купонного автосценария: {scenario_code}"
                 )
+                if source_scenario is not None:
+                    description_parts.append(f"Основа: {source_scenario.code}")
                 template = MessageTemplate.objects.create(
                     name=str(self.cleaned_data["template_name"]).strip(),
                     description=" ".join(description_parts),
@@ -281,36 +339,118 @@ class CouponAutomationScenarioCreateForm(forms.Form):
                     created_by="mailings_v2_user",
                     is_active=True,
                 )
+            scenario_kwargs = {
+                "priority": NotificationScenario.Priority.BULK,
+                "target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "send_window_begin": None,
+                "send_window_end": None,
+                "timezone": "Asia/Yekaterinburg",
+                "cooldown_minutes": 0,
+                "max_per_day_per_guest": None,
+            }
+            if source_scenario is not None:
+                scenario_kwargs.update(
+                    {
+                        "priority": source_scenario.priority,
+                        "target_mode": source_scenario.target_mode,
+                        "distribution_mode": source_scenario.distribution_mode,
+                        "send_window_begin": source_scenario.send_window_begin,
+                        "send_window_end": source_scenario.send_window_end,
+                        "timezone": source_scenario.timezone,
+                        "cooldown_minutes": source_scenario.cooldown_minutes,
+                        "max_per_day_per_guest": source_scenario.max_per_day_per_guest,
+                    }
+                )
             scenario = NotificationScenario(
                 code=self.cleaned_data["code"],
                 name=str(self.cleaned_data["name"]).strip(),
-                description="",
+                description=(
+                    f"Создано на основе сценария {source_scenario.code}."
+                    if source_scenario is not None
+                    else ""
+                ),
                 is_active=False,
                 is_system=False,
                 trigger_type=NotificationScenario.TriggerType.SCHEDULE,
                 template=template,
-                priority=NotificationScenario.Priority.BULK,
-                target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
-                distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
-                timezone="Asia/Yekaterinburg",
                 settings=self._build_scenario_settings(),
+                **scenario_kwargs,
             )
             scenario.full_clean()
             scenario.save()
             scenario.bot_profiles.set(self.cleaned_data.get("notification_bot_profiles") or [])
 
+            source_settings = (
+                deepcopy(self.source_config.settings)
+                if self.source_config is not None and isinstance(self.source_config.settings, dict)
+                else {}
+            )
+            source_settings.update(self._build_config_settings())
+            config_kwargs = {
+                "venue_selection_mode": CouponAutomationConfig.VenueSelectionMode.LAST_ORDER,
+                "audience_venue_filter_mode": CouponAutomationConfig.AudienceVenueFilterMode.DISABLED,
+                "audience_venue_code": None,
+                "audience_venue_name": None,
+                "coupon_series": None,
+                "venue_code": None,
+                "venue_name": None,
+                "coupon_validity_days": 14,
+                "coupon_title_template": None,
+                "coupon_promo_text_template": None,
+                "min_order_amount": None,
+                "iikocard_action_note": None,
+                "max_recipients_per_run": 100,
+                "max_active_coupons_per_guest": 1,
+                "cooldown_days": self._build_cooldown_days(),
+                "settings": source_settings,
+            }
+            if self.source_config is not None:
+                config_kwargs.update(
+                    {
+                        "venue_selection_mode": self.source_config.venue_selection_mode,
+                        "audience_venue_filter_mode": self.source_config.audience_venue_filter_mode,
+                        "audience_venue_code": self.source_config.audience_venue_code,
+                        "audience_venue_name": self.source_config.audience_venue_name,
+                        "coupon_series": self.source_config.coupon_series,
+                        "venue_code": self.source_config.venue_code,
+                        "venue_name": self.source_config.venue_name,
+                        "coupon_validity_days": self.source_config.coupon_validity_days,
+                        "coupon_title_template": self.source_config.coupon_title_template,
+                        "coupon_promo_text_template": self.source_config.coupon_promo_text_template,
+                        "min_order_amount": self.source_config.min_order_amount,
+                        "iikocard_action_note": self.source_config.iikocard_action_note,
+                        "max_recipients_per_run": self.source_config.max_recipients_per_run,
+                        "max_active_coupons_per_guest": self.source_config.max_active_coupons_per_guest,
+                        "cooldown_days": self.source_config.cooldown_days,
+                    }
+                )
             config = CouponAutomationConfig(
                 scenario=scenario,
                 scenario_type=self.cleaned_data["scenario_type"],
                 execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
-                coupon_validity_days=14,
-                max_recipients_per_run=100,
-                max_active_coupons_per_guest=1,
-                cooldown_days=self._build_cooldown_days(),
-                settings=self._build_config_settings(),
+                **config_kwargs,
             )
             config.full_clean()
             config.save()
+            if self.source_config is not None:
+                for source_rule in self.source_config.coupon_rules.order_by("priority", "id"):
+                    copied_rule = CouponAutomationRule(
+                        config=config,
+                        is_active=source_rule.is_active,
+                        scope_type=source_rule.scope_type,
+                        coupon_series=source_rule.coupon_series,
+                        venue_code=source_rule.venue_code,
+                        venue_name=source_rule.venue_name,
+                        coupon_validity_days=source_rule.coupon_validity_days,
+                        priority=source_rule.priority,
+                        min_order_amount=source_rule.min_order_amount,
+                        iikocard_action_note=source_rule.iikocard_action_note,
+                        coupon_title_template=source_rule.coupon_title_template,
+                        coupon_promo_text_template=source_rule.coupon_promo_text_template,
+                    )
+                    copied_rule.full_clean()
+                    copied_rule.save()
 
         return config
 

@@ -3067,6 +3067,23 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
     form_class = CouponAutomationScenarioCreateForm
     template_name = "mailing_v2/coupon_autoscenario_create.html"
 
+    def _get_source_config(self) -> CouponAutomationConfig | None:
+        if hasattr(self, "_source_config"):
+            return self._source_config
+
+        source_config_id = str(self.request.GET.get("source_config_id") or "").strip()
+        if not source_config_id.isdigit():
+            self._source_config = None
+            return self._source_config
+
+        self._source_config = (
+            CouponAutomationConfig.objects.select_related("scenario", "scenario__template")
+            .prefetch_related("scenario__bot_profiles", "coupon_rules")
+            .filter(pk=int(source_config_id))
+            .first()
+        )
+        return self._source_config
+
     @staticmethod
     def _build_existing_template_payload() -> dict[str, dict[str, object]]:
         preview_guest = SimpleNamespace(
@@ -3120,9 +3137,22 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
             }
         return payload
 
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        kwargs["source_config"] = self._get_source_config()
+        return kwargs
+
     def form_valid(self, form):
         config = form.save()
         self.object = config
+        source_config = self._get_source_config()
+        if source_config is not None:
+            messages.success(
+                self.request,
+                "Купонный автосценарий создан как черновик на основе выбранного автосценария. "
+                "Проверьте правила купонов и пилот перед запуском.",
+            )
+            return redirect(self.get_success_url())
         messages.success(
             self.request,
             "Купонный автосценарий создан как черновик. Настройте правила купонов и пилот перед запуском.",
@@ -3140,6 +3170,7 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
         context["scenarios_url"] = reverse("mailings_v2_scenarios")
         context["has_active_bot_profiles"] = BotProfile.objects.filter(is_active=True).exists()
         context["existing_template_payload"] = self._build_existing_template_payload()
+        context["source_config"] = self._get_source_config()
         return context
 
 

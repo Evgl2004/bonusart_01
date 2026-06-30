@@ -2425,6 +2425,223 @@ class MailingsV2ViewsTests(TestCase):
         self.assertNotContains(response, "/admin/guests/botprofile/")
         self.assertNotContains(response, "админке")
 
+    def test_coupon_autoscenario_create_view_prefills_from_source_config(self):
+        """
+        Оператор может открыть мастер создания на основе существующего автосценария.
+        """
+        source_template = MessageTemplate.objects.create(
+            name="Источник: шаблон купона",
+            description="",
+            message_text="Привет, {{ first_name }}! Купон: {coupon_code}",
+            created_by="operator",
+            is_active=True,
+        )
+        source_scenario = NotificationScenario.objects.create(
+            code="source_coupon_45d",
+            name="Источник: не был 45 дней",
+            template=source_template,
+            is_active=True,
+            is_system=False,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.HIGH,
+            target_mode=NotificationScenario.TargetMode.ALL_BOTS,
+            distribution_mode=NotificationScenario.DistributionMode.UNIFORM,
+            send_window_begin=time(9, 0),
+            send_window_end=time(18, 0),
+            timezone="Asia/Yekaterinburg",
+            settings={"coupon_required": True, "inactive_days": 45},
+        )
+        source_scenario.bot_profiles.add(self.bot)
+        source_config = CouponAutomationConfig.objects.create(
+            scenario=source_scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            coupon_validity_days=21,
+            max_recipients_per_run=25,
+            cooldown_days=45,
+        )
+
+        response = self.client.get(
+            f"{reverse('mailings_v2_coupon_autoscenario_create')}?source_config_id={source_config.id}",
+            secure=True,
+        )
+        form = response.context["form"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Создание на основе существующего автосценария")
+        self.assertContains(response, "source_coupon_45d")
+        self.assertEqual(response.context["source_config"], source_config)
+        self.assertEqual(form.initial["code"], "source_coupon_45d_copy")
+        self.assertEqual(form.initial["name"], "Источник: не был 45 дней (копия)")
+        self.assertEqual(form.initial["inactive_days"], 45)
+        self.assertEqual(form.initial["template_text"], source_template.message_text)
+        self.assertEqual(form.initial["notification_bot_profiles"], [self.bot.id])
+
+    def test_coupon_autoscenario_create_view_copies_source_config_and_rules(self):
+        """
+        Создание на основе должно создать отдельный черновик и скопировать безопасные настройки и правила.
+        """
+        source_template = MessageTemplate.objects.create(
+            name="Источник: шаблон с правилами",
+            description="",
+            message_text="Ваш купон: {coupon_code}",
+            created_by="operator",
+            is_active=True,
+        )
+        source_scenario = NotificationScenario.objects.create(
+            code="source_rules_coupon",
+            name="Источник с правилами",
+            template=source_template,
+            is_active=True,
+            is_system=False,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.HIGH,
+            target_mode=NotificationScenario.TargetMode.ALL_BOTS,
+            distribution_mode=NotificationScenario.DistributionMode.UNIFORM,
+            send_window_begin=time(9, 0),
+            send_window_end=time(18, 0),
+            timezone="Asia/Yekaterinburg",
+            cooldown_minutes=60,
+            max_per_day_per_guest=1,
+            settings={"coupon_required": True, "inactive_days": 45},
+        )
+        source_scenario.bot_profiles.add(self.bot)
+        source_config = CouponAutomationConfig.objects.create(
+            scenario=source_scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            venue_selection_mode=CouponAutomationConfig.VenueSelectionMode.ALL_VISITED,
+            audience_venue_filter_mode=CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE,
+            audience_venue_code="DEP_1",
+            audience_venue_name="Сами Сусами",
+            coupon_series="SRC_FALLBACK",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=21,
+            coupon_title_template="Название источника",
+            coupon_promo_text_template="Описание источника",
+            min_order_amount="250.00",
+            iikocard_action_note="Подарок из источника",
+            max_recipients_per_run=25,
+            max_active_coupons_per_guest=2,
+            cooldown_days=45,
+            settings={"pilot_phones": ["+79120000000"]},
+        )
+        CouponAutomationRule.objects.create(
+            config=source_config,
+            is_active=True,
+            scope_type=CouponAutomationRule.ScopeType.VENUE,
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_series="SRC_DEP",
+            coupon_validity_days=14,
+            priority=10,
+            min_order_amount="300.00",
+            iikocard_action_note="Правило источника",
+            coupon_title_template="Правило название",
+            coupon_promo_text_template="Правило описание",
+        )
+
+        response = self.client.post(
+            f"{reverse('mailings_v2_coupon_autoscenario_create')}?source_config_id={source_config.id}",
+            {
+                "code": "copied_rules_coupon",
+                "name": "Копия с правилами",
+                "scenario_type": CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+                "inactive_days": "45",
+                "birthday_preparation_window_days": "",
+                "template_name": "Копия шаблона с правилами",
+                "template_description": "",
+                "template_text": "Ваш купон: {coupon_code}",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        copied_scenario = NotificationScenario.objects.get(code="copied_rules_coupon")
+        copied_config = copied_scenario.coupon_automation_config
+        copied_rule = copied_config.coupon_rules.get()
+        source_config.refresh_from_db()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(copied_scenario.is_active)
+        self.assertFalse(copied_scenario.is_system)
+        self.assertEqual(copied_scenario.priority, source_scenario.priority)
+        self.assertEqual(copied_scenario.target_mode, source_scenario.target_mode)
+        self.assertEqual(copied_scenario.distribution_mode, source_scenario.distribution_mode)
+        self.assertEqual(copied_scenario.send_window_begin, time(9, 0))
+        self.assertEqual(copied_scenario.send_window_end, time(18, 0))
+        self.assertEqual(copied_scenario.cooldown_minutes, 60)
+        self.assertEqual(copied_scenario.max_per_day_per_guest, 1)
+        self.assertEqual(list(copied_scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])
+        self.assertEqual(copied_config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
+        self.assertEqual(source_config.execution_mode, CouponAutomationConfig.ExecutionMode.AUTOMATIC)
+        self.assertEqual(copied_config.venue_selection_mode, source_config.venue_selection_mode)
+        self.assertEqual(copied_config.audience_venue_code, "DEP_1")
+        self.assertEqual(copied_config.coupon_series, "SRC_FALLBACK")
+        self.assertEqual(copied_config.coupon_validity_days, 21)
+        self.assertEqual(copied_config.max_recipients_per_run, 25)
+        self.assertEqual(copied_config.max_active_coupons_per_guest, 2)
+        self.assertEqual(copied_config.cooldown_days, 45)
+        self.assertEqual(copied_config.settings["pilot_phones"], ["+79120000000"])
+        self.assertEqual(copied_rule.coupon_series, "SRC_DEP")
+        self.assertEqual(copied_rule.venue_code, "DEP_1")
+        self.assertEqual(copied_rule.priority, 10)
+        self.assertEqual(copied_rule.coupon_title_template, "Правило название")
+        self.assertEqual(DispatchTask.objects.count(), 0)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_coupon_autoscenario_create_view_rejects_source_type_mismatch(self):
+        """
+        Копирование не должно смешивать типовую основу с настройками другой механики.
+        """
+        source_template = MessageTemplate.objects.create(
+            name="Источник для проверки типа",
+            description="",
+            message_text="Ваш купон: {coupon_code}",
+            created_by="operator",
+            is_active=True,
+        )
+        source_scenario = NotificationScenario.objects.create(
+            code="source_type_guard_coupon",
+            name="Источник проверки типа",
+            template=source_template,
+            is_active=True,
+            is_system=False,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            settings={"coupon_required": True, "inactive_days": 30},
+        )
+        source_scenario.bot_profiles.add(self.bot)
+        source_config = CouponAutomationConfig.objects.create(
+            scenario=source_scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+        )
+
+        response = self.client.post(
+            f"{reverse('mailings_v2_coupon_autoscenario_create')}?source_config_id={source_config.id}",
+            {
+                "code": "wrong_source_type_coupon",
+                "name": "Неверная типовая основа",
+                "scenario_type": CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
+                "inactive_days": "",
+                "birthday_preparation_window_days": "7",
+                "template_name": "Шаблон неверной основы",
+                "template_description": "",
+                "template_text": "Ваш купон: {coupon_code}",
+                "notification_bot_profiles": [str(self.bot.id)],
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "типовая основа должна совпадать")
+        self.assertFalse(NotificationScenario.objects.filter(code="wrong_source_type_coupon").exists())
+
     def test_coupon_autoscenario_create_view_uses_existing_template(self):
         """
         Оператор может привязать активный существующий шаблон без создания дубля.
