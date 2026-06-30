@@ -19,6 +19,26 @@
 
   {% include "mailing_v2/_coupon_autoscenario_nav.html" with config=config autoscenario_active_tab=autoscenario_active_tab autoscenario_urls=autoscenario_urls %}
 
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Маршруты оператора</h2>
+    </div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="{{ autoscenario_urls.settings_state }}">Состояние и лимиты</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ autoscenario_urls.settings_messages }}">Сообщения и каналы</a>
+        {% if chain_steps|length > 1 %}
+          <a class="btn btn-outline-secondary btn-sm" href="{{ autoscenario_urls.settings_chain }}">Цепочка</a>
+        {% endif %}
+        <a class="btn btn-outline-secondary btn-sm" href="{{ autoscenario_urls.settings_coupons }}">Купоны и награды</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ autoscenario_urls.settings_pilot }}">Пилот</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ autoscenario_urls.settings_advanced }}">Технические параметры</a>
+        <a class="btn btn-outline-primary btn-sm" href="{{ autoscenario_urls.preview }}">Расчёт аудитории</a>
+        <a class="btn btn-outline-primary btn-sm" href="{{ autoscenario_urls.report }}">Отчёт запусков</a>
+      </div>
+    </div>
+  </div>
+
   {% if pilot_report %}
     <div class="alert alert-success">
       <div class="fw-semibold mb-1">Пилотная волна создана</div>
@@ -184,6 +204,13 @@
                       {% endif %}
                     </td>
                     <td class="text-muted">{{ row.detail }}</td>
+                    <td class="text-end">
+                      {% if row.action_url %}
+                        <a class="btn btn-outline-secondary btn-sm" href="{{ row.action_url }}">{{ row.action_label }}</a>
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </td>
                   </tr>
                 {% endfor %}
               </tbody>
@@ -278,6 +305,7 @@
               <th>Сценарий</th>
               <th>Шаблон</th>
               <th>Статус</th>
+              <th>Маршрут</th>
             </tr>
           </thead>
           <tbody>
@@ -307,6 +335,13 @@
                     <span class="badge text-bg-success">включён</span>
                   {% else %}
                     <span class="badge text-bg-secondary">выключен</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if step.settings_url %}
+                    <a class="btn btn-outline-secondary btn-sm" href="{{ step.settings_url }}">Настроить этап</a>
+                  {% else %}
+                    <span class="text-muted">—</span>
                   {% endif %}
                 </td>
               </tr>

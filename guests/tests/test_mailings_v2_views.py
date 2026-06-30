@@ -2635,13 +2635,24 @@ class MailingsV2ViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Пульт управления автосценарием")
+        self.assertContains(response, "Маршруты оператора")
+        self.assertContains(response, "#settings-state")
+        self.assertContains(response, "#settings-messages")
+        self.assertContains(response, "#settings-coupons")
+        self.assertContains(response, "#settings-pilot")
+        self.assertContains(response, "#settings-advanced")
+        self.assertContains(response, "Расчёт аудитории")
+        self.assertContains(response, "Отчёт запусков")
         self.assertContains(response, "Центр управления")
         self.assertContains(response, "Структурная готовность")
+        self.assertContains(response, "Настроить")
         self.assertContains(response, "Основной купонный автосценарий")
+        self.assertContains(response, "Настроить этап")
         self.assertContains(response, "Последние запуски")
         self.assertContains(response, f"#{run.id}")
         self.assertContains(response, "Проверить готовность")
         self.assertContains(response, "Планировщик уведомлений")
+        self.assertNotContains(response, "#settings-chain")
 
     def test_coupon_autoscenario_control_view_builds_readiness_plan_on_request(self):
         """
@@ -2764,6 +2775,9 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Купон после заполнения даты рождения")
         self.assertContains(response, SCENARIO_CODE_FILL_BIRTHDAY_REQUEST)
         self.assertContains(response, SCENARIO_CODE_FILL_BIRTHDAY_COUPON)
+        self.assertContains(response, "#settings-chain")
+        self.assertContains(response, "Цепочка")
+        self.assertContains(response, "Настроить этап")
 
     def test_coupon_autoscenario_control_rejects_unknown_action(self):
         """

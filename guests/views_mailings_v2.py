@@ -116,6 +116,7 @@ def _build_coupon_autoscenario_urls(config: CouponAutomationConfig) -> dict[str,
     scenario = getattr(config, "scenario", None)
     scenario_code = str(getattr(scenario, "code", "") or "").strip()
     hub_url = reverse("mailings_v2_scenarios")
+    settings_url = reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk})
     preview_query = urlencode(
         {
             "coupon_scenario_code": scenario_code,
@@ -125,7 +126,13 @@ def _build_coupon_autoscenario_urls(config: CouponAutomationConfig) -> dict[str,
     report_query = urlencode({"scenario_code": scenario_code})
     return {
         "control": reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
-        "settings": reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+        "settings": settings_url,
+        "settings_state": f"{settings_url}#settings-state",
+        "settings_messages": f"{settings_url}#settings-messages",
+        "settings_chain": f"{settings_url}#settings-chain",
+        "settings_coupons": f"{settings_url}#settings-coupons",
+        "settings_pilot": f"{settings_url}#settings-pilot",
+        "settings_advanced": f"{settings_url}#settings-advanced",
         "hub": hub_url,
         "preview": f"{hub_url}?{preview_query}" if scenario_code else hub_url,
         "report": f"{reverse('reports_coupon_autoscenarios')}?{report_query}",
@@ -184,12 +191,28 @@ def _build_coupon_autoscenario_readiness(config: CouponAutomationConfig) -> dict
     Выполняет лёгкую структурную проверку без построения аудитории и резервирования купонов.
     """
     scenario = config.scenario
+    settings_url = reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk})
     rows: list[dict[str, object]] = []
     blockers: list[str] = []
     warnings: list[str] = []
 
-    def add_row(label: str, ok: bool, detail: str, *, blocker: str = "", warning: str = "") -> None:
-        rows.append({"label": label, "ok": bool(ok), "detail": detail})
+    def settings_tab_url(tab_name: str) -> str:
+        return f"{settings_url}#settings-{tab_name}"
+
+    def add_row(
+        label: str,
+        ok: bool,
+        detail: str,
+        *,
+        blocker: str = "",
+        warning: str = "",
+        settings_tab: str = "",
+    ) -> None:
+        row = {"label": label, "ok": bool(ok), "detail": detail}
+        if settings_tab:
+            row["action_url"] = settings_tab_url(settings_tab)
+            row["action_label"] = "Настроить"
+        rows.append(row)
         if not ok and blocker:
             blockers.append(blocker)
         if not ok and warning:
@@ -201,6 +224,7 @@ def _build_coupon_autoscenario_readiness(config: CouponAutomationConfig) -> dict
         template_obj is not None,
         getattr(template_obj, "name", "") or "шаблон не выбран",
         blocker="У сценария не выбран шаблон сообщения.",
+        settings_tab="messages",
     )
     if template_obj is not None:
         try:
@@ -211,9 +235,15 @@ def _build_coupon_autoscenario_readiness(config: CouponAutomationConfig) -> dict
                 False,
                 "; ".join(exc.messages),
                 blocker="В шаблоне нет корректного параметра купона.",
+                settings_tab="messages",
             )
         else:
-            add_row("Параметр купона", True, f"Параметр {COUPON_CODE_PLACEHOLDER} найден.")
+            add_row(
+                "Параметр купона",
+                True,
+                f"Параметр {COUPON_CODE_PLACEHOLDER} найден.",
+                settings_tab="messages",
+            )
 
     active_bot_count = scenario.bot_profiles.filter(is_active=True).count()
     add_row(
@@ -221,12 +251,14 @@ def _build_coupon_autoscenario_readiness(config: CouponAutomationConfig) -> dict
         active_bot_count > 0,
         f"активных ботов: {active_bot_count}",
         blocker="Не выбран ни один активный бот для отправки сообщений.",
+        settings_tab="messages",
     )
     add_row(
         "Тип запуска",
         scenario.trigger_type == NotificationScenario.TriggerType.SCHEDULE,
         scenario.get_trigger_type_display(),
         blocker="Сценарий не относится к планировщику.",
+        settings_tab="state",
     )
 
     has_coupon_source = bool(str(config.coupon_series or "").strip()) or any(
@@ -238,6 +270,7 @@ def _build_coupon_autoscenario_readiness(config: CouponAutomationConfig) -> dict
         has_coupon_source,
         "правила заведений или резервная серия заданы" if has_coupon_source else "серии купонов не заданы",
         blocker="Не настроено ни одно правило купонов или резервная серия.",
+        settings_tab="coupons",
     )
 
     planner_ok = bool(scenario.is_active)
@@ -265,8 +298,19 @@ def _build_coupon_autoscenario_chain_steps(config: CouponAutomationConfig) -> li
     Описывает этапы автосценария для операторского пульта.
     """
     scenario = config.scenario
+    settings_url = reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk})
 
-    def step_payload(number: int, title: str, scenario_obj: NotificationScenario | None, description: str) -> dict:
+    def settings_tab_url(tab_name: str) -> str:
+        return f"{settings_url}#settings-{tab_name}"
+
+    def step_payload(
+        number: int,
+        title: str,
+        scenario_obj: NotificationScenario | None,
+        description: str,
+        *,
+        settings_tab: str = "messages",
+    ) -> dict:
         template_obj = getattr(scenario_obj, "template", None) if scenario_obj else None
         display_name, technical_name = _resolve_template_title(template_obj)
         return {
@@ -279,6 +323,7 @@ def _build_coupon_autoscenario_chain_steps(config: CouponAutomationConfig) -> li
             "is_active": bool(getattr(scenario_obj, "is_active", False)),
             "template_display_name": display_name or getattr(template_obj, "name", "") or "—",
             "template_technical_name": technical_name,
+            "settings_url": settings_tab_url(settings_tab),
         }
 
     if str(scenario.code or "").strip() == SCENARIO_CODE_FILL_BIRTHDAY_COUPON:
@@ -294,12 +339,14 @@ def _build_coupon_autoscenario_chain_steps(config: CouponAutomationConfig) -> li
                 "Просьба заполнить дату рождения",
                 request_scenario,
                 "Плановый сценарий просит гостя заполнить дату рождения в боте.",
+                settings_tab="chain",
             ),
             step_payload(
                 2,
                 "Купон после заполнения даты рождения",
                 scenario,
                 "Купон выдаётся после появления события заполнения профиля.",
+                settings_tab="coupons",
             ),
         ]
 
@@ -309,6 +356,7 @@ def _build_coupon_autoscenario_chain_steps(config: CouponAutomationConfig) -> li
             "Основной купонный автосценарий",
             scenario,
             config.effective_scenario_type_label,
+            settings_tab="messages",
         )
     ]
 
