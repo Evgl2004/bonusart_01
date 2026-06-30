@@ -2356,11 +2356,14 @@ class MailingsV2ViewsTests(TestCase):
         hub_response = self.client.get(reverse("mailings_v2_scenarios"), secure=True)
         self.assertEqual(hub_response.status_code, 200)
         self.assertContains(hub_response, "Создать автосценарий")
+        self.assertNotContains(hub_response, "/admin/guests/notificationscenario/")
+        self.assertNotContains(hub_response, "/admin/guests/couponautomationconfig/")
 
         response = self.client.get(reverse("mailings_v2_coupon_autoscenario_create"), secure=True)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Код автосценария")
-        self.assertContains(response, "Тип расчёта")
+        self.assertContains(response, "Типовая основа")
+        self.assertContains(response, "на основе которой будет создан обособленный автосценарий")
         self.assertContains(response, "Использовать существующий шаблон")
         self.assertContains(response, "Разрешённые боты")
 
@@ -2406,6 +2409,21 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(config.settings, {})
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_coupon_autoscenario_create_view_does_not_offer_django_admin_for_missing_bots(self):
+        """
+        Если активных ботов нет, мастер должен показать блокировку, а не отправлять оператора в Django Admin.
+        """
+        self.bot.is_active = False
+        self.bot.save(update_fields=["is_active"])
+
+        response = self.client.get(reverse("mailings_v2_coupon_autoscenario_create"), secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Нет активных ботов")
+        self.assertContains(response, "заблокировано до настройки справочника ботов")
+        self.assertNotContains(response, "/admin/guests/botprofile/")
+        self.assertNotContains(response, "админке")
 
     def test_coupon_autoscenario_create_view_uses_existing_template(self):
         """
@@ -3211,6 +3229,8 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Разрешённые боты")
         self.assertNotContains(response, "Первое сообщение: просьба заполнить дату рождения")
         self.assertContains(response, "Telegram main")
+        self.assertNotContains(response, "/admin/guests/couponautomationconfig/")
+        self.assertNotContains(response, "/admin/guests/botprofile/")
         self.assertContains(response, "Сразу")
         self.assertContains(response, "Если “Текст карточки купона” оставить пустым")
         self.assertContains(response, "Если пусто, используется общее название из блока ниже")

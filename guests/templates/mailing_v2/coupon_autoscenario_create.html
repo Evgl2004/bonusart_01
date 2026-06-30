@@ -100,6 +100,9 @@
         <div class="col-12 col-lg-3">
           {{ form.scenario_type.label_tag }}
           {{ form.scenario_type }}
+          {% if form.scenario_type.help_text %}
+            <div class="form-text">{{ form.scenario_type.help_text }}</div>
+          {% endif %}
           {% if form.scenario_type.errors %}
             <div class="text-danger small mt-1">{{ form.scenario_type.errors|join:", " }}</div>
           {% endif %}
@@ -236,8 +239,7 @@
         </small>
       {% else %}
         <small class="text-danger d-block">
-          Нет активных ботов. Добавьте и активируйте профиль бота в
-          <a href="{{ bot_profiles_admin_url }}">админке</a>, затем обновите страницу.
+          Нет активных ботов. Создание автосценария заблокировано до настройки справочника ботов ответственным специалистом.
         </small>
       {% endif %}
       {% if form.notification_bot_profiles.errors %}

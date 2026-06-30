@@ -98,9 +98,10 @@ class CouponAutomationScenarioCreateForm(forms.Form):
         ),
     )
     scenario_type = forms.ChoiceField(
-        label="Тип расчёта",
+        label="Типовая основа",
         choices=CouponAutomationConfig.ScenarioType.choices,
         widget=forms.Select(attrs={"class": "form-select"}),
+        help_text="Выберите типовую механику, на основе которой будет создан обособленный автосценарий.",
     )
     inactive_days = forms.IntegerField(
         label="Порог неактивности, дней",

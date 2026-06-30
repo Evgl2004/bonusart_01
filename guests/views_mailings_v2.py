@@ -3139,7 +3139,6 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
         context = super().get_context_data(**kwargs)
         context["scenarios_url"] = reverse("mailings_v2_scenarios")
         context["has_active_bot_profiles"] = BotProfile.objects.filter(is_active=True).exists()
-        context["bot_profiles_admin_url"] = "/admin/guests/botprofile/"
         context["existing_template_payload"] = self._build_existing_template_payload()
         return context
 
@@ -3553,14 +3552,8 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
                     "birthday_date": "01.07",
                 },
             )
-        context["coupon_rules_admin_url"] = (
-            f"/admin/guests/couponautomationconfig/{self.object.pk}/change/"
-            if self.object.pk
-            else "/admin/guests/couponautomationconfig/"
-        )
         active_bot_profiles_qs = BotProfile.objects.filter(is_active=True)
         context["has_active_bot_profiles"] = active_bot_profiles_qs.exists()
-        context["bot_profiles_admin_url"] = "/admin/guests/botprofile/"
         return context
 
 
