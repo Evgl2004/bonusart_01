@@ -68,6 +68,7 @@ from guests.services.coupon_autoscenarios import (
     CouponAutoscenarioPreviewError,
     build_coupon_autoscenario_execution_plan,
     cleanup_coupon_autoscenario_pilot_assignment,
+    execute_coupon_autoscenario_automatic,
     execute_coupon_autoscenario_pilot,
     format_coupon_autoscenario_audience_venue_filter,
     resolve_coupon_autoscenario_type,
@@ -3608,6 +3609,57 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
             )
             return redirect(self._control_url(config, check=True))
 
+        if action == "run_controlled_automatic":
+            if config.execution_mode != CouponAutomationConfig.ExecutionMode.AUTOMATIC:
+                messages.error(
+                    request,
+                    "Боевой запуск не создан: переведите купонный автосценарий в состояние «Активен».",
+                )
+                return redirect(self._control_url(config, check=True))
+
+            configured_limit = max(1, int(config.max_recipients_per_run or 1))
+            run_limit = self._parse_positive_int(
+                request.POST.get("coupon_run_limit"),
+                default=configured_limit,
+                max_value=configured_limit,
+            )
+            scan_limit = self._parse_positive_int(
+                request.POST.get("coupon_scan_limit"),
+                default=COUPON_AUTOSCENARIO_CONTROL_SCAN_LIMIT,
+                max_value=100000,
+            )
+            try:
+                result = execute_coupon_autoscenario_automatic(
+                    scenario_code=scenario.code,
+                    limit=run_limit,
+                    scan_limit=scan_limit,
+                    confirm=True,
+                )
+            except CouponAutoscenarioPreviewError as exc:
+                messages.error(request, str(exc))
+                return redirect(self._control_url(config, check=True))
+
+            request.session["mailings_v2_coupon_control_automatic_report"] = {
+                "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+                "scenario_code": result.plan.scenario_code,
+                "run_id": result.run_id,
+                "created_assignments": result.created_assignments,
+                "queue_events_created": result.queue_events_created,
+                "planned_assignments": result.plan.planned_assignments,
+                "run_limit": run_limit,
+            }
+            request.session.modified = True
+            messages.success(
+                request,
+                (
+                    "Контролируемый боевой запуск создан: "
+                    f"запуск #{result.run_id}, лимит={run_limit}, "
+                    f"назначений={result.created_assignments}, "
+                    f"событий vtelemax={result.queue_events_created}."
+                ),
+            )
+            return redirect(self._control_url(config, check=True))
+
         if action == "check_readiness":
             return redirect(redirect_url)
 
@@ -3659,6 +3711,10 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
         context["issue_rows"] = _build_coupon_autoscenario_issue_rows(config)
         context["pilot_report"] = self.request.session.pop(
             "mailings_v2_coupon_control_pilot_report",
+            None,
+        )
+        context["automatic_report"] = self.request.session.pop(
+            "mailings_v2_coupon_control_automatic_report",
             None,
         )
         context["recent_runs"] = list(

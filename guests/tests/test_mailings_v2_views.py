@@ -2938,6 +2938,8 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Боевой режим")
         self.assertContains(response, "После пилота")
         self.assertContains(response, "Центр управления")
+        self.assertContains(response, "Контролируемый боевой запуск")
+        self.assertContains(response, 'value="run_controlled_automatic"')
         self.assertContains(response, "Структурная готовность")
         self.assertContains(response, "Настроить")
         self.assertContains(response, "Основной купонный автосценарий")
@@ -3499,6 +3501,118 @@ class MailingsV2ViewsTests(TestCase):
             confirm=True,
         )
         self.assertContains(response, "Нельзя выполнить пробный запуск")
+
+    def test_coupon_autoscenario_control_blocks_controlled_automatic_when_mode_is_not_active(self):
+        """
+        Разовый боевой запуск из пульта запрещён вне состояния "Активен".
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон боевого запуска вне режима",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_control_not_active",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.UNIFORM,
+            send_window_begin=time(10, 0),
+            send_window_end=time(20, 0),
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        with patch("guests.views_mailings_v2.execute_coupon_autoscenario_automatic") as execute_mock:
+            response = self.client.post(
+                reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+                {"action": "run_controlled_automatic"},
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        execute_mock.assert_not_called()
+        self.assertContains(response, "Боевой запуск не создан")
+        self.assertContains(response, "переведите купонный автосценарий в состояние")
+
+    def test_coupon_autoscenario_control_runs_controlled_automatic_with_configured_limit(self):
+        """
+        Разовый боевой запуск из пульта вызывает protected automatic-executor с лимитом настройки.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон малого боевого запуска",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_control_active_run",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.UNIFORM,
+            send_window_begin=time(10, 0),
+            send_window_end=time(20, 0),
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=7,
+            cooldown_days=30,
+        )
+        result = SimpleNamespace(
+            plan=SimpleNamespace(
+                scenario_code=scenario.code,
+                planned_assignments=2,
+            ),
+            run_id=42,
+            created_assignments=2,
+            queue_events_created=2,
+        )
+
+        with patch(
+            "guests.views_mailings_v2.execute_coupon_autoscenario_automatic",
+            return_value=result,
+        ) as execute_mock:
+            response = self.client.post(
+                reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+                {
+                    "action": "run_controlled_automatic",
+                    "coupon_run_limit": "999",
+                    "coupon_scan_limit": "5000",
+                },
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        execute_mock.assert_called_once_with(
+            scenario_code=scenario.code,
+            limit=7,
+            scan_limit=5000,
+            confirm=True,
+        )
+        self.assertContains(response, "Контролируемый боевой запуск создан")
+        self.assertContains(response, "запуск #42, лимит=7")
+        self.assertContains(response, "#42")
 
     def test_coupon_autoscenario_settings_view_updates_safe_pilot_fields(self):
         """
