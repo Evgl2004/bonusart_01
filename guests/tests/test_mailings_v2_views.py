@@ -2902,6 +2902,92 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
         self.assertContains(response, "Неизвестное действие пульта автосценария")
 
+    def test_coupon_autoscenario_control_enables_ready_planner(self):
+        """
+        Пульт включает планировщик только для структурно готового автосценария.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон готового планировщика",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_ready_planner",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+            {"action": "enable_planner"},
+            secure=True,
+            follow=True,
+        )
+
+        scenario.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(scenario.is_active)
+        self.assertContains(response, "Планировщик уведомлений включён.")
+
+    def test_coupon_autoscenario_control_blocks_planner_when_not_ready(self):
+        """
+        Пульт не включает планировщик при структурных блокировках автосценария.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон без параметра купона",
+            message_text="Купон будет позже.",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_blocked_planner",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+            coupon_series="",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+            {"action": "enable_planner"},
+            secure=True,
+            follow=True,
+        )
+
+        scenario.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(scenario.is_active)
+        self.assertContains(response, "Планировщик не включён")
+        self.assertContains(response, "В шаблоне нет корректного параметра купона")
+        self.assertContains(response, "Не выбран ни один активный бот")
+        self.assertContains(response, "Не настроено ни одно правило купонов")
+
     def test_coupon_autoscenario_control_shows_pilot_error_without_crash(self):
         """
         Ошибка сервиса пилота должна показываться оператору без падения страницы.

@@ -3194,6 +3194,17 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
         redirect_url = self._control_url(config, check=action in {"check_readiness"})
 
         if action == "enable_planner":
+            readiness = _build_coupon_autoscenario_readiness(config)
+            blockers = list(readiness.get("blockers") or [])
+            if blockers:
+                messages.error(
+                    request,
+                    "Планировщик не включён: устраните блокировки готовности автосценария.",
+                )
+                for blocker in blockers:
+                    messages.warning(request, str(blocker))
+                return redirect(self._control_url(config, check=True))
+
             scenario.is_active = True
             scenario.updated_at = timezone.now()
             scenario.save(update_fields=["is_active", "updated_at"])
