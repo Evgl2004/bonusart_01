@@ -45,6 +45,7 @@ from guests.models import (
     CouponAutoscenarioAssignment,
     CouponAutoscenarioRun,
     CouponCampaignAssignment,
+    CouponVtelemaxSyncQueue,
     DispatchTask,
     Guest,
     IikoCustomerCategorySyncEvent,
@@ -710,6 +711,303 @@ def _build_coupon_autoscenario_diagnostics(config: CouponAutomationConfig) -> li
             ),
         },
     ]
+
+
+def _build_coupon_autoscenario_olap_e2e_checklist(config: CouponAutomationConfig) -> dict[str, object]:
+    """
+    Собирает контрольный список проверки применения купона через OLAP.
+    """
+
+    def item(title: str, status_label: str, status_class: str, detail: str) -> dict[str, str]:
+        return {
+            "title": title,
+            "status_label": status_label,
+            "status_class": status_class,
+            "detail": detail,
+        }
+
+    assignment = (
+        CouponAutoscenarioAssignment.objects.select_related("run", "guest", "coupon")
+        .filter(config=config)
+        .order_by("-updated_at", "-created_at", "-id")
+        .first()
+    )
+    if assignment is None:
+        return {
+            "assignment": None,
+            "assignment_label": "",
+            "coupon_label": "",
+            "guest_label": "",
+            "items": [
+                item(
+                    "Купон выдан в автосценарии",
+                    "ожидает",
+                    "text-bg-secondary",
+                    "Сначала создайте пилотную волну или дождитесь боевого запуска.",
+                ),
+                item(
+                    "Синхронизация выдачи во vtelemax",
+                    "ожидает",
+                    "text-bg-secondary",
+                    "Событие появится после создания назначения купона.",
+                ),
+                item(
+                    "Сообщение отправлено гостю",
+                    "ожидает",
+                    "text-bg-secondary",
+                    "Отправка начнётся после подтверждения выдачи во vtelemax.",
+                ),
+                item(
+                    "Применение найдено через OLAP",
+                    "ожидает",
+                    "text-bg-secondary",
+                    "После применения на кассе дождитесь OLAP и синхронизации применений.",
+                ),
+                item(
+                    "Статус применения отправлен во vtelemax",
+                    "ожидает",
+                    "text-bg-secondary",
+                    "Событие `status_update` появится после фиксации применения купона.",
+                ),
+            ],
+        }
+
+    assignment_event = (
+        CouponVtelemaxSyncQueue.objects.filter(
+            autoscenario_assignment=assignment,
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+        )
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    status_update_event = (
+        CouponVtelemaxSyncQueue.objects.filter(
+            autoscenario_assignment=assignment,
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+        )
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+
+    used_statuses = {
+        CouponAutoscenarioAssignment.Status.USED,
+        CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+    }
+    delivered_statuses = used_statuses | {CouponAutoscenarioAssignment.Status.SENT}
+    is_used = assignment.status in used_statuses
+    is_delivered = assignment.status in delivered_statuses
+    is_canceled = assignment.status == CouponAutoscenarioAssignment.Status.CANCELED
+    is_error = assignment.status == CouponAutoscenarioAssignment.Status.ERROR
+
+    coupon_label = f"{assignment.coupon_series}:{assignment.coupon_code}"
+    if assignment.phone_e164:
+        guest_label = assignment.phone_e164
+    elif assignment.guest_id:
+        guest_label = f"гость #{assignment.guest_id}"
+    else:
+        guest_label = "гость не определён"
+    assignment_label = f"#{assignment.id}"
+
+    checklist_items: list[dict[str, str]] = []
+    if is_error:
+        checklist_items.append(
+            item(
+                "Купон выдан в автосценарии",
+                "ошибка",
+                "text-bg-danger",
+                assignment.status_details or assignment.status_reason or "Назначение купона завершилось ошибкой.",
+            )
+        )
+    elif is_canceled:
+        checklist_items.append(
+            item(
+                "Купон выдан в автосценарии",
+                "отменено",
+                "text-bg-secondary",
+                f"Назначение {assignment_label} отменено, купон {coupon_label} не подходит для E2E-проверки.",
+            )
+        )
+    else:
+        checklist_items.append(
+            item(
+                "Купон выдан в автосценарии",
+                "готово",
+                "text-bg-success",
+                f"Назначение {assignment_label}, купон {coupon_label}, получатель: {guest_label}.",
+            )
+        )
+
+    if (
+        assignment.vtelemax_sync_status == CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR
+        or getattr(assignment_event, "status", None) == CouponVtelemaxSyncQueue.Status.ERROR
+    ):
+        checklist_items.append(
+            item(
+                "Синхронизация выдачи во vtelemax",
+                "ошибка",
+                "text-bg-danger",
+                assignment.vtelemax_sync_error
+                or getattr(assignment_event, "last_error", "")
+                or "vtelemax отклонил или не подтвердил выдачу купона.",
+            )
+        )
+    elif (
+        assignment.vtelemax_sync_status == CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK
+        or getattr(assignment_event, "status", None) == CouponVtelemaxSyncQueue.Status.ACKED
+    ):
+        checklist_items.append(
+            item(
+                "Синхронизация выдачи во vtelemax",
+                "подтверждено",
+                "text-bg-success",
+                "Выдача купона подтверждена vtelemax, можно контролировать доставку сообщения.",
+            )
+        )
+    else:
+        event_status = assignment_event.get_status_display() if assignment_event else "событие не создано"
+        checklist_items.append(
+            item(
+                "Синхронизация выдачи во vtelemax",
+                "ожидает",
+                "text-bg-warning text-dark",
+                f"Текущее состояние события выдачи: {event_status}.",
+            )
+        )
+
+    if is_delivered:
+        checklist_items.append(
+            item(
+                "Сообщение отправлено гостю",
+                "отправлено",
+                "text-bg-success",
+                f"Текущий статус назначения: {assignment.get_status_display()}.",
+            )
+        )
+    elif is_canceled:
+        checklist_items.append(
+            item(
+                "Сообщение отправлено гостю",
+                "отменено",
+                "text-bg-secondary",
+                "Назначение отменено, сообщение по этому купону не нужно ждать.",
+            )
+        )
+    elif is_error:
+        checklist_items.append(
+            item(
+                "Сообщение отправлено гостю",
+                "ошибка",
+                "text-bg-danger",
+                assignment.status_details or "Назначение находится в ошибке.",
+            )
+        )
+    else:
+        checklist_items.append(
+            item(
+                "Сообщение отправлено гостю",
+                "ожидает",
+                "text-bg-warning text-dark",
+                f"Текущий статус назначения: {assignment.get_status_display()}.",
+            )
+        )
+
+    if is_used:
+        used_details = []
+        if assignment.used_order_id:
+            used_details.append(f"заказ #{assignment.used_order_id}")
+        if assignment.used_business_date:
+            used_details.append(f"дата бизнеса {assignment.used_business_date:%Y-%m-%d}")
+        if assignment.used_at:
+            used_details.append(f"зафиксировано {timezone.localtime(assignment.used_at):%Y-%m-%d %H:%M}")
+        checklist_items.append(
+            item(
+                "Применение найдено через OLAP",
+                "найдено",
+                "text-bg-success",
+                ", ".join(used_details) or "Купон отмечен как применённый.",
+            )
+        )
+    elif is_canceled:
+        checklist_items.append(
+            item(
+                "Применение найдено через OLAP",
+                "не требуется",
+                "text-bg-secondary",
+                "Назначение отменено до применения.",
+            )
+        )
+    elif is_error:
+        checklist_items.append(
+            item(
+                "Применение найдено через OLAP",
+                "заблокировано",
+                "text-bg-danger",
+                "Сначала устраните ошибку назначения купона.",
+            )
+        )
+    else:
+        checklist_items.append(
+            item(
+                "Применение найдено через OLAP",
+                "ожидает",
+                "text-bg-warning text-dark",
+                "Оставьте купон активным, примените его на кассе и дождитесь OLAP-синхронизации.",
+            )
+        )
+
+    if not is_used:
+        checklist_items.append(
+            item(
+                "Статус применения отправлен во vtelemax",
+                "после применения",
+                "text-bg-secondary",
+                "Обновление статуса отправляется только после фиксации применения купона.",
+            )
+        )
+    elif status_update_event is None:
+        checklist_items.append(
+            item(
+                "Статус применения отправлен во vtelemax",
+                "не создано",
+                "text-bg-warning text-dark",
+                "Применение найдено, но событие `status_update` для vtelemax ещё не создано.",
+            )
+        )
+    elif status_update_event.status == CouponVtelemaxSyncQueue.Status.ACKED:
+        checklist_items.append(
+            item(
+                "Статус применения отправлен во vtelemax",
+                "подтверждено",
+                "text-bg-success",
+                "vtelemax подтвердил обновление статуса применённого купона.",
+            )
+        )
+    elif status_update_event.status == CouponVtelemaxSyncQueue.Status.ERROR:
+        checklist_items.append(
+            item(
+                "Статус применения отправлен во vtelemax",
+                "ошибка",
+                "text-bg-danger",
+                status_update_event.last_error or "vtelemax не подтвердил обновление статуса применения.",
+            )
+        )
+    else:
+        checklist_items.append(
+            item(
+                "Статус применения отправлен во vtelemax",
+                "ожидает",
+                "text-bg-warning text-dark",
+                f"Текущее состояние `status_update`: {status_update_event.get_status_display()}.",
+            )
+        )
+
+    return {
+        "assignment": assignment,
+        "assignment_label": assignment_label,
+        "coupon_label": coupon_label,
+        "guest_label": guest_label,
+        "items": checklist_items,
+    }
 
 
 def _build_coupon_autoscenario_issue_rows(config: CouponAutomationConfig) -> list[dict[str, object]]:
@@ -3357,6 +3655,7 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
         context["control_plan"] = plan
         context["control_plan_error"] = plan_error
         context["diagnostic_rows"] = _build_coupon_autoscenario_diagnostics(config)
+        context["olap_e2e_checklist"] = _build_coupon_autoscenario_olap_e2e_checklist(config)
         context["issue_rows"] = _build_coupon_autoscenario_issue_rows(config)
         context["pilot_report"] = self.request.session.pop(
             "mailings_v2_coupon_control_pilot_report",

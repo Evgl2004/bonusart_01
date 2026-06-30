@@ -2965,6 +2965,145 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Планировщик уведомлений")
         self.assertNotContains(response, "#settings-chain")
 
+    def test_coupon_autoscenario_control_olap_checklist_waits_without_assignments(self):
+        """
+        Чек-лист OLAP в пульте должен явно показывать ожидание, если купоны ещё не выдавались.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон чек-листа без назначений",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_no_olap_assignment",
+            name="Остывшие 30 дней: без назначений",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Контроль применения через OLAP")
+        self.assertContains(response, "Назначений купонов пока нет")
+        self.assertContains(response, "Сначала создайте пилотную волну")
+        self.assertContains(response, "Событие `status_update` появится после фиксации применения купона")
+
+    def test_coupon_autoscenario_control_olap_checklist_shows_used_assignment(self):
+        """
+        Чек-лист OLAP должен показывать применённый купон и ACK `status_update` во vtelemax.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон чек-листа применения",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_used_olap_assignment",
+            name="Остывшие 30 дней: применение через OLAP",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+        run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            execution_mode=config.execution_mode,
+            matched_guests=1,
+            created_assignments=1,
+        )
+        guest = Guest.objects.create(
+            phone="+79990009900",
+            first_name="Анна",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_30D",
+            code="AUTO-OLAP-USED-1",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+            assigned_at=self.now,
+        )
+        assignment = CouponAutoscenarioAssignment.objects.create(
+            run=run,
+            scenario=scenario,
+            config=config,
+            guest=guest,
+            coupon=coupon,
+            phone_e164=guest.phone,
+            coupon_series="AUTO_30D",
+            coupon_code="AUTO-OLAP-USED-1",
+            status=CouponAutoscenarioAssignment.Status.USED,
+            used_at=self.now,
+            used_order_id=777001,
+            used_business_date=self.now.date(),
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.OK,
+            vtelemax_synced_at=self.now,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.ASSIGNMENTS,
+            autoscenario_assignment=assignment,
+            payload_json={"autoscenario_assignment_id": assignment.id},
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+        CouponVtelemaxSyncQueue.objects.create(
+            direction=CouponVtelemaxSyncQueue.Direction.STATUS_UPDATE,
+            autoscenario_assignment=assignment,
+            payload_json={
+                "autoscenario_assignment_id": assignment.id,
+                "status": CouponAutoscenarioAssignment.Status.USED,
+            },
+            status=CouponVtelemaxSyncQueue.Status.ACKED,
+            sent_at=self.now,
+            ack_at=self.now,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Контроль применения через OLAP")
+        self.assertContains(response, "купон: AUTO_30D:AUTO-OLAP-USED-1")
+        self.assertContains(response, "Применение найдено через OLAP")
+        self.assertContains(response, "заказ #777001")
+        self.assertContains(response, "Статус применения отправлен во vtelemax")
+        self.assertContains(response, "vtelemax подтвердил обновление статуса применённого купона")
+
     def test_coupon_autoscenario_control_view_builds_readiness_plan_on_request(self):
         """
         Проверка готовности в пульте использует существующий сервис построения плана без запуска.
