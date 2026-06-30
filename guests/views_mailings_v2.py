@@ -712,6 +712,107 @@ def _build_coupon_autoscenario_diagnostics(config: CouponAutomationConfig) -> li
     ]
 
 
+def _build_coupon_autoscenario_issue_rows(config: CouponAutomationConfig) -> list[dict[str, object]]:
+    """
+    Возвращает последние конкретные проблемы автосценария для операторского пульта.
+    """
+
+    def compact_text(value: object, *, default: str = "—", limit: int = 180) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return default
+        if len(text) <= limit:
+            return text
+        return f"{text[: limit - 1].rstrip()}…"
+
+    rows: list[dict[str, object]] = []
+
+    for run in CouponAutoscenarioRun.objects.filter(
+        config=config,
+        status=CouponAutoscenarioRun.Status.ERROR,
+    ).order_by("-updated_at", "-id")[:5]:
+        run_messages = list(run.blockers or []) or list(run.warnings or [])
+        rows.append(
+            {
+                "created_at": run.updated_at or run.created_at,
+                "source": "Технический запуск",
+                "object_label": f"#{run.id}",
+                "status_label": run.get_status_display(),
+                "detail": compact_text("; ".join(str(item) for item in run_messages), default="Ошибка запуска."),
+            }
+        )
+
+    assignment_issue_filter = (
+        Q(status=CouponAutoscenarioAssignment.Status.ERROR)
+        | Q(vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR)
+        | Q(iiko_category_add_status=CouponAutoscenarioAssignment.IikoCategorySyncStatus.ERROR)
+    )
+    for assignment in (
+        CouponAutoscenarioAssignment.objects.filter(config=config)
+        .filter(assignment_issue_filter)
+        .order_by("-updated_at", "-id")[:5]
+    ):
+        status_parts = [assignment.get_status_display()]
+        if assignment.vtelemax_sync_status == CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR:
+            status_parts.append(f"vtelemax: {assignment.get_vtelemax_sync_status_display()}")
+        if assignment.iiko_category_add_status == CouponAutoscenarioAssignment.IikoCategorySyncStatus.ERROR:
+            status_parts.append(f"iikoCard: {assignment.get_iiko_category_add_status_display()}")
+        rows.append(
+            {
+                "created_at": assignment.updated_at or assignment.created_at,
+                "source": "Назначение купона",
+                "object_label": f"#{assignment.id} {assignment.coupon_series}:{assignment.coupon_code}",
+                "status_label": "; ".join(status_parts),
+                "detail": compact_text(
+                    assignment.vtelemax_sync_error
+                    or assignment.iiko_category_add_error
+                    or assignment.status_details
+                    or assignment.status_reason,
+                    default="Ошибка назначения купона.",
+                ),
+            }
+        )
+
+    for event in (
+        NotificationEvent.objects.filter(
+            scenario=config.scenario,
+            status=NotificationEvent.Status.ERROR,
+        ).order_by("-updated_at", "-id")[:5]
+    ):
+        rows.append(
+            {
+                "created_at": event.updated_at or event.created_at,
+                "source": "Событие уведомления",
+                "object_label": f"#{event.id}",
+                "status_label": event.get_status_display(),
+                "detail": compact_text(event.error_text, default="Ошибка обработки события."),
+            }
+        )
+
+    for task in (
+        DispatchTask.objects.filter(
+            notification_scenario=config.scenario,
+            status=DispatchTask.Status.FAILED,
+        )
+        .select_related("bot_profile")
+        .order_by("-updated_at", "-id")[:5]
+    ):
+        provider_label = task.get_provider_type_display()
+        if task.bot_profile_id:
+            provider_label = f"{provider_label} · {task.bot_profile.name}"
+        rows.append(
+            {
+                "created_at": task.updated_at or task.created_at,
+                "source": "Задача доставки",
+                "object_label": f"#{task.id} {provider_label}",
+                "status_label": task.get_status_display(),
+                "detail": compact_text(task.last_error, default="Ошибка доставки сообщения."),
+            }
+        )
+
+    return sorted(rows, key=lambda row: row["created_at"], reverse=True)[:10]
+
+
 def _coupon_autoscenario_audience_venue_filter_summary(
     *,
     mode: str | None,
@@ -3197,6 +3298,7 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
         context["control_plan"] = plan
         context["control_plan_error"] = plan_error
         context["diagnostic_rows"] = _build_coupon_autoscenario_diagnostics(config)
+        context["issue_rows"] = _build_coupon_autoscenario_issue_rows(config)
         context["pilot_report"] = self.request.session.pop(
             "mailings_v2_coupon_control_pilot_report",
             None,

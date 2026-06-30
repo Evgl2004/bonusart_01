@@ -2656,7 +2656,8 @@ class MailingsV2ViewsTests(TestCase):
             venue_code="DEP_1",
             venue_name="Сами Сусами",
             status=CouponAutoscenarioAssignment.Status.RESERVED,
-            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR,
+            vtelemax_sync_error="vtelemax отклонил купон",
         )
         event = NotificationEvent.objects.create(
             scenario=scenario,
@@ -2674,6 +2675,7 @@ class MailingsV2ViewsTests(TestCase):
             notification_event=event,
             guest=guest,
             message_text="Тестовая доставка",
+            last_error="Ошибка отправки в Telegram",
         )
 
         response = self.client.get(
@@ -2715,6 +2717,13 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Задачи доставки")
         self.assertContains(response, "ожидает: 0, в очереди: 0, доставлено: 0")
         self.assertContains(response, "ошибки")
+        self.assertContains(response, "Последние проблемы")
+        self.assertContains(response, "Назначение купона")
+        self.assertContains(response, "vtelemax отклонил купон")
+        self.assertContains(response, "Событие уведомления")
+        self.assertContains(response, "Тестовая ошибка события")
+        self.assertContains(response, "Задача доставки")
+        self.assertContains(response, "Ошибка отправки в Telegram")
         self.assertContains(response, "Последние запуски")
         self.assertContains(response, f"#{run.id}")
         self.assertContains(response, "Проверить готовность")
