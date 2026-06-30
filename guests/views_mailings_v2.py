@@ -577,6 +577,141 @@ def _build_coupon_autoscenario_launch_steps(
     return steps
 
 
+def _build_coupon_autoscenario_diagnostics(config: CouponAutomationConfig) -> list[dict[str, object]]:
+    """
+    Собирает краткую диагностику результата автосценария для операторского пульта.
+    """
+    run_stats = CouponAutoscenarioRun.objects.filter(config=config).aggregate(
+        total=Count("id"),
+        completed=Count("id", filter=Q(status=CouponAutoscenarioRun.Status.COMPLETED)),
+        sync_pending=Count("id", filter=Q(status=CouponAutoscenarioRun.Status.SYNC_PENDING)),
+        error=Count("id", filter=Q(status=CouponAutoscenarioRun.Status.ERROR)),
+    )
+    assignment_stats = CouponAutoscenarioAssignment.objects.filter(config=config).aggregate(
+        total=Count("id"),
+        reserved=Count("id", filter=Q(status=CouponAutoscenarioAssignment.Status.RESERVED)),
+        sent=Count("id", filter=Q(status=CouponAutoscenarioAssignment.Status.SENT)),
+        used=Count(
+            "id",
+            filter=Q(
+                status__in=[
+                    CouponAutoscenarioAssignment.Status.USED,
+                    CouponAutoscenarioAssignment.Status.USED_AFTER_CAMPAIGN,
+                ]
+            ),
+        ),
+        error=Count("id", filter=Q(status=CouponAutoscenarioAssignment.Status.ERROR)),
+        vtelemax_pending=Count(
+            "id",
+            filter=Q(vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING),
+        ),
+        vtelemax_error=Count(
+            "id",
+            filter=Q(vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.ERROR),
+        ),
+        iiko_pending=Count(
+            "id",
+            filter=Q(iiko_category_add_status=CouponAutoscenarioAssignment.IikoCategorySyncStatus.PENDING),
+        ),
+        iiko_error=Count(
+            "id",
+            filter=Q(iiko_category_add_status=CouponAutoscenarioAssignment.IikoCategorySyncStatus.ERROR),
+        ),
+    )
+    event_stats = NotificationEvent.objects.filter(scenario=config.scenario).aggregate(
+        total=Count("id"),
+        task_created=Count("id", filter=Q(status=NotificationEvent.Status.TASK_CREATED)),
+        skipped=Count("id", filter=Q(status=NotificationEvent.Status.SKIPPED)),
+        error=Count("id", filter=Q(status=NotificationEvent.Status.ERROR)),
+    )
+    task_stats = DispatchTask.objects.filter(notification_scenario=config.scenario).aggregate(
+        total=Count("id"),
+        pending=Count("id", filter=Q(status=DispatchTask.Status.PENDING)),
+        queued=Count("id", filter=Q(status=DispatchTask.Status.QUEUED)),
+        done=Count("id", filter=Q(status=DispatchTask.Status.DONE)),
+        failed=Count("id", filter=Q(status=DispatchTask.Status.FAILED)),
+    )
+
+    def safe_int(stats: dict[str, object], key: str) -> int:
+        return int(stats.get(key) or 0)
+
+    def status_class(error_count: int, pending_count: int = 0) -> str:
+        if error_count:
+            return "text-bg-danger"
+        if pending_count:
+            return "text-bg-warning text-dark"
+        return "text-bg-success"
+
+    def status_label(error_count: int, pending_count: int = 0) -> str:
+        if error_count:
+            return "ошибки"
+        if pending_count:
+            return "ожидает"
+        return "без ошибок"
+
+    run_errors = safe_int(run_stats, "error")
+    run_pending = safe_int(run_stats, "sync_pending")
+    assignment_errors = (
+        safe_int(assignment_stats, "error")
+        + safe_int(assignment_stats, "vtelemax_error")
+        + safe_int(assignment_stats, "iiko_error")
+    )
+    assignment_pending = safe_int(assignment_stats, "vtelemax_pending") + safe_int(
+        assignment_stats,
+        "iiko_pending",
+    )
+    event_errors = safe_int(event_stats, "error")
+    task_errors = safe_int(task_stats, "failed")
+    task_pending = safe_int(task_stats, "pending") + safe_int(task_stats, "queued")
+
+    return [
+        {
+            "title": "Технические запуски",
+            "value": safe_int(run_stats, "total"),
+            "status_label": status_label(run_errors, run_pending),
+            "status_class": status_class(run_errors, run_pending),
+            "detail": (
+                f"завершено: {safe_int(run_stats, 'completed')}, "
+                f"ожидает vtelemax: {safe_int(run_stats, 'sync_pending')}, "
+                f"ошибок: {safe_int(run_stats, 'error')}"
+            ),
+        },
+        {
+            "title": "Назначения купонов",
+            "value": safe_int(assignment_stats, "total"),
+            "status_label": status_label(assignment_errors, assignment_pending),
+            "status_class": status_class(assignment_errors, assignment_pending),
+            "detail": (
+                f"отправлено: {safe_int(assignment_stats, 'sent')}, "
+                f"использовано: {safe_int(assignment_stats, 'used')}, "
+                f"резерв: {safe_int(assignment_stats, 'reserved')}"
+            ),
+        },
+        {
+            "title": "События уведомлений",
+            "value": safe_int(event_stats, "total"),
+            "status_label": status_label(event_errors),
+            "status_class": status_class(event_errors),
+            "detail": (
+                f"задач создано: {safe_int(event_stats, 'task_created')}, "
+                f"пропущено: {safe_int(event_stats, 'skipped')}, "
+                f"ошибок: {safe_int(event_stats, 'error')}"
+            ),
+        },
+        {
+            "title": "Задачи доставки",
+            "value": safe_int(task_stats, "total"),
+            "status_label": status_label(task_errors, task_pending),
+            "status_class": status_class(task_errors, task_pending),
+            "detail": (
+                f"ожидает: {safe_int(task_stats, 'pending')}, "
+                f"в очереди: {safe_int(task_stats, 'queued')}, "
+                f"доставлено: {safe_int(task_stats, 'done')}"
+            ),
+        },
+    ]
+
+
 def _coupon_autoscenario_audience_venue_filter_summary(
     *,
     mode: str | None,
@@ -3061,6 +3196,7 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
         context["check_requested"] = check_requested
         context["control_plan"] = plan
         context["control_plan_error"] = plan_error
+        context["diagnostic_rows"] = _build_coupon_autoscenario_diagnostics(config)
         context["pilot_report"] = self.request.session.pop(
             "mailings_v2_coupon_control_pilot_report",
             None,

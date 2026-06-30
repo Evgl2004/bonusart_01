@@ -389,6 +389,28 @@
     </div>
   </div>
 
+  <div class="card border-0 shadow-sm mt-3">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Диагностика результата</h2>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        {% for row in diagnostic_rows %}
+          <div class="col-12 col-lg-3 d-flex">
+            <div class="border rounded p-3 w-100 h-100">
+              <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                <div class="text-muted small">{{ row.title }}</div>
+                <span class="badge {{ row.status_class }}">{{ row.status_label }}</span>
+              </div>
+              <div class="h4 mb-1">{{ row.value }}</div>
+              <div class="text-muted small">{{ row.detail }}</div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
   <div class="row g-3 mt-1">
     <div class="col-12 col-xl-6">
       <div class="card border-0 shadow-sm h-100">

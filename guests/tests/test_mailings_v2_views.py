@@ -22,6 +22,7 @@ from guests.models import (
     BotProfile,
     CouponAutomationConfig,
     CouponAutomationRule,
+    CouponAutoscenarioAssignment,
     CouponAutoscenarioRun,
     CouponCampaignAssignment,
     CouponRegistryEntry,
@@ -2627,6 +2628,53 @@ class MailingsV2ViewsTests(TestCase):
             matched_guests=3,
             created_assignments=1,
         )
+        guest = Guest.objects.create(
+            phone="+79990002635",
+            first_name="Пётр",
+            created_at=self.now,
+            updated_at=self.now,
+        )
+        coupon = CouponRegistryEntry.objects.create(
+            series="AUTO_30D",
+            code="AUTO-CONTROL-1",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            source=CouponRegistryEntry.SourceType.GENERATED,
+            is_active=False,
+            pool_status=CouponRegistryEntry.PoolStatus.ASSIGNED,
+            assigned_at=self.now,
+        )
+        CouponAutoscenarioAssignment.objects.create(
+            run=run,
+            scenario=scenario,
+            config=config,
+            guest=guest,
+            coupon=coupon,
+            phone_e164=guest.phone,
+            coupon_series="AUTO_30D",
+            coupon_code="AUTO-CONTROL-1",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            status=CouponAutoscenarioAssignment.Status.RESERVED,
+            vtelemax_sync_status=CouponAutoscenarioAssignment.VtelemaxSyncStatus.PENDING,
+        )
+        event = NotificationEvent.objects.create(
+            scenario=scenario,
+            guest=guest,
+            source_type=NotificationEvent.SourceType.SCHEDULE,
+            dedupe_key="control-diagnostic-event",
+            status=NotificationEvent.Status.ERROR,
+            error_text="Тестовая ошибка события",
+        )
+        DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            status=DispatchTask.Status.FAILED,
+            notification_scenario=scenario,
+            notification_event=event,
+            guest=guest,
+            message_text="Тестовая доставка",
+        )
 
         response = self.client.get(
             reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
@@ -2657,6 +2705,16 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Настроить")
         self.assertContains(response, "Основной купонный автосценарий")
         self.assertContains(response, "Настроить этап")
+        self.assertContains(response, "Диагностика результата")
+        self.assertContains(response, "Технические запуски")
+        self.assertContains(response, "завершено: 0, ожидает vtelemax: 0, ошибок: 0")
+        self.assertContains(response, "Назначения купонов")
+        self.assertContains(response, "отправлено: 0, использовано: 0, резерв: 1")
+        self.assertContains(response, "События уведомлений")
+        self.assertContains(response, "задач создано: 0, пропущено: 0, ошибок: 1")
+        self.assertContains(response, "Задачи доставки")
+        self.assertContains(response, "ожидает: 0, в очереди: 0, доставлено: 0")
+        self.assertContains(response, "ошибки")
         self.assertContains(response, "Последние запуски")
         self.assertContains(response, f"#{run.id}")
         self.assertContains(response, "Проверить готовность")
