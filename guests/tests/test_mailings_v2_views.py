@@ -2988,6 +2988,93 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Не выбран ни один активный бот")
         self.assertContains(response, "Не настроено ни одно правило купонов")
 
+    def test_coupon_autoscenario_control_blocks_pilot_when_mode_is_not_pilot(self):
+        """
+        Ручной POST пульта не запускает пилот вне состояния "Пилот".
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон пилота вне режима",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_control_not_pilot",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        with patch("guests.views_mailings_v2.execute_coupon_autoscenario_pilot") as execute_mock:
+            response = self.client.post(
+                reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+                {"action": "run_pilot"},
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        execute_mock.assert_not_called()
+        self.assertContains(response, "Пилотная волна не создана")
+        self.assertContains(response, "переведите купонный автосценарий в состояние")
+
+    def test_coupon_autoscenario_control_blocks_pilot_when_not_ready(self):
+        """
+        Пульт не запускает пилот при структурных блокировках автосценария.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон пилота с блокировками",
+            message_text="Купон будет позже.",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_control_blocked_pilot",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        with patch("guests.views_mailings_v2.execute_coupon_autoscenario_pilot") as execute_mock:
+            response = self.client.post(
+                reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+                {"action": "run_pilot"},
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        execute_mock.assert_not_called()
+        self.assertContains(response, "Пилотная волна не создана")
+        self.assertContains(response, "В шаблоне нет корректного параметра купона")
+        self.assertContains(response, "Не выбран ни один активный бот")
+        self.assertContains(response, "Не настроено ни одно правило купонов")
+
     def test_coupon_autoscenario_control_shows_pilot_error_without_crash(self):
         """
         Ошибка сервиса пилота должна показываться оператору без падения страницы.

@@ -3228,6 +3228,24 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
             return redirect(self._control_url(config, check=True))
 
         if action == "run_pilot":
+            if config.execution_mode != CouponAutomationConfig.ExecutionMode.PILOT:
+                messages.error(
+                    request,
+                    "Пилотная волна не создана: переведите купонный автосценарий в состояние «Пилот».",
+                )
+                return redirect(self._control_url(config, check=True))
+
+            readiness = _build_coupon_autoscenario_readiness(config)
+            blockers = list(readiness.get("blockers") or [])
+            if blockers:
+                messages.error(
+                    request,
+                    "Пилотная волна не создана: устраните блокировки готовности автосценария.",
+                )
+                for blocker in blockers:
+                    messages.warning(request, str(blocker))
+                return redirect(self._control_url(config, check=True))
+
             scan_limit = self._parse_positive_int(
                 request.POST.get("coupon_scan_limit"),
                 default=COUPON_AUTOSCENARIO_CONTROL_SCAN_LIMIT,
