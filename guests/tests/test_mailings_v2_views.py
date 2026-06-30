@@ -3685,9 +3685,79 @@ class MailingsV2ViewsTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         config.refresh_from_db()
+        scenario.refresh_from_db()
         self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.PILOT)
+        self.assertTrue(scenario.is_active)
         self.assertEqual(config.coupon_series, "")
         self.assertEqual(config.coupon_rules.get().coupon_series, "AUTO_RULE_ONLY")
+
+    def test_coupon_autoscenario_settings_report_only_disables_notification_scenario(self):
+        """
+        Возврат в черновик должен выключать связанный сценарий уведомлений без Django Admin.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон возврата в черновик",
+            message_text="Привет, {{ first_name }}! Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_return_draft",
+            name="Остывшие 30 дней: возврат в черновик",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.UNIFORM,
+            send_window_begin=time(10, 0),
+            send_window_end=time(20, 0),
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+            settings={"pilot_phones": ["+79129923438"]},
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "venue_selection_mode": CouponAutomationConfig.VenueSelectionMode.LAST_ORDER,
+                "audience_venue_filter_mode": CouponAutomationConfig.AudienceVenueFilterMode.DISABLED,
+                "coupon_series": "AUTO_30D",
+                "venue_code": "",
+                "coupon_validity_days": "14",
+                "max_recipients_per_run": "10",
+                "cooldown_days": "30",
+                "pilot_phones": "",
+                "min_order_amount": "",
+                "iikocard_action_note": "",
+                "coupon_promo_text_template": "",
+                "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "notification_bot_profiles": [str(self.bot.id)],
+                "notification_send_window_begin": "",
+                "notification_send_window_end": "",
+                "notification_timezone": "Asia/Yekaterinburg",
+                "coupon_rules-TOTAL_FORMS": "0",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        config.refresh_from_db()
+        scenario.refresh_from_db()
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
+        self.assertFalse(scenario.is_active)
 
     def test_coupon_autoscenario_settings_blocks_pilot_without_coupon_code_placeholder(self):
         """

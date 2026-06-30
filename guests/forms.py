@@ -1103,8 +1103,13 @@ class CouponAutomationConfigForm(forms.ModelForm):
                 )
                 scenario.send_window_begin = self.cleaned_data.get("notification_send_window_begin")
                 scenario.send_window_end = self.cleaned_data.get("notification_send_window_end")
+                scenario.is_active = instance.execution_mode in {
+                    CouponAutomationConfig.ExecutionMode.PILOT,
+                    CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+                }
                 scenario.save(
                     update_fields=[
+                        "is_active",
                         "distribution_mode",
                         "target_mode",
                         "timezone",
