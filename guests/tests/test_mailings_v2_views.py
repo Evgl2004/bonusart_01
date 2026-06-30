@@ -22,6 +22,7 @@ from guests.models import (
     BotProfile,
     CouponAutomationConfig,
     CouponAutomationRule,
+    CouponAutoscenarioRun,
     CouponCampaignAssignment,
     CouponRegistryEntry,
     CouponVtelemaxSyncQueue,
@@ -2587,6 +2588,276 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(settings_response.status_code, 200)
         self.assertContains(settings_response, "Окно подготовки ко дню рождения")
         self.assertContains(settings_response, "сегодня + 10 дн. включительно")
+
+    def test_coupon_autoscenario_control_view_shows_panel_and_history(self):
+        """
+        Пульт купонного автосценария показывает состояние, действия, готовность и историю запусков.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон пульта",
+            message_text="Привет! Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+        run = CouponAutoscenarioRun.objects.create(
+            scenario=scenario,
+            config=config,
+            execution_mode=config.execution_mode,
+            matched_guests=3,
+            created_assignments=1,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Пульт управления автосценарием")
+        self.assertContains(response, "Центр управления")
+        self.assertContains(response, "Структурная готовность")
+        self.assertContains(response, "Основной купонный автосценарий")
+        self.assertContains(response, "Последние запуски")
+        self.assertContains(response, f"#{run.id}")
+        self.assertContains(response, "Проверить готовность")
+        self.assertContains(response, "Планировщик уведомлений")
+
+    def test_coupon_autoscenario_control_view_builds_readiness_plan_on_request(self):
+        """
+        Проверка готовности в пульте использует существующий сервис построения плана без запуска.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон проверки пульта",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        with patch("guests.views_mailings_v2.build_coupon_autoscenario_execution_plan") as plan_mock:
+            plan_mock.return_value = SimpleNamespace(
+                as_dict=lambda: {
+                    "scenario_code": scenario.code,
+                    "execution_mode": CouponAutomationConfig.ExecutionMode.PILOT,
+                    "can_execute": True,
+                    "coupon_series": "AUTO_30D",
+                    "scanned_guests": 20,
+                    "matched_guests": 5,
+                    "planned_assignments": 2,
+                    "coupon_shortage": 0,
+                    "blockers": [],
+                }
+            )
+            response = self.client.get(
+                reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+                {"check": "1"},
+                secure=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        plan_mock.assert_called_once_with(scenario_code=scenario.code, scan_limit=5000)
+        self.assertContains(response, "можно выполнить")
+        self.assertContains(response, "К выдаче")
+        self.assertContains(response, "2")
+
+    def test_coupon_autoscenario_control_view_shows_fill_birthday_chain(self):
+        """
+        Составной сценарий заполнения даты рождения должен отображаться как цепочка этапов.
+        """
+        from guests.services.notification_registry import (
+            SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
+            SCENARIO_CODE_FILL_BIRTHDAY_REQUEST,
+        )
+
+        request_template = MessageTemplate.objects.create(
+            name="Шаблон просьбы заполнить дату рождения",
+            message_text="Заполните дату рождения",
+            is_active=True,
+        )
+        request_scenario = NotificationScenario.objects.create(
+            code=SCENARIO_CODE_FILL_BIRTHDAY_REQUEST,
+            name="Заполнить дату рождения",
+            template=request_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+        request_scenario.bot_profiles.add(self.bot)
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон купона за дату рождения",
+            message_text="Спасибо! Купон: {coupon_code}",
+            is_active=True,
+        )
+        coupon_scenario = NotificationScenario.objects.create(
+            code=SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
+            name="Заполнил дату рождения + купон",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.BULK,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        coupon_scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=coupon_scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="BIRTHDAY_FILLED",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=365,
+        )
+
+        response = self.client.get(
+            reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Просьба заполнить дату рождения")
+        self.assertContains(response, "Купон после заполнения даты рождения")
+        self.assertContains(response, SCENARIO_CODE_FILL_BIRTHDAY_REQUEST)
+        self.assertContains(response, SCENARIO_CODE_FILL_BIRTHDAY_COUPON)
+
+    def test_coupon_autoscenario_control_rejects_unknown_action(self):
+        """
+        Неизвестное действие пульта не должно менять состояние автосценария.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон неизвестного действия",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+            {"action": "unknown_control_action"},
+            secure=True,
+            follow=True,
+        )
+
+        scenario.refresh_from_db()
+        config.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(scenario.is_active)
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
+        self.assertContains(response, "Неизвестное действие пульта автосценария")
+
+    def test_coupon_autoscenario_control_shows_pilot_error_without_crash(self):
+        """
+        Ошибка сервиса пилота должна показываться оператору без падения страницы.
+        """
+        from guests.services.coupon_autoscenarios import CouponAutoscenarioPreviewError
+
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон ошибки пилота",
+            message_text="Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon",
+            name="Остывшие 30 дней",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        with patch(
+            "guests.views_mailings_v2.execute_coupon_autoscenario_pilot",
+            side_effect=CouponAutoscenarioPreviewError("Нельзя выполнить пробный запуск"),
+        ) as execute_mock:
+            response = self.client.post(
+                reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+                {"action": "run_pilot"},
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        execute_mock.assert_called_once_with(
+            scenario_code=scenario.code,
+            scan_limit=5000,
+            confirm=True,
+        )
+        self.assertContains(response, "Нельзя выполнить пробный запуск")
 
     def test_coupon_autoscenario_settings_view_updates_safe_pilot_fields(self):
         """

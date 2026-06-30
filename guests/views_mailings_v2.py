@@ -43,6 +43,7 @@ from guests.models import (
     CouponAutomationConfig,
     CouponAutomationRule,
     CouponAutoscenarioAssignment,
+    CouponAutoscenarioRun,
     CouponCampaignAssignment,
     DispatchTask,
     Guest,
@@ -77,6 +78,7 @@ from guests.services.notification_registry import (
 )
 
 MAILINGS_V2_RUN_NOW_MAX_BATCHES = 5
+COUPON_AUTOSCENARIO_CONTROL_SCAN_LIMIT = 5000
 logger = logging.getLogger(__name__)
 
 COUPON_AUTOSCENARIO_STATE_LABELS = {
@@ -105,6 +107,210 @@ def _coupon_autoscenario_state_label(mode: str) -> str:
 
 def _coupon_autoscenario_state_hint(mode: str) -> str:
     return COUPON_AUTOSCENARIO_STATE_HINTS.get(str(mode or ""), "")
+
+
+def _build_coupon_autoscenario_urls(config: CouponAutomationConfig) -> dict[str, str]:
+    """
+    Возвращает основные переходы внутри рабочего контура купонного автосценария.
+    """
+    scenario = getattr(config, "scenario", None)
+    scenario_code = str(getattr(scenario, "code", "") or "").strip()
+    hub_url = reverse("mailings_v2_scenarios")
+    preview_query = urlencode(
+        {
+            "coupon_scenario_code": scenario_code,
+            "coupon_check": "1",
+        }
+    )
+    report_query = urlencode({"scenario_code": scenario_code})
+    return {
+        "control": reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+        "settings": reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+        "hub": hub_url,
+        "preview": f"{hub_url}?{preview_query}" if scenario_code else hub_url,
+        "report": f"{reverse('reports_coupon_autoscenarios')}?{report_query}",
+    }
+
+
+def _decorate_coupon_autoscenario_config(config: CouponAutomationConfig) -> CouponAutomationConfig:
+    """
+    Добавляет к настройке автосценария поля, удобные для шаблонов mailings-v2.
+    """
+    effective_scenario_type = resolve_coupon_autoscenario_type(config)
+    config.effective_scenario_type = effective_scenario_type
+    config.effective_scenario_type_label = dict(CouponAutomationConfig.ScenarioType.choices).get(
+        effective_scenario_type,
+        effective_scenario_type or "—",
+    )
+    template_obj = getattr(config.scenario, "template", None)
+    display_name, technical_name = _resolve_template_title(template_obj)
+    config.template_display_name = display_name
+    config.template_technical_name = technical_name
+    config.execution_state_label = _coupon_autoscenario_state_label(config.execution_mode)
+    config.execution_state_hint = _coupon_autoscenario_state_hint(config.execution_mode)
+    config.active_coupon_rules = [rule for rule in config.coupon_rules.all() if rule.is_active]
+    config.has_rule_based_coupon_selection = bool(config.active_coupon_rules)
+    config.coupon_selection_policy_label = _coupon_autoscenario_policy_label(
+        venue_selection_mode=config.venue_selection_mode
+    )
+    config.coupon_selection_policy_rows = _coupon_autoscenario_policy_rows(
+        cooldown_days=config.cooldown_days,
+        scenario_type=effective_scenario_type,
+        scenario_code=config.scenario.code,
+        birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
+        venue_selection_mode=config.venue_selection_mode,
+    )
+    config.audience_venue_filter_label = format_coupon_autoscenario_audience_venue_filter(
+        config.audience_venue_filter_mode
+    )
+    config.audience_venue_filter_summary = _coupon_autoscenario_audience_venue_filter_summary(
+        mode=config.audience_venue_filter_mode,
+        venue_code=config.audience_venue_code,
+        venue_name=config.audience_venue_name,
+        inactive_days=(config.scenario.settings or {}).get("inactive_days"),
+    )
+    selected_bots = list(config.scenario.bot_profiles.all())
+    config.notification_target_mode_label = config.scenario.get_target_mode_display()
+    config.notification_bot_profiles_summary = (
+        ", ".join(f"{bot.name} ({bot.get_provider_type_display()})" for bot in selected_bots)
+        if selected_bots
+        else "боты не выбраны"
+    )
+    return config
+
+
+def _build_coupon_autoscenario_readiness(config: CouponAutomationConfig) -> dict[str, object]:
+    """
+    Выполняет лёгкую структурную проверку без построения аудитории и резервирования купонов.
+    """
+    scenario = config.scenario
+    rows: list[dict[str, object]] = []
+    blockers: list[str] = []
+    warnings: list[str] = []
+
+    def add_row(label: str, ok: bool, detail: str, *, blocker: str = "", warning: str = "") -> None:
+        rows.append({"label": label, "ok": bool(ok), "detail": detail})
+        if not ok and blocker:
+            blockers.append(blocker)
+        if not ok and warning:
+            warnings.append(warning)
+
+    template_obj = getattr(scenario, "template", None)
+    add_row(
+        "Шаблон сообщения",
+        template_obj is not None,
+        getattr(template_obj, "name", "") or "шаблон не выбран",
+        blocker="У сценария не выбран шаблон сообщения.",
+    )
+    if template_obj is not None:
+        try:
+            validate_coupon_code_placeholder(getattr(template_obj, "message_text", ""))
+        except ValidationError as exc:
+            add_row(
+                "Параметр купона",
+                False,
+                "; ".join(exc.messages),
+                blocker="В шаблоне нет корректного параметра купона.",
+            )
+        else:
+            add_row("Параметр купона", True, f"Параметр {COUPON_CODE_PLACEHOLDER} найден.")
+
+    active_bot_count = scenario.bot_profiles.filter(is_active=True).count()
+    add_row(
+        "Разрешённые боты",
+        active_bot_count > 0,
+        f"активных ботов: {active_bot_count}",
+        blocker="Не выбран ни один активный бот для отправки сообщений.",
+    )
+    add_row(
+        "Тип запуска",
+        scenario.trigger_type == NotificationScenario.TriggerType.SCHEDULE,
+        scenario.get_trigger_type_display(),
+        blocker="Сценарий не относится к планировщику.",
+    )
+
+    has_coupon_source = bool(str(config.coupon_series or "").strip()) or any(
+        rule.is_active and str(rule.coupon_series or "").strip()
+        for rule in config.coupon_rules.all()
+    )
+    add_row(
+        "Источник купонов",
+        has_coupon_source,
+        "правила заведений или резервная серия заданы" if has_coupon_source else "серии купонов не заданы",
+        blocker="Не настроено ни одно правило купонов или резервная серия.",
+    )
+
+    planner_ok = bool(scenario.is_active)
+    add_row(
+        "Планировщик уведомлений",
+        planner_ok,
+        "включён" if planner_ok else "выключен",
+        warning="Планировщик выключен; автоматический режим не будет выполняться по расписанию.",
+    )
+    if config.execution_mode == CouponAutomationConfig.ExecutionMode.REPORT_ONLY:
+        warnings.append("Автосценарий находится в черновике: фактическая выдача купонов отключена.")
+    if config.execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
+        warnings.append("Автосценарий поставлен на паузу.")
+
+    return {
+        "rows": rows,
+        "blockers": blockers,
+        "warnings": warnings,
+        "is_ready": not blockers,
+    }
+
+
+def _build_coupon_autoscenario_chain_steps(config: CouponAutomationConfig) -> list[dict[str, object]]:
+    """
+    Описывает этапы автосценария для операторского пульта.
+    """
+    scenario = config.scenario
+
+    def step_payload(number: int, title: str, scenario_obj: NotificationScenario | None, description: str) -> dict:
+        template_obj = getattr(scenario_obj, "template", None) if scenario_obj else None
+        display_name, technical_name = _resolve_template_title(template_obj)
+        return {
+            "number": number,
+            "title": title,
+            "description": description,
+            "scenario": scenario_obj,
+            "code": str(getattr(scenario_obj, "code", "") or ""),
+            "name": str(getattr(scenario_obj, "name", "") or ""),
+            "is_active": bool(getattr(scenario_obj, "is_active", False)),
+            "template_display_name": display_name or getattr(template_obj, "name", "") or "—",
+            "template_technical_name": technical_name,
+        }
+
+    if str(scenario.code or "").strip() == SCENARIO_CODE_FILL_BIRTHDAY_COUPON:
+        request_scenario = (
+            NotificationScenario.objects.select_related("template")
+            .prefetch_related("bot_profiles")
+            .filter(code=SCENARIO_CODE_FILL_BIRTHDAY_REQUEST)
+            .first()
+        )
+        return [
+            step_payload(
+                1,
+                "Просьба заполнить дату рождения",
+                request_scenario,
+                "Плановый сценарий просит гостя заполнить дату рождения в боте.",
+            ),
+            step_payload(
+                2,
+                "Купон после заполнения даты рождения",
+                scenario,
+                "Купон выдаётся после появления события заполнения профиля.",
+            ),
+        ]
+
+    return [
+        step_payload(
+            1,
+            "Основной купонный автосценарий",
+            scenario,
+            config.effective_scenario_type_label,
+        )
+    ]
 
 
 def _coupon_autoscenario_audience_venue_filter_summary(
@@ -2124,50 +2330,7 @@ class MailingsV2ScenariosView(TemplateView):
             .order_by("scenario__code")[:100]
         )
         for config in coupon_configs:
-            effective_scenario_type = resolve_coupon_autoscenario_type(config)
-            config.effective_scenario_type = effective_scenario_type
-            config.effective_scenario_type_label = dict(
-                CouponAutomationConfig.ScenarioType.choices
-            ).get(effective_scenario_type, effective_scenario_type or "—")
-            template_obj = getattr(config.scenario, "template", None)
-            display_name, technical_name = _resolve_template_title(template_obj)
-            config.template_display_name = display_name
-            config.template_technical_name = technical_name
-            config.execution_state_label = _coupon_autoscenario_state_label(config.execution_mode)
-            config.execution_state_hint = _coupon_autoscenario_state_hint(config.execution_mode)
-            config.active_coupon_rules = [
-                rule for rule in config.coupon_rules.all() if rule.is_active
-            ]
-            config.has_rule_based_coupon_selection = bool(config.active_coupon_rules)
-            config.coupon_selection_policy_label = _coupon_autoscenario_policy_label(
-                venue_selection_mode=config.venue_selection_mode
-            )
-            config.coupon_selection_policy_rows = _coupon_autoscenario_policy_rows(
-                cooldown_days=config.cooldown_days,
-                scenario_type=effective_scenario_type,
-                scenario_code=config.scenario.code,
-                birthday_window_days=(config.settings or {}).get("birthday_preparation_window_days"),
-                venue_selection_mode=config.venue_selection_mode,
-            )
-            config.audience_venue_filter_label = format_coupon_autoscenario_audience_venue_filter(
-                config.audience_venue_filter_mode
-            )
-            config.audience_venue_filter_summary = _coupon_autoscenario_audience_venue_filter_summary(
-                mode=config.audience_venue_filter_mode,
-                venue_code=config.audience_venue_code,
-                venue_name=config.audience_venue_name,
-                inactive_days=(config.scenario.settings or {}).get("inactive_days"),
-            )
-            selected_bots = list(config.scenario.bot_profiles.all())
-            config.notification_target_mode_label = config.scenario.get_target_mode_display()
-            config.notification_bot_profiles_summary = (
-                ", ".join(
-                    f"{bot.name} ({bot.get_provider_type_display()})"
-                    for bot in selected_bots
-                )
-                if selected_bots
-                else "боты не выбраны"
-            )
+            _decorate_coupon_autoscenario_config(config)
 
         config_ids = [int(config.id) for config in coupon_configs]
         anonymous_coupon_keys_by_config: dict[int, set[tuple[str, str]]] = {
@@ -2481,6 +2644,164 @@ class MailingsV2CouponAutoscenarioCreateView(FormView):
         return context
 
 
+class MailingsV2CouponAutoscenarioControlView(TemplateView):
+    """
+    Операторский пульт купонного автосценария.
+
+    Экран не меняет правила подбора аудитории и купонов. Он собирает уже
+    существующие сервисы в безопасный центр управления: проверка готовности,
+    пилотный запуск, пауза и управление флагом планировщика.
+    """
+
+    template_name = "mailing_v2/coupon_autoscenario_control.html"
+
+    @staticmethod
+    def _parse_positive_int(raw_value: str, *, default: int, max_value: int) -> int:
+        """
+        Нормализует пользовательский лимит для безопасного расчёта.
+        """
+        try:
+            parsed = int(str(raw_value or "").strip())
+        except (TypeError, ValueError):
+            return int(default)
+        if parsed <= 0:
+            return int(default)
+        return min(parsed, max_value)
+
+    @staticmethod
+    def _control_url(config: CouponAutomationConfig, *, check: bool = False) -> str:
+        url = reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk})
+        if check:
+            return f"{url}?{urlencode({'check': '1'})}"
+        return url
+
+    def _load_config(self) -> CouponAutomationConfig:
+        return get_object_or_404(
+            CouponAutomationConfig.objects.select_related("scenario", "scenario__template").prefetch_related(
+                "scenario__bot_profiles",
+                Prefetch(
+                    "coupon_rules",
+                    queryset=CouponAutomationRule.objects.order_by("priority", "id"),
+                ),
+            ),
+            pk=self.kwargs["pk"],
+        )
+
+    def post(self, request, *args, **kwargs):
+        config = self._load_config()
+        scenario = config.scenario
+        action = str(request.POST.get("action") or "").strip()
+        redirect_url = self._control_url(config, check=action in {"check_readiness"})
+
+        if action == "enable_planner":
+            scenario.is_active = True
+            scenario.updated_at = timezone.now()
+            scenario.save(update_fields=["is_active", "updated_at"])
+            messages.success(request, "Планировщик уведомлений включён.")
+            return redirect(self._control_url(config, check=True))
+
+        if action == "disable_planner":
+            scenario.is_active = False
+            scenario.updated_at = timezone.now()
+            scenario.save(update_fields=["is_active", "updated_at"])
+            messages.success(request, "Планировщик уведомлений выключен.")
+            return redirect(self._control_url(config, check=True))
+
+        if action == "pause_autoscenario":
+            config.execution_mode = CouponAutomationConfig.ExecutionMode.PAUSED
+            config.save(update_fields=["execution_mode", "updated_at"])
+            scenario.is_active = False
+            scenario.updated_at = timezone.now()
+            scenario.save(update_fields=["is_active", "updated_at"])
+            messages.success(request, "Автосценарий поставлен на паузу, планировщик выключен.")
+            return redirect(self._control_url(config, check=True))
+
+        if action == "run_pilot":
+            scan_limit = self._parse_positive_int(
+                request.POST.get("coupon_scan_limit"),
+                default=COUPON_AUTOSCENARIO_CONTROL_SCAN_LIMIT,
+                max_value=100000,
+            )
+            try:
+                result = execute_coupon_autoscenario_pilot(
+                    scenario_code=scenario.code,
+                    scan_limit=scan_limit,
+                    confirm=True,
+                )
+            except CouponAutoscenarioPreviewError as exc:
+                messages.error(request, str(exc))
+                return redirect(self._control_url(config, check=True))
+
+            request.session["mailings_v2_coupon_control_pilot_report"] = {
+                "generated_at": timezone.localtime().strftime("%Y-%m-%d %H:%M:%S"),
+                "scenario_code": result.plan.scenario_code,
+                "run_id": result.run_id,
+                "created_assignments": result.created_assignments,
+                "queue_events_created": result.queue_events_created,
+                "planned_assignments": result.plan.planned_assignments,
+            }
+            request.session.modified = True
+            messages.success(
+                request,
+                (
+                    "Пилотная волна создана: "
+                    f"запуск #{result.run_id}, назначений={result.created_assignments}, "
+                    f"событий vtelemax={result.queue_events_created}."
+                ),
+            )
+            return redirect(self._control_url(config, check=True))
+
+        if action == "check_readiness":
+            return redirect(redirect_url)
+
+        messages.error(request, "Неизвестное действие пульта автосценария.")
+        return redirect(self._control_url(config))
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        config = _decorate_coupon_autoscenario_config(self._load_config())
+        scenario = config.scenario
+        check_requested = bool(self.request.GET.get("check"))
+
+        plan = None
+        plan_error = ""
+        if check_requested:
+            try:
+                plan_obj = build_coupon_autoscenario_execution_plan(
+                    scenario_code=scenario.code,
+                    scan_limit=COUPON_AUTOSCENARIO_CONTROL_SCAN_LIMIT,
+                )
+                plan = plan_obj.as_dict()
+                plan["execution_state_label"] = _coupon_autoscenario_state_label(
+                    plan.get("execution_mode", "")
+                )
+            except CouponAutoscenarioPreviewError as exc:
+                plan_error = str(exc)
+
+        context["config"] = config
+        context["autoscenario_active_tab"] = "control"
+        context["autoscenario_urls"] = _build_coupon_autoscenario_urls(config)
+        context["readiness"] = _build_coupon_autoscenario_readiness(config)
+        context["chain_steps"] = _build_coupon_autoscenario_chain_steps(config)
+        context["check_requested"] = check_requested
+        context["control_plan"] = plan
+        context["control_plan_error"] = plan_error
+        context["pilot_report"] = self.request.session.pop(
+            "mailings_v2_coupon_control_pilot_report",
+            None,
+        )
+        context["recent_runs"] = list(
+            CouponAutoscenarioRun.objects.filter(config=config)
+            .order_by("-created_at", "-id")[:10]
+        )
+        context["recent_assignments"] = list(
+            CouponAutoscenarioAssignment.objects.select_related("run", "guest")
+            .filter(config=config)
+            .order_by("-created_at", "-id")[:10]
+        )
+        return context
+
+
 class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
     """
     Пользовательская настройка купонного автосценария.
@@ -2600,6 +2921,8 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["scenarios_url"] = reverse("mailings_v2_scenarios")
+        context["autoscenario_active_tab"] = "settings"
+        context["autoscenario_urls"] = _build_coupon_autoscenario_urls(self.object)
         scenario_code = self.object.scenario.code if self.object and self.object.scenario_id else ""
         context["preview_url"] = (
             f"{reverse('mailings_v2_scenarios')}?{urlencode({'coupon_scenario_code': scenario_code, 'coupon_check': '1'})}"

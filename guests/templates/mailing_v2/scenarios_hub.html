@@ -195,12 +195,20 @@
                     {% endif %}
                   </td>
                   <td class="text-end">
-                    <a
-                      class="btn btn-outline-primary btn-sm"
-                      href="{% url 'mailings_v2_coupon_autoscenario_settings' config.id %}"
-                    >
-                      Настройки
-                    </a>
+                    <div class="d-flex justify-content-end gap-1 flex-wrap">
+                      <a
+                        class="btn btn-outline-primary btn-sm"
+                        href="{% url 'mailings_v2_coupon_autoscenario_control' config.id %}"
+                      >
+                        Пульт
+                      </a>
+                      <a
+                        class="btn btn-outline-secondary btn-sm"
+                        href="{% url 'mailings_v2_coupon_autoscenario_settings' config.id %}"
+                      >
+                        Настройки
+                      </a>
+                    </div>
                   </td>
                 </tr>
               </tbody>

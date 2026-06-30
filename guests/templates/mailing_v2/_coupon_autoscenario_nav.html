@@ -1,0 +1,24 @@
+{% if config and config.id %}
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body py-2">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <span class="small text-muted me-1">Купонный автосценарий:</span>
+        <a class="btn btn-sm {% if autoscenario_active_tab == 'control' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{{ autoscenario_urls.control }}">Пульт</a>
+        <a class="btn btn-sm {% if autoscenario_active_tab == 'settings' %}btn-primary{% else %}btn-outline-secondary{% endif %}" href="{{ autoscenario_urls.settings }}">Настройки</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ autoscenario_urls.preview }}">Проверка расчёта</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ autoscenario_urls.report }}">Отчёт</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ autoscenario_urls.hub }}">Все автосценарии</a>
+      </div>
+
+      <div class="small text-muted mt-2 pt-2 border-top">
+        {% if autoscenario_active_tab == 'control' %}
+          Центр управления: состояние, готовность, пилот, цепочка этапов и последние технические события.
+        {% elif autoscenario_active_tab == 'settings' %}
+          Настройки правил, сообщений, ботов, пилота, заведений и купонных серий.
+        {% else %}
+          Рабочий контур купонного автосценария.
+        {% endif %}
+      </div>
+    </div>
+  </div>
+{% endif %}

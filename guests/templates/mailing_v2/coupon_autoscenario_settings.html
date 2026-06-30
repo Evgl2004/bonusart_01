@@ -68,6 +68,8 @@
     </div>
   </details>
 
+  {% include "mailing_v2/_coupon_autoscenario_nav.html" with config=config autoscenario_active_tab=autoscenario_active_tab autoscenario_urls=autoscenario_urls %}
+
   {% if form.errors or rule_formset.errors or rule_formset.non_form_errors or fill_birthday_request_form.errors %}
     <div class="alert alert-danger" role="alert">
       <div class="fw-semibold mb-1">Настройки не сохранены.</div>
