@@ -51,6 +51,43 @@
     </div>
   {% endif %}
 
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Мастер запуска</h2>
+    </div>
+    <div class="card-body">
+      <div class="row g-3">
+        {% for step in launch_steps %}
+          <div class="col-12 col-lg-3 d-flex">
+            <div class="border rounded p-3 w-100 h-100">
+              <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                <span class="text-muted small">Шаг {{ step.number }}</span>
+                <span class="badge {{ step.status_class }}">{{ step.status_label }}</span>
+              </div>
+              <div class="fw-semibold mb-1">{{ step.title }}</div>
+              <div class="text-muted small">{{ step.detail }}</div>
+
+              {% if step.post_action %}
+                <form class="mt-3" method="post">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="{{ step.post_action }}">
+                  {% if step.post_action == "run_pilot" %}
+                    <input type="hidden" name="coupon_scan_limit" value="5000">
+                  {% endif %}
+                  <button class="btn btn-outline-primary btn-sm" type="submit" {% if step.action_disabled %}disabled{% endif %}>
+                    {{ step.action_label }}
+                  </button>
+                </form>
+              {% elif step.action_url %}
+                <a class="btn btn-outline-primary btn-sm mt-3" href="{{ step.action_url }}">{{ step.action_label }}</a>
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
   <div class="row g-3 align-items-stretch">
     <div class="col-12 col-xl-5 d-flex">
       <div class="card border-0 shadow-sm w-100 h-100">

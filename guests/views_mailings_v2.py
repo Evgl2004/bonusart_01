@@ -361,6 +361,222 @@ def _build_coupon_autoscenario_chain_steps(config: CouponAutomationConfig) -> li
     ]
 
 
+def _build_coupon_autoscenario_launch_steps(
+    config: CouponAutomationConfig,
+    readiness: dict[str, object],
+    urls: dict[str, str],
+    *,
+    check_requested: bool,
+    control_plan: dict[str, object] | None,
+    control_plan_error: str = "",
+) -> list[dict[str, object]]:
+    """
+    Собирает пошаговый мастер запуска для пульта без изменения бизнес-логики.
+    """
+    blockers = list(readiness.get("blockers") or [])
+    structurally_ready = bool(readiness.get("is_ready"))
+    execution_mode = str(config.execution_mode or "")
+    planner_enabled = bool(getattr(config.scenario, "is_active", False))
+
+    steps: list[dict[str, object]] = []
+
+    def add_step(
+        number: int,
+        title: str,
+        status_label: str,
+        status_class: str,
+        detail: str,
+        *,
+        action_label: str = "",
+        action_url: str = "",
+        post_action: str = "",
+        action_disabled: bool = False,
+    ) -> None:
+        steps.append(
+            {
+                "number": number,
+                "title": title,
+                "status_label": status_label,
+                "status_class": status_class,
+                "detail": detail,
+                "action_label": action_label,
+                "action_url": action_url,
+                "post_action": post_action,
+                "action_disabled": action_disabled,
+            }
+        )
+
+    if structurally_ready:
+        add_step(
+            1,
+            "Проверить основу",
+            "Готово",
+            "text-bg-success",
+            "Шаблон, боты и источник купонов заданы.",
+            action_label="Открыть настройки",
+            action_url=urls["settings"],
+        )
+    else:
+        add_step(
+            1,
+            "Проверить основу",
+            "Требует настройки",
+            "text-bg-warning text-dark",
+            f"Структурные блокировки: {len(blockers)}.",
+            action_label="Исправить настройки",
+            action_url=urls["settings"],
+        )
+
+    if control_plan_error:
+        add_step(
+            2,
+            "Проверить расчёт",
+            "Ошибка проверки",
+            "text-bg-danger",
+            control_plan_error,
+            action_label="Повторить проверку",
+            post_action="check_readiness",
+        )
+    elif control_plan:
+        planned_assignments = int(control_plan.get("planned_assignments") or 0)
+        if control_plan.get("can_execute"):
+            add_step(
+                2,
+                "Проверить расчёт",
+                "Готово",
+                "text-bg-success",
+                f"План можно выполнить: к выдаче {planned_assignments}.",
+                action_label="Повторить проверку",
+                post_action="check_readiness",
+            )
+        else:
+            plan_blockers = list(control_plan.get("blockers") or [])
+            add_step(
+                2,
+                "Проверить расчёт",
+                "Есть блокировки",
+                "text-bg-warning text-dark",
+                f"План построен, блокировок: {len(plan_blockers)}.",
+                action_label="Повторить проверку",
+                post_action="check_readiness",
+            )
+    elif check_requested:
+        add_step(
+            2,
+            "Проверить расчёт",
+            "Нет результата",
+            "text-bg-secondary",
+            "Расчёт не вернул данных. Проверьте настройки и повторите проверку.",
+            action_label="Повторить проверку",
+            post_action="check_readiness",
+        )
+    else:
+        add_step(
+            2,
+            "Проверить расчёт",
+            "Ожидает проверки",
+            "text-bg-secondary",
+            "Постройте план ближайшего запуска без резервирования купонов.",
+            action_label="Проверить готовность",
+            post_action="check_readiness",
+        )
+
+    if execution_mode == CouponAutomationConfig.ExecutionMode.PILOT:
+        if structurally_ready:
+            add_step(
+                3,
+                "Настроить пилот",
+                "Готов к пилоту",
+                "text-bg-info",
+                "Пилотный режим включён. Запуск создаст резерв купонов и события vtelemax.",
+                action_label="Создать пилот",
+                post_action="run_pilot",
+            )
+        else:
+            add_step(
+                3,
+                "Настроить пилот",
+                "Ждёт исправлений",
+                "text-bg-warning text-dark",
+                "Сначала устраните структурные блокировки автосценария.",
+                action_label="Открыть пилот",
+                action_url=urls["settings_pilot"],
+            )
+    elif execution_mode == CouponAutomationConfig.ExecutionMode.AUTOMATIC:
+        add_step(
+            3,
+            "Настроить пилот",
+            "Пройдено",
+            "text-bg-success",
+            "Автосценарий уже переведён в автоматический режим.",
+            action_label="Открыть отчёт",
+            action_url=urls["report"],
+        )
+    elif execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
+        add_step(
+            3,
+            "Настроить пилот",
+            "На паузе",
+            "text-bg-secondary",
+            "Автосценарий остановлен; перед пилотом выберите рабочий режим.",
+            action_label="Открыть режим",
+            action_url=urls["settings_state"],
+        )
+    else:
+        add_step(
+            3,
+            "Настроить пилот",
+            "Нужно включить пилот",
+            "text-bg-secondary",
+            "Переведите купонный режим в пилот и укажите контрольные телефоны.",
+            action_label="Открыть пилот",
+            action_url=urls["settings_pilot"],
+        )
+
+    if execution_mode == CouponAutomationConfig.ExecutionMode.AUTOMATIC and planner_enabled:
+        add_step(
+            4,
+            "Боевой режим",
+            "Активен",
+            "text-bg-success",
+            "Автоматический режим и планировщик включены.",
+            action_label="Открыть отчёт",
+            action_url=urls["report"],
+        )
+    elif execution_mode == CouponAutomationConfig.ExecutionMode.AUTOMATIC:
+        add_step(
+            4,
+            "Боевой режим",
+            "Включить планировщик",
+            "text-bg-info",
+            "Купонный режим автоматический, но планировщик уведомлений выключен.",
+            action_label="Включить планировщик",
+            post_action="enable_planner",
+        )
+    elif execution_mode == CouponAutomationConfig.ExecutionMode.PAUSED:
+        add_step(
+            4,
+            "Боевой режим",
+            "На паузе",
+            "text-bg-secondary",
+            "Для боевого запуска снимите паузу и верните автоматический режим через настройки.",
+            action_label="Открыть режим",
+            action_url=urls["settings_state"],
+        )
+    else:
+        add_step(
+            4,
+            "Боевой режим",
+            "После пилота",
+            "text-bg-secondary",
+            "После успешного пилота переведите режим в автоматический и включите планировщик.",
+            action_label="Открыть режим",
+            action_url=urls["settings_state"],
+        )
+
+    return steps
+
+
 def _coupon_autoscenario_audience_venue_filter_summary(
     *,
     mode: str | None,
@@ -2826,11 +3042,22 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
             except CouponAutoscenarioPreviewError as exc:
                 plan_error = str(exc)
 
+        autoscenario_urls = _build_coupon_autoscenario_urls(config)
+        readiness = _build_coupon_autoscenario_readiness(config)
+
         context["config"] = config
         context["autoscenario_active_tab"] = "control"
-        context["autoscenario_urls"] = _build_coupon_autoscenario_urls(config)
-        context["readiness"] = _build_coupon_autoscenario_readiness(config)
+        context["autoscenario_urls"] = autoscenario_urls
+        context["readiness"] = readiness
         context["chain_steps"] = _build_coupon_autoscenario_chain_steps(config)
+        context["launch_steps"] = _build_coupon_autoscenario_launch_steps(
+            config,
+            readiness,
+            autoscenario_urls,
+            check_requested=check_requested,
+            control_plan=plan,
+            control_plan_error=plan_error,
+        )
         context["check_requested"] = check_requested
         context["control_plan"] = plan
         context["control_plan_error"] = plan_error
