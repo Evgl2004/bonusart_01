@@ -1,0 +1,609 @@
+{% extends "base.html" %}
+
+{% block title %}Пульт автосценария · версия 2{% endblock %}
+
+{% block content %}
+<style>
+  .autoscenario-v2-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .autoscenario-v2-summary__item {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    padding: 0.75rem;
+    background: #f8fafc;
+  }
+
+  .autoscenario-v2-next {
+    border-left: 4px solid #0d6efd;
+  }
+
+  .autoscenario-v2-steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+  }
+
+  .autoscenario-v2-step {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    padding: 0.75rem;
+    background: #fff;
+  }
+
+  .autoscenario-v2-action-row {
+    border: 1px solid #e5e7eb;
+    border-radius: 0.45rem;
+    padding: 0.85rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  @media (max-width: 1200px) {
+    .autoscenario-v2-summary,
+    .autoscenario-v2-steps {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 768px) {
+    .autoscenario-v2-summary,
+    .autoscenario-v2-steps {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<div class="container-fluid">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Пульт управления автосценарием · версия 2</h1>
+      <p class="text-muted mb-0">
+        {{ config.scenario.code }} · {{ config.scenario.name }}
+      </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ autoscenario_urls.control }}">Пульт 1</a>
+      <a class="btn btn-outline-primary" href="{{ autoscenario_urls.settings }}">Настройки</a>
+      <a class="btn btn-outline-secondary" href="{{ autoscenario_urls.hub }}">К автосценариям</a>
+    </div>
+  </div>
+
+  {% if pilot_report %}
+    <div class="alert alert-success">
+      <div class="fw-semibold mb-1">Пилотная волна создана</div>
+      <div>
+        Автосценарий: <code>{{ pilot_report.scenario_code }}</code>,
+        запуск: <strong>#{{ pilot_report.run_id }}</strong>,
+        назначений: <strong>{{ pilot_report.created_assignments }}</strong>,
+        событий vtelemax: <strong>{{ pilot_report.queue_events_created }}</strong>.
+      </div>
+    </div>
+  {% endif %}
+
+  {% if automatic_report %}
+    <div class="alert alert-success">
+      <div class="fw-semibold mb-1">Контролируемый боевой запуск создан</div>
+      <div>
+        Автосценарий: <code>{{ automatic_report.scenario_code }}</code>,
+        запуск: <strong>#{{ automatic_report.run_id }}</strong>,
+        лимит: <strong>{{ automatic_report.run_limit }}</strong>,
+        назначений: <strong>{{ automatic_report.created_assignments }}</strong>,
+        событий vtelemax: <strong>{{ automatic_report.queue_events_created }}</strong>.
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="row g-3 align-items-stretch">
+    <div class="col-12 col-xl-8 d-flex">
+      <section class="card border-0 shadow-sm w-100">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Состояние и готовность</h2>
+        </div>
+        <div class="card-body">
+          <div class="d-flex flex-wrap gap-2 mb-3">
+            <span class="badge {% if config.execution_mode == 'automatic' %}text-bg-success{% elif config.execution_mode == 'pilot' %}text-bg-info{% elif config.execution_mode == 'paused' %}text-bg-secondary{% else %}text-bg-light text-dark border{% endif %}">
+              {{ config.execution_state_label }}
+            </span>
+            {% if config.scenario.is_active %}
+              <span class="badge text-bg-success">планировщик включён</span>
+            {% else %}
+              <span class="badge text-bg-secondary">планировщик выключен</span>
+            {% endif %}
+            {% if readiness.is_ready %}
+              <span class="badge text-bg-success">структура готова</span>
+            {% else %}
+              <span class="badge text-bg-warning text-dark">есть блокировки</span>
+            {% endif %}
+          </div>
+
+          {% if config.execution_state_hint %}
+            <p class="text-muted mb-3">{{ config.execution_state_hint }}</p>
+          {% endif %}
+
+          <div class="autoscenario-v2-summary">
+            <div class="autoscenario-v2-summary__item">
+              <div class="text-muted small">Тип механики</div>
+              <div class="fw-semibold">{{ config.effective_scenario_type_label }}</div>
+            </div>
+            <div class="autoscenario-v2-summary__item">
+              <div class="text-muted small">Шаблон и канал</div>
+              <div class="fw-semibold">{{ config.template_display_name|default:"шаблон не выбран" }}</div>
+              <div class="text-muted small">{{ config.notification_target_mode_label|default:"канал не задан" }}</div>
+            </div>
+            <div class="autoscenario-v2-summary__item">
+              <div class="text-muted small">Купоны</div>
+              {% if config.has_rule_based_coupon_selection %}
+                <div class="fw-semibold">правил: {{ config.active_coupon_rules|length }}</div>
+              {% else %}
+                <div class="fw-semibold">{{ config.coupon_series|default:"серия не задана" }}</div>
+              {% endif %}
+              <div class="text-muted small">срок {{ config.coupon_validity_days }} дн.</div>
+            </div>
+            <div class="autoscenario-v2-summary__item">
+              <div class="text-muted small">Блокировки</div>
+              <div class="fw-semibold">{{ readiness.blockers|length }}</div>
+              <div class="text-muted small">предупреждений: {{ readiness.warnings|length }}</div>
+            </div>
+          </div>
+
+          {% if readiness.blockers %}
+            <div class="alert alert-warning small mt-3 mb-0">
+              <div class="fw-semibold mb-1">Что мешает запуску</div>
+              <ul class="mb-0">
+                {% for item in readiness.blockers|slice:":3" %}<li>{{ item }}</li>{% endfor %}
+              </ul>
+            </div>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+
+    <div class="col-12 col-xl-4 d-flex">
+      <section class="card border-0 shadow-sm w-100 autoscenario-v2-next">
+        <div class="card-header bg-white">
+          <h2 class="h6 mb-0">Следующий шаг</h2>
+        </div>
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+            <span class="text-muted small">Шаг {{ primary_step.number }}</span>
+            <span class="badge {{ primary_step.status_class }}">{{ primary_step.status_label }}</span>
+          </div>
+          <div class="h5 mb-2">{{ primary_step.title }}</div>
+          <p class="text-muted mb-3">{{ primary_step.detail }}</p>
+
+          {% if primary_step.post_action %}
+            <form method="post">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="{{ primary_step.post_action }}">
+              {% if primary_step.post_action == "run_pilot" %}
+                <input type="hidden" name="coupon_scan_limit" value="5000">
+              {% endif %}
+              <button class="btn btn-primary" type="submit" {% if primary_step.action_disabled %}disabled{% endif %}>
+                {{ primary_step.action_label }}
+              </button>
+            </form>
+          {% elif primary_step.action_url %}
+            <a class="btn btn-primary" href="{{ primary_step.action_url }}">{{ primary_step.action_label }}</a>
+          {% else %}
+            <button class="btn btn-primary" type="button" disabled>{{ primary_step.action_label|default:"Действие недоступно" }}</button>
+          {% endif %}
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <section class="card border-0 shadow-sm mt-3">
+    <div class="card-header bg-white">
+      <h2 class="h6 mb-0">Путь запуска</h2>
+    </div>
+    <div class="card-body">
+      <div class="autoscenario-v2-steps">
+        {% for step in launch_steps %}
+          <div class="autoscenario-v2-step">
+            <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+              <span class="text-muted small">Шаг {{ step.number }}</span>
+              <span class="badge {{ step.status_class }}">{{ step.status_label }}</span>
+            </div>
+            <div class="fw-semibold">{{ step.title }}</div>
+            <div class="text-muted small mt-1">{{ step.detail }}</div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+
+  <section class="card border-0 shadow-sm mt-3">
+    <div class="card-header bg-white">
+      <ul class="nav nav-tabs card-header-tabs" id="autoscenario-control-v2-tabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="control-v2-readiness-tab" data-bs-toggle="tab" data-bs-target="#control-v2-readiness" type="button" role="tab" aria-controls="control-v2-readiness" aria-selected="true">Готовность</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="control-v2-launch-tab" data-bs-toggle="tab" data-bs-target="#control-v2-launch" type="button" role="tab" aria-controls="control-v2-launch" aria-selected="false">Запуск</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="control-v2-diagnostics-tab" data-bs-toggle="tab" data-bs-target="#control-v2-diagnostics" type="button" role="tab" aria-controls="control-v2-diagnostics" aria-selected="false">Диагностика</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="control-v2-history-tab" data-bs-toggle="tab" data-bs-target="#control-v2-history" type="button" role="tab" aria-controls="control-v2-history" aria-selected="false">История</button>
+        </li>
+      </ul>
+    </div>
+    <div class="card-body">
+      <div class="tab-content">
+        <div class="tab-pane fade show active" id="control-v2-readiness" role="tabpanel" aria-labelledby="control-v2-readiness-tab" tabindex="0">
+          <div class="row g-3">
+            <div class="col-12 col-xl-5">
+              <h2 class="h6">Структурная готовность</h2>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <tbody>
+                    {% for row in readiness.rows %}
+                      <tr>
+                        <td>{{ row.label }}</td>
+                        <td>
+                          {% if row.ok %}
+                            <span class="badge text-bg-success">да</span>
+                          {% else %}
+                            <span class="badge text-bg-danger">нет</span>
+                          {% endif %}
+                        </td>
+                        <td class="text-muted">{{ row.detail }}</td>
+                        <td class="text-end">
+                          {% if row.action_url %}
+                            <a class="btn btn-outline-secondary btn-sm" href="{{ row.action_url }}">{{ row.action_label }}</a>
+                          {% else %}
+                            <span class="text-muted">—</span>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="col-12 col-xl-7">
+              <h2 class="h6">Проверка ближайшего запуска</h2>
+              {% if control_plan_error %}
+                <div class="alert alert-danger mb-0">{{ control_plan_error }}</div>
+              {% elif control_plan %}
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                  {% if control_plan.can_execute %}
+                    <span class="badge text-bg-success">можно выполнить</span>
+                  {% else %}
+                    <span class="badge text-bg-warning text-dark">есть блокировки</span>
+                  {% endif %}
+                  <span class="badge text-bg-light border">режим: {{ control_plan.execution_state_label }}</span>
+                  <span class="badge text-bg-light border">серия: {{ control_plan.coupon_series|default:"—" }}</span>
+                </div>
+                <div class="row g-2 small">
+                  <div class="col-6 col-lg-3">
+                    <div class="text-muted">Просмотрено</div>
+                    <div class="h5 mb-0">{{ control_plan.scanned_guests }}</div>
+                  </div>
+                  <div class="col-6 col-lg-3">
+                    <div class="text-muted">Подошло</div>
+                    <div class="h5 mb-0">{{ control_plan.matched_guests }}</div>
+                  </div>
+                  <div class="col-6 col-lg-3">
+                    <div class="text-muted">К выдаче</div>
+                    <div class="h5 mb-0">{{ control_plan.planned_assignments }}</div>
+                  </div>
+                  <div class="col-6 col-lg-3">
+                    <div class="text-muted">Не хватает купонов</div>
+                    <div class="h5 mb-0">{{ control_plan.coupon_shortage }}</div>
+                  </div>
+                </div>
+                {% if control_plan.blockers %}
+                  <div class="alert alert-warning small mt-3 mb-0">
+                    <div class="fw-semibold mb-1">Блокировки плана</div>
+                    <ul class="mb-0">
+                      {% for item in control_plan.blockers %}<li>{{ item }}</li>{% endfor %}
+                    </ul>
+                  </div>
+                {% endif %}
+              {% else %}
+                <div class="alert alert-light border mb-0">
+                  Нажмите «Проверить готовность», чтобы построить план ближайшего запуска без изменений в базе.
+                </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-pane fade" id="control-v2-launch" role="tabpanel" aria-labelledby="control-v2-launch-tab" tabindex="0">
+          <div class="d-flex flex-column gap-3">
+            <div class="autoscenario-v2-action-row">
+              <div>
+                <div class="fw-semibold">Проверить готовность</div>
+                <div class="small text-muted">Строит план через текущий сервис без резервирования купонов.</div>
+              </div>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="check_readiness">
+                <button class="btn btn-outline-info btn-sm" type="submit">Проверить готовность</button>
+              </form>
+            </div>
+
+            <div class="autoscenario-v2-action-row">
+              <div>
+                <div class="fw-semibold">Пилотная волна</div>
+                <div class="small text-muted">Создаёт резерв купонов и события vtelemax для контрольной проверки.</div>
+              </div>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="run_pilot">
+                <input type="hidden" name="coupon_scan_limit" value="5000">
+                <button class="btn btn-warning btn-sm" type="submit" {% if config.execution_mode != "pilot" %}disabled{% endif %}>Создать пилот</button>
+              </form>
+            </div>
+
+            <div class="autoscenario-v2-action-row">
+              <div>
+                <div class="fw-semibold">Контролируемый боевой запуск</div>
+                <div class="small text-muted">Создаёт один запуск в режиме «Активен» с лимитом из настроек.</div>
+              </div>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="run_controlled_automatic">
+                <input type="hidden" name="coupon_run_limit" value="{{ config.max_recipients_per_run }}">
+                <input type="hidden" name="coupon_scan_limit" value="5000">
+                <button class="btn btn-danger btn-sm" type="submit" {% if config.execution_mode != "automatic" or not config.scenario.is_active %}disabled{% endif %}>Создать малый запуск</button>
+              </form>
+            </div>
+
+            <div class="autoscenario-v2-action-row">
+              <div>
+                <div class="fw-semibold">Планировщик уведомлений</div>
+                <div class="small text-muted">Меняет только флаг включения сценария уведомлений.</div>
+              </div>
+              {% if config.scenario.is_active %}
+                <form method="post">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="disable_planner">
+                  <button class="btn btn-outline-secondary btn-sm" type="submit">Выключить планировщик</button>
+                </form>
+              {% else %}
+                <form method="post">
+                  {% csrf_token %}
+                  <input type="hidden" name="action" value="enable_planner">
+                  <button class="btn btn-outline-success btn-sm" type="submit">Включить планировщик</button>
+                </form>
+              {% endif %}
+            </div>
+
+            <div class="autoscenario-v2-action-row">
+              <div>
+                <div class="fw-semibold">Пауза автосценария</div>
+                <div class="small text-muted">Переводит купонный режим в паузу и выключает планировщик.</div>
+              </div>
+              <form method="post">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="pause_autoscenario">
+                <button class="btn btn-outline-danger btn-sm" type="submit">Поставить на паузу</button>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-pane fade" id="control-v2-diagnostics" role="tabpanel" aria-labelledby="control-v2-diagnostics-tab" tabindex="0">
+          <h2 class="h6">Диагностика результата</h2>
+          <div class="row g-3 mb-3">
+            {% for row in diagnostic_rows %}
+              <div class="col-12 col-lg-3 d-flex">
+                <div class="border rounded p-3 w-100 h-100">
+                  <div class="d-flex justify-content-between align-items-start gap-2 mb-2">
+                    <div class="text-muted small">{{ row.title }}</div>
+                    <span class="badge {{ row.status_class }}">{{ row.status_label }}</span>
+                  </div>
+                  <div class="h4 mb-1">{{ row.value }}</div>
+                  <div class="text-muted small">{{ row.detail }}</div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+
+          <h2 class="h6">Контроль применения через OLAP</h2>
+          {% if olap_e2e_checklist.assignment %}
+            <div class="d-flex flex-wrap gap-2 mb-3 small">
+              <span class="badge text-bg-light border">купон: {{ olap_e2e_checklist.coupon_label }}</span>
+              <span class="badge text-bg-light border">получатель: {{ olap_e2e_checklist.guest_label }}</span>
+              <span class="badge text-bg-light border">статус: {{ olap_e2e_checklist.assignment.get_status_display }}</span>
+            </div>
+          {% else %}
+            <div class="alert alert-light border mb-3">
+              Назначений купонов пока нет. Создайте пилотную волну или дождитесь первого боевого запуска.
+            </div>
+          {% endif %}
+          <div class="table-responsive mb-3">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Проверка</th>
+                  <th style="width: 160px;">Статус</th>
+                  <th>Детали</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for step in olap_e2e_checklist.items %}
+                  <tr>
+                    <td class="fw-semibold">{{ step.title }}</td>
+                    <td><span class="badge {{ step.status_class }}">{{ step.status_label }}</span></td>
+                    <td class="text-muted">{{ step.detail }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <h2 class="h6">Последние проблемы</h2>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>Контур</th>
+                  <th>Объект</th>
+                  <th>Статус</th>
+                  <th>Пояснение</th>
+                  <th>Обновлено</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for issue in issue_rows %}
+                  <tr>
+                    <td>{{ issue.source }}</td>
+                    <td>{{ issue.object_label }}</td>
+                    <td><span class="badge text-bg-danger">{{ issue.status_label }}</span></td>
+                    <td class="text-muted">{{ issue.detail }}</td>
+                    <td>{{ issue.created_at|date:"Y-m-d H:i" }}</td>
+                  </tr>
+                {% empty %}
+                  <tr>
+                    <td colspan="5" class="text-center text-muted py-3">Проблем пока нет.</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="tab-pane fade" id="control-v2-history" role="tabpanel" aria-labelledby="control-v2-history-tab" tabindex="0">
+          <h2 class="h6">Цепочка этапов</h2>
+          <div class="table-responsive mb-3">
+            <table class="table table-sm align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th style="width: 80px;">Этап</th>
+                  <th>Название</th>
+                  <th>Сценарий</th>
+                  <th>Шаблон</th>
+                  <th>Статус</th>
+                  <th>Маршрут</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for step in chain_steps %}
+                  <tr>
+                    <td>{{ step.number }}</td>
+                    <td>
+                      <div class="fw-semibold">{{ step.title }}</div>
+                      <div class="text-muted small">{{ step.description }}</div>
+                    </td>
+                    <td>
+                      {% if step.code %}
+                        <code>{{ step.code }}</code>
+                        <div class="text-muted small">{{ step.name }}</div>
+                      {% else %}
+                        <span class="text-danger">сценарий не найден</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {{ step.template_display_name }}
+                      {% if step.template_technical_name %}
+                        <div class="text-muted small">{{ step.template_technical_name }}</div>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if step.is_active %}
+                        <span class="badge text-bg-success">включён</span>
+                      {% else %}
+                        <span class="badge text-bg-secondary">выключен</span>
+                      {% endif %}
+                    </td>
+                    <td>
+                      {% if step.settings_url %}
+                        <a class="btn btn-outline-secondary btn-sm" href="{{ step.settings_url }}">Настроить этап</a>
+                      {% else %}
+                        <span class="text-muted">—</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12 col-xl-6">
+              <h2 class="h6">Последние запуски</h2>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Запуск</th>
+                      <th>Статус</th>
+                      <th>Подошло</th>
+                      <th>Назначено</th>
+                      <th>Создано</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for run in recent_runs %}
+                      <tr>
+                        <td>#{{ run.id }}</td>
+                        <td>{{ run.get_status_display }}</td>
+                        <td>{{ run.matched_guests }}</td>
+                        <td>{{ run.created_assignments }}</td>
+                        <td>{{ run.created_at|date:"Y-m-d H:i" }}</td>
+                      </tr>
+                    {% empty %}
+                      <tr>
+                        <td colspan="5" class="text-center text-muted py-3">Запусков пока нет.</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="col-12 col-xl-6">
+              <h2 class="h6">Последние назначения</h2>
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Назначение</th>
+                      <th>Гость</th>
+                      <th>Купон</th>
+                      <th>Статус</th>
+                      <th>Создано</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for assignment in recent_assignments %}
+                      <tr>
+                        <td>#{{ assignment.id }}</td>
+                        <td>
+                          {% if assignment.guest_id %}
+                            #{{ assignment.guest_id }} {{ assignment.phone_e164|default:"" }}
+                          {% else %}
+                            {{ assignment.phone_e164|default:"—" }}
+                          {% endif %}
+                        </td>
+                        <td><code>{{ assignment.coupon_series }}:{{ assignment.coupon_code }}</code></td>
+                        <td>{{ assignment.get_status_display }}</td>
+                        <td>{{ assignment.created_at|date:"Y-m-d H:i" }}</td>
+                      </tr>
+                    {% empty %}
+                      <tr>
+                        <td colspan="5" class="text-center text-muted py-3">Назначений пока нет.</td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

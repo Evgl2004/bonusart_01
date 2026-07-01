@@ -128,6 +128,7 @@ def _build_coupon_autoscenario_urls(config: CouponAutomationConfig) -> dict[str,
     report_query = urlencode({"scenario_code": scenario_code})
     return {
         "control": reverse("mailings_v2_coupon_autoscenario_control", kwargs={"pk": config.pk}),
+        "control_v2": reverse("mailings_v2_coupon_autoscenario_control_v2", kwargs={"pk": config.pk}),
         "settings": settings_url,
         "settings_state": f"{settings_url}#settings-state",
         "settings_messages": f"{settings_url}#settings-messages",
@@ -577,6 +578,30 @@ def _build_coupon_autoscenario_launch_steps(
         )
 
     return steps
+
+
+def _build_coupon_autoscenario_primary_step(launch_steps: list[dict[str, object]]) -> dict[str, object]:
+    """
+    Возвращает главный следующий шаг оператора из уже рассчитанного мастера запуска.
+    """
+    completed_statuses = {"Готово", "Пройдено", "Активен"}
+    for step in launch_steps:
+        if str(step.get("status_label") or "") not in completed_statuses:
+            return {**step, "is_complete": False}
+    if launch_steps:
+        return {**launch_steps[-1], "is_complete": True}
+    return {
+        "number": "",
+        "title": "Проверить настройки",
+        "status_label": "Нет данных",
+        "status_class": "text-bg-secondary",
+        "detail": "Мастер запуска не смог определить следующий шаг.",
+        "action_label": "Открыть настройки",
+        "action_url": "",
+        "post_action": "",
+        "action_disabled": True,
+        "is_complete": False,
+    }
 
 
 def _build_coupon_autoscenario_diagnostics(config: CouponAutomationConfig) -> list[dict[str, object]]:
@@ -3696,7 +3721,7 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
         context["autoscenario_urls"] = autoscenario_urls
         context["readiness"] = readiness
         context["chain_steps"] = _build_coupon_autoscenario_chain_steps(config)
-        context["launch_steps"] = _build_coupon_autoscenario_launch_steps(
+        launch_steps = _build_coupon_autoscenario_launch_steps(
             config,
             readiness,
             autoscenario_urls,
@@ -3704,6 +3729,8 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
             control_plan=plan,
             control_plan_error=plan_error,
         )
+        context["launch_steps"] = launch_steps
+        context["primary_step"] = _build_coupon_autoscenario_primary_step(launch_steps)
         context["check_requested"] = check_requested
         context["control_plan"] = plan
         context["control_plan_error"] = plan_error
@@ -3727,6 +3754,29 @@ class MailingsV2CouponAutoscenarioControlView(TemplateView):
             .filter(config=config)
             .order_by("-created_at", "-id")[:10]
         )
+        return context
+
+
+class MailingsV2CouponAutoscenarioControlV2View(MailingsV2CouponAutoscenarioControlView):
+    """
+    Вторая версия операторского пульта для сравнения UX-подходов.
+
+    Бизнес-действия и проверки наследуются от первого пульта; отличается только
+    порядок подачи информации: состояние, следующий шаг и раскрываемые детали.
+    """
+
+    template_name = "mailing_v2/coupon_autoscenario_control_v2.html"
+
+    @staticmethod
+    def _control_url(config: CouponAutomationConfig, *, check: bool = False) -> str:
+        url = reverse("mailings_v2_coupon_autoscenario_control_v2", kwargs={"pk": config.pk})
+        if check:
+            return f"{url}?{urlencode({'check': '1'})}"
+        return url
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["autoscenario_active_tab"] = "control_v2"
         return context
 
 

@@ -2967,6 +2967,56 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Планировщик уведомлений")
         self.assertNotContains(response, "#settings-chain")
 
+    def test_coupon_autoscenario_control_v2_view_shows_focused_version(self):
+        """
+        Пульт 2 показывает состояние, главный следующий шаг и подробности во вкладках.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Шаблон пульта 2",
+            message_text="Привет! Купон: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_v2",
+            name="Остывшие 30 дней: пульт 2",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+        url = reverse("mailings_v2_coupon_autoscenario_control_v2", kwargs={"pk": config.pk})
+
+        response = self.client.get(url, secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Пульт управления автосценарием · версия 2")
+        self.assertContains(response, "Пульт 1")
+        self.assertContains(response, "Состояние и готовность")
+        self.assertContains(response, "Следующий шаг")
+        self.assertContains(response, "Что мешает запуску")
+        self.assertContains(response, "Путь запуска")
+        self.assertContains(response, 'id="control-v2-readiness-tab"')
+        self.assertContains(response, 'id="control-v2-launch-tab"')
+        self.assertContains(response, 'id="control-v2-diagnostics-tab"')
+        self.assertContains(response, 'id="control-v2-history-tab"')
+        self.assertContains(response, "Контроль применения через OLAP")
+
+        post_response = self.client.post(url, {"action": "check_readiness"}, secure=True)
+
+        self.assertEqual(post_response.status_code, 302)
+        self.assertIn("/control-v2/?check=1", post_response["Location"])
+
     def test_coupon_autoscenario_control_olap_checklist_waits_without_assignments(self):
         """
         Чек-лист OLAP в пульте должен явно показывать ожидание, если купоны ещё не выдавались.

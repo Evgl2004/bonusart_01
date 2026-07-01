@@ -45,6 +45,7 @@ from .views_mailings_v2 import (
     MailingsV2CampaignUpdateView,
     MailingsV2CampaignsHubView,
     MailingsV2CouponAutoscenarioControlView,
+    MailingsV2CouponAutoscenarioControlV2View,
     MailingsV2CouponAutoscenarioCreateView,
     MailingsV2CouponAutoscenarioSettingsView,
     MailingsV2MonitorView,
@@ -141,6 +142,11 @@ urlpatterns = [
         "mailings-v2/scenarios/coupons/<int:pk>/control/",
         MailingsV2CouponAutoscenarioControlView.as_view(),
         name="mailings_v2_coupon_autoscenario_control",
+    ),
+    path(
+        "mailings-v2/scenarios/coupons/<int:pk>/control-v2/",
+        MailingsV2CouponAutoscenarioControlV2View.as_view(),
+        name="mailings_v2_coupon_autoscenario_control_v2",
     ),
 
     # Гости.
