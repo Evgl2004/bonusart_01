@@ -346,9 +346,9 @@ class Command(BaseCommand):
             code="coupon_release_waiting_ack",
             status="ok" if waiting_ack_total == 0 else "warning",
             message=(
-                "Нет release-событий, ожидающих ACK vtelemax."
+                "Нет release-событий, ожидающих подтверждения vtelemax."
                 if waiting_ack_total == 0
-                else "Есть release-события, ожидающие ACK vtelemax."
+                else "Есть release-события, ожидающие подтверждения vtelemax."
             ),
             details={
                 "release_requested_total": release_requested_total,
@@ -360,9 +360,9 @@ class Command(BaseCommand):
             code="coupon_release_ack_side_effects",
             status="ok" if acked_not_released_total == 0 else "blocked",
             message=(
-                "Нет release-событий с ACK без фактического возврата купона в пул."
+                "Нет release-событий с подтверждением без фактического возврата купона в пул."
                 if acked_not_released_total == 0
-                else "Есть release-события с ACK, но купон не вернулся в пул."
+                else "Есть release-события с подтверждением, но купон не вернулся в пул."
             ),
             details={"release_acked_not_released_total": acked_not_released_total},
         )

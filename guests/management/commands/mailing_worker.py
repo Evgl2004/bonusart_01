@@ -32,7 +32,7 @@ SLEEP_SECONDS = 3
 BATCH_SIZE = 10
 
 # Временные причины блокировки sync-gate: строку оставляем в PLANNED,
-# чтобы она автоматически прошла после подтверждения ACK из vtelemax.
+# чтобы она автоматически прошла после подтверждения из vtelemax.
 COUPON_GATE_SOFT_BLOCK_CODES = {
     "coupon_sync_event_pending",
     "coupon_sync_event_sent_wait_ack",

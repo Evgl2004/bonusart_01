@@ -57,8 +57,8 @@
 - в очереди `CouponVtelemaxSyncQueue` одно событие остается отдельной учетной единицей с собственным `event_id`;
 - наружу во vtelemax события отправляются пачками по `direction` через payload с `request_id`, `sent_at`, `direction`, `items[]`;
 - каждый item содержит собственный `event_id`;
-- ACK/error обрабатывается по каждому `event_id` отдельно;
-- `canceled -> release` выполняется только после ACK конкретного item.
+- подтверждение/ошибка обрабатывается по каждому `event_id` отдельно;
+- `canceled -> release` выполняется только после подтверждения конкретного item.
 
 Состав работ:
 
@@ -71,7 +71,7 @@
 Критерий готовности:
 
 - один HTTP POST может содержать до `VTELEMAX_COUPON_SYNC_BATCH_SIZE` items одного `direction`;
-- частичный ACK не ломает всю пачку;
+- частичное подтверждение не ломает всю пачку;
 - rejected/error item остается в retry/error-состоянии с понятной причиной;
 - release купона при `canceled` выполняется только для ACKed item.
 

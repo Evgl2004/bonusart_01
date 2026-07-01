@@ -39,7 +39,7 @@ python manage.py plan_coupon_autoscenario --scenario-code inactive_30d_coupon
 python manage.py execute_coupon_autoscenario_pilot --scenario-code inactive_30d_coupon --confirm
 ```
 
-Первый вызов только считает план и не меняет базу. Второй создает техническую волну, резервирует купон и ставит assignment-событие во vtelemax; сообщение гостю создается только после ACK vtelemax.
+Первый вызов только считает план и не меняет базу. Второй создает техническую волну, резервирует купон и ставит assignment-событие во vtelemax; сообщение гостю создается только после подтверждения vtelemax.
 
 ## Мониторинг и диагностика
 Техническая админка:
@@ -84,7 +84,7 @@ python manage.py execute_coupon_autoscenario_pilot --scenario-code inactive_30d_
 3. техническая волна фиксируется в `CouponAutoscenarioRun`;
 4. назначение купона гостю фиксируется в `CouponAutoscenarioAssignment`;
 5. `CouponVtelemaxSyncQueue` отправляет `assignments` и `status_update` во vtelemax с привязкой к автосценарному назначению;
-6. `NotificationEvent` и `DispatchTask` создаются только после ACK vtelemax по assignment-событию.
+6. `NotificationEvent` и `DispatchTask` создаются только после подтверждения vtelemax по assignment-событию.
 
 Логика выбора купона:
 
@@ -98,10 +98,10 @@ python manage.py execute_coupon_autoscenario_pilot --scenario-code inactive_30d_
 
 1. предпросмотр аудитории без изменения базы;
 2. создание пробной волны в состоянии `Пилот`;
-3. ACK vtelemax по assignment;
+3. подтверждение vtelemax по assignment;
 4. создание и доставка сообщения в Telegram;
-5. cleanup пилота через `status_update:canceled` с `release_to_pool=true`;
-6. возврат купона в пул после ACK vtelemax.
+5. очистка пилота через `status_update:canceled` с `release_to_pool=true`;
+6. возврат купона в пул после подтверждения vtelemax.
 
 Открытый долг: полный E2E применения купона через реальный заказ iiko -> OLAP -> `order_fact` -> `sync_coupon_redemptions` -> `status_update:used` во vtelemax.
 

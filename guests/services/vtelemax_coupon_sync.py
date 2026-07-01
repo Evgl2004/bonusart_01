@@ -348,7 +348,7 @@ class VtelemaxCouponSyncService:
         """
         Выполняет HTTP POST пачки событий в vtelemax endpoint.
 
-        Возвращает словарь `event_id -> error_text`. Значение `None` означает ACK.
+        Возвращает словарь `event_id -> error_text`. Значение `None` означает подтверждение.
         """
 
         request_id = str(uuid4())
@@ -536,7 +536,7 @@ class VtelemaxCouponSyncService:
 
         Важный кейс:
         1. `status_update` со статусом `canceled` и `meta.release_to_pool=true`;
-        2. купон освобождается обратно в пул ТОЛЬКО после ACK, чтобы исключить
+        2. купон освобождается обратно в пул ТОЛЬКО после подтверждения, чтобы исключить
            повторную выдачу до фактического скрытия купона у предыдущего гостя.
         """
         if (
@@ -557,7 +557,7 @@ class VtelemaxCouponSyncService:
                 )
             except Exception:
                 logger.exception(
-                    "Не удалось создать dispatch-задачу автосценария после ACK vtelemax: event_id=%s assignment_id=%s",
+                    "Не удалось создать dispatch-задачу автосценария после подтверждения vtelemax: event_id=%s assignment_id=%s",
                     event.event_id,
                     event.autoscenario_assignment_id,
                 )

@@ -14,7 +14,7 @@ from guests.models import CouponCampaignAssignment, CouponRegistryEntry, CouponV
 class Command(BaseCommand):
     help = (
         "Аудит контура освобождения купонов после отмены кампаний: "
-        "показывает ожидание ACK, аномалии после ACK и зависшие reserved."
+        "показывает ожидание подтверждения, аномалии после подтверждения и зависшие reserved."
     )
 
     def add_arguments(self, parser) -> None:

@@ -4261,7 +4261,7 @@ def _build_mailing_dry_run_report(mailing: Mailing, now) -> dict[str, object]:
 
 def _is_coupon_sync_gate_ack_wait_report(gate_report: dict[str, object]) -> bool:
     """
-    Проверяет, что batch run-now остановился только из-за ожидания ACK купона от vtelemax.
+    Проверяет, что ручной запуск остановился только из-за ожидания подтверждения купона от vtelemax.
     """
     if not bool(gate_report.get("coupon_mode")):
         return False

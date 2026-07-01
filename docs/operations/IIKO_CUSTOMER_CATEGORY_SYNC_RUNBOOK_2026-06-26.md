@@ -36,7 +36,7 @@ IIKO_CUSTOMER_CATEGORY_SYNC_SCHEDULE_MINUTES=1
 1. SAGUR создаёт назначение купона гостю (`reserved`).
 2. SAGUR ставит событие в очередь vtelemax.
 3. SAGUR ставит `add` в очередь `IikoCustomerCategorySyncEvent`.
-4. Рассылка разрешается только после ACK vtelemax и ACK iikoCard.
+4. Рассылка разрешается только после подтверждения vtelemax и подтверждения iikoCard.
 5. При `used`, `expired`, `canceled` SAGUR ставит `remove`, но только если у
    гостя нет другого живого купона.
 

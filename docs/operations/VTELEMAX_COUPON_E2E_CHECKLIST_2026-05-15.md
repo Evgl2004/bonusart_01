@@ -102,7 +102,7 @@ python manage.py audit_coupon_release_readiness
 - [ ] итог `status=ready` или только согласованные `warning`;
 - [ ] нет `blocked` по конфигурации vtelemax;
 - [ ] нет событий очереди, исчерпавших retry;
-- [ ] нет release-событий с ACK без фактического возврата купона в пул;
+- [ ] нет release-событий с подтверждением без фактического возврата купона в пул;
 - [ ] синк получателей vtelemax свежий для sync-gate.
 
 ## 6. Сценарий 1: генерация и проверка пула
@@ -156,7 +156,7 @@ python manage.py verify_coupon_pool_iiko --series <SERIES> --sample-info-check-l
 - [ ] каждому назначению выдан уникальный `coupon_code`;
 - [ ] купоны переведены из доступных в assigned;
 - [ ] созданы события `CouponVtelemaxSyncQueue` с `direction=assignments`;
-- [ ] до ACK от vtelemax sync-gate не должен пропустить фактическую отправку рассылки.
+- [ ] до подтверждения от vtelemax синхронизационный шлюз не должен пропустить фактическую отправку рассылки.
 
 Фиксируем:
 
@@ -306,12 +306,12 @@ python manage.py close_coupon_campaigns --campaign-id <CAMPAIGN_ID> --limit 10
 
 Или использовать согласованное UI-действие отмены кампании.
 
-Проверить до ACK:
+Проверить до подтверждения:
 
 - [ ] assignment C имеет `status=canceled`;
 - [ ] создан `status_update:canceled`;
 - [ ] `meta.release_to_pool=true`;
-- [ ] купон C еще НЕ доступен для повторной выдачи до ACK vtelemax.
+- [ ] купон C еще НЕ доступен для повторной выдачи до подтверждения vtelemax.
 
 Отправить событие:
 
@@ -323,9 +323,9 @@ python manage.py run_coupon_vtelemax_sync_worker --once --batch-size 100 --force
 
 - [ ] купон C удален/скрыт у гостя C;
 - [ ] повторный `canceled` безопасен;
-- [ ] response содержит ACK по конкретному `event_id`.
+- [ ] ответ содержит подтверждение по конкретному `event_id`.
 
-Ожидаемо в SAGUR после ACK:
+Ожидаемо в SAGUR после подтверждения:
 
 - [ ] event `status_update:canceled` имеет `acked`;
 - [ ] купон C вернулся в `verified_loaded`;
@@ -352,7 +352,7 @@ Reassign:
 | new `assignment_id` | | |
 | new assignment `event_id` | | |
 
-## 13. Негативный сценарий: partial ACK
+## 13. Негативный сценарий: частичное подтверждение
 
 Просим vtelemax на тестовой пачке вернуть:
 
@@ -396,9 +396,9 @@ python manage.py report_coupon_campaign_performance --campaign-id <CAMPAIGN_ID> 
 
 Ожидаемо:
 
-- [ ] нет зависших release после ACK;
+- [ ] нет зависших release после подтверждения;
 - [ ] нет активных купонов у старых гостей после `used/used_after_campaign/expired/canceled`;
-- [ ] нет повторно выданных купонов без предварительного ACK `canceled`;
+- [ ] нет повторно выданных купонов без предварительного подтверждения `canceled`;
 - [ ] отчет кампании показывает корректные назначения, used/used_after_campaign/expired/canceled.
 
 На стороне vtelemax:
@@ -414,14 +414,14 @@ python manage.py report_coupon_campaign_performance --campaign-id <CAMPAIGN_ID> 
 E2E считается пройденным, если:
 
 - [ ] `assignments` batch принят и подтвержден item-level `results[]`;
-- [ ] sync-gate в SAGUR работает строго по ACK;
+- [ ] синхронизационный шлюз в SAGUR работает строго по подтверждению;
 - [ ] `used` скрывает купон и не освобождает его;
 - [ ] `used_after_campaign` скрывает купон, не освобождает его и совпадает по статусу в SAGUR/vtelemax;
 - [ ] `expired` скрывает купон и не освобождает его;
-- [ ] `canceled` скрывает купон и освобождает его только после ACK;
+- [ ] `canceled` скрывает купон и освобождает его только после подтверждения;
 - [ ] тот же `coupon_series + coupon_code` успешно переназначен другому гостю после release;
-- [ ] partial ACK корректно разделяет успешные и ошибочные items;
-- [ ] ответ без `results[]` не принимается как ACK;
+- [ ] частичное подтверждение корректно разделяет успешные и ошибочные items;
+- [ ] ответ без `results[]` не принимается как подтверждение;
 - [ ] SAGUR и vtelemax могут сопоставить логи по `request_id` и `event_id`.
 
 ## 17. Что фиксируем в итоговом протоколе
@@ -430,19 +430,19 @@ E2E считается пройденным, если:
 |---|---|---|
 | Pool generate/export/verify | | |
 | `assignments` batch | | |
-| item-level ACK | | |
+| подтверждение на уровне элемента | | |
 | sync-gate | | |
-| dispatch после ACK | | |
+| dispatch после подтверждения | | |
 | `used` | | |
 | `used_after_campaign` | Отложено | Отдельная проверка зафиксирована как технический долг: нужен контролируемый сценарий применения после окончания окна кампании. |
 | `expired` | OK | Кампания `#4`: `status_update:expired` ACKed во vtelemax, 3 купона скрыты из активного меню гостей. Повторять сейчас не требуется, можно оставить как регрессионную проверку после включения автоматизации. |
 | `canceled -> release` | OK | Кампания `#6`: `status_update:canceled` с `meta.release_to_pool=true` ACKed, купон возвращён в пул SAGUR и удалён у гостя C во vtelemax. |
 | `reassign` | OK | Кампания `#7`: тот же `coupon_series+coupon_code` повторно назначен гостю D, подтверждён во vtelemax как активный/видимый, затем очищен через cleanup cancel. |
-| partial ACK | | |
+| частичное подтверждение | | |
 | no `results[]` negative test | | |
 | audit clean | OK | После cleanup: активных тестовых кампаний нет, открытой купонной очереди нет, pending/error назначений нет, открытых dispatch-задач нет. |
 
-### 17.1. Фактически зафиксированный результат: позитивный сценарий `assign -> ACK -> send -> visible QR -> used`
+### 17.1. Фактически зафиксированный результат: позитивный сценарий `assign -> подтверждение -> send -> visible QR -> used`
 
 Дата фиксации: 2026-05-20.
 
@@ -466,7 +466,7 @@ E2E считается пройденным, если:
 | Проверка iikoCard | OK | Купоны серии `E2E_SAMI_20260519` подтверждены как найденные в iikoCard. |
 | Назначение купонов | OK | Для кампании `#5` созданы 3 назначения. |
 | Batch `assignments` в vtelemax | OK | `run_coupon_vtelemax_sync_worker --once --batch-size 100`: `processed=3 acked=3 failed=0`. |
-| Sync-gate | OK | До ACK рассылка блокировалась; после ACK повторный `run-now` пропустил 3 строки. |
+| Синхронизационный шлюз | OK | До подтверждения рассылка блокировалась; после подтверждения повторный `run-now` пропустил 3 строки. |
 | Dispatch SAGUR | OK | Все 3 dispatch-задачи завершены `done`: Telegram, MAX, VK. |
 | Отображение купона в vtelemax/боте | OK | Telegram подтверждён пользователем; MAX подтверждён коллегой, QR-код формируется; VK подтверждён пользователем, купон пришёл и отображается. |
 | Реальное применение купона | OK | Купон `E2E-JA03FCBC` применён в заведении `Сами Сусами`, заказ `70`, оплаченная сумма заказа после скидок `350.00`. |
@@ -501,7 +501,7 @@ E2E считается пройденным, если:
 
 Дата фиксации: 2026-05-21.
 
-Цель проверки: подтвердить, что неотправленный `reserved`-купон можно безопасно отменить, освободить только после ACK vtelemax и повторно назначить другому гостю тем же `coupon_series + coupon_code`.
+Цель проверки: подтвердить, что неотправленный `reserved`-купон можно безопасно отменить, освободить только после подтверждения vtelemax и повторно назначить другому гостю тем же `coupon_series + coupon_code`.
 
 Тестовые данные:
 
@@ -525,14 +525,14 @@ E2E считается пройденным, если:
 | Pre-state vtelemax перед отменой | OK | vtelemax подтвердил активный/видимый купон у C и отсутствие этого купона у других гостей. |
 | Safe cancel кампании `#6` | OK | Строка аудитории отменена, assignment переведён в `canceled`, создано `status_update:canceled`. |
 | Release-событие | OK | `event_id=8972983a-6545-4ba1-bddf-a81905ee0288`, `meta.release_to_pool=true`, `meta.remove_from_guest=true`. |
-| ACK release от vtelemax | OK | `processed=1 acked=1 failed=0 status_updates_acked=1`; во vtelemax купон удалён у C, active_visible_count=0. |
+| Подтверждение release от vtelemax | OK | `processed=1 acked=1 failed=0 status_updates_acked=1`; во vtelemax купон удалён у C, active_visible_count=0. |
 | Возврат купона в пул SAGUR | OK | Купон `REL-DBEXB604`: `pool_status=verified_loaded`, `is_active=true`, `assigned_at=None`. |
 | Pre-state vtelemax перед reassign | OK | vtelemax подтвердил: у C купона нет, у D купона нет, активной занятой связки по `series+code` нет. |
 | Reassign гостю D | OK | Кампания `#7`, `assignment_id=8`, тот же `coupon_id=15`, тот же `coupon_code=REL-DBEXB604`, статус `reserved`. |
 | Batch `assignments` для D | OK | `event_id=74519f3f-8d40-4393-b652-1d93c703c8b7`, ACKed в SAGUR. |
 | Post-state vtelemax после reassign | OK | vtelemax подтвердил активный/видимый купон у D, отсутствие купона у C, ровно одну активную связку по `coupon_series+coupon_code`. |
 | Cleanup кампании `#7` | OK | Кампания `#7` остановлена, строка аудитории отменена, создано финальное `status_update:canceled` с `meta.release_to_pool=true`. |
-| ACK cleanup release | OK | `event_id=c4c55aba-7484-4189-a7be-54848a7648e1`, `processed=1 acked=1 failed=0 status_updates_acked=1`. |
+| Подтверждение очистки release | OK | `event_id=c4c55aba-7484-4189-a7be-54848a7648e1`, `processed=1 acked=1 failed=0 status_updates_acked=1`. |
 | Финальный post-cleanup SAGUR | OK | Assignment `#8`: `status=canceled`, `vtelemax_sync_status=ok`; купон `REL-DBEXB604`: `pool_status=verified_loaded`, `is_active=true`, `assigned_at=None`; `dispatch_tasks=[]`. |
 | Финальный post-cleanup vtelemax | OK | Купон отсутствует у C и D; `active_visible_occupied_rows=0`, `any_rows_for_coupon=0`, rejected=0, problems=[]. |
 
@@ -541,7 +541,7 @@ E2E считается пройденным, если:
 Зафиксированная семантика:
 
 - `canceled` с `meta.release_to_pool=true` удаляет купон у гостя во vtelemax;
-- SAGUR возвращает купон в пул только после item-level ACK от vtelemax;
+- SAGUR возвращает купон в пул только после подтверждения на уровне элемента от vtelemax;
 - тот же `coupon_series + coupon_code` может быть повторно назначен другому гостю;
 - повторное назначение не создаёт дубль у старого гостя;
 - в тесте reassign сообщения гостям не отправлялись, проверялся именно жизненный цикл купона и состояние vtelemax;

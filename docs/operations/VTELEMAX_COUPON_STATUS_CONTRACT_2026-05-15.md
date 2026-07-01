@@ -34,5 +34,5 @@
 
 ## Привязка к реализации SAGUR
 1. `cancel_campaign` переводит только `reserved -> canceled`, выставляет `meta.release_to_pool=true`, но не освобождает купон мгновенно.
-2. Освобождение купона в пул (`verified_loaded`, `is_active=true`) выполняется только после ACK `status_update(canceled)`.
+2. Освобождение купона в пул (`verified_loaded`, `is_active=true`) выполняется только после подтверждения `status_update(canceled)`.
 3. Для `used/expired` выставляется `meta.release_to_pool=false`, купон повторно не используется.

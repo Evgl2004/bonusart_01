@@ -87,7 +87,7 @@ class CouponCampaignLifecycleService:
         1. Строки `planned/in_progress` переводятся в ошибку с признаком отмены;
         2. Dispatch-задачи `pending/queued/in_progress` переводятся в `canceled`;
         3. Только купоны в `reserved` помечаются к освобождению;
-        4. Фактическое освобождение в пул выполняется только после ACK по `status_update(canceled)`.
+        4. Фактическое освобождение в пул выполняется только после подтверждения по `status_update(canceled)`.
         """
         stats = CouponCampaignLifecycleStats(campaigns_scanned=1)
         now_value = now or timezone.now()

@@ -85,7 +85,7 @@ def iiko_customer_category_sync_enabled() -> bool:
 
 def iiko_customer_category_gate_required() -> bool:
     """
-    Проверяет, должен ли pre-send gate ждать ACK от iikoCard.
+    Проверяет, должен ли шлюз перед отправкой ждать подтверждение от iikoCard.
     """
     return iiko_customer_category_sync_enabled() and bool(
         getattr(settings, "IIKO_CUSTOMER_CATEGORY_GATE_REQUIRE_ACK", True)
@@ -661,7 +661,7 @@ class IikoCustomerCategorySyncService:
             )
         except Exception:
             logger.exception(
-                "Не удалось создать dispatch-задачу автосценария после ACK iikoCard: event_id=%s assignment_id=%s",
+                "Не удалось создать dispatch-задачу автосценария после подтверждения iikoCard: event_id=%s assignment_id=%s",
                 event.event_id,
                 event.autoscenario_assignment_id,
             )
@@ -698,7 +698,7 @@ def _is_customer_has_no_category_error(exc: IikoCustomerCategoryApiError) -> boo
     Проверяет ответ iikoCard: категория уже отсутствует у гостя.
 
     Для операции `remove` это конечное состояние без повторов, но не полноценный
-    ACK: событие переводим в `skipped` и сохраняем причину для диагностики.
+    подтверждение: событие переводим в `skipped` и сохраняем причину для диагностики.
     """
     error_code = str(getattr(exc, "error_code", "") or "").strip()
     if error_code == IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE:

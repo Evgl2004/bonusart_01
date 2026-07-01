@@ -705,7 +705,7 @@ class CouponCampaignGateService:
                         row_id=int(row.id),
                         guest_id=guest_id,
                         code="coupon_sync_event_sent_wait_ack",
-                        message="Событие синхронизации отправлено в vtelemax, но ещё не получен ACK.",
+                        message="Событие синхронизации отправлено в vtelemax, но подтверждение ещё не получено.",
                     )
                 )
                 continue
@@ -827,7 +827,7 @@ class CouponCampaignGateService:
                             row_id=int(row.id),
                             guest_id=guest_id,
                             code="iiko_category_event_sent_wait_ack",
-                            message="Запрос добавления категории отправлен в iikoCard, но ещё не получен ACK.",
+                            message="Запрос добавления категории отправлен в iikoCard, но подтверждение ещё не получено.",
                         )
                     )
                     continue
@@ -866,7 +866,7 @@ class CouponCampaignGateService:
                             row_id=int(row.id),
                             guest_id=guest_id,
                             code="iiko_category_status_pending",
-                            message="Назначение купона ещё не переведено в статус `ok` после ACK iikoCard.",
+                            message="Назначение купона ещё не переведено в статус `ok` после подтверждения iikoCard.",
                         )
                     )
                     continue

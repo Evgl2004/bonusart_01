@@ -224,7 +224,7 @@ class CouponCampaignGateServiceTests(TestCase):
     )
     def test_prepare_rows_blocks_until_iiko_category_ack_when_enabled(self):
         """
-        При включённом iikoCard-gate одного ACK от vtelemax недостаточно.
+        При включённом шлюзе iikoCard одного подтверждения от vtelemax недостаточно.
         """
         row = self._create_row("2235")
         row.guest.iiko_id = "iiko-guest-2235"
@@ -298,7 +298,7 @@ class CouponCampaignGateServiceTests(TestCase):
     )
     def test_prepare_rows_allows_dispatch_after_vtelemax_and_iiko_ack(self):
         """
-        При включённом iikoCard-gate строка проходит только после двух ACK.
+        При включённом шлюзе iikoCard строка проходит только после двух подтверждений.
         """
         row = self._create_row("2236")
         row.guest.iiko_id = "iiko-guest-2236"

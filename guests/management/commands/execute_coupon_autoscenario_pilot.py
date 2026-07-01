@@ -158,7 +158,7 @@ class Command(BaseCommand):
         else:
             self.stdout.write(
                 "Режим: подтверждённый пробный запуск. "
-                "Купоны зарезервированы, события ждут ACK vtelemax, сообщения гостям не созданы."
+                "Купоны зарезервированы, события ждут подтверждения vtelemax, сообщения гостям не созданы."
             )
 
         safe_sample_limit = max(0, int(sample_limit))

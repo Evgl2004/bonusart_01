@@ -1062,7 +1062,7 @@ class MailingsV2ViewsTests(TestCase):
 
     def test_campaign_ops_run_now_coupon_mode_soft_block_stays_planned_until_ack(self):
         """
-        Если купон назначен, но sync-event ещё без ACK, строка не должна уходить в dispatch
+        Если купон назначен, но событие синхронизации ещё без подтверждения, строка не должна уходить в dispatch
         и остаётся в planned (мягкая блокировка до подтверждения).
         """
         mailing = self._create_mailing()
@@ -3009,7 +3009,7 @@ class MailingsV2ViewsTests(TestCase):
 
     def test_coupon_autoscenario_control_olap_checklist_shows_used_assignment(self):
         """
-        Чек-лист OLAP должен показывать применённый купон и ACK `status_update` во vtelemax.
+        Чек-лист OLAP должен показывать применённый купон и подтверждение `status_update` во vtelemax.
         """
         coupon_template = MessageTemplate.objects.create(
             name="Шаблон чек-листа применения",
@@ -4418,7 +4418,7 @@ class MailingsV2ViewsTests(TestCase):
 
     def test_coupon_autoscenario_settings_blocks_active_immediate_delivery(self):
         """
-        Боевой автосценарий нельзя сохранить с отправкой "Сразу": иначе ACK vtelemax
+        Боевой автосценарий нельзя сохранить с отправкой "Сразу": иначе подтверждение vtelemax
         мог бы привести к ночной отправке сообщения.
         """
         scenario = NotificationScenario.objects.create(
