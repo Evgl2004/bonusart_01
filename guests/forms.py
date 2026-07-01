@@ -2,6 +2,7 @@
 
 from django import forms
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from .models import (
@@ -768,6 +769,14 @@ class CouponAutomationConfigForm(forms.ModelForm):
         choices=NotificationScenario.DistributionMode.choices,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
+    notification_template = forms.ModelChoiceField(
+        label="Шаблон сообщения",
+        required=True,
+        queryset=MessageTemplate.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+        empty_label=None,
+        help_text="Выберите активный шаблон из пользовательского раздела «Шаблоны».",
+    )
     notification_target_mode = forms.ChoiceField(
         label="Куда отправлять сообщение",
         required=False,
@@ -910,6 +919,14 @@ class CouponAutomationConfigForm(forms.ModelForm):
         self.initial["pilot_phones"] = ", ".join(str(phone) for phone in pilot_phones if str(phone).strip())
         self.initial["pilot_include_unmatched"] = bool(settings.get("pilot_include_unmatched"))
         scenario = getattr(self.instance, "scenario", None)
+        current_template_id = getattr(scenario, "template_id", None)
+        template_filter = Q(is_active=True)
+        if current_template_id:
+            template_filter |= Q(pk=current_template_id)
+            self.initial["notification_template"] = current_template_id
+        self.fields["notification_template"].queryset = MessageTemplate.objects.filter(
+            template_filter
+        ).order_by("name", "id")
         effective_scenario_type = resolve_coupon_autoscenario_type(self.instance)
         is_birthday_scenario = (
             effective_scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
@@ -1017,10 +1034,15 @@ class CouponAutomationConfigForm(forms.ModelForm):
             CouponAutomationConfig.ExecutionMode.PILOT,
             CouponAutomationConfig.ExecutionMode.AUTOMATIC,
         }:
-            template = getattr(getattr(self.instance, "scenario", None), "template", None)
+            template = cleaned_data.get("notification_template") or getattr(
+                getattr(self.instance, "scenario", None),
+                "template",
+                None,
+            )
             try:
                 validate_coupon_code_placeholder(getattr(template, "message_text", ""))
             except forms.ValidationError as exc:
+                self.add_error("notification_template", exc)
                 self.add_error(
                     None,
                     forms.ValidationError(
@@ -1091,6 +1113,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
                     or scenario.distribution_mode
                     or NotificationScenario.DistributionMode.IMMEDIATE
                 )
+                scenario.template = self.cleaned_data.get("notification_template") or scenario.template
                 scenario.target_mode = (
                     self.cleaned_data.get("notification_target_mode")
                     or scenario.target_mode
@@ -1110,6 +1133,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
                 scenario.save(
                     update_fields=[
                         "is_active",
+                        "template",
                         "distribution_mode",
                         "target_mode",
                         "timezone",

@@ -267,6 +267,20 @@
       <div class="coupon-settings-tab-pane" data-settings-tab-pane="messages">
       <hr class="my-4">
 
+      <h2 class="h6 mb-3">Шаблон сообщения</h2>
+      <div class="row g-3 mb-4">
+        <div class="col-12 col-lg-6">
+          {{ form.notification_template.label_tag }}
+          {{ form.notification_template }}
+          {% if form.notification_template.help_text %}
+            <div class="form-text">{{ form.notification_template.help_text }}</div>
+          {% endif %}
+          {% if form.notification_template.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_template.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
       <h2 class="h6 mb-3">Окно отправки сообщений</h2>
       <details class="alert alert-light border small">
         <summary class="fw-semibold" style="cursor: pointer;">Как работает окно отправки</summary>

@@ -3692,6 +3692,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Редактировать шаблон")
         self.assertContains(response, "Предпросмотр с тестовым купоном")
         self.assertContains(response, "TEST123")
+        self.assertContains(response, "Выберите активный шаблон")
         self.assertContains(response, "Окно отправки сообщений")
         self.assertContains(response, "Режим отправки сообщений")
         self.assertContains(response, "Каналы отправки сообщений")
@@ -3726,6 +3727,7 @@ class MailingsV2ViewsTests(TestCase):
                 "iikocard_action_note": "Подарок при заказе от 200 ₽.",
                 "coupon_title_template": "Общее название купона",
                 "coupon_promo_text_template": "Тестовый купон автосценария.",
+                "notification_template": str(coupon_template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
                 "notification_target_mode": NotificationScenario.TargetMode.ALL_BOTS,
                 "notification_bot_profiles": [str(self.bot.id)],
@@ -3777,6 +3779,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertTrue(config.settings["pilot_include_unmatched"])
         scenario.refresh_from_db()
         self.assertEqual(scenario.distribution_mode, NotificationScenario.DistributionMode.UNIFORM)
+        self.assertEqual(scenario.template_id, coupon_template.id)
         self.assertEqual(scenario.target_mode, NotificationScenario.TargetMode.ALL_BOTS)
         self.assertEqual(list(scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])
         self.assertEqual(scenario.send_window_begin, time(10, 0))
@@ -3798,6 +3801,154 @@ class MailingsV2ViewsTests(TestCase):
         self.assertIsNone(rules[1].coupon_title_template)
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_coupon_autoscenario_settings_changes_message_template_from_ui(self):
+        """
+        Шаблон купонного автосценария можно заменить из пользовательской формы без Django Admin.
+        """
+        current_template = MessageTemplate.objects.create(
+            name="Старый купонный шаблон",
+            message_text="Старый текст: {coupon_code}",
+            is_active=True,
+        )
+        replacement_template = MessageTemplate.objects.create(
+            name="Новый купонный шаблон",
+            message_text="Новый текст для {{ first_name }}: {coupon_code}",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_template_change",
+            name="Остывшие 30 дней: замена шаблона",
+            template=current_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+            settings={},
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+                "venue_selection_mode": CouponAutomationConfig.VenueSelectionMode.LAST_ORDER,
+                "audience_venue_filter_mode": CouponAutomationConfig.AudienceVenueFilterMode.DISABLED,
+                "coupon_series": "AUTO_30D",
+                "venue_code": "",
+                "coupon_validity_days": "14",
+                "max_recipients_per_run": "10",
+                "cooldown_days": "30",
+                "pilot_phones": "",
+                "min_order_amount": "",
+                "iikocard_action_note": "",
+                "coupon_promo_text_template": "",
+                "notification_template": str(replacement_template.id),
+                "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "notification_bot_profiles": [str(self.bot.id)],
+                "notification_send_window_begin": "",
+                "notification_send_window_end": "",
+                "notification_timezone": "Asia/Yekaterinburg",
+                "coupon_rules-TOTAL_FORMS": "0",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        scenario.refresh_from_db()
+        self.assertEqual(scenario.template_id, replacement_template.id)
+        self.assertFalse(scenario.is_active)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+        self.assertEqual(NotificationEvent.objects.count(), 0)
+
+    def test_coupon_autoscenario_settings_blocks_pilot_with_selected_template_without_coupon(self):
+        """
+        Новый выбранный шаблон тоже обязан содержать {coupon_code} перед пилотом.
+        """
+        current_template = MessageTemplate.objects.create(
+            name="Рабочий купонный шаблон",
+            message_text="Рабочий текст: {coupon_code}",
+            is_active=True,
+        )
+        invalid_template = MessageTemplate.objects.create(
+            name="Шаблон без купона",
+            message_text="Привет, {{ first_name }}!",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="inactive_30d_coupon_bad_selected_template",
+            name="Остывшие 30 дней: плохой выбранный шаблон",
+            template=current_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_30D",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+            settings={},
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.PILOT,
+                "venue_selection_mode": CouponAutomationConfig.VenueSelectionMode.LAST_ORDER,
+                "audience_venue_filter_mode": CouponAutomationConfig.AudienceVenueFilterMode.DISABLED,
+                "coupon_series": "AUTO_30D",
+                "venue_code": "",
+                "coupon_validity_days": "14",
+                "max_recipients_per_run": "10",
+                "cooldown_days": "30",
+                "pilot_phones": "+79129923438",
+                "min_order_amount": "",
+                "iikocard_action_note": "",
+                "coupon_promo_text_template": "",
+                "notification_template": str(invalid_template.id),
+                "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "notification_bot_profiles": [str(self.bot.id)],
+                "notification_send_window_begin": "10:00",
+                "notification_send_window_end": "20:00",
+                "notification_timezone": "Asia/Yekaterinburg",
+                "coupon_rules-TOTAL_FORMS": "0",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Нельзя перевести купонный автосценарий")
+        self.assertContains(response, "должен быть параметр")
+        scenario.refresh_from_db()
+        config.refresh_from_db()
+        self.assertEqual(scenario.template_id, current_template.id)
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
+        self.assertFalse(scenario.is_active)
 
     def test_coupon_autoscenario_settings_blocks_pilot_without_coupon_rules(self):
         """
@@ -3844,6 +3995,7 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "",
                 "iikocard_action_note": "",
                 "coupon_promo_text_template": "",
+                "notification_template": str(coupon_template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
                 "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
                 "notification_bot_profiles": [str(self.bot.id)],
@@ -3914,6 +4066,7 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "",
                 "iikocard_action_note": "",
                 "coupon_promo_text_template": "",
+                "notification_template": str(coupon_template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
                 "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
                 "notification_bot_profiles": [str(self.bot.id)],
@@ -3992,6 +4145,7 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "",
                 "iikocard_action_note": "",
                 "coupon_promo_text_template": "",
+                "notification_template": str(coupon_template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
                 "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
                 "notification_bot_profiles": [str(self.bot.id)],
@@ -4052,6 +4206,7 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "",
                 "iikocard_action_note": "",
                 "coupon_promo_text_template": "",
+                "notification_template": str(self.template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
                 "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
                 "notification_bot_profiles": [str(self.bot.id)],
@@ -4163,6 +4318,7 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "",
                 "iikocard_action_note": "",
                 "coupon_promo_text_template": "",
+                "notification_template": str(coupon_template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
                 "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
                 "notification_bot_profiles": [str(self.bot.id)],
@@ -4239,6 +4395,7 @@ class MailingsV2ViewsTests(TestCase):
                 "min_order_amount": "",
                 "iikocard_action_note": "",
                 "coupon_promo_text_template": "",
+                "notification_template": str(self.template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
                 "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
                 "notification_send_window_begin": "",
@@ -4294,6 +4451,7 @@ class MailingsV2ViewsTests(TestCase):
                 "coupon_validity_days": "14",
                 "max_recipients_per_run": "100",
                 "cooldown_days": "30",
+                "notification_template": str(self.template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
                 "notification_timezone": "Asia/Yekaterinburg",
                 "coupon_rules-TOTAL_FORMS": "0",
