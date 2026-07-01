@@ -3690,6 +3690,8 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Дополнительно: условия iikoCard и карточка купона")
         self.assertContains(response, "Шаблон сообщения гостю")
         self.assertContains(response, "Редактировать шаблон")
+        self.assertContains(response, "Создать копию")
+        self.assertContains(response, f"source_template_id={coupon_template.id}")
         self.assertContains(response, "Предпросмотр с тестовым купоном")
         self.assertContains(response, "TEST123")
         self.assertContains(response, "Выберите активный шаблон")

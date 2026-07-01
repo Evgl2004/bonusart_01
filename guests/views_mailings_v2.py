@@ -3919,6 +3919,11 @@ class MailingsV2CouponAutoscenarioSettingsView(UpdateView):
             if template_obj
             else ""
         )
+        context["template_copy_url"] = (
+            f"{reverse('mailings_v2_templates_new')}?{urlencode({'source_template_id': template_obj.pk})}"
+            if template_obj
+            else ""
+        )
         context["message_template_preview_text"] = ""
         if template_obj is not None:
             preview_guest = SimpleNamespace(
