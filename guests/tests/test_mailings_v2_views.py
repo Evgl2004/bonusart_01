@@ -2174,6 +2174,181 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(response.context["coupon_plan"]["planned_assignments"], 1)
         self.assertEqual(response.context["coupon_plan"]["sample_plan_items"][0]["days_without_visits"], 30)
 
+    def test_scenarios_hub_v2_focuses_coupon_autoscenario_workflow(self):
+        """
+        Вторая версия экрана автосценариев оставляет основным потоком выбор,
+        проверку расчёта и переход к пульту без раскрытия сервисных таблиц.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="ui_manual_30d",
+            name="Остывшие гости 30 дней",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.PILOT,
+            coupon_series="AUTO_UI",
+            venue_code="DEP_UI",
+            venue_name="Сами Сусами",
+            audience_venue_filter_mode=(
+                CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE
+            ),
+            audience_venue_code="DEP_UI",
+            audience_venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        with patch("guests.views_mailings_v2.build_coupon_autoscenario_execution_plan") as plan_mock:
+            plan_mock.return_value = SimpleNamespace(
+                as_dict=lambda: {
+                    "scenario_code": scenario.code,
+                    "execution_mode": CouponAutomationConfig.ExecutionMode.PILOT,
+                    "can_execute": True,
+                    "coupon_series": "AUTO_UI",
+                    "venue_code": "DEP_UI",
+                    "venue_name": "Сами Сусами",
+                    "audience_venue_filter_mode": (
+                        CouponAutomationConfig.AudienceVenueFilterMode.VISITED_ONCE_AND_INACTIVE
+                    ),
+                    "audience_venue_code": "DEP_UI",
+                    "audience_venue_name": "Сами Сусами",
+                    "inactive_days_threshold": 30,
+                    "bot_bound_guests": 5,
+                    "message_target_guests": 4,
+                    "blocked_without_bot_binding": 1,
+                    "blocked_without_message_permission": 1,
+                    "blocked_existing_active_coupon": 0,
+                    "blocked_existing_trigger": 0,
+                    "blocked_by_cooldown": 0,
+                    "blocked_by_pilot_filter": 0,
+                    "planned_assignments": 4,
+                    "available_coupons": 10,
+                    "coupon_shortage": 0,
+                    "blockers": [],
+                    "warnings": [],
+                    "plan_items": [],
+                }
+            )
+            response = self.client.get(
+                reverse("mailings_v2_scenarios_v2"),
+                {
+                    "coupon_scenario_code": scenario.code,
+                    "coupon_check": "1",
+                    "coupon_scan_limit": "5000",
+                    "coupon_sample_limit": "5",
+                },
+                secure=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        plan_mock.assert_called_once_with(scenario_code=scenario.code, scan_limit=5000)
+        self.assertContains(response, "Автосценарии рассылок · версия 2")
+        self.assertContains(response, "Выбор купонного автосценария")
+        self.assertContains(response, "Следующий шаг")
+        self.assertContains(response, "Открыть пульт")
+        self.assertContains(response, reverse("mailings_v2_coupon_autoscenario_control_v2", kwargs={"pk": config.pk}))
+        self.assertContains(response, "Сервисный разовый запуск плановых сценариев")
+        self.assertContains(response, "Все сценарии уведомлений")
+        self.assertContains(response, "Версия 1")
+        self.assertContains(response, "готов к пробному запуску")
+
+    def test_scenarios_hub_v2_shows_plan_error_without_crash(self):
+        """
+        Ошибка безопасного расчёта на второй версии страницы не должна ломать интерфейс.
+        """
+        from guests.services.coupon_autoscenarios import CouponAutoscenarioPreviewError
+
+        scenario = NotificationScenario.objects.create(
+            code="ui_manual_error",
+            name="Ошибка расчёта",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+        )
+        CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="AUTO_ERR",
+            coupon_validity_days=14,
+            max_recipients_per_run=10,
+            cooldown_days=30,
+        )
+
+        with patch(
+            "guests.views_mailings_v2.build_coupon_autoscenario_execution_plan",
+            side_effect=CouponAutoscenarioPreviewError("Нет доступных купонов для проверки"),
+        ):
+            response = self.client.get(
+                reverse("mailings_v2_scenarios_v2"),
+                {
+                    "coupon_scenario_code": scenario.code,
+                    "coupon_check": "1",
+                    "coupon_scan_limit": "5000",
+                },
+                secure=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Нет доступных купонов для проверки")
+        self.assertContains(response, "Следующий шаг")
+        self.assertIsNone(response.context["coupon_plan"])
+
+    def test_scenarios_hub_v2_manual_schedule_run_returns_to_v2(self):
+        """
+        Сервисный запуск из второй версии страницы возвращает оператора в тот же интерфейс.
+        """
+        scenario = NotificationScenario.objects.create(
+            code="ui_schedule_once",
+            name="Разовый запуск",
+            template=self.template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.NORMAL,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=True,
+        )
+
+        with patch("guests.views_mailings_v2.run_registered_schedule_scenarios") as run_mock:
+            run_mock.return_value = {
+                scenario.code: SimpleNamespace(
+                    scanned_guests=10,
+                    matched_guests=2,
+                    created_tasks=1,
+                    skipped_without_coupon=0,
+                    skipped_duplicate_or_no_targets=1,
+                )
+            }
+            response = self.client.post(
+                reverse("mailings_v2_scenarios_v2"),
+                {
+                    "action": "run_schedule_once",
+                    "scenario_code": scenario.code,
+                    "limit_per_scenario": "25",
+                    "return_query": "trigger_type=schedule",
+                },
+                secure=True,
+                follow=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        run_mock.assert_called_once_with(scenario_codes=[scenario.code], limit_per_scenario=25)
+        self.assertEqual(response.resolver_match.url_name, "mailings_v2_scenarios_v2")
+        self.assertEqual(response.context["scenarios_run_report"]["total_created_tasks"], 1)
+        self.assertContains(response, "Последний ручной запуск")
+
     def test_scenarios_hub_birthday_plan_separates_database_count_from_recipients(self):
         scenario = NotificationScenario.objects.create(
             code="birthday_coupon",

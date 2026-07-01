@@ -3380,6 +3380,28 @@ class MailingsV2ScenariosView(TemplateView):
         return context
 
 
+class MailingsV2ScenariosV2View(MailingsV2ScenariosView):
+    """
+    Вторая версия рабочего экрана автосценариев.
+
+    Переиспользует расчёты и действия базовой страницы, но показывает их
+    по пользовательскому сценарию: выбор, состояние, следующий шаг, детали.
+    """
+
+    template_name = "mailing_v2/scenarios_hub_v2.html"
+
+    @staticmethod
+    def _build_redirect_url(*, return_query: str) -> str:
+        """
+        Возвращает оператора на вторую версию страницы с сохранением фильтров.
+        """
+        base_url = reverse("mailings_v2_scenarios_v2")
+        safe_query = str(return_query or "").strip()
+        if not safe_query:
+            return base_url
+        return f"{base_url}?{safe_query}"
+
+
 class MailingsV2CouponAutoscenarioCreateView(FormView):
     """
     Создание пользовательского купонного автосценария из интерфейса рассылок.
