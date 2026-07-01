@@ -768,7 +768,7 @@ def _build_coupon_autoscenario_olap_e2e_checklist(config: CouponAutomationConfig
                     "Статус применения отправлен во vtelemax",
                     "ожидает",
                     "text-bg-secondary",
-                    "Событие `status_update` появится после фиксации применения купона.",
+                    "Событие обновления статуса применения (`status_update`) появится после фиксации применения купона.",
                 ),
             ],
         }
@@ -971,7 +971,7 @@ def _build_coupon_autoscenario_olap_e2e_checklist(config: CouponAutomationConfig
                 "Статус применения отправлен во vtelemax",
                 "не создано",
                 "text-bg-warning text-dark",
-                "Применение найдено, но событие `status_update` для vtelemax ещё не создано.",
+                "Применение найдено, но событие обновления статуса применения (`status_update`) для vtelemax ещё не создано.",
             )
         )
     elif status_update_event.status == CouponVtelemaxSyncQueue.Status.ACKED:
@@ -998,7 +998,8 @@ def _build_coupon_autoscenario_olap_e2e_checklist(config: CouponAutomationConfig
                 "Статус применения отправлен во vtelemax",
                 "ожидает",
                 "text-bg-warning text-dark",
-                f"Текущее состояние `status_update`: {status_update_event.get_status_display()}.",
+                f"Текущее состояние события обновления статуса применения (`status_update`): "
+                f"{status_update_event.get_status_display()}.",
             )
         )
 

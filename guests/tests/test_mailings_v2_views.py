@@ -3005,11 +3005,14 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Контроль применения через OLAP")
         self.assertContains(response, "Назначений купонов пока нет")
         self.assertContains(response, "Сначала создайте пилотную волну")
-        self.assertContains(response, "Событие `status_update` появится после фиксации применения купона")
+        self.assertContains(
+            response,
+            "Событие обновления статуса применения (`status_update`) появится после фиксации применения купона",
+        )
 
     def test_coupon_autoscenario_control_olap_checklist_shows_used_assignment(self):
         """
-        Чек-лист OLAP должен показывать применённый купон и подтверждение `status_update` во vtelemax.
+        Чек-лист OLAP должен показывать применённый купон и подтверждение обновления статуса во vtelemax.
         """
         coupon_template = MessageTemplate.objects.create(
             name="Шаблон чек-листа применения",
