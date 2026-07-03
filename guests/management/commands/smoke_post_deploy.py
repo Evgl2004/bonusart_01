@@ -92,6 +92,32 @@ class Command(BaseCommand):
             aliases.append(alias)
         return aliases
 
+    @classmethod
+    def _migration_db_aliases(cls) -> list[str]:
+        """
+        Возвращает алиасы БД, где post-deploy проверка должна контролировать миграции.
+
+        Не все подключённые базы являются владельцами схемы текущего Django-приложения:
+        например, `webhooks` используется как отдельный контур и не должен случайно
+        получать миграции `guests`.
+        """
+        raw_aliases = getattr(
+            settings,
+            "SMOKE_POST_DEPLOY_MIGRATION_DATABASES",
+            ("default",),
+        )
+        if isinstance(raw_aliases, str):
+            requested_aliases = [
+                alias.strip() for alias in raw_aliases.split(",") if alias.strip()
+            ]
+        else:
+            requested_aliases = [
+                str(alias).strip() for alias in raw_aliases if str(alias).strip()
+            ]
+
+        configured_aliases = set(cls._configured_db_aliases())
+        return [alias for alias in requested_aliases if alias in configured_aliases]
+
     def _check_django_system(self, errors: list[str]) -> None:
         """
         Запускает встроенный `manage.py check`.
@@ -119,9 +145,14 @@ class Command(BaseCommand):
 
     def _check_migrations(self, errors: list[str]) -> None:
         """
-        Проверяет отсутствие неприменённых миграций на всех активных БД.
+        Проверяет отсутствие неприменённых миграций в БД, владеющих схемой проекта.
         """
-        for alias in self._configured_db_aliases():
+        aliases = self._migration_db_aliases()
+        if not aliases:
+            errors.append("[fail] migration database aliases are empty")
+            return
+
+        for alias in aliases:
             try:
                 connection = connections[alias]
                 executor = MigrationExecutor(connection)

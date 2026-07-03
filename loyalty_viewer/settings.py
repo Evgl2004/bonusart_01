@@ -147,6 +147,16 @@ DATABASES = {
     }
 
 }
+
+# Базы данных, в которых post-deploy проверка должна контролировать миграции.
+# `webhooks` не является владельцем схемы приложения `guests`, поэтому по
+# умолчанию проверяем только основную базу проекта.
+SMOKE_POST_DEPLOY_MIGRATION_DATABASES = tuple(
+    alias.strip()
+    for alias in os.getenv("SMOKE_POST_DEPLOY_MIGRATION_DATABASES", "default").split(",")
+    if alias.strip()
+)
+
 Q_CLUSTER = {
     "name": "loyalty_cluster",
     "workers": 1,             # сколько воркеров выполнять задачи

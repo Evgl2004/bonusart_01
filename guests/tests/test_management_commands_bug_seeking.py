@@ -17,7 +17,7 @@ from unittest.mock import MagicMock, Mock, patch
 from django.conf import settings
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, override_settings
 
 
 class RunProviderWorkerCommandBugSeekingTests(SimpleTestCase):
@@ -520,3 +520,53 @@ class SmokePostDeployCommandTests(SimpleTestCase):
         mocked_redis.assert_not_called()
         mocked_scenarios.assert_not_called()
         mocked_tokens.assert_not_called()
+
+    @override_settings(
+        DATABASES={
+            "default": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": ":memory:",
+            },
+            "webhooks": {
+                "ENGINE": "django.db.backends.sqlite3",
+                "NAME": ":memory:",
+            },
+        },
+        SMOKE_POST_DEPLOY_MIGRATION_DATABASES=("default",),
+    )
+    def test_smoke_migration_aliases_do_not_include_webhooks_by_default(self):
+        """
+        База `webhooks` не должна случайно проверяться как владелец схемы `guests`.
+        """
+        from guests.management.commands.smoke_post_deploy import Command
+
+        self.assertEqual(Command._migration_db_aliases(), ["default"])
+
+    def test_smoke_migration_check_uses_only_declared_migration_aliases(self):
+        """
+        Проверка миграций должна обходить только явно разрешённые алиасы БД.
+        """
+        from guests.management.commands.smoke_post_deploy import Command
+
+        command = Command()
+        errors: list[str] = []
+        default_connection = object()
+        connections_mock = MagicMock()
+        connections_mock.__getitem__.side_effect = {"default": default_connection}.__getitem__
+        executor_mock = MagicMock()
+        executor_mock.loader.graph.leaf_nodes.return_value = []
+        executor_mock.migration_plan.return_value = []
+
+        with (
+            patch.object(Command, "_migration_db_aliases", return_value=["default"]),
+            patch("guests.management.commands.smoke_post_deploy.connections", connections_mock),
+            patch(
+                "guests.management.commands.smoke_post_deploy.MigrationExecutor",
+                return_value=executor_mock,
+            ) as migration_executor_mock,
+        ):
+            command._check_migrations(errors)
+
+        self.assertEqual(errors, [])
+        connections_mock.__getitem__.assert_called_once_with("default")
+        migration_executor_mock.assert_called_once_with(default_connection)
