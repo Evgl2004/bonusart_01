@@ -12,12 +12,12 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from types import SimpleNamespace
 from typing import Any
 
 from django.conf import settings
-from django.db.models import Exists, Max, Min, OuterRef
+from django.db.models import Count, Exists, Max, Min, OuterRef, Sum
 
 from guests.models import (
     FocusCategory,
@@ -77,6 +77,8 @@ AUDIENCE_CHANNEL_GROUP_DEFINITIONS = (
 )
 AUDIENCE_CHANNEL_GROUP_NAMES_MAP = dict(AUDIENCE_CHANNEL_GROUP_DEFINITIONS)
 NEW_BOT_PROVIDER_TYPES = ("telegram", "max", "vk")
+HISTORICAL_AUDIENCE_METRICS_LAYER = "historical_all_time"
+HISTORICAL_AUDIENCE_SEGMENT_CODE = "historical_all_time"
 SELECTED_GUESTS_LIMIT = 200
 COMPLEX_FILTER_MAX_ITEMS = 6
 COMPLEX_FILTER_FIELDS = (
@@ -396,7 +398,10 @@ def _build_audience_channel_filter(audience_channel_group: str) -> dict[str, set
     if normalized_group == AUDIENCE_CHANNEL_GROUP_NEW_BOTS_SENDABLE:
         return {"include_guest_ids": sendable_guest_ids, "exclude_guest_ids": set()}
     if normalized_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT:
-        return {"include_guest_ids": historical_telegram_guest_ids, "exclude_guest_ids": set()}
+        return {
+            "include_guest_ids": historical_telegram_guest_ids - registered_new_bot_guest_ids,
+            "exclude_guest_ids": set(),
+        }
 
     return {
         "include_guest_ids": registered_new_bot_guest_ids - sendable_guest_ids,
@@ -590,8 +595,13 @@ def build_guest_workbench_payload(
     selected_segment_code = normalize_segment_code(segment_code)
     selected_focus_category_code_raw = (focus_category_code or "").strip()
     selected_audience_channel_group = normalize_audience_channel_group(audience_channel_group)
+    historical_audience_mode = selected_audience_channel_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT
+    if historical_audience_mode:
+        selected_venue_selection_mode = VENUE_SELECTION_VISITED_ONCE
+        selected_segment_code = ""
+        selected_focus_category_code_raw = ""
     audience_channel_filter = _build_audience_channel_filter(selected_audience_channel_group)
-    normalized_complex_filters = normalize_complex_filters(complex_filters)
+    normalized_complex_filters = [] if historical_audience_mode else normalize_complex_filters(complex_filters)
     complex_filter_options = _build_complex_filter_options()
     saved_presets = _build_saved_presets(show_all_presets=show_all_presets)
 
@@ -599,6 +609,24 @@ def build_guest_workbench_payload(
     if target_as_of is None:
         target_as_of = (
             GuestRestaurantWindowMetrics.objects.aggregate(v=Max("as_of_date")).get("v")
+        )
+    if target_as_of is None and historical_audience_mode:
+        target_as_of = (
+            GuestRestaurantDailyOrderFact.objects.aggregate(v=Max("business_date")).get("v")
+        )
+
+    if historical_audience_mode:
+        return _build_historical_telegram_all_time_payload(
+            as_of_date=target_as_of,
+            selected_window_days=selected_window_days,
+            selected_department_id=selected_department_id,
+            selected_audience_channel_group=selected_audience_channel_group,
+            audience_channel_filter=audience_channel_filter,
+            normalized_complex_filters=normalized_complex_filters,
+            complex_filter_options=complex_filter_options,
+            show_all_presets=show_all_presets,
+            saved_presets=saved_presets,
+            selected_guests_limit=selected_guests_limit,
         )
 
     if target_as_of is None:
@@ -868,6 +896,8 @@ def build_guest_workbench_payload(
                 if use_category_window_metrics
                 else "Общие метрики по окну"
             ),
+            "historical_audience_mode": False,
+            "historical_audience_requires_department": False,
             "complex_filters": normalized_complex_filters,
             "complex_filter_fields": complex_filter_options["fields"],
             "complex_filter_operators": complex_filter_options["operators"],
@@ -893,6 +923,317 @@ def build_guest_workbench_payload(
             "scatter_points": scatter_points,
         },
     }
+
+
+def _build_historical_telegram_all_time_payload(
+    *,
+    as_of_date: date | None,
+    selected_window_days: int,
+    selected_department_id: str,
+    selected_audience_channel_group: str,
+    audience_channel_filter: dict[str, set[int] | None],
+    normalized_complex_filters: list[dict[str, Any]],
+    complex_filter_options: dict[str, list[dict[str, str]]],
+    show_all_presets: bool,
+    saved_presets: list[dict[str, Any]],
+    selected_guests_limit: int | None = SELECTED_GUESTS_LIMIT,
+) -> dict[str, Any]:
+    """
+    Строит строгий режим возвратной рассылки для исторической Telegram-аудитории.
+
+    В этом режиме не применяются оконные сегменты, категории и сложные условия:
+    аудитория определяется рабочим историческим Telegram-каналом и фактом
+    хотя бы одного посещения выбранного заведения за всё доступное время.
+    """
+
+    selected_guest_rows = _collect_historical_telegram_all_time_rows(
+        selected_department_id=selected_department_id,
+        audience_channel_filter=audience_channel_filter,
+    )
+    selected_guests = _build_selected_guests_rows(
+        base_scope=GuestRestaurantWindowMetrics.objects.none(),
+        selected_window_days=selected_window_days,
+        segment_by_key={},
+        segment_guest_keys_by_code={},
+        focus_guest_keys_by_code={},
+        segment_code="",
+        focus_category_code="",
+        allowed_guest_keys=None,
+        limit=selected_guests_limit,
+        selected_guest_rows=selected_guest_rows,
+    )
+    cards = _build_cards_from_selected_rows(selected_guest_rows)
+    department_competition = _build_department_competition_from_selected_rows(selected_guest_rows)
+
+    historical_total = len(selected_guest_rows)
+    department_required = not bool(selected_department_id)
+    venue_selection_summary = {
+        "applied": bool(selected_department_id),
+        "department_id": selected_department_id,
+        "mode": VENUE_SELECTION_VISITED_ONCE,
+        "mode_name": "Был хотя бы 1 раз за всё доступное время",
+        "total": int(historical_total),
+        "date_from": "",
+        "date_to": "",
+    }
+
+    return {
+        "filters": {
+            "as_of_date": as_of_date.isoformat() if as_of_date else "",
+            "window_days": selected_window_days,
+            "window_options": list(WINDOW_OPTIONS),
+            "department_id": selected_department_id,
+            "department_options": _build_department_options(),
+            "venue_selection_mode": VENUE_SELECTION_VISITED_ONCE,
+            "venue_selection_mode_name": "Был хотя бы 1 раз за всё доступное время",
+            "venue_selection_mode_options": _build_venue_selection_mode_options(),
+            "venue_selection": venue_selection_summary,
+            "segment_code": "",
+            "segment_options": _build_segment_options(),
+            "focus_category_code": "",
+            "focus_category_options": [],
+            "audience_channel_group": selected_audience_channel_group,
+            "audience_channel_group_name": AUDIENCE_CHANNEL_GROUP_NAMES_MAP.get(
+                selected_audience_channel_group,
+                AUDIENCE_CHANNEL_GROUP_NAMES_MAP[AUDIENCE_CHANNEL_GROUP_ALL],
+            ),
+            "audience_channel_group_options": _build_audience_channel_group_options(),
+            "metrics_layer": HISTORICAL_AUDIENCE_METRICS_LAYER,
+            "metrics_layer_name": "Историческая Telegram-аудитория за всё доступное время",
+            "historical_audience_mode": True,
+            "historical_audience_requires_department": department_required,
+            "complex_filters": normalized_complex_filters,
+            "complex_filter_fields": complex_filter_options["fields"],
+            "complex_filter_operators": complex_filter_options["operators"],
+            "show_all_presets": show_all_presets,
+            "saved_presets": saved_presets,
+        },
+        "cards": cards,
+        "segments": {code: 0 for code, _ in SEGMENT_DEFINITIONS},
+        "segment_focus_matrix": {
+            "rows": [
+                {
+                    "segment_code": code,
+                    "segment_name": name,
+                    "guests_total": 0,
+                    "cells": [],
+                }
+                for code, name in SEGMENT_DEFINITIONS
+            ],
+            "columns": [],
+            "heatmap": {"max_value": 0, "items": []},
+        },
+        "top_rating": [_serialize_metric_row(row) for row, _ in selected_guest_rows[:20]],
+        "anti_rating": [
+            _serialize_metric_row(row)
+            for row, _ in sorted(
+                [item for item in selected_guest_rows if int(item[0].orders_count or 0) > 0],
+                key=lambda item: (
+                    float(item[0].rating_score or 0),
+                    float(item[0].sum_net or 0),
+                    int(item[0].guest_id),
+                ),
+            )[:20]
+        ],
+        "selected_guests": selected_guests,
+        "department_competition": department_competition,
+        "visualization": {
+            "scatter_points": _build_scatter_points(selected_guest_rows),
+        },
+    }
+
+
+def _collect_historical_telegram_all_time_rows(
+    *,
+    selected_department_id: str,
+    audience_channel_filter: dict[str, set[int] | None],
+) -> list[tuple[Any, str]]:
+    """
+    Возвращает гостей исторической Telegram-аудитории, которые были в заведении
+    хотя бы один раз за весь доступный период очищенных дневных фактов.
+    """
+
+    safe_department_id = (selected_department_id or "").strip()
+    if not safe_department_id:
+        return []
+
+    include_guest_ids = audience_channel_filter.get("include_guest_ids")
+    if include_guest_ids is not None and not include_guest_ids:
+        return []
+
+    scope = GuestRestaurantDailyOrderFact.objects.filter(
+        department_id=safe_department_id,
+        orders_count__gt=0,
+    )
+    if include_guest_ids is not None:
+        scope = scope.filter(guest_id__in=include_guest_ids)
+
+    aggregate_rows = list(
+        scope.values("guest_id", "department_id")
+        .annotate(
+            orders_total=Sum("orders_count"),
+            visits_total=Count("business_date", distinct=True),
+            sum_net_total=Sum("sum_net"),
+            bonus_in_total=Sum("bonus_in_sum"),
+            bonus_out_total=Sum("bonus_out_sum"),
+            first_visit_at=Min("business_date"),
+            last_visit_at=Max("business_date"),
+        )
+        .order_by("-last_visit_at", "guest_id")
+    )
+    if not aggregate_rows:
+        return []
+
+    guest_ids = [int(row["guest_id"]) for row in aggregate_rows if row.get("guest_id")]
+    guests_map = {
+        int(guest.id): guest
+        for guest in Guest.objects.filter(id__in=guest_ids).only(
+            "id",
+            "phone",
+            "first_name",
+            "last_name",
+        )
+    }
+
+    result: list[tuple[Any, str]] = []
+    for row in aggregate_rows:
+        guest_id = int(row["guest_id"])
+        guest = guests_map.get(guest_id)
+        if guest is None:
+            continue
+
+        orders_count = int(row.get("orders_total") or 0)
+        visits_count = int(row.get("visits_total") or 0)
+        sum_net = Decimal(str(row.get("sum_net_total") or 0))
+        avg_check_net = _calculate_avg_check_net(sum_net=sum_net, orders_count=orders_count)
+        rating_score = _calculate_rating_score(
+            orders_count=orders_count,
+            visits_count=visits_count,
+            avg_check_net=avg_check_net,
+        )
+        synthetic_row = SimpleNamespace(
+            guest_id=guest_id,
+            guest=guest,
+            department_id=str(row.get("department_id") or "").strip(),
+            window_days=0,
+            orders_count=orders_count,
+            visits_count=visits_count,
+            sum_net=sum_net,
+            avg_check_net=avg_check_net,
+            bonus_in_sum=Decimal(str(row.get("bonus_in_total") or 0)),
+            bonus_out_sum=Decimal(str(row.get("bonus_out_total") or 0)),
+            rating_score=rating_score,
+            first_visit_at=row.get("first_visit_at"),
+            last_visit_at=row.get("last_visit_at"),
+        )
+        result.append((synthetic_row, HISTORICAL_AUDIENCE_SEGMENT_CODE))
+    result.sort(
+        key=lambda item: (
+            -(float(item[0].rating_score or 0)),
+            -(float(item[0].sum_net or 0)),
+            int(item[0].guest_id),
+        )
+    )
+    return result
+
+
+def _calculate_avg_check_net(*, sum_net: Decimal, orders_count: int) -> Decimal:
+    if orders_count <= 0:
+        return Decimal("0")
+    return (sum_net / Decimal(orders_count)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _calculate_rating_score(
+    *,
+    orders_count: int,
+    visits_count: int,
+    avg_check_net: Decimal,
+) -> Decimal:
+    score = (
+        Decimal(int(orders_count or 0)) * Decimal("3")
+        + Decimal(int(visits_count or 0)) * Decimal("2")
+        + (avg_check_net / Decimal("100"))
+    )
+    return score.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _build_cards_from_selected_rows(selected_guest_rows: list[tuple[Any, str]]) -> dict[str, Any]:
+    cards_orders_total = 0
+    cards_visits_total = 0
+    cards_net_total = Decimal("0")
+    cards_bonus_in_total = Decimal("0")
+    cards_bonus_out_total = Decimal("0")
+    cards_rating_total = Decimal("0")
+
+    for row, _ in selected_guest_rows:
+        cards_orders_total += int(row.orders_count or 0)
+        cards_visits_total += int(row.visits_count or 0)
+        cards_net_total += Decimal(str(row.sum_net or 0))
+        cards_bonus_in_total += Decimal(str(row.bonus_in_sum or 0))
+        cards_bonus_out_total += Decimal(str(row.bonus_out_sum or 0))
+        cards_rating_total += Decimal(str(row.rating_score or 0))
+
+    cards_guests_total = len(selected_guest_rows)
+    cards_avg_rating = (
+        (cards_rating_total / Decimal(cards_guests_total))
+        if cards_guests_total > 0
+        else Decimal("0")
+    )
+    return {
+        "guests_total": int(cards_guests_total),
+        "orders_total": int(cards_orders_total),
+        "visits_total": int(cards_visits_total),
+        "net_total": _to_money_ui(cards_net_total),
+        "bonus_in_total": _to_money_str(cards_bonus_in_total),
+        "bonus_out_total": _to_money_str(cards_bonus_out_total),
+        "avg_rating": _to_decimal_str(cards_avg_rating),
+    }
+
+
+def _build_department_competition_from_selected_rows(selected_guest_rows: list[tuple[Any, str]]) -> list[dict[str, Any]]:
+    department_names_map = _load_department_names()
+    department_agg: dict[str, dict[str, Any]] = {}
+    for row, _ in selected_guest_rows:
+        department_id = (row.department_id or "").strip()
+        bucket = department_agg.setdefault(
+            department_id,
+            {
+                "guests_count": 0,
+                "net_total": Decimal("0"),
+                "rating_total": Decimal("0"),
+                "bonus_in_total": Decimal("0"),
+                "bonus_out_total": Decimal("0"),
+            },
+        )
+        bucket["guests_count"] += 1
+        bucket["net_total"] += Decimal(str(row.sum_net or 0))
+        bucket["rating_total"] += Decimal(str(row.rating_score or 0))
+        bucket["bonus_in_total"] += Decimal(str(row.bonus_in_sum or 0))
+        bucket["bonus_out_total"] += Decimal(str(row.bonus_out_sum or 0))
+
+    return [
+        {
+            "department_id": department_id,
+            "department_name": department_names_map.get(department_id, department_id or "—"),
+            "guests_count": int(values["guests_count"] or 0),
+            "net_total": _to_money_ui(values["net_total"]),
+            "avg_rating": _to_decimal_str(
+                (values["rating_total"] / Decimal(values["guests_count"]))
+                if int(values["guests_count"] or 0) > 0
+                else Decimal("0")
+            ),
+            "bonus_in_total": _to_money_str(values["bonus_in_total"]),
+            "bonus_out_total": _to_money_str(values["bonus_out_total"]),
+        }
+        for department_id, values in sorted(
+            department_agg.items(),
+            key=lambda item: (
+                -float(item[1]["net_total"]),
+                -int(item[1]["guests_count"]),
+                item[0],
+            ),
+        )
+    ]
 
 
 def _build_empty_payload(
@@ -948,6 +1289,8 @@ def _build_empty_payload(
             "audience_channel_group_options": _build_audience_channel_group_options(),
             "metrics_layer": "window",
             "metrics_layer_name": "Общие метрики по окну",
+            "historical_audience_mode": False,
+            "historical_audience_requires_department": False,
             "complex_filters": normalized_complex_filters,
             "complex_filter_fields": complex_filter_options["fields"],
             "complex_filter_operators": complex_filter_options["operators"],
@@ -1639,7 +1982,11 @@ def _build_selected_guests_rows(
         if effective_limit is None or len(rows) < effective_limit:
             item = _serialize_metric_row(row)
             item["segment_code"] = row_segment_code
-            item["segment_name"] = SEGMENT_NAMES_MAP.get(row_segment_code, "Вне сегмента")
+            item["segment_name"] = (
+                "Историческая Telegram-аудитория"
+                if row_segment_code == HISTORICAL_AUDIENCE_SEGMENT_CODE
+                else SEGMENT_NAMES_MAP.get(row_segment_code, "Вне сегмента")
+            )
             item["source_window_days"] = int(row.window_days or 0)
             rows.append(item)
 

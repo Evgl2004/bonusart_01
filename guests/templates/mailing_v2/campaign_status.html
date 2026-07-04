@@ -105,7 +105,11 @@
               <div class="small mb-2">Кампания создана из экрана «Гости».</div>
               <div class="d-flex flex-wrap gap-1 mb-2">
                 {% if workbench_snapshot.as_of_date %}<span class="badge text-bg-light border">Срез: {{ workbench_snapshot.as_of_date }}</span>{% endif %}
-                {% if workbench_snapshot.window_days %}<span class="badge text-bg-light border">Окно: {{ workbench_snapshot.window_days }} дн</span>{% endif %}
+                {% if workbench_snapshot.historical_audience_mode %}
+                  <span class="badge text-bg-light border">Период: всё доступное время</span>
+                {% elif workbench_snapshot.window_days %}
+                  <span class="badge text-bg-light border">Окно: {{ workbench_snapshot.window_days }} дн</span>
+                {% endif %}
                 <span class="badge text-bg-light border">Связь с заведением: {{ workbench_snapshot.venue_selection_mode_label }}</span>
                 <span class="badge text-bg-light border">Аудитория: {{ workbench_snapshot.audience_channel_group_label }}</span>
                 {% if workbench_snapshot.mailing_template_name %}<span class="badge text-bg-light border">Шаблон: {{ workbench_snapshot.mailing_template_name }}</span>{% endif %}

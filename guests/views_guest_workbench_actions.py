@@ -27,12 +27,13 @@ from guests.models import (
     MessageTemplate,
 )
 from guests.services.guest_workbench import (
+    AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT,
     build_guest_workbench_payload,
     normalize_audience_channel_group,
     normalize_segment_code,
     normalize_window_days,
 )
-from guests.services.guest_venue_selection import normalize_venue_selection_mode
+from guests.services.guest_venue_selection import VENUE_SELECTION_VISITED_ONCE, normalize_venue_selection_mode
 from guests.services.mailing_delivery_targets import build_mailing_delivery_plan, normalize_mailing_target_mode
 from guests.services.template_render import render_message_for_guest
 
@@ -220,8 +221,13 @@ class GuestsWorkbenchActionsView(View):
         venue_selection_mode = normalize_venue_selection_mode(request.POST.get("venue_selection_mode"))
         segment_code = normalize_segment_code((request.POST.get("segment_code") or "").strip())
         audience_channel_group = normalize_audience_channel_group(request.POST.get("audience_channel_group"))
+        if audience_channel_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT:
+            venue_selection_mode = VENUE_SELECTION_VISITED_ONCE
+            segment_code = ""
 
         focus_category_code = (request.POST.get("focus_category_code") or "").strip()
+        if audience_channel_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT:
+            focus_category_code = ""
         if focus_category_code and not FocusCategory.objects.filter(
             code=focus_category_code, is_enabled=True
         ).exists():
@@ -388,27 +394,33 @@ class GuestsWorkbenchActionsView(View):
         Постоянная копия нужна, чтобы оператор мог открыть кампанию позднее
         и восстановить, каким фильтром была собрана аудитория.
         """
+        payload_filters = payload.get("filters") if isinstance(payload, dict) else {}
+        if not isinstance(payload_filters, dict):
+            payload_filters = {}
+
         as_of_date = filters.get("as_of_date")
-        as_of_date_value = as_of_date.isoformat() if as_of_date else ""
-        window_days_value = str(filters.get("window_days") or "").strip()
-        department_id_value = str(filters.get("department_id") or "").strip()
+        as_of_date_value = str(payload_filters.get("as_of_date") or "").strip()
+        if not as_of_date_value:
+            as_of_date_value = as_of_date.isoformat() if as_of_date else ""
+        window_days_value = str(payload_filters.get("window_days") or filters.get("window_days") or "").strip()
+        department_id_value = str(payload_filters.get("department_id") or filters.get("department_id") or "").strip()
         venue_selection_mode_value = normalize_venue_selection_mode(
-            str(filters.get("venue_selection_mode") or "").strip()
+            str(payload_filters.get("venue_selection_mode") or filters.get("venue_selection_mode") or "").strip()
         )
-        segment_code_value = str(filters.get("segment_code") or "").strip()
-        focus_category_code_value = str(filters.get("focus_category_code") or "").strip()
+        segment_code_value = str(payload_filters.get("segment_code") or "").strip()
+        focus_category_code_value = str(payload_filters.get("focus_category_code") or "").strip()
         audience_channel_group_value = normalize_audience_channel_group(
-            str(filters.get("audience_channel_group") or "").strip()
+            str(payload_filters.get("audience_channel_group") or filters.get("audience_channel_group") or "").strip()
         )
 
-        complex_filters_raw = filters.get("complex_filters") or []
+        complex_filters_raw = payload_filters.get("complex_filters") or []
         complex_filters: list[dict[str, str]] = []
         for item in complex_filters_raw:
             if not isinstance(item, dict):
                 continue
             field = str(item.get("field") or "").strip()
             operator = str(item.get("operator") or "").strip()
-            value = str(item.get("value") or "").strip()
+            value = str(item.get("value_str") or item.get("value") or "").strip()
             if not (field or operator or value):
                 continue
             complex_filters.append(
@@ -419,10 +431,8 @@ class GuestsWorkbenchActionsView(View):
                 }
             )
 
-        payload_filters = payload.get("filters") if isinstance(payload, dict) else {}
         source_layer = ""
-        if isinstance(payload_filters, dict):
-            source_layer = str(payload_filters.get("metrics_layer") or "").strip()
+        source_layer = str(payload_filters.get("metrics_layer") or "").strip()
 
         snapshot = {
             "as_of_date": as_of_date_value,

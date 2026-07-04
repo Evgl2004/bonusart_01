@@ -311,6 +311,13 @@ class GuestsWorkbenchViewTests(TestCase):
         Фильтр legacy должен оставлять гостей без привязки к новым ботам.
         """
         self._historical_telegram_channel(self.guest_2, telegram_chat_id="historical-tg-guest-2")
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2025, 9, 10),
+            guest=self.guest_2,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("700.00"),
+        )
 
         response = self.client.get(
             reverse("guests_workbench"),
@@ -329,6 +336,67 @@ class GuestsWorkbenchViewTests(TestCase):
         self.assertEqual(payload["cards"]["guests_total"], 1)
         self.assertEqual(payload["selected_guests"]["total"], 1)
         self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], self.guest_2.phone)
+
+    def test_historical_telegram_mode_uses_all_time_visits_and_resets_window_filters(self):
+        """
+        Историческая Telegram-аудитория должна отбираться по посещению заведения
+        за всё доступное время и не применять оконные сегменты, категории и условия.
+        """
+        old_guest = Guest.objects.create(phone="+79990003333", first_name="Старый")
+        registered_guest = Guest.objects.create(phone="+79990004444", first_name="Новый")
+        self._historical_telegram_channel(old_guest, telegram_chat_id="historical-tg-old")
+        self._historical_telegram_channel(registered_guest, telegram_chat_id="historical-tg-registered")
+        self._create_bot_binding(
+            registered_guest,
+            external_chat_id="tg-registered",
+            is_primary=False,
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2025, 9, 10),
+            guest=old_guest,
+            department_id=self.department_id,
+            orders_count=2,
+            sum_net=Decimal("1200.00"),
+        )
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2025, 9, 11),
+            guest=registered_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("900.00"),
+        )
+
+        response = self.client.get(
+            reverse("guests_workbench"),
+            {
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "audience_channel_group": "legacy_no_new_bot",
+                "venue_selection_mode": "favorite",
+                "segment_code": "active_30d",
+                "focus_category_code": "beer_ermolaev",
+                "cf_field": "orders_count",
+                "cf_op": "gt",
+                "cf_value": "999",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.context["payload"]
+        self.assertTrue(payload["filters"]["historical_audience_mode"])
+        self.assertEqual(payload["filters"]["metrics_layer"], "historical_all_time")
+        self.assertEqual(payload["filters"]["venue_selection_mode"], "visited_once")
+        self.assertEqual(payload["filters"]["segment_code"], "")
+        self.assertEqual(payload["filters"]["focus_category_code"], "")
+        self.assertEqual(payload["filters"]["complex_filters"], [])
+        self.assertEqual(payload["cards"]["guests_total"], 1)
+        self.assertEqual(payload["cards"]["orders_total"], 2)
+        self.assertEqual(payload["selected_guests"]["total"], 1)
+        self.assertEqual(payload["selected_guests"]["rows"][0]["phone"], old_guest.phone)
+        self.assertContains(response, 'id="wb-window-days" name="window_days" class="form-select" disabled')
+        self.assertContains(response, "Историческая Telegram-аудитория считается за всё доступное время")
 
     def test_workbench_filters_new_bot_guests_blocked_for_messages(self):
         """
@@ -1238,6 +1306,13 @@ class GuestsWorkbenchViewTests(TestCase):
         Черновик обычной рассылки может быть создан для legacy-гостя с Telegram-каналом.
         """
         self._historical_telegram_channel(self.guest_2, telegram_chat_id="historical-tg-guest-2")
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2025, 9, 10),
+            guest=self.guest_2,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("700.00"),
+        )
 
         response = self.client.post(
             reverse("guests_workbench_actions"),
@@ -1265,6 +1340,59 @@ class GuestsWorkbenchViewTests(TestCase):
         mailing.refresh_from_db()
         self.assertEqual(mailing.source_filter_snapshot["audience_channel_group"], "legacy_no_new_bot")
         self.assertEqual(mailing.source_filter_snapshot["delivery_legacy_telegram_guests"], 1)
+
+    def test_create_mailing_draft_for_historical_mode_uses_all_time_selection(self):
+        """
+        Черновик из исторической аудитории должен переносить тот же строгий набор,
+        даже если в POST пришли несовместимые оконные фильтры.
+        """
+        old_guest = Guest.objects.create(phone="+79990005555", first_name="Возврат")
+        self._historical_telegram_channel(old_guest, telegram_chat_id="historical-tg-return")
+        GuestRestaurantDailyOrderFact.objects.create(
+            business_date=date(2025, 9, 12),
+            guest=old_guest,
+            department_id=self.department_id,
+            orders_count=1,
+            sum_net=Decimal("600.00"),
+        )
+
+        response = self.client.post(
+            reverse("guests_workbench_actions"),
+            {
+                "action": "create_mailing_draft",
+                "as_of_date": self.as_of_date.isoformat(),
+                "window_days": 30,
+                "department_id": self.department_id,
+                "audience_channel_group": "legacy_no_new_bot",
+                "venue_selection_mode": "favorite",
+                "segment_code": "active_30d",
+                "focus_category_code": "beer_ermolaev",
+                "cf_field": "orders_count",
+                "cf_op": "gt",
+                "cf_value": "999",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        mailing = Mailing.objects.get()
+        rows = list(MailingGuest.objects.filter(mailing=mailing).order_by("guest_id"))
+        self.assertEqual([row.guest_id for row in rows], [old_guest.id])
+
+        snapshot = self.client.session["mailings_v2_workbench_snapshots"][str(mailing.id)]
+        self.assertEqual(snapshot["audience_channel_group"], "legacy_no_new_bot")
+        self.assertEqual(snapshot["source_layer"], "historical_all_time")
+        self.assertEqual(snapshot["venue_selection_mode"], "visited_once")
+        self.assertEqual(snapshot["segment_code"], "")
+        self.assertEqual(snapshot["focus_category_code"], "")
+        self.assertEqual(snapshot["complex_filters"], [])
+        self.assertEqual(snapshot["delivery_available_guests"], 1)
+        self.assertEqual(snapshot["delivery_legacy_telegram_guests"], 1)
+
+        mailing.refresh_from_db()
+        self.assertEqual(mailing.source_filter_snapshot["source_layer"], "historical_all_time")
+        self.assertEqual(mailing.source_filter_snapshot["segment_code"], "")
+        self.assertEqual(mailing.source_filter_snapshot["complex_filters"], [])
 
     def test_create_mailing_draft_without_audience_limit_uses_full_selection(self):
         """
@@ -1351,9 +1479,9 @@ class GuestsWorkbenchViewTests(TestCase):
         preset = GuestWorkbenchFilterPreset.objects.get(name="Остывшие + Вино")
         self.assertEqual(preset.window_days, 30)
         self.assertEqual(preset.department_id, self.department_id)
-        self.assertEqual(preset.venue_selection_mode, "favorite")
-        self.assertEqual(preset.segment_code, "cooling_30_60d")
-        self.assertEqual(preset.focus_category_code, "wine")
+        self.assertEqual(preset.venue_selection_mode, "visited_once")
+        self.assertEqual(preset.segment_code, "")
+        self.assertEqual(preset.focus_category_code, "")
         self.assertEqual(preset.audience_channel_group, "legacy_no_new_bot")
 
     def test_save_filter_preset_accepts_new_in_venue_segment(self):

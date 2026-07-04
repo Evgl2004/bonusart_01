@@ -171,6 +171,10 @@
     font-size: 0.8rem;
     color: #64748b;
   }
+
+  .wb-filter-locked {
+    opacity: 0.65;
+  }
 </style>
 {% endblock %}
 
@@ -192,7 +196,7 @@
   <div class="row g-2 align-items-end">
     <div class="col-12 col-lg-3">
       <label class="form-label">Окно (дней)</label>
-      <select id="wb-window-days" name="window_days" class="form-select">
+      <select id="wb-window-days" name="window_days" class="form-select" {% if payload.filters.historical_audience_mode %}disabled{% endif %}>
         {% for item in payload.filters.window_options %}
           <option value="{{ item }}" {% if item == selected_window_days %}selected{% endif %}>{{ item }}</option>
         {% endfor %}
@@ -209,7 +213,7 @@
     </div>
     <div class="col-12 col-lg-3">
       <label class="form-label">Связь с заведением</label>
-      <select id="wb-venue-selection-mode" name="venue_selection_mode" class="form-select">
+      <select id="wb-venue-selection-mode" name="venue_selection_mode" class="form-select" {% if payload.filters.historical_audience_mode %}disabled{% endif %}>
         {% for mode in payload.filters.venue_selection_mode_options %}
           <option value="{{ mode.code }}" {% if mode.code == selected_venue_selection_mode %}selected{% endif %}>{{ mode.name }}</option>
         {% endfor %}
@@ -217,7 +221,7 @@
     </div>
     <div class="col-12 col-lg-3">
       <label class="form-label">Сегмент</label>
-      <select id="wb-segment-code" name="segment_code" class="form-select">
+      <select id="wb-segment-code" name="segment_code" class="form-select" {% if payload.filters.historical_audience_mode %}disabled{% endif %}>
         <option value="">Все сегменты</option>
         {% for seg in payload.filters.segment_options %}
           <option value="{{ seg.code }}" title="{{ seg.description }}" {% if seg.code == selected_segment_code %}selected{% endif %}>{{ seg.name }}</option>
@@ -226,7 +230,7 @@
     </div>
     <div class="col-12 col-lg-3">
       <label class="form-label">Целевая категория</label>
-      <select id="wb-focus-category-code" name="focus_category_code" class="form-select">
+      <select id="wb-focus-category-code" name="focus_category_code" class="form-select" {% if payload.filters.historical_audience_mode %}disabled{% endif %}>
         <option value="">Все категории</option>
         {% for cat in payload.filters.focus_category_options %}
           <option value="{{ cat.code }}" {% if cat.code == selected_focus_category_code %}selected{% endif %}>{{ cat.name }}</option>
@@ -238,6 +242,15 @@
   {% if selected_segment_code == "new_in_venue" and not selected_department_id %}
     <div class="alert alert-warning border py-2 small my-2">
       Для сегмента «Новые» выберите конкретное заведение. Счётчики и аудитория появятся после выбора.
+    </div>
+  {% endif %}
+
+  {% if payload.filters.historical_audience_mode %}
+    <div class="alert alert-info border py-2 small my-2">
+      Историческая Telegram-аудитория считается за всё доступное время. Рабочий фильтр: выбранное заведение, где гость был хотя бы 1 раз.
+      {% if payload.filters.historical_audience_requires_department %}
+        Выберите заведение, чтобы получить аудиторию.
+      {% endif %}
     </div>
   {% endif %}
 
@@ -257,14 +270,14 @@
     </div>
   </div>
 
-  <div class="wb-complex-filters-box mt-2">
+  <div id="wb-complex-filters-box" class="wb-complex-filters-box mt-2 {% if payload.filters.historical_audience_mode %}wb-filter-locked{% endif %}">
     <div class="d-flex align-items-center justify-content-between mb-2">
       <label class="form-label mb-0">Дополнительные условия (логика И)</label>
       <span id="wb-cf-limit-note" class="wb-complex-limit-note">0 из 6 условий</span>
     </div>
     <div id="wb-complex-filters" data-max-items="6"></div>
     <div class="wb-complex-controls">
-      <button type="button" id="wb-cf-add" class="btn btn-sm btn-outline-primary">Добавить условие</button>
+      <button type="button" id="wb-cf-add" class="btn btn-sm btn-outline-primary" {% if payload.filters.historical_audience_mode %}disabled{% endif %}>Добавить условие</button>
       <span class="wb-complex-limit-note">Пример: «Сумма (нетто) больше 10000» и «Рейтинг больше 20».</span>
     </div>
   </div>
@@ -871,6 +884,7 @@
     const showAllPresetsCheckbox = document.getElementById("show-all-presets");
     const activeTabInput = document.getElementById("wb-active-tab");
     const scrollTargetInput = document.getElementById("wb-scroll-target");
+    const complexFiltersBox = document.getElementById("wb-complex-filters-box");
     const complexFiltersContainer = document.getElementById("wb-complex-filters");
     const complexFilterTemplate = document.getElementById("wb-cf-row-template");
     const complexFilterAddButton = document.getElementById("wb-cf-add");
@@ -901,6 +915,42 @@
       guests: "tab-guests",
       rating: "tab-rating",
       presets: "tab-presets",
+    };
+    const HISTORICAL_AUDIENCE_GROUP = "legacy_no_new_bot";
+
+    const isHistoricalAudienceMode = () => (
+      audienceChannelGroupSelect && audienceChannelGroupSelect.value === HISTORICAL_AUDIENCE_GROUP
+    );
+
+    const syncHistoricalAudienceControls = () => {
+      const locked = isHistoricalAudienceMode();
+      if (venueSelectionModeSelect && locked) {
+        venueSelectionModeSelect.value = "visited_once";
+      }
+      if (segmentSelect && locked) {
+        segmentSelect.value = "";
+      }
+      if (focusSelect && locked) {
+        focusSelect.value = "";
+      }
+
+      [windowSelect, venueSelectionModeSelect, segmentSelect, focusSelect].forEach((node) => {
+        if (node) {
+          node.disabled = locked;
+        }
+      });
+
+      if (complexFiltersBox) {
+        complexFiltersBox.classList.toggle("wb-filter-locked", locked);
+      }
+      if (complexFiltersContainer) {
+        complexFiltersContainer.querySelectorAll("select, input, button").forEach((node) => {
+          node.disabled = locked;
+        });
+      }
+      if (complexFilterAddButton) {
+        complexFilterAddButton.disabled = locked || complexFilterAddButton.dataset.wbLimitReached === "1";
+      }
     };
 
     const normalizeTabKey = (value) => {
@@ -953,6 +1003,7 @@
       autoApplyCheckbox.checked = stored === null ? true : stored === "1";
 
       const syncApplyButtonState = () => {
+        syncHistoricalAudienceControls();
         if (autoApplyCheckbox.checked) {
           applyButton.disabled = true;
           applyButton.classList.remove("btn-primary");
@@ -965,6 +1016,7 @@
       };
 
       const maybeAutoSubmit = () => {
+        syncHistoricalAudienceControls();
         if (!autoApplyCheckbox.checked) {
           return;
         }
@@ -1024,7 +1076,8 @@
         const rows = getRows();
         const filledRowsCount = rows.filter(isFilled).length;
         complexFilterLimitNote.textContent = `${filledRowsCount} из ${maxItems} условий`;
-        complexFilterAddButton.disabled = rows.length >= maxItems;
+        complexFilterAddButton.dataset.wbLimitReached = rows.length >= maxItems ? "1" : "0";
+        complexFilterAddButton.disabled = isHistoricalAudienceMode() || rows.length >= maxItems;
       };
 
       const triggerAutoSubmit = (rowForValidation = null) => {
@@ -1058,6 +1111,7 @@
             triggerAutoSubmit();
           });
         }
+        syncHistoricalAudienceControls();
       };
 
       const appendRow = (rule = {}, shouldTriggerAutoSubmit = false) => {
@@ -1107,6 +1161,7 @@
       });
 
       filterForm.addEventListener("submit", () => {
+        syncHistoricalAudienceControls();
         getRows().forEach((row) => {
           if (isFilled(row)) {
             return;
@@ -1116,6 +1171,7 @@
           });
         });
       });
+      syncHistoricalAudienceControls();
     };
 
     const initDeliveryPreview = () => {

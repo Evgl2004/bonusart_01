@@ -4469,13 +4469,18 @@ def _get_workbench_snapshot(request, mailing: Mailing | int) -> dict | None:
     mailing_bot_profiles = raw_snapshot.get("mailing_bot_profiles") or []
     if not isinstance(mailing_bot_profiles, list):
         mailing_bot_profiles = []
+    source_layer = str(raw_snapshot.get("source_layer") or "").strip()
+    historical_audience_mode = source_layer == "historical_all_time"
+    venue_selection_mode_label = _localize_workbench_venue_selection_mode(venue_selection_mode)
+    if historical_audience_mode and venue_selection_mode == "visited_once":
+        venue_selection_mode_label = "Был хотя бы 1 раз за всё доступное время"
 
     snapshot = {
         "as_of_date": str(raw_snapshot.get("as_of_date") or "").strip(),
         "window_days": str(raw_snapshot.get("window_days") or "").strip(),
         "department_id": str(raw_snapshot.get("department_id") or "").strip(),
         "venue_selection_mode": venue_selection_mode,
-        "venue_selection_mode_label": _localize_workbench_venue_selection_mode(venue_selection_mode),
+        "venue_selection_mode_label": venue_selection_mode_label,
         "segment_code": str(raw_snapshot.get("segment_code") or "").strip(),
         "focus_category_code": str(raw_snapshot.get("focus_category_code") or "").strip(),
         "audience_channel_group": audience_channel_group,
@@ -4501,7 +4506,9 @@ def _get_workbench_snapshot(request, mailing: Mailing | int) -> dict | None:
         "mailing_send_window_begin": str(raw_snapshot.get("mailing_send_window_begin") or "").strip(),
         "mailing_send_window_end": str(raw_snapshot.get("mailing_send_window_end") or "").strip(),
         "mailing_bot_profiles": [str(item) for item in mailing_bot_profiles if str(item or "").strip()],
-        "source_layer": str(raw_snapshot.get("source_layer") or "").strip(),
+        "source_layer": source_layer,
+        "source_layer_label": "Всё доступное время" if historical_audience_mode else "Оконная аналитика",
+        "historical_audience_mode": historical_audience_mode,
         "saved_at": str(raw_snapshot.get("saved_at") or "").strip(),
         "complex_filters": [],
     }
