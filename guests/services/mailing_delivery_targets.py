@@ -14,10 +14,12 @@ from typing import Any, Iterable
 
 from django.db.models import Max
 
-from guests.models import BotProfile, GuestBotBinding, Mailing, VtelemaxRecipientChannel
+from guests.models import BotProfile, GuestBotBinding, HistoricalTelegramChannel, Mailing, VtelemaxRecipientChannel
+from guests.services.historical_telegram import build_historical_telegram_channels_map
 
 SUPPORTED_PROVIDERS = ("telegram", "max", "vk")
 CHANNEL_MODE_BINDING = "guest_bot_binding"
+CHANNEL_MODE_HISTORICAL_TELEGRAM = "historical_telegram_channel"
 CHANNEL_MODE_LEGACY_TELEGRAM = "legacy_vtelemax_channel"
 
 
@@ -104,6 +106,11 @@ def build_mailing_delivery_plan(
         require_message_permission=False,
     )
     new_bot_bound_guest_ids = _collect_new_bot_bound_guest_ids(ordered_guest_ids)
+    historical_channels_map = build_historical_telegram_channels_map(
+        ordered_guest_ids,
+        selected_bot_ids=active_selected_bot_ids,
+        exclude_registered=True,
+    )
     legacy_channels_map = _build_legacy_telegram_channels_map(
         ordered_guest_ids,
         exclude_guest_ids=new_bot_bound_guest_ids,
@@ -128,6 +135,13 @@ def build_mailing_delivery_plan(
                 blocked_without_message_permission += 1
                 continue
             targets = build_targets_from_bindings(permitted_bindings, target_mode=normalized_target_mode)
+        elif legacy_telegram_bot is not None and guest_id in historical_channels_map:
+            historical_target = _build_historical_telegram_target(
+                channel=historical_channels_map[guest_id],
+            )
+            if historical_target:
+                targets = [historical_target]
+                legacy_telegram_guests += 1
         elif legacy_telegram_bot is not None and guest_id in legacy_channels_map:
             legacy_target = _build_legacy_telegram_target(
                 channel=legacy_channels_map[guest_id],
@@ -210,6 +224,11 @@ def build_mailing_delivery_preview_state(
         require_message_permission=False,
     )
     new_bot_bound_guest_ids = _collect_new_bot_bound_guest_ids(ordered_guest_ids)
+    historical_channels_map = build_historical_telegram_channels_map(
+        ordered_guest_ids,
+        selected_bot_ids=active_bot_ids,
+        exclude_registered=True,
+    )
     legacy_channels_map = _build_legacy_telegram_channels_map(
         ordered_guest_ids,
         exclude_guest_ids=new_bot_bound_guest_ids,
@@ -220,7 +239,10 @@ def build_mailing_delivery_preview_state(
             {
                 "guest_id": int(guest_id),
                 "new_bot_bound": int(guest_id) in new_bot_bound_guest_ids,
-                "legacy_telegram_available": int(guest_id) in legacy_channels_map,
+                "legacy_telegram_available": (
+                    int(guest_id) in historical_channels_map
+                    or int(guest_id) in legacy_channels_map
+                ),
                 "bindings": [
                     {
                         "bot_profile_id": int(binding.bot_id),
@@ -251,7 +273,8 @@ def build_mailing_delivery_targets_map(
 
     Приоритет:
     1. новые привязки `GuestBotBinding`;
-    2. legacy Telegram-канал из `VtelemaxRecipientChannel`, если новой привязки у гостя нет.
+    2. проверенный исторический Telegram-канал, если новой привязки у гостя нет;
+    3. старый запасной Telegram-канал из `VtelemaxRecipientChannel`.
     """
     ordered_guest_ids = _ordered_unique_ints(guest_ids)
     selected_bot_ids_tuple = _ordered_unique_ints(selected_bot_ids)
@@ -280,6 +303,11 @@ def build_mailing_delivery_targets_map(
         return targets_map
 
     new_bot_bound_guest_ids = _collect_new_bot_bound_guest_ids(ordered_guest_ids)
+    historical_channels_map = build_historical_telegram_channels_map(
+        ordered_guest_ids,
+        selected_bot_ids=active_selected_bot_ids,
+        exclude_registered=True,
+    )
     legacy_channels_map = _build_legacy_telegram_channels_map(
         ordered_guest_ids,
         exclude_guest_ids=new_bot_bound_guest_ids,
@@ -287,6 +315,14 @@ def build_mailing_delivery_targets_map(
     for guest_id in ordered_guest_ids:
         if guest_id in targets_map:
             continue
+        historical_channel = historical_channels_map.get(guest_id)
+        if historical_channel is not None:
+            historical_target = _build_historical_telegram_target(
+                channel=historical_channel,
+            )
+            if historical_target:
+                targets_map[guest_id] = [historical_target]
+                continue
         channel = legacy_channels_map.get(guest_id)
         if channel is None:
             continue
@@ -458,6 +494,27 @@ def _build_legacy_telegram_channels_map(
         if guest_id not in result:
             result[guest_id] = channel
     return result
+
+
+def _build_historical_telegram_target(
+    *,
+    channel: HistoricalTelegramChannel,
+) -> dict[str, Any] | None:
+    """
+    Формирует цель отправки через рабочий исторический Telegram-канал.
+    """
+    external_chat_id = str(channel.telegram_chat_id or "").strip()
+    if not external_chat_id:
+        return None
+    return {
+        "provider_type": BotProfile.ProviderType.TELEGRAM,
+        "external_chat_id": external_chat_id,
+        "external_user_id": "",
+        "guest_binding": None,
+        "bot_profile": channel.bot_profile,
+        "channel_mode": CHANNEL_MODE_HISTORICAL_TELEGRAM,
+        "historical_telegram_channel_id": int(channel.id),
+    }
 
 
 def _build_legacy_telegram_target(

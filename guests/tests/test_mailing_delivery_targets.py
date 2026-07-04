@@ -10,7 +10,7 @@ from datetime import timedelta
 from django.test import TestCase
 from django.utils import timezone
 
-from guests.models import BotProfile, Guest, GuestBotBinding, Mailing, VtelemaxRecipientChannel
+from guests.models import BotProfile, Guest, GuestBotBinding, HistoricalTelegramChannel, Mailing, VtelemaxRecipientChannel
 from guests.services.mailing_delivery_targets import build_mailing_delivery_plan, build_mailing_delivery_preview_state
 
 
@@ -176,6 +176,52 @@ class MailingDeliveryTargetsTests(TestCase):
         self.assertEqual(plan.rows[0].bot_codes, ("delivery_tg",))
         self.assertEqual(plan.rows[0].channel_modes, ("legacy_vtelemax_channel",))
 
+    def test_historical_telegram_channel_makes_guest_deliverable_without_new_binding(self):
+        """
+        Исторический Telegram-канал даёт цель доставки без новой привязки гостя.
+        """
+        guest = Guest.objects.create(phone="+79990000018")
+        self._historical_telegram_channel(guest, telegram_chat_id="historical-tg-18")
+
+        plan = build_mailing_delivery_plan(
+            [guest.id],
+            selected_bot_ids=[self.bot_telegram.id, self.bot_vk.id],
+            target_mode=Mailing.TargetMode.ALL_BOTS,
+        )
+
+        self.assertEqual(plan.deliverable_guests, 1)
+        self.assertEqual(plan.legacy_telegram_guests, 1)
+        self.assertEqual(plan.blocked_without_bot_binding, 0)
+        self.assertEqual(plan.rows[0].providers, ("telegram",))
+        self.assertEqual(plan.rows[0].bot_codes, ("delivery_tg",))
+        self.assertEqual(plan.rows[0].channel_modes, ("historical_telegram_channel",))
+
+    def test_registered_new_bot_guest_is_not_sent_through_historical_channel(self):
+        """
+        Гость нового контура исключается из исторической Telegram-доставки независимо от согласия.
+        """
+        guest = Guest.objects.create(phone="+79990000019")
+        self._historical_telegram_channel(guest, telegram_chat_id="historical-tg-19")
+        VtelemaxRecipientChannel.objects.create(
+            person_id=uuid.uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164=guest.phone,
+            external_id="new-tg-19",
+            is_registered=True,
+            notifications_allowed=False,
+            guest=guest,
+        )
+
+        plan = build_mailing_delivery_plan(
+            [guest.id],
+            selected_bot_ids=[self.bot_telegram.id],
+            target_mode=Mailing.TargetMode.PRIMARY_ONLY,
+        )
+
+        self.assertEqual(plan.deliverable_guests, 0)
+        self.assertEqual(plan.legacy_telegram_guests, 0)
+        self.assertEqual(plan.blocked_without_bot_binding, 1)
+
     def test_legacy_telegram_channel_requires_selected_telegram_bot(self):
         """
         Legacy fallback не используется, если в рассылке не выбран Telegram-бот.
@@ -282,6 +328,21 @@ class MailingDeliveryTargetsTests(TestCase):
             is_registered=True,
             notifications_allowed=notifications_allowed,
             guest=guest,
+        )
+
+    def _historical_telegram_channel(
+        self,
+        guest: Guest,
+        *,
+        telegram_chat_id: str,
+        delivery_state: str = HistoricalTelegramChannel.DeliveryState.SENDABLE,
+    ) -> HistoricalTelegramChannel:
+        return HistoricalTelegramChannel.objects.create(
+            guest=guest,
+            bot_profile=self.bot_telegram,
+            telegram_chat_id=telegram_chat_id,
+            delivery_state=delivery_state,
+            last_success_at=timezone.now(),
         )
 
     @staticmethod

@@ -10,6 +10,11 @@ from django.db.models import F
 from django.utils import timezone
 
 from guests.models import DispatchTask, GuestBotBinding, MailingGuest
+from guests.services.historical_telegram import (
+    is_guest_registered_in_new_bot,
+    mark_historical_telegram_error,
+    mark_historical_telegram_success,
+)
 from guests.services.universal_queue.provider_clients import (
     ProviderBlockedError,
     ProviderPermanentError,
@@ -197,6 +202,13 @@ class AsyncProviderWorker:
             )
             return
 
+        historical_canceled = await sync_to_async(
+            self._cancel_registered_historical_task_sync,
+            thread_sensitive=True,
+        )(task)
+        if historical_canceled:
+            return
+
         try:
             await self.rate_limiter.acquire(
                 provider_type=self.config.provider_type,
@@ -229,7 +241,11 @@ class AsyncProviderWorker:
             )
         except ProviderBlockedError as err:
             await sync_to_async(self._mark_binding_blocked_sync, thread_sensitive=True)(task)
-            await sync_to_async(self._fail_task_sync, thread_sensitive=True)(task.id, f"blocked: {err}")
+            await sync_to_async(self._fail_task_sync, thread_sensitive=True)(
+                task.id,
+                f"blocked: {err}",
+                blocked=True,
+            )
         except ProviderTemporaryError as err:
             next_delay = self._temporary_retry_delay_seconds(task.attempt)
             # При временном сбое ставим глобальную паузу провайдера, чтобы
@@ -300,6 +316,7 @@ class AsyncProviderWorker:
         task_row = DispatchTask.objects.filter(id=task_id).values("payload", "mailing_guest_id").first()
         payload = task_row["payload"] if task_row and isinstance(task_row.get("payload"), dict) else {}
         mailing_guest_id = int(task_row["mailing_guest_id"]) if task_row and task_row.get("mailing_guest_id") else None
+        historical_channel_id = _historical_channel_id_from_payload(payload)
         payload.update(
             {
                 "provider_message_id": result.provider_message_id,
@@ -326,6 +343,8 @@ class AsyncProviderWorker:
                 delivery_status="done",
                 error_description=None,
             )
+        if historical_channel_id:
+            mark_historical_telegram_success(historical_channel_id, sent_at=result.sent_at)
 
     @staticmethod
     def _requeue_task_sync(task_id: int, delay_seconds: float, reason: str) -> None:
@@ -343,9 +362,11 @@ class AsyncProviderWorker:
         )
 
     @staticmethod
-    def _fail_task_sync(task_id: int, reason: str) -> None:
-        task_row = DispatchTask.objects.filter(id=task_id).values("mailing_guest_id").first()
+    def _fail_task_sync(task_id: int, reason: str, *, blocked: bool = False) -> None:
+        task_row = DispatchTask.objects.filter(id=task_id).values("mailing_guest_id", "payload").first()
         mailing_guest_id = int(task_row["mailing_guest_id"]) if task_row and task_row.get("mailing_guest_id") else None
+        payload = task_row["payload"] if task_row and isinstance(task_row.get("payload"), dict) else {}
+        historical_channel_id = _historical_channel_id_from_payload(payload)
         now = timezone.now()
         DispatchTask.objects.filter(id=task_id).update(
             status=DispatchTask.Status.FAILED,
@@ -353,6 +374,12 @@ class AsyncProviderWorker:
             updated_at=now,
             last_error=str(reason)[:2000],
         )
+        if historical_channel_id:
+            mark_historical_telegram_error(
+                historical_channel_id,
+                error_text=str(reason),
+                blocked=blocked,
+            )
 
         # Ошибку строки поднимаем только если по этой строке нет успешных dispatch-задач.
         if mailing_guest_id:
@@ -377,3 +404,43 @@ class AsyncProviderWorker:
             last_error="Провайдер вернул blocked/forbidden при отправке.",
             updated_at=timezone.now(),
         )
+
+    @staticmethod
+    def _cancel_registered_historical_task_sync(task: DispatchTask) -> bool:
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        historical_channel_id = _historical_channel_id_from_payload(payload)
+        if not historical_channel_id:
+            return False
+        if not is_guest_registered_in_new_bot(task.guest_id):
+            return False
+
+        reason = "Гость зарегистрировался в новом боте; историческая Telegram-отправка отменена."
+        now = timezone.now()
+        DispatchTask.objects.filter(id=task.id).update(
+            status=DispatchTask.Status.CANCELED,
+            finished_at=now,
+            updated_at=now,
+            last_error=reason,
+        )
+        if task.mailing_guest_id:
+            has_success = DispatchTask.objects.filter(
+                mailing_guest_id=task.mailing_guest_id,
+                status=DispatchTask.Status.DONE,
+            ).exists()
+            if not has_success:
+                MailingGuest.objects.filter(id=task.mailing_guest_id).update(
+                    status=MailingGuest.Status.ERROR,
+                    delivery_status="historical_new_bot_registered",
+                    error_description=reason,
+                )
+        return True
+
+
+def _historical_channel_id_from_payload(payload: dict | None) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    try:
+        channel_id = int(payload.get("historical_telegram_channel_id") or 0)
+    except (TypeError, ValueError):
+        return None
+    return channel_id if channel_id > 0 else None

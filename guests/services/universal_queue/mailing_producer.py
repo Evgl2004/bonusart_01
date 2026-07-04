@@ -2,8 +2,8 @@
 Producer для перевода строк массовой рассылки в универсальную очередь DispatchTask.
 
 Важно: маршрутизация использует выбранные в рассылке `Mailing.bot_profiles`.
-Основной путь - `GuestBotBinding`; для legacy-гостей без новой регистрации
-поддержан fallback через Telegram-канал из `VtelemaxRecipientChannel`.
+Основной путь - `GuestBotBinding`; для исторической Telegram-аудитории
+поддержан отдельный проверенный канал и старый запасной путь через `VtelemaxRecipientChannel`.
 """
 
 import logging
@@ -110,7 +110,7 @@ def _build_external_id_telegram_target(
     row: MailingGuest,
 ) -> List[dict]:
     """
-    Возвращает цель доставки для разовых legacy-рассылок, где Telegram-идентификатор
+    Возвращает цель доставки для разовых исторических рассылок, где Telegram-идентификатор
     пришёл из файла и сохранён прямо в строке аудитории кампании.
     """
     external_chat_id = str(row.external_id or "").strip()
@@ -214,6 +214,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                 "mailing_id": mailing.id,
                 "mailing_guest_id": row.id,
                 "channel_mode": target.get("channel_mode") or CHANNEL_MODE_BINDING,
+                "historical_telegram_channel_id": target.get("historical_telegram_channel_id"),
                 "vtelemax_channel_id": target.get("vtelemax_channel_id"),
                 "coupon_series": assignment.coupon_series if assignment else None,
                 "coupon_code": assignment.coupon_code if assignment else None,

@@ -4893,7 +4893,7 @@ _PROVIDER_TYPE_LABELS_RU: dict[str, str] = {
 _WORKBENCH_AUDIENCE_GROUP_LABELS_RU: dict[str, str] = {
     "all": "Все гости",
     "new_bots_sendable": "Доступна рассылка в новых ботах",
-    "legacy_no_new_bot": "Legacy Telegram / без новой регистрации",
+    "legacy_no_new_bot": "Историческая Telegram-аудитория",
     "new_bots_blocked": "В новых ботах, но рассылка запрещена",
 }
 

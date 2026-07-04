@@ -38,6 +38,10 @@ from guests.services.guest_venue_selection import (
     build_guest_venue_selection,
     normalize_venue_selection_mode,
 )
+from guests.services.historical_telegram import (
+    collect_registered_new_bot_guest_ids,
+    collect_sendable_historical_telegram_guest_ids,
+)
 
 WINDOW_OPTIONS = (7, 14, 30, 60, 180)
 DEFAULT_WINDOW_DAYS = 30
@@ -68,7 +72,7 @@ AUDIENCE_CHANNEL_GROUP_NEW_BOTS_BLOCKED = "new_bots_blocked"
 AUDIENCE_CHANNEL_GROUP_DEFINITIONS = (
     (AUDIENCE_CHANNEL_GROUP_ALL, "Все гости"),
     (AUDIENCE_CHANNEL_GROUP_NEW_BOTS_SENDABLE, "Доступна рассылка в новых ботах"),
-    (AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT, "Legacy Telegram / без новой регистрации"),
+    (AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT, "Историческая Telegram-аудитория"),
     (AUDIENCE_CHANNEL_GROUP_NEW_BOTS_BLOCKED, "В новых ботах, но рассылка запрещена"),
 )
 AUDIENCE_CHANNEL_GROUP_NAMES_MAP = dict(AUDIENCE_CHANNEL_GROUP_DEFINITIONS)
@@ -377,25 +381,25 @@ def _build_audience_channel_filter(audience_channel_group: str) -> dict[str, set
 
     Фильтр разделяет три разных бизнес-смысла:
     1. есть рабочая доставка через новые боты;
-    2. legacy-гость со старым Telegram-каналом, но без новой регистрации;
+    2. гость с рабочим историческим Telegram-каналом, но без новой регистрации;
     3. гость уже в новых ботах, но без права отправки сообщения.
     """
     normalized_group = normalize_audience_channel_group(audience_channel_group)
     if normalized_group == AUDIENCE_CHANNEL_GROUP_ALL:
         return {"include_guest_ids": None, "exclude_guest_ids": set()}
 
-    bot_bound_guest_ids = _collect_new_bot_bound_guest_ids()
+    registered_new_bot_guest_ids = collect_registered_new_bot_guest_ids() | _collect_new_bot_bound_guest_ids()
     sendable_guest_ids = _collect_new_bot_sendable_guest_ids()
-    legacy_telegram_guest_ids = _collect_legacy_telegram_guest_ids(
-        exclude_guest_ids=bot_bound_guest_ids,
+    historical_telegram_guest_ids = collect_sendable_historical_telegram_guest_ids(
+        exclude_registered=True,
     )
     if normalized_group == AUDIENCE_CHANNEL_GROUP_NEW_BOTS_SENDABLE:
         return {"include_guest_ids": sendable_guest_ids, "exclude_guest_ids": set()}
     if normalized_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT:
-        return {"include_guest_ids": legacy_telegram_guest_ids, "exclude_guest_ids": set()}
+        return {"include_guest_ids": historical_telegram_guest_ids, "exclude_guest_ids": set()}
 
     return {
-        "include_guest_ids": bot_bound_guest_ids - sendable_guest_ids,
+        "include_guest_ids": registered_new_bot_guest_ids - sendable_guest_ids,
         "exclude_guest_ids": set(),
     }
 

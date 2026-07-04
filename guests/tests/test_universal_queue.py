@@ -28,6 +28,7 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestBotBinding,
+    HistoricalTelegramChannel,
     Mailing,
     MailingGuest,
     MessageTemplate,
@@ -1151,6 +1152,8 @@ class ProviderWorkerTests(TestCase):
         max_attempts: int = 3,
         external_chat_id: str = "321654",
         mailing_guest: MailingGuest | None = None,
+        payload: dict | None = None,
+        use_binding: bool = True,
     ) -> DispatchTask:
         return DispatchTask.objects.create(
             source_type=DispatchTask.SourceType.SYSTEM,
@@ -1159,10 +1162,10 @@ class ProviderWorkerTests(TestCase):
             status=DispatchTask.Status.QUEUED,
             guest=self.guest,
             mailing_guest=mailing_guest,
-            guest_binding=self.binding,
+            guest_binding=self.binding if use_binding else None,
             external_chat_id=external_chat_id,
             message_text="worker test",
-            payload={"kind": "worker_test"},
+            payload=payload or {"kind": "worker_test"},
             available_at=timezone.now() - timedelta(minutes=1),
             max_attempts=max_attempts,
             attempt=attempt,
@@ -1231,6 +1234,110 @@ class ProviderWorkerTests(TestCase):
         self.assertEqual(self.mailing_guest.status, MailingGuest.Status.DONE)
         self.assertEqual(self.mailing_guest.delivery_status, "done")
         self.assertIsNotNone(self.mailing_guest.sent_at)
+
+    def test_process_envelope_success_updates_historical_channel(self):
+        """
+        Успешная историческая отправка должна подтвердить рабочее состояние канала.
+        """
+        channel = HistoricalTelegramChannel.objects.create(
+            guest=self.guest,
+            bot_profile=self.bot,
+            telegram_chat_id="historical-worker-1",
+            delivery_state=HistoricalTelegramChannel.DeliveryState.SENDABLE,
+            last_error_at=timezone.now(),
+            last_error_text="старая ошибка",
+        )
+        task = self._create_queued_task(
+            external_chat_id="historical-worker-1",
+            mailing_guest=self.mailing_guest,
+            payload={"historical_telegram_channel_id": channel.id},
+            use_binding=False,
+        )
+        envelope = self._envelope_for_task(task)
+        worker, _ = self._build_worker(sender=_SuccessSender())
+
+        async_to_sync(worker._process_envelope)("high", envelope)
+
+        channel.refresh_from_db()
+        self.assertEqual(channel.delivery_state, HistoricalTelegramChannel.DeliveryState.SENDABLE)
+        self.assertIsNotNone(channel.last_success_at)
+        self.assertIsNone(channel.last_error_at)
+        self.assertIsNone(channel.last_error_text)
+
+    def test_process_envelope_blocked_marks_historical_channel_blocked(self):
+        """
+        blocked-ответ провайдера должен закрыть исторический Telegram-канал.
+        """
+        channel = HistoricalTelegramChannel.objects.create(
+            guest=self.guest,
+            bot_profile=self.bot,
+            telegram_chat_id="historical-worker-2",
+            delivery_state=HistoricalTelegramChannel.DeliveryState.SENDABLE,
+        )
+        task = self._create_queued_task(
+            external_chat_id="historical-worker-2",
+            payload={"historical_telegram_channel_id": channel.id},
+            use_binding=False,
+        )
+        envelope = self._envelope_for_task(task)
+        worker, _ = self._build_worker(sender=_ErrorSender(ProviderBlockedError("blocked")))
+
+        async_to_sync(worker._process_envelope)("high", envelope)
+
+        channel.refresh_from_db()
+        task.refresh_from_db()
+        self.assertEqual(task.status, DispatchTask.Status.FAILED)
+        self.assertEqual(channel.delivery_state, HistoricalTelegramChannel.DeliveryState.BLOCKED)
+        self.assertIn("blocked", channel.last_error_text or "")
+
+    def test_process_envelope_cancels_historical_send_after_new_registration(self):
+        """
+        Если гость успел зарегистрироваться в новом боте, историческая отправка отменяется до провайдера.
+        """
+        channel = HistoricalTelegramChannel.objects.create(
+            guest=self.guest,
+            bot_profile=self.bot,
+            telegram_chat_id="historical-worker-3",
+            delivery_state=HistoricalTelegramChannel.DeliveryState.SENDABLE,
+        )
+        VtelemaxRecipientChannel.objects.create(
+            person_id=uuid.uuid4(),
+            platform=VtelemaxRecipientChannel.Platform.TELEGRAM,
+            phone_e164=self.guest.phone,
+            external_id="new-worker-chat",
+            is_registered=True,
+            notifications_allowed=False,
+            guest=self.guest,
+        )
+        task = self._create_queued_task(
+            external_chat_id="historical-worker-3",
+            mailing_guest=self.mailing_guest,
+            payload={"historical_telegram_channel_id": channel.id},
+            use_binding=False,
+        )
+        envelope = self._envelope_for_task(task)
+        sender = Mock()
+        sender.send = AsyncMock(
+            return_value=ProviderSendResult(
+                provider_message_id="should_not_send",
+                sent_at=timezone.now(),
+                raw_response={},
+            )
+        )
+        worker, limiter = self._build_worker(sender=sender)
+
+        async_to_sync(worker._process_envelope)("high", envelope)
+
+        task.refresh_from_db()
+        self.mailing_guest.refresh_from_db()
+        channel.refresh_from_db()
+        self.assertEqual(task.status, DispatchTask.Status.CANCELED)
+        self.assertEqual(self.mailing_guest.status, MailingGuest.Status.ERROR)
+        self.assertEqual(self.mailing_guest.delivery_status, "historical_new_bot_registered")
+        self.assertEqual(limiter.acquire_calls, [])
+        sender.send.assert_not_awaited()
+        self.assertEqual(channel.delivery_state, HistoricalTelegramChannel.DeliveryState.SENDABLE)
+        self.assertIsNone(channel.last_error_text)
 
     def test_process_envelope_rate_limit_requeues_and_registers_pause(self):
         """

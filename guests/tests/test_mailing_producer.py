@@ -18,6 +18,7 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestBotBinding,
+    HistoricalTelegramChannel,
     Mailing,
     MailingGuest,
     MessageTemplate,
@@ -189,6 +190,29 @@ class MailingProducerTests(TestCase):
         self.assertEqual(task.external_chat_id, "legacy-file-chat-1")
         self.assertIsNone(task.guest_binding_id)
         self.assertEqual(task.payload.get("channel_mode"), "mailing_row_external_id")
+        self.assertEqual(row.status, MailingGuest.Status.DONE)
+
+    def test_enqueue_row_uses_historical_telegram_channel_without_binding(self):
+        row = self._create_row()
+        channel = HistoricalTelegramChannel.objects.create(
+            guest=self.guest,
+            bot_profile=self.bot_tg,
+            telegram_chat_id="historical-producer-chat-1",
+            delivery_state=HistoricalTelegramChannel.DeliveryState.SENDABLE,
+            last_success_at=timezone.now(),
+        )
+
+        summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
+
+        row.refresh_from_db()
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertEqual(summary.rows_queued, 1)
+        self.assertEqual(summary.tasks_created, 1)
+        self.assertEqual(task.provider_type, BotProfile.ProviderType.TELEGRAM)
+        self.assertEqual(task.external_chat_id, "historical-producer-chat-1")
+        self.assertIsNone(task.guest_binding_id)
+        self.assertEqual(task.payload.get("channel_mode"), "historical_telegram_channel")
+        self.assertEqual(task.payload.get("historical_telegram_channel_id"), channel.id)
         self.assertEqual(row.status, MailingGuest.Status.DONE)
 
     def test_enqueue_rows_creates_dispatch_task_with_future_schedule(self):

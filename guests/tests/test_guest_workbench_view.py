@@ -21,6 +21,7 @@ from guests.models import (
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantWindowCategoryMetrics,
     GuestRestaurantWindowMetrics,
+    HistoricalTelegramChannel,
     Mailing,
     MailingGuest,
     MessageTemplate,
@@ -309,7 +310,7 @@ class GuestsWorkbenchViewTests(TestCase):
         """
         Фильтр legacy должен оставлять гостей без привязки к новым ботам.
         """
-        self._legacy_telegram_channel(self.guest_2, external_id="legacy-tg-guest-2")
+        self._historical_telegram_channel(self.guest_2, telegram_chat_id="historical-tg-guest-2")
 
         response = self.client.get(
             reverse("guests_workbench"),
@@ -1236,7 +1237,7 @@ class GuestsWorkbenchViewTests(TestCase):
         """
         Черновик обычной рассылки может быть создан для legacy-гостя с Telegram-каналом.
         """
-        self._legacy_telegram_channel(self.guest_2, external_id="legacy-tg-guest-2")
+        self._historical_telegram_channel(self.guest_2, telegram_chat_id="historical-tg-guest-2")
 
         response = self.client.post(
             reverse("guests_workbench_actions"),
@@ -1432,6 +1433,14 @@ class GuestsWorkbenchViewTests(TestCase):
             notifications_allowed=True,
             is_registered=True,
             guest=guest,
+        )
+
+    def _historical_telegram_channel(self, guest: Guest, *, telegram_chat_id: str) -> HistoricalTelegramChannel:
+        return HistoricalTelegramChannel.objects.create(
+            guest=guest,
+            bot_profile=self.bot_telegram,
+            telegram_chat_id=telegram_chat_id,
+            delivery_state=HistoricalTelegramChannel.DeliveryState.SENDABLE,
         )
 
     def test_rename_filter_preset_from_workbench(self):
