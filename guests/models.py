@@ -608,6 +608,68 @@ class VtelemaxRecipientChannel(models.Model):
         return f"person={self.person_id} platform={self.platform}"
 
 
+class HistoricalTelegramChannel(models.Model):
+    """
+    Проверенный исторический Telegram-канал для гостя.
+
+    Таблица хранит только адрес доставки и состояние возможности отправки.
+    Данные гостя, посещения и регистрацию в новом боте берём из существующих
+    контуров, чтобы не создавать вторую версию правды.
+    """
+
+    class DeliveryState(models.TextChoices):
+        SENDABLE = "sendable", "можно отправлять"
+        BLOCKED = "blocked", "заблокирован или недоступен"
+        MANUALLY_EXCLUDED = "manually_excluded", "исключён вручную"
+
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.CASCADE,
+        related_name="historical_telegram_channels",
+    )
+    bot_profile = models.ForeignKey(
+        "BotProfile",
+        on_delete=models.RESTRICT,
+        related_name="historical_telegram_channels",
+    )
+    telegram_chat_id = models.CharField(max_length=128, db_index=True)
+    delivery_state = models.CharField(
+        max_length=32,
+        choices=DeliveryState.choices,
+        default=DeliveryState.SENDABLE,
+        db_index=True,
+    )
+    last_success_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    last_error_at = models.DateTimeField(blank=True, null=True)
+    last_error_text = models.TextField(blank=True, null=True)
+    excluded_at = models.DateTimeField(blank=True, null=True)
+    excluded_reason = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "historical_telegram_channels"
+        verbose_name = "Исторический Telegram-канал"
+        verbose_name_plural = "Исторические Telegram-каналы"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["guest", "bot_profile"],
+                name="hist_tg_channel_guest_bot_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["bot_profile", "telegram_chat_id"],
+                name="hist_tg_channel_bot_chat_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["delivery_state", "updated_at"], name="hist_tg_state_updated_idx"),
+            models.Index(fields=["guest", "delivery_state"], name="hist_tg_guest_state_idx"),
+        ]
+
+    def __str__(self):
+        return f"guest={self.guest_id} bot={self.bot_profile_id} chat={self.telegram_chat_id}"
+
+
 class VtelemaxSyncState(models.Model):
     """
     Состояние потока синхронизации SAGUR <- vtelemax.

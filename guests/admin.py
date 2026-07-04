@@ -20,6 +20,7 @@ from .models import (
     FocusCategoryNomenclatureResolved,
     Guest,
     GuestBotBinding,
+    HistoricalTelegramChannel,
     GuestOrderFocusFact,
     GuestRestaurantDailyCategoryFact,
     GuestRestaurantDailyOrderFact,
@@ -241,6 +242,34 @@ class VtelemaxRecipientChannelAdmin(admin.ModelAdmin):
     raw_id_fields = ("guest", "guest_binding")
     readonly_fields = ("first_seen_at", "last_synced_at")
     list_per_page = 100
+
+
+@admin.register(HistoricalTelegramChannel)
+class HistoricalTelegramChannelAdmin(admin.ModelAdmin):
+    """
+    Просмотр рабочих исторических Telegram-каналов.
+    """
+
+    list_display = (
+        "id",
+        "guest",
+        "guest_phone",
+        "bot_profile",
+        "telegram_chat_id",
+        "delivery_state",
+        "last_success_at",
+        "last_error_at",
+        "updated_at",
+    )
+    list_filter = ("delivery_state", "bot_profile", "last_success_at", "last_error_at")
+    search_fields = ("telegram_chat_id", "guest__phone", "guest__first_name", "guest__last_name")
+    raw_id_fields = ("guest", "bot_profile")
+    readonly_fields = ("created_at", "updated_at", "last_success_at", "last_error_at", "last_error_text")
+    list_per_page = 100
+
+    @admin.display(description="Телефон")
+    def guest_phone(self, obj: HistoricalTelegramChannel) -> str:
+        return obj.guest.phone if obj.guest_id and obj.guest else "-"
 
 
 @admin.register(VtelemaxSyncState)
