@@ -552,6 +552,15 @@ WELCOME_COUPON_ACCEPT_REGISTRATIONS_FROM = str(
     os.getenv("WELCOME_COUPON_ACCEPT_REGISTRATIONS_FROM", "") or ""
 ).strip()
 WELCOME_COUPON_PROCESSING_ENABLED = _env_bool("WELCOME_COUPON_PROCESSING_ENABLED", False)
+WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED = _env_bool(
+    "WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED",
+    False,
+)
+WELCOME_COUPON_PROCESSING_SCHEDULE_MINUTES = _env_int(
+    "WELCOME_COUPON_PROCESSING_SCHEDULE_MINUTES",
+    1,
+    min_value=1,
+)
 WELCOME_COUPON_SCENARIO_CODE = str(
     os.getenv("WELCOME_COUPON_SCENARIO_CODE", "welcome_coupon") or "welcome_coupon"
 ).strip()
@@ -801,6 +810,7 @@ DJANGO_Q_SCHEDULE_MANAGED_NAMES = (
     "sync_webhooks_recent",
     "run_notification_scenarios",
     "run_vtelemax_recipients_delta",
+    "run_welcome_registration_events",
     "run_vtelemax_coupon_sync_queue",
     "run_coupon_autoscenarios",
     "run_coupon_campaign_close",
@@ -1233,6 +1243,14 @@ def _register_olap_schedule_tasks() -> None:
         }
     else:
         schedule_map.pop("run_vtelemax_recipients_delta", None)
+
+    if WELCOME_COUPON_PROCESSING_ENABLED and WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED:
+        schedule_map["run_welcome_registration_events"] = {
+            "func": "guests.tasks.run_welcome_registration_events_task",
+            "minutes": WELCOME_COUPON_PROCESSING_SCHEDULE_MINUTES,
+        }
+    else:
+        schedule_map.pop("run_welcome_registration_events", None)
 
     if VTELEMAX_COUPON_SYNC_ENABLED and VTELEMAX_COUPON_SYNC_SCHEDULE_ENABLED:
         schedule_map["run_vtelemax_coupon_sync_queue"] = {

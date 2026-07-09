@@ -193,6 +193,79 @@ class OlapScheduleTasksTests(SimpleTestCase):
         )
 
 
+class WelcomeRegistrationEventsScheduleTaskTests(SimpleTestCase):
+    """
+    Проверяет плановую обработку welcome-регистраций vtelemax.
+    """
+
+    @override_settings(
+        WELCOME_COUPON_PROCESSING_ENABLED=False,
+        WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.WelcomeRegistrationEventProcessor")
+    def test_welcome_processing_task_returns_zero_when_globally_disabled(self, mocked_processor_cls):
+        result = tasks.run_welcome_registration_events_task()
+        self.assertEqual(result, 0)
+        mocked_processor_cls.from_settings.assert_not_called()
+
+    @override_settings(
+        WELCOME_COUPON_PROCESSING_ENABLED=True,
+        WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED=False,
+    )
+    @patch("guests.tasks.WelcomeRegistrationEventProcessor")
+    def test_welcome_processing_task_returns_zero_when_schedule_disabled(self, mocked_processor_cls):
+        result = tasks.run_welcome_registration_events_task()
+        self.assertEqual(result, 0)
+        mocked_processor_cls.from_settings.assert_not_called()
+
+    @override_settings(
+        WELCOME_COUPON_PROCESSING_ENABLED=True,
+        WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED=True,
+        WELCOME_COUPON_PROCESSING_BATCH_SIZE=17,
+    )
+    @patch("guests.tasks.timezone.now")
+    @patch("guests.tasks.WelcomeRegistrationEventProcessor")
+    def test_welcome_processing_task_processes_batch(self, mocked_processor_cls, mocked_now):
+        current_now = timezone.make_aware(datetime(2026, 7, 9, 12, 30))
+        mocked_now.return_value = current_now
+        mocked_stats = MagicMock()
+        mocked_stats.as_dict.return_value = {
+            "scanned": 6,
+            "processed": 5,
+            "channel_applied": 4,
+            "coupon_reserved": 3,
+            "skipped": 1,
+            "failed": 1,
+            "skipped_max_attempts": 0,
+            "dry_run": False,
+        }
+        mocked_processor = MagicMock()
+        mocked_processor.process_batch.return_value = mocked_stats
+        mocked_processor_cls.from_settings.return_value = mocked_processor
+
+        result = tasks.run_welcome_registration_events_task()
+
+        self.assertEqual(result, 5)
+        mocked_processor_cls.from_settings.assert_called_once_with()
+        mocked_processor.process_batch.assert_called_once_with(
+            limit=17,
+            now=current_now,
+            dry_run=False,
+        )
+
+    @override_settings(
+        WELCOME_COUPON_PROCESSING_ENABLED=True,
+        WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED=True,
+    )
+    @patch("guests.tasks.WelcomeRegistrationEventProcessor")
+    def test_welcome_processing_task_returns_zero_on_error(self, mocked_processor_cls):
+        mocked_processor_cls.from_settings.side_effect = RuntimeError("welcome failed")
+
+        result = tasks.run_welcome_registration_events_task()
+
+        self.assertEqual(result, 0)
+
+
 class VtelemaxCouponSyncScheduleTaskTests(SimpleTestCase):
     """
     Проверяет плановую задачу доставки купонов SAGUR -> vtelemax.

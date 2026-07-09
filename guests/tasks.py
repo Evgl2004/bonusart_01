@@ -16,6 +16,7 @@ from .services.olap_check_sync import OlapCheckSyncWorkerService
 from .services.olap_control_pull import OlapControlPullOptions, OlapControlPullService
 from .services.olap_live_pipeline import OlapLivePipelineService
 from .services.vtelemax_coupon_sync import VtelemaxCouponSyncService
+from .services.welcome_registration_events import WelcomeRegistrationEventProcessor
 from .services.webhooks import process_recent_webhooks
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,52 @@ def run_vtelemax_recipients_delta_task() -> int:
         return 1
     except Exception as err:
         logger.exception("Vtelemax sync (schedule): failed: %s", err)
+        return 0
+
+
+def run_welcome_registration_events_task() -> int:
+    """
+    Плановая обработка журнала welcome-регистраций vtelemax.
+
+    HTTP-callback только быстро фиксирует событие. Эта задача применяет профиль гостя,
+    резервирует приветственный купон и передаёт дальнейшие шаги штатным очередям
+    vtelemax, iikoCard и доставки сообщений.
+    """
+    if not bool(getattr(settings, "WELCOME_COUPON_PROCESSING_ENABLED", False)):
+        logger.info(
+            "Обработка welcome-регистраций vtelemax: выключена флагом "
+            "WELCOME_COUPON_PROCESSING_ENABLED."
+        )
+        return 0
+    if not bool(getattr(settings, "WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED", False)):
+        logger.info(
+            "Обработка welcome-регистраций vtelemax: плановый запуск выключен флагом "
+            "WELCOME_COUPON_PROCESSING_SCHEDULE_ENABLED."
+        )
+        return 0
+
+    batch_size = max(1, int(getattr(settings, "WELCOME_COUPON_PROCESSING_BATCH_SIZE", 100) or 100))
+    try:
+        processor = WelcomeRegistrationEventProcessor.from_settings()
+        stats = processor.process_batch(limit=batch_size, now=timezone.now(), dry_run=False)
+        summary = stats.as_dict()
+        logger.info(
+            (
+                "Обработка welcome-регистраций vtelemax: scanned=%s processed=%s "
+                "channel_applied=%s coupon_reserved=%s skipped=%s failed=%s "
+                "skipped_max_attempts=%s"
+            ),
+            summary["scanned"],
+            summary["processed"],
+            summary["channel_applied"],
+            summary["coupon_reserved"],
+            summary["skipped"],
+            summary["failed"],
+            summary["skipped_max_attempts"],
+        )
+        return int(summary["processed"])
+    except Exception as err:
+        logger.exception("Обработка welcome-регистраций vtelemax: ошибка планового прохода: %s", err)
         return 0
 
 
