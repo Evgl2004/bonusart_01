@@ -55,6 +55,29 @@ class EnvSampleDocumentationTests(SimpleTestCase):
             with self.subTest(variable_name=variable_name):
                 self.assertIn(f"{variable_name}=", env_sample)
 
+    def test_welcome_coupon_vtelemax_variables_are_documented(self):
+        root_dir = Path(__file__).resolve().parents[2]
+        env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
+
+        expected_variables = (
+            "VTELEMAX_REGISTRATION_CALLBACK_ENABLED",
+            "VTELEMAX_REGISTRATION_CALLBACK_HMAC_SECRET",
+            "VTELEMAX_REGISTRATION_CALLBACK_REQUIRE_HTTPS",
+            "VTELEMAX_REGISTRATION_CALLBACK_TIMESTAMP_TOLERANCE_SECONDS",
+            "VTELEMAX_REGISTRATION_CALLBACK_MAX_BODY_BYTES",
+            "WELCOME_COUPON_ACCEPT_REGISTRATIONS_FROM",
+            "WELCOME_COUPON_PROCESSING_ENABLED",
+            "WELCOME_COUPON_SCENARIO_CODE",
+            "WELCOME_COUPON_PROCESSING_BATCH_SIZE",
+            "WELCOME_COUPON_PROCESSING_MAX_ATTEMPTS",
+            "WELCOME_COUPON_PROCESSING_RETRY_BASE_SECONDS",
+            "WELCOME_COUPON_PROCESSING_RETRY_MAX_SECONDS",
+        )
+
+        for variable_name in expected_variables:
+            with self.subTest(variable_name=variable_name):
+                self.assertIn(f"{variable_name}=", env_sample)
+
     def test_olap_live_pipeline_variables_are_documented(self):
         root_dir = Path(__file__).resolve().parents[2]
         env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
