@@ -110,6 +110,71 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         self.assertFalse(binding.is_opt_in)
         self.assertTrue(binding.is_stop_sending)
 
+    def test_apply_items_skips_older_payload_without_disabling_binding(self):
+        service = VtelemaxRecipientsApplyService(bot_code_telegram="tg-main")
+        service.apply_items(
+            items=[
+                self._build_item(
+                    state_updated_at="2026-05-05T11:00:00Z",
+                    effective_updated_at="2026-05-05T11:00:00Z",
+                )
+            ],
+            dry_run=False,
+        )
+
+        stats = service.apply_items(
+            items=[
+                self._build_item(
+                    external_id="old-chat",
+                    notifications_allowed=False,
+                    is_registered=False,
+                    state_updated_at="2026-05-05T10:00:00Z",
+                    effective_updated_at="2026-05-05T10:00:00Z",
+                )
+            ],
+            dry_run=False,
+        )
+
+        self.assertEqual(stats.rows_total, 1)
+        self.assertEqual(stats.rows_skipped_stale, 1)
+        self.assertEqual(stats.rows_updated, 0)
+        self.assertEqual(stats.rows_binding_updated, 0)
+        channel = VtelemaxRecipientChannel.objects.get()
+        self.assertEqual(channel.external_id, "113703")
+        self.assertTrue(channel.notifications_allowed)
+        self.assertTrue(channel.is_registered)
+
+        binding = GuestBotBinding.objects.get()
+        self.assertEqual(binding.external_chat_id, "113703")
+        self.assertTrue(binding.is_active)
+        self.assertTrue(binding.is_opt_in)
+        self.assertFalse(binding.is_stop_sending)
+
+    def test_apply_items_skips_payload_without_dates_when_existing_channel_is_fresh(self):
+        service = VtelemaxRecipientsApplyService(bot_code_telegram="tg-main")
+        service.apply_items(items=[self._build_item()], dry_run=False)
+
+        stats = service.apply_items(
+            items=[
+                self._build_item(
+                    notifications_allowed=False,
+                    is_registered=False,
+                    registered_at="",
+                    state_updated_at="",
+                    account_created_at="",
+                    effective_updated_at="",
+                )
+            ],
+            dry_run=False,
+        )
+
+        self.assertEqual(stats.rows_total, 1)
+        self.assertEqual(stats.rows_skipped_stale, 1)
+        self.assertEqual(stats.rows_updated, 0)
+        channel = VtelemaxRecipientChannel.objects.get()
+        self.assertTrue(channel.notifications_allowed)
+        self.assertTrue(channel.is_registered)
+
     def test_apply_items_dry_run_does_not_write(self):
         service = VtelemaxRecipientsApplyService(bot_code_telegram="tg-main")
 

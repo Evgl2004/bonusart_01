@@ -107,6 +107,26 @@ def _phone10_from_phone(raw_value: Any) -> str | None:
     return phone11[-10:]
 
 
+def _is_stale_channel_payload(
+    *,
+    current_updated_at: datetime | None,
+    incoming_updated_at: datetime | None,
+) -> bool:
+    """
+    Проверяет, не является ли входящая строка vtelemax устаревшей.
+
+    Если локальная запись уже имеет более свежий `effective_updated_at`, старый
+    snapshot/delta не должен перетирать состояние канала, привязку к боту и
+    профиль гостя. Равные даты считаются повтором того же состояния и могут
+    применяться идемпотентно.
+    """
+    if current_updated_at is None:
+        return False
+    if incoming_updated_at is None:
+        return True
+    return incoming_updated_at < current_updated_at
+
+
 def _is_valid_channel_for_guest_creation(
     *,
     phone_e164: str | None,
@@ -136,6 +156,7 @@ class VtelemaxApplyStats:
     rows_total: int = 0
     rows_created: int = 0
     rows_updated: int = 0
+    rows_skipped_stale: int = 0
     rows_skipped_invalid: int = 0
     rows_not_eligible_for_guest_create: int = 0
     rows_guest_unresolved: int = 0
@@ -180,6 +201,7 @@ class VtelemaxRecipientsApplyService:
             row_result = self._apply_one(item=item, dry_run=dry_run)
             stats.rows_created += row_result.rows_created
             stats.rows_updated += row_result.rows_updated
+            stats.rows_skipped_stale += row_result.rows_skipped_stale
             stats.rows_skipped_invalid += row_result.rows_skipped_invalid
             stats.rows_not_eligible_for_guest_create += row_result.rows_not_eligible_for_guest_create
             stats.rows_guest_unresolved += row_result.rows_guest_unresolved
@@ -254,25 +276,49 @@ class VtelemaxRecipientsApplyService:
                 default=None,
             )
 
-        guest, birthdate_filled_now = self._resolve_guest_by_phone(
-            phone_e164=phone_e164,
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
-            gender=gender,
-            birthdate=birthdate,
-            allow_guest_create_by_channel=allow_guest_create_by_channel,
-            dry_run=dry_run,
-        )
-        if guest is None and allow_guest_create_by_channel:
-            stats.rows_guest_unresolved = 1
-
         bot_profile = self._resolve_bot_for_platform(platform=platform)
 
         if dry_run:
+            guest, _ = self._resolve_guest_by_phone(
+                phone_e164=phone_e164,
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                gender=gender,
+                birthdate=birthdate,
+                allow_guest_create_by_channel=allow_guest_create_by_channel,
+                dry_run=True,
+            )
+            if guest is None and allow_guest_create_by_channel:
+                stats.rows_guest_unresolved = 1
             return stats
 
         with transaction.atomic():
+            existing_channel = (
+                VtelemaxRecipientChannel.objects.select_for_update()
+                .filter(person_id=person_id, platform=platform)
+                .first()
+            )
+            if existing_channel is not None and _is_stale_channel_payload(
+                current_updated_at=existing_channel.effective_updated_at,
+                incoming_updated_at=effective_updated_at,
+            ):
+                stats.rows_skipped_stale = 1
+                return stats
+
+            guest, birthdate_filled_now = self._resolve_guest_by_phone(
+                phone_e164=phone_e164,
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                gender=gender,
+                birthdate=birthdate,
+                allow_guest_create_by_channel=allow_guest_create_by_channel,
+                dry_run=False,
+            )
+            if guest is None and allow_guest_create_by_channel:
+                stats.rows_guest_unresolved = 1
+
             channel_defaults = {
                 "phone_e164": phone_e164,
                 "external_id": external_id,
@@ -286,11 +332,15 @@ class VtelemaxRecipientsApplyService:
                 "guest": guest,
                 "source_payload": item,
             }
-            channel, channel_created = VtelemaxRecipientChannel.objects.get_or_create(
-                person_id=person_id,
-                platform=platform,
-                defaults=channel_defaults,
-            )
+            if existing_channel is None:
+                channel, channel_created = VtelemaxRecipientChannel.objects.get_or_create(
+                    person_id=person_id,
+                    platform=platform,
+                    defaults=channel_defaults,
+                )
+            else:
+                channel = existing_channel
+                channel_created = False
             if channel_created:
                 stats.rows_created = 1
             else:
