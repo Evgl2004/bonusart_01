@@ -4700,3 +4700,71 @@ class MailingsV2ViewsTests(TestCase):
         scenario.refresh_from_db()
         self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
         self.assertEqual(scenario.distribution_mode, NotificationScenario.DistributionMode.IMMEDIATE)
+
+    def test_welcome_coupon_autoscenario_settings_allows_active_immediate_delivery(self):
+        """
+        Welcome-автосценарий можно активировать с отправкой «Сразу»: событие приходит по одному гостю.
+        """
+        coupon_template = MessageTemplate.objects.create(
+            name="Приветственный шаблон с купоном",
+            description="",
+            message_text="Ваш приветственный купон: {coupon_code}",
+            created_by="test",
+            is_active=True,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="welcome_coupon_ui",
+            name="Приветственный купон",
+            template=coupon_template,
+            trigger_type=NotificationScenario.TriggerType.SCHEDULE,
+            priority=NotificationScenario.Priority.HIGH,
+            target_mode=NotificationScenario.TargetMode.PRIMARY_ONLY,
+            distribution_mode=NotificationScenario.DistributionMode.IMMEDIATE,
+            timezone="Asia/Yekaterinburg",
+            is_active=False,
+            settings={"coupon_required": True, "registration_event_source": "vtelemax"},
+        )
+        scenario.bot_profiles.add(self.bot)
+        config = CouponAutomationConfig.objects.create(
+            scenario=scenario,
+            scenario_type=CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON,
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+            coupon_series="WELCOME_UI",
+            venue_code="DEP_1",
+            venue_name="Сами Сусами",
+            coupon_validity_days=14,
+            max_recipients_per_run=100,
+            cooldown_days=3650,
+            settings={"registration_event_source": "vtelemax"},
+        )
+
+        response = self.client.post(
+            reverse("mailings_v2_coupon_autoscenario_settings", kwargs={"pk": config.pk}),
+            {
+                "execution_mode": CouponAutomationConfig.ExecutionMode.AUTOMATIC,
+                "coupon_series": "WELCOME_UI",
+                "venue_code": "DEP_1",
+                "coupon_validity_days": "14",
+                "max_recipients_per_run": "100",
+                "cooldown_days": "3650",
+                "notification_template": str(coupon_template.id),
+                "notification_distribution_mode": NotificationScenario.DistributionMode.IMMEDIATE,
+                "notification_target_mode": NotificationScenario.TargetMode.PRIMARY_ONLY,
+                "notification_bot_profiles": [str(self.bot.id)],
+                "notification_send_window_begin": "",
+                "notification_send_window_end": "",
+                "notification_timezone": "Asia/Yekaterinburg",
+                "coupon_rules-TOTAL_FORMS": "0",
+                "coupon_rules-INITIAL_FORMS": "0",
+                "coupon_rules-MIN_NUM_FORMS": "0",
+                "coupon_rules-MAX_NUM_FORMS": "1000",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 302)
+        config.refresh_from_db()
+        scenario.refresh_from_db()
+        self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.AUTOMATIC)
+        self.assertTrue(scenario.is_active)
+        self.assertEqual(scenario.distribution_mode, NotificationScenario.DistributionMode.IMMEDIATE)

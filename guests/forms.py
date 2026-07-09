@@ -1005,6 +1005,10 @@ class CouponAutomationConfigForm(forms.ModelForm):
         is_birthday_scenario = (
             effective_scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON
         )
+        is_welcome_registration_scenario = (
+            effective_scenario_type
+            == CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON
+        )
         distribution_mode = (
             cleaned_data.get("notification_distribution_mode")
             or getattr(getattr(self.instance, "scenario", None), "distribution_mode", "")
@@ -1031,6 +1035,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
         if (
             execution_mode == CouponAutomationConfig.ExecutionMode.AUTOMATIC
             and distribution_mode == NotificationScenario.DistributionMode.IMMEDIATE
+            and not is_welcome_registration_scenario
         ):
             self.add_error(
                 "notification_distribution_mode",
