@@ -299,6 +299,8 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             settings["inactive_days"] = int(self.cleaned_data.get("inactive_days") or 30)
         elif scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON:
             settings["profile_event_type"] = "birthdate_filled"
+        elif scenario_type == CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON:
+            settings["registration_event_source"] = "vtelemax"
         return settings
 
     def _build_config_settings(self) -> dict:
@@ -311,12 +313,16 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             }
         if scenario_type == CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON:
             return {"profile_event_type": "birthdate_filled"}
+        if scenario_type == CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON:
+            return {"registration_event_source": "vtelemax"}
         return {}
 
     def _build_cooldown_days(self) -> int:
         scenario_type = self.cleaned_data["scenario_type"]
         if scenario_type == CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON:
             return max(1, int(self.cleaned_data.get("inactive_days") or 30))
+        if scenario_type == CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON:
+            return 3650
         return 365
 
     def save(self) -> CouponAutomationConfig:

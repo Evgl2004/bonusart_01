@@ -83,6 +83,18 @@ class VtelemaxRecipientsApplyServiceTests(TestCase):
         self.assertTrue(binding.is_opt_in)
         self.assertFalse(binding.is_stop_sending)
 
+    def test_apply_items_saves_customer_id_to_guest_iiko_id(self):
+        service = VtelemaxRecipientsApplyService(bot_code_telegram="tg-main")
+
+        stats = service.apply_items(
+            items=[self._build_item(customerId="iiko-customer-42")],
+            dry_run=False,
+        )
+
+        self.assertEqual(stats.rows_total, 1)
+        self.guest.refresh_from_db()
+        self.assertEqual(self.guest.iiko_id, "iiko-customer-42")
+
     def test_apply_items_updates_existing_channel_and_disables_binding(self):
         service = VtelemaxRecipientsApplyService(bot_code_telegram="tg-main")
         service.apply_items(items=[self._build_item()], dry_run=False)

@@ -2101,6 +2101,10 @@ class CouponAutomationConfig(models.Model):
         INACTIVE_DAYS_COUPON = "inactive_days_coupon", "Гость не был N дней + купон"
         BIRTHDAY_COUPON = "birthday_coupon", "День рождения + купон"
         BIRTHDATE_FILLED_COUPON = "birthdate_filled_coupon", "Дата рождения заполнена + купон"
+        WELCOME_REGISTRATION_COUPON = (
+            "welcome_registration_coupon",
+            "Регистрация гостя + приветственный купон",
+        )
 
     class VenueSelectionMode(models.TextChoices):
         LAST_ORDER = "last_order", "Последнее заведение"
@@ -2240,6 +2244,7 @@ class CouponAutomationConfig(models.Model):
                         "inactive_days_coupon",
                         "birthday_coupon",
                         "birthdate_filled_coupon",
+                        "welcome_registration_coupon",
                     ]
                 ),
                 name="cauto_scenario_type_chk",
@@ -2309,6 +2314,7 @@ class CouponAutomationConfig(models.Model):
             self.ScenarioType.INACTIVE_DAYS_COUPON,
             self.ScenarioType.BIRTHDAY_COUPON,
             self.ScenarioType.BIRTHDATE_FILLED_COUPON,
+            self.ScenarioType.WELCOME_REGISTRATION_COUPON,
         }:
             errors["scenario_type"] = "Выберите тип купонного автосценария."
         if self.venue_selection_mode not in {

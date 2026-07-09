@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Count, F, Max, OuterRef, Q, QuerySet, Subquery, Sum, Window
 from django.db.models.functions import RowNumber
 from django.utils import timezone
@@ -38,6 +38,7 @@ from guests.services.notification_registry import (
     SCENARIO_CODE_BIRTHDAY_COUPON,
     SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
+    SCENARIO_CODE_WELCOME_COUPON,
 )
 from guests.services.guest_resolution import normalize_phone_e164
 from guests.services.template_render import render_message_for_guest
@@ -47,15 +48,18 @@ SYSTEM_COUPON_AUTOSCENARIO_TYPES = {
     SCENARIO_CODE_INACTIVE_30D_COUPON: CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
     SCENARIO_CODE_BIRTHDAY_COUPON: CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
     SCENARIO_CODE_FILL_BIRTHDAY_COUPON: CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
+    SCENARIO_CODE_WELCOME_COUPON: CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON,
 }
 SUPPORTED_COUPON_AUTOSCENARIO_TYPES = {
     CouponAutomationConfig.ScenarioType.INACTIVE_DAYS_COUPON,
     CouponAutomationConfig.ScenarioType.BIRTHDAY_COUPON,
     CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
+    CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON,
 }
 DEFAULT_PREVIEW_SCAN_LIMIT = 5000
 DEFAULT_PILOT_PHONE_E164 = "+79129923438"
 DEFAULT_BIRTHDAY_PREPARATION_WINDOW_DAYS = 7
+WELCOME_REGISTRATION_TRIGGER_KEY = "welcome_registration"
 PILOT_PHONE_SETTINGS_KEYS = ("pilot_phone_e164", "pilot_phone", "pilot_phones", "pilot_phone_e164s")
 PILOT_GUEST_ID_SETTINGS_KEYS = ("pilot_guest_id", "pilot_guest_ids")
 PILOT_INCLUDE_UNMATCHED_SETTINGS_KEYS = (
@@ -232,6 +236,8 @@ class CouponAutoscenarioPlanItem:
     coupon_selection_source: str = ""
     last_order_department_id: str = ""
     last_order_department_name: str = ""
+    preferred_channel_person_id: str = ""
+    preferred_channel_platform: str = ""
 
     def as_dict(self) -> dict:
         valid_until_local = timezone.localtime(self.valid_until)
@@ -291,6 +297,8 @@ class CouponAutoscenarioPlanItem:
             ),
             "last_order_department_id": self.last_order_department_id,
             "last_order_department_name": self.last_order_department_name,
+            "preferred_channel_person_id": self.preferred_channel_person_id,
+            "preferred_channel_platform": self.preferred_channel_platform,
         }
 
 
@@ -398,6 +406,30 @@ class CouponAutoscenarioExecutionResult:
             "created_assignments": self.created_assignments,
             "queue_events_created": self.queue_events_created,
             "plan": self.plan.as_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class WelcomeCouponReservationResult:
+    assignment: CouponAutoscenarioAssignment | None = None
+    run_id: int | None = None
+    created: bool = False
+    skipped: bool = False
+    skip_reason: str = ""
+    error_text: str = ""
+
+    @property
+    def assignment_id(self) -> int | None:
+        return int(self.assignment.id) if self.assignment is not None and self.assignment.id else None
+
+    def as_dict(self) -> dict:
+        return {
+            "assignment_id": self.assignment_id,
+            "run_id": self.run_id,
+            "created": bool(self.created),
+            "skipped": bool(self.skipped),
+            "skip_reason": self.skip_reason,
+            "error_text": self.error_text,
         }
 
 
@@ -1081,6 +1113,223 @@ def _execute_coupon_autoscenario(
     )
 
 
+def reserve_welcome_registration_coupon(
+    *,
+    guest: Guest,
+    channel: VtelemaxRecipientChannel,
+    scenario_code: str = SCENARIO_CODE_WELCOME_COUPON,
+    event_id: str = "",
+    registered_at: datetime | None = None,
+    current_now: datetime | None = None,
+) -> WelcomeCouponReservationResult:
+    """
+    Резервирует приветственный купон для одного события регистрации vtelemax.
+
+    Функция использует общий контур купонных автосценариев: создаёт
+    `CouponAutoscenarioAssignment`, очередь синхронизации vtelemax и событие
+    добавления категории iikoCard. Сообщение гостю появится только после
+    подтверждений внешних шлюзов.
+    """
+    if guest is None or not getattr(guest, "id", None):
+        return WelcomeCouponReservationResult(error_text="Нельзя выдать welcome-купон: гость не найден.")
+    if channel is None or not getattr(channel, "id", None):
+        return WelcomeCouponReservationResult(error_text="Нельзя выдать welcome-купон: канал vtelemax не найден.")
+
+    current_now = current_now or timezone.now()
+    safe_event_id = str(event_id or "").strip()
+    scenario, config = _load_coupon_autoscenario_context(scenario_code=scenario_code)
+    scenario_type = _coupon_autoscenario_type(config)
+    if scenario_type != CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON:
+        return WelcomeCouponReservationResult(
+            error_text=(
+                f"Сценарий '{scenario.code}' имеет тип '{scenario_type}', "
+                "а для welcome-регистраций нужен тип 'welcome_registration_coupon'."
+            )
+        )
+    if not scenario.is_active:
+        return WelcomeCouponReservationResult(error_text=f"Сценарий '{scenario.code}' выключен.")
+    if config.execution_mode != CouponAutomationConfig.ExecutionMode.AUTOMATIC:
+        return WelcomeCouponReservationResult(
+            error_text=(
+                f"Купонный автосценарий '{scenario.code}' не в режиме "
+                f"'Активен': {format_coupon_autoscenario_execution_mode(config.execution_mode)}."
+            )
+        )
+    if not _is_channel_sendable(channel):
+        return WelcomeCouponReservationResult(skipped=True, skip_reason="channel_not_sendable")
+    if not _is_channel_allowed_for_welcome_message(scenario=scenario, channel=channel):
+        return WelcomeCouponReservationResult(error_text="Канал регистрации не разрешён для отправки этим сценарием.")
+
+    existing_assignment = _existing_welcome_registration_assignment(scenario=scenario, guest=guest)
+    if existing_assignment is not None:
+        return WelcomeCouponReservationResult(
+            assignment=existing_assignment,
+            run_id=existing_assignment.run_id,
+            skipped=True,
+            skip_reason="welcome_coupon_already_issued",
+        )
+
+    rules = _effective_coupon_rules(config=config)
+    if not rules:
+        return WelcomeCouponReservationResult(error_text="В welcome-сценарии не настроены купонные правила или серия.")
+
+    coupon_series_values = tuple(dict.fromkeys(rule.coupon_series for rule in rules if rule.coupon_series))
+    if not coupon_series_values:
+        return WelcomeCouponReservationResult(error_text="В welcome-сценарии нет доступных серий купонов.")
+
+    guest_ids = [int(guest.id)]
+    if guest.id in _active_assignment_guest_ids(guest_ids=guest_ids, coupon_series=coupon_series_values):
+        return WelcomeCouponReservationResult(skipped=True, skip_reason="guest_has_active_coupon_in_series")
+
+    cooldown_days = int(config.cooldown_days or 0)
+    if guest.id in _cooldown_guest_ids(
+        guest_ids=guest_ids,
+        coupon_series=coupon_series_values,
+        cooldown_days=cooldown_days,
+        now=current_now,
+    ):
+        return WelcomeCouponReservationResult(skipped=True, skip_reason="guest_in_coupon_cooldown")
+
+    last_order_venues = _last_order_venue_map(guest_ids=guest_ids)
+    venue_codes = [rule.venue_code for rule in rules if not rule.is_global and rule.venue_code]
+    guest_venue_affinities = _guest_venue_affinity_map(guest_ids=guest_ids, venue_codes=venue_codes)
+    venue_selection_mode = _venue_selection_mode(config=config)
+    last_order_venue = last_order_venues.get(int(guest.id))
+    trigger_date = timezone.localtime(registered_at or current_now).date()
+    row = CouponAutoscenarioAudienceRow(
+        guest_id=int(guest.id),
+        phone=str(channel.phone_e164 or guest.phone or ""),
+        first_name=str(guest.first_name or ""),
+        last_name=str(guest.last_name or ""),
+        last_visit_at=last_order_venue.last_visit_at if last_order_venue else None,
+        sendable_channels=(str(channel.platform or "").strip(),),
+        trigger_key=WELCOME_REGISTRATION_TRIGGER_KEY,
+        trigger_date=trigger_date,
+    )
+
+    selection_options = _coupon_rule_selection_options_for_row(
+        row=row,
+        rules=rules,
+        last_order_venues=last_order_venues,
+        guest_venue_affinities=guest_venue_affinities,
+        venue_selection_mode=venue_selection_mode,
+    )
+    if not selection_options:
+        return WelcomeCouponReservationResult(
+            error_text="Не найдено подходящее купонное правило для welcome-регистрации гостя."
+        )
+
+    coupons_by_rule = _available_coupons_by_rule(rules=rules, limit=1)
+    available_coupons = sum(len(coupons) for coupons in coupons_by_rule.values())
+    selected_option: CouponRuleSelectionOption | None = None
+    selected_coupon: CouponRegistryEntry | None = None
+    for option in selection_options:
+        coupons = coupons_by_rule.get(option.rule.key) or []
+        if not coupons:
+            continue
+        selected_option = option
+        selected_coupon = coupons[0]
+        break
+    if selected_option is None or selected_coupon is None:
+        return WelcomeCouponReservationResult(
+            error_text="Нет свободного проверенного купона для welcome-сценария."
+        )
+
+    plan_item = _build_plan_item_from_coupon_selection(
+        row=row,
+        config=config,
+        inactive_days=0,
+        current_now=current_now,
+        option=selected_option,
+        coupon=selected_coupon,
+        trigger_key=WELCOME_REGISTRATION_TRIGGER_KEY,
+        last_order_venue=last_order_venue,
+    )
+    plan_item = replace(
+        plan_item,
+        preferred_channel_person_id=str(channel.person_id),
+        preferred_channel_platform=str(channel.platform or "").strip().lower(),
+    )
+    plan = CouponAutoscenarioExecutionPlan(
+        scenario_id=int(scenario.id),
+        scenario_code=str(scenario.code),
+        execution_mode=str(config.execution_mode),
+        venue_selection_mode=venue_selection_mode,
+        audience_venue_filter_mode=_audience_venue_filter_mode(config=config),
+        audience_venue_code=_audience_venue_code(config=config),
+        audience_venue_name=_audience_venue_name(config=config),
+        coupon_series=_format_coupon_series_summary(rules),
+        venue_code=str(config.venue_code or ""),
+        venue_name=str(config.venue_name or ""),
+        inactive_days_threshold=0,
+        birthday_preparation_window_days=0,
+        max_recipients_per_run=1,
+        scan_limit=1,
+        scanned_guests=1,
+        matched_guests=1,
+        sendable_guests=1,
+        blocked_without_channel=0,
+        message_target_guests=1,
+        blocked_without_message_target=0,
+        blocked_existing_active_coupon=0,
+        blocked_existing_trigger=0,
+        blocked_by_cooldown=0,
+        blocked_by_pilot_filter=0,
+        pilot_phone_filters=tuple(),
+        pilot_guest_id_filters=tuple(),
+        used_default_pilot_phone=False,
+        pilot_forced_guests=0,
+        eligible_guests=1,
+        planned_assignments=1,
+        available_coupons=available_coupons,
+        coupon_shortage=0,
+        can_execute=True,
+        bot_bound_guests=1,
+        blocked_without_bot_binding=0,
+        blocked_without_message_permission=0,
+        plan_items=(plan_item,),
+        warnings=(
+            (f"Источник welcome-события: {safe_event_id}.")
+            if safe_event_id
+            else "Источник welcome-события не указан.",
+        ),
+    )
+
+    try:
+        run_id, _created_assignments, _queue_events_created = _create_coupon_autoscenario_run_from_plan(
+            scenario=scenario,
+            config=config,
+            plan=plan,
+            current_now=current_now,
+        )
+    except IntegrityError:
+        existing_assignment = _existing_welcome_registration_assignment(scenario=scenario, guest=guest)
+        if existing_assignment is not None:
+            return WelcomeCouponReservationResult(
+                assignment=existing_assignment,
+                run_id=existing_assignment.run_id,
+                skipped=True,
+                skip_reason="welcome_coupon_already_issued",
+            )
+        raise
+
+    assignment = (
+        CouponAutoscenarioAssignment.objects.select_related("run", "scenario", "config", "coupon")
+        .filter(run_id=run_id, guest=guest, trigger_key=WELCOME_REGISTRATION_TRIGGER_KEY)
+        .first()
+    )
+    if assignment is None:
+        return WelcomeCouponReservationResult(
+            run_id=run_id,
+            error_text="Welcome-назначение купона не найдено после создания технического запуска.",
+        )
+    return WelcomeCouponReservationResult(
+        assignment=assignment,
+        run_id=run_id,
+        created=True,
+    )
+
+
 def _create_coupon_autoscenario_run_from_plan(
     *,
     scenario: NotificationScenario,
@@ -1137,7 +1386,7 @@ def _create_coupon_autoscenario_run_from_plan(
                     f"План устарел: купон {coupon.series}:{coupon.code} уже недоступен."
                 )
 
-            channel = primary_channels.get(item.guest_id)
+            channel = _preferred_channel_for_plan_item(item=item) or primary_channels.get(item.guest_id)
             rendered_coupon_title = _render_autoscenario_coupon_title(
                 config=config,
                 guest=guest,
@@ -1762,6 +2011,7 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             birthday_date=assignment.trigger_date,
         )
         is_pilot_execution = assignment.config.execution_mode == CouponAutomationConfig.ExecutionMode.PILOT
+        route_overrides = _welcome_assignment_route_overrides(assignment=assignment)
         try:
             created_count = create_notification_event(
                 scenario_code=assignment.scenario.code,
@@ -1777,6 +2027,8 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
                 coupon_code=assignment.coupon_code,
                 coupon_external_id=f"{assignment.coupon_series}:{assignment.coupon_code}",
                 coupon_expires_at=assignment.lifetime_expires_at,
+                route_target_mode=route_overrides.get("route_target_mode"),
+                route_allowed_bot_profile_ids=route_overrides.get("route_allowed_bot_profile_ids"),
                 allow_inactive_scenario=is_pilot_execution,
                 planned_send_at_override=current_now if is_pilot_execution else None,
                 skip_send_limits=is_pilot_execution,
@@ -1809,6 +2061,37 @@ def create_autoscenario_dispatch_after_vtelemax_ack(
             )
         _refresh_autoscenario_run_status(run_id=assignment.run_id)
         return int(created_count or 0)
+
+
+def _welcome_assignment_route_overrides(
+    *,
+    assignment: CouponAutoscenarioAssignment,
+) -> dict[str, list[int] | str]:
+    """
+    Для welcome-купона отправляем сообщение в тот бот, где прошла регистрация.
+    """
+    if str(assignment.trigger_key or "").strip() != WELCOME_REGISTRATION_TRIGGER_KEY:
+        return {}
+    if not assignment.guest_id or not assignment.person_id:
+        return {}
+
+    channel = (
+        VtelemaxRecipientChannel.objects.select_related("guest_binding", "guest_binding__bot")
+        .filter(
+            guest_id=assignment.guest_id,
+            person_id=assignment.person_id,
+        )
+        .first()
+    )
+    if not _is_channel_allowed_for_welcome_message(scenario=assignment.scenario, channel=channel):
+        return {}
+    binding = channel.guest_binding if channel is not None else None
+    if binding is None or binding.bot_id is None:
+        return {}
+    return {
+        "route_target_mode": NotificationScenario.TargetMode.ALL_BOTS,
+        "route_allowed_bot_profile_ids": [int(binding.bot_id)],
+    }
 
 
 def _autoscenario_assignments_for_update_queryset():
@@ -2470,6 +2753,27 @@ def _is_channel_sendable(channel: VtelemaxRecipientChannel | None) -> bool:
     return True
 
 
+def _is_channel_allowed_for_welcome_message(
+    *,
+    scenario: NotificationScenario,
+    channel: VtelemaxRecipientChannel | None,
+) -> bool:
+    if not _is_channel_sendable(channel):
+        return False
+    if channel.guest_binding_id is None:
+        return False
+    binding = getattr(channel, "guest_binding", None)
+    if binding is None:
+        binding = GuestBotBinding.objects.select_related("bot").filter(id=channel.guest_binding_id).first()
+    if binding is None or not binding.is_active or not binding.is_opt_in or binding.is_stop_sending:
+        return False
+    bot = getattr(binding, "bot", None)
+    if bot is None or not bot.is_active or bot.provider_type not in {"telegram", "max", "vk"}:
+        return False
+    allowed_bot_ids = set(scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True))
+    return bool(allowed_bot_ids and int(binding.bot_id) in allowed_bot_ids)
+
+
 def _message_target_guest_ids(
     *,
     scenario: NotificationScenario,
@@ -3074,6 +3378,37 @@ def _build_primary_channel_map(*, guest_ids: list[int]) -> dict[int, VtelemaxRec
     return result
 
 
+def _preferred_channel_for_plan_item(
+    *,
+    item: CouponAutoscenarioPlanItem,
+) -> VtelemaxRecipientChannel | None:
+    person_id = str(item.preferred_channel_person_id or "").strip()
+    platform = str(item.preferred_channel_platform or "").strip().lower()
+    if not person_id or platform not in {"telegram", "max", "vk"}:
+        return None
+
+    channel = (
+        VtelemaxRecipientChannel.objects.filter(
+            guest_id=item.guest_id,
+            person_id=person_id,
+            platform=platform,
+        )
+        .only(
+            "guest_id",
+            "person_id",
+            "platform",
+            "phone_e164",
+            "external_id",
+            "is_registered",
+            "notifications_allowed",
+        )
+        .first()
+    )
+    if not _is_channel_sendable(channel):
+        return None
+    return channel
+
+
 def _render_autoscenario_coupon_text(
     *,
     scenario: NotificationScenario,
@@ -3630,6 +3965,25 @@ def _existing_trigger_assignment_pairs_for_guests(
         for guest_id, trigger_key in existing_rows
         if guest_id and str(trigger_key or "").strip()
     }
+
+
+def _existing_welcome_registration_assignment(
+    *,
+    scenario: NotificationScenario,
+    guest: Guest,
+) -> CouponAutoscenarioAssignment | None:
+    if guest is None or not getattr(guest, "id", None):
+        return None
+    return (
+        CouponAutoscenarioAssignment.objects.filter(
+            scenario=scenario,
+            guest=guest,
+            trigger_key=WELCOME_REGISTRATION_TRIGGER_KEY,
+        )
+        .exclude(status=CouponAutoscenarioAssignment.Status.CANCELED)
+        .order_by("id")
+        .first()
+    )
 
 
 def _active_assignment_guest_ids(

@@ -16,6 +16,7 @@ from guests.services.notification_registry import (
     SCENARIO_CODE_BIRTHDAY_COUPON,
     SCENARIO_CODE_FILL_BIRTHDAY_COUPON,
     SCENARIO_CODE_INACTIVE_30D_COUPON,
+    SCENARIO_CODE_WELCOME_COUPON,
 )
 
 
@@ -133,6 +134,19 @@ class CouponAutomationConfigModelTests(TestCase):
         self.assertEqual(
             resolve_coupon_autoscenario_type(config),
             CouponAutomationConfig.ScenarioType.BIRTHDATE_FILLED_COUPON,
+        )
+
+    def test_resolver_uses_system_code_for_welcome_coupon_config(self):
+        config = CouponAutomationConfig(
+            scenario=self._scenario(code=SCENARIO_CODE_WELCOME_COUPON),
+            execution_mode=CouponAutomationConfig.ExecutionMode.REPORT_ONLY,
+        )
+
+        config.full_clean()
+
+        self.assertEqual(
+            resolve_coupon_autoscenario_type(config),
+            CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON,
         )
 
     def test_resolver_uses_saved_type_for_user_scenario(self):

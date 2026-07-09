@@ -245,6 +245,10 @@ class VtelemaxRecipientsApplyService:
         )
         email = _pick_first_str(item, "email") or _pick_first_str(profile, "email")
         gender = _pick_first_str(item, "gender", "sex") or _pick_first_str(profile, "gender", "sex")
+        iiko_id = (
+            _pick_first_str(item, "customerId", "customer_id", "iiko_customer_id", "iiko_id")
+            or _pick_first_str(profile, "customerId", "customer_id", "iiko_customer_id", "iiko_id")
+        )
         birthdate = _parse_birthdate(
             item.get("birthdate")
             or item.get("birthday")
@@ -285,6 +289,7 @@ class VtelemaxRecipientsApplyService:
                 last_name=last_name,
                 email=email,
                 gender=gender,
+                iiko_id=iiko_id,
                 birthdate=birthdate,
                 allow_guest_create_by_channel=allow_guest_create_by_channel,
                 dry_run=True,
@@ -312,6 +317,7 @@ class VtelemaxRecipientsApplyService:
                 last_name=last_name,
                 email=email,
                 gender=gender,
+                iiko_id=iiko_id,
                 birthdate=birthdate,
                 allow_guest_create_by_channel=allow_guest_create_by_channel,
                 dry_run=False,
@@ -508,6 +514,7 @@ class VtelemaxRecipientsApplyService:
         last_name: str | None,
         email: str | None,
         gender: str | None,
+        iiko_id: str | None,
         birthdate: date | None,
         allow_guest_create_by_channel: bool,
         dry_run: bool,
@@ -528,6 +535,7 @@ class VtelemaxRecipientsApplyService:
                     last_name=last_name,
                     email=email,
                     gender=gender,
+                    iiko_id=iiko_id,
                     birthdate=birthdate,
                 )
             birthdate_filled_now = birthdate_was_empty and "birthdate" in updated_fields
@@ -539,6 +547,7 @@ class VtelemaxRecipientsApplyService:
             last_name=last_name,
             email=email,
             gender=gender,
+            iiko_id=iiko_id,
             birthdate=birthdate,
             allow_create=False,
             source="vtelemax.sync",
@@ -556,6 +565,7 @@ class VtelemaxRecipientsApplyService:
             last_name=last_name,
             email=email,
             gender=gender,
+            iiko_id=iiko_id,
             birthdate=birthdate,
             allow_create=True,
             source="vtelemax.sync",
@@ -590,10 +600,12 @@ class VtelemaxRecipientsApplyService:
         last_name: str | None,
         email: str | None,
         gender: str | None,
+        iiko_id: str | None,
         birthdate: date | None,
     ) -> list[str]:
         updated_fields: list[str] = []
         candidates = (
+            ("iiko_id", iiko_id),
             ("first_name", first_name),
             ("last_name", last_name),
             ("email", email),

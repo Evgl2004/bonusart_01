@@ -102,6 +102,42 @@ class CreateCouponAutoscenarioCommandTests(TestCase):
         self.assertEqual(config.execution_mode, CouponAutomationConfig.ExecutionMode.REPORT_ONLY)
         self.assertIn("config_id=", stdout.getvalue())
 
+    def test_confirm_creates_welcome_coupon_draft(self):
+        """
+        Welcome-сценарий создаётся как отдельная типовая основа без порога неактивности.
+        """
+        stdout = io.StringIO()
+
+        call_command(
+            "create_coupon_autoscenario",
+            "--code",
+            "cmd_welcome_coupon",
+            "--name",
+            "Приветственный купон",
+            "--scenario-type",
+            CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON,
+            "--template-name",
+            "Welcome coupon template",
+            "--template-text",
+            "Ваш приветственный купон: {coupon_code}",
+            "--bot-profile-code",
+            self.bot.code,
+            "--confirm",
+            stdout=stdout,
+        )
+
+        scenario = NotificationScenario.objects.get(code="cmd_welcome_coupon")
+        config = scenario.coupon_automation_config
+        self.assertFalse(scenario.is_active)
+        self.assertEqual(scenario.settings["registration_event_source"], "vtelemax")
+        self.assertEqual(
+            config.scenario_type,
+            CouponAutomationConfig.ScenarioType.WELCOME_REGISTRATION_COUPON,
+        )
+        self.assertEqual(config.settings["registration_event_source"], "vtelemax")
+        self.assertEqual(config.cooldown_days, 3650)
+        self.assertIn("scenario_type=Регистрация гостя + приветственный купон", stdout.getvalue())
+
     def test_confirm_copies_source_config_and_rules(self):
         """
         Команда должна уметь создать отдельный черновик на основе существующего автосценария.
