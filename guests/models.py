@@ -3392,6 +3392,114 @@ class GuestProfileCompletionEvent(models.Model):
         return f"guest={self.guest_id} event={self.event_type} status={self.status}"
 
 
+class GuestWelcomeRegistrationEvent(models.Model):
+    """
+    Журнал входящих событий регистрации гостя из vtelemax.
+
+    Событие фиксируется отдельно от назначения купона: это даёт идемпотентность
+    по `event_id`, диагностику входящего контракта и безопасную точку для
+    последующей обработки welcome-автосценарием.
+    """
+
+    class EventType(models.TextChoices):
+        GUEST_REGISTERED = "guest_registered", "Гость зарегистрирован"
+
+    class Platform(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+        MAX = "max", "MAX"
+        VK = "vk", "VK"
+
+    class Status(models.TextChoices):
+        NEW = "new", "Ожидает обработки"
+        CHANNEL_APPLIED = "channel_applied", "Канал применён"
+        COUPON_RESERVED = "coupon_reserved", "Купон зарезервирован"
+        SKIPPED = "skipped", "Пропущено"
+        ERROR = "error", "Ошибка"
+
+    event_id = models.CharField(max_length=128, unique=True, db_index=True)
+    request_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    event_type = models.CharField(
+        max_length=64,
+        choices=EventType.choices,
+        default=EventType.GUEST_REGISTERED,
+        db_index=True,
+    )
+    person_id = models.UUIDField(blank=True, null=True, db_index=True)
+    platform = models.CharField(
+        max_length=32,
+        choices=Platform.choices,
+        db_index=True,
+    )
+    phone_e164 = models.CharField(max_length=32, blank=True, null=True, db_index=True)
+    iiko_customer_id = models.CharField(
+        max_length=64,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Идентификатор гостя iikoCard (`customerId`), переданный vtelemax.",
+    )
+    external_id = models.CharField(max_length=128, blank=True, null=True)
+    rules_accepted = models.BooleanField(default=False)
+    notifications_allowed = models.BooleanField(default=False)
+    is_registered = models.BooleanField(default=False)
+    registered_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    state_updated_at = models.DateTimeField(blank=True, null=True)
+    account_created_at = models.DateTimeField(blank=True, null=True)
+    effective_updated_at = models.DateTimeField(blank=True, null=True, db_index=True)
+    guest = models.ForeignKey(
+        "Guest",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="welcome_registration_events",
+    )
+    vtelemax_channel = models.ForeignKey(
+        "VtelemaxRecipientChannel",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="welcome_registration_events",
+    )
+    coupon_assignment = models.OneToOneField(
+        "CouponAutoscenarioAssignment",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="welcome_registration_event",
+    )
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.NEW,
+        db_index=True,
+    )
+    skip_reason = models.CharField(max_length=120, blank=True, null=True, db_index=True)
+    error_text = models.TextField(blank=True, null=True)
+    attempts = models.PositiveIntegerField(default=0)
+    next_retry_at = models.DateTimeField(default=timezone.now, db_index=True)
+    profile = models.JSONField(default=dict, blank=True)
+    payload_json = models.JSONField(default=dict, blank=True)
+    payload_sha256 = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    received_at = models.DateTimeField(default=timezone.now, db_index=True)
+    processed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "guest_welcome_registration_events"
+        verbose_name = "Событие welcome-регистрации гостя"
+        verbose_name_plural = "События welcome-регистраций гостей"
+        indexes = [
+            models.Index(fields=["status", "next_retry_at", "received_at"], name="gwre_status_retry_idx"),
+            models.Index(fields=["person_id", "platform"], name="gwre_person_platform_idx"),
+            models.Index(fields=["phone_e164", "platform"], name="gwre_phone_platform_idx"),
+            models.Index(fields=["guest", "status"], name="gwre_guest_status_idx"),
+        ]
+
+    def __str__(self):
+        return f"event={self.event_id} platform={self.platform} status={self.status}"
+
+
 class CouponVtelemaxSyncQueue(models.Model):
     """
     Очередь отправки событий по купонам из SAGUR в vtelemax.

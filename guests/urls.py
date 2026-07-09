@@ -56,9 +56,16 @@ from .views_mailings_v2 import (
     MailingsV2TemplateUpdateView,
     MailingsV2TemplatesView,
 )
+from .views_vtelemax_registration import vtelemax_registration_events
 
 
 urlpatterns = [
+    path(
+        "internal/integration/v1/vtelemax/registration-events",
+        vtelemax_registration_events,
+        name="vtelemax_registration_events",
+    ),
+
     # Главная страница пока остается списком гостей для совместимости.
     path("", GuestListView.as_view(), name="home"),
 
