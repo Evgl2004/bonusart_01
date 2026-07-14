@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from guests.models import (
@@ -427,6 +429,31 @@ class SimpleMailingReportingServiceTests(TestCase):
         self.assertEqual(rows["DISH-FALLBACK"]["net_sum"], Decimal("50"))
         self.assertEqual(rows["DISH-FALLBACK"]["dish_name"], "Позиция без net")
 
+    def test_purchase_analysis_returns_only_top_ten_items(self):
+        guest, _ = self._make_sent_guest()
+        order = self._add_order(
+            guest,
+            business_date=self.start_date,
+            net_sum="1000",
+        )
+        for index in range(12):
+            self._add_raw_line(
+                order,
+                dish_code=f"DISH-{index:02d}",
+                dish_name=f"Позиция {index}",
+                amount=str(12 - index),
+                before="100",
+                after="80",
+            )
+
+        snapshot = build_simple_mailing_report_snapshot(mailing=self.mailing).to_dict()
+
+        self.assertEqual(len(snapshot["purchase_rows"]), 10)
+        self.assertEqual(
+            [row["dish_code"] for row in snapshot["purchase_rows"]],
+            [f"DISH-{index:02d}" for index in range(10)],
+        )
+
     def test_details_page_is_capped_stable_and_shows_only_unambiguous_channel(self):
         first_guest, _ = self._make_sent_guest()
         second_guest, second_row = self._make_sent_guest(provider=BotProfile.ProviderType.TELEGRAM)
@@ -515,3 +542,33 @@ class SimpleMailingReportingServiceTests(TestCase):
         self.assertEqual(snapshot["period"]["start_date"], self.start_date)
         self.assertEqual(snapshot["orders"]["orders_count"], 1)
         self.assertTrue(any("не совпадает" in item for item in snapshot["limitations"]))
+
+    def test_query_count_does_not_grow_with_audience_size(self):
+        first_guest, _ = self._make_sent_guest()
+        first_order = self._add_order(
+            first_guest,
+            business_date=self.start_date,
+            net_sum="100",
+        )
+        self._add_raw_line(
+            first_order,
+            dish_code="DISH-QUERY",
+            dish_name="Контрольная позиция",
+        )
+
+        with CaptureQueriesContext(connection) as small_scope_queries:
+            build_simple_mailing_report_snapshot(mailing=self.mailing)
+
+        for index in range(5):
+            guest, _ = self._make_sent_guest()
+            self._add_order(
+                guest,
+                business_date=self.start_date + timedelta(days=index),
+                net_sum="50",
+            )
+
+        with CaptureQueriesContext(connection) as expanded_scope_queries:
+            build_simple_mailing_report_snapshot(mailing=self.mailing)
+
+        self.assertLessEqual(len(small_scope_queries), 12)
+        self.assertEqual(len(expanded_scope_queries), len(small_scope_queries))

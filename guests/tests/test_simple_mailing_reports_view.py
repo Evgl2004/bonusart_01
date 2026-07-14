@@ -147,6 +147,27 @@ class SimpleMailingReportsViewTests(TestCase):
         )
         self.assertContains(response, "Отчёт не доказывает влияние сообщения на заказ.")
 
+    def test_main_page_accepts_only_fixed_periods(self):
+        fourteen_days = self.client.get(
+            reverse("reports_simple_mailings"),
+            {"mailing_id": self.mailing.id, "period_days": 14},
+            secure=True,
+        )
+        arbitrary_period = self.client.get(
+            reverse("reports_simple_mailings"),
+            {"mailing_id": self.mailing.id, "period_days": 9},
+            secure=True,
+        )
+
+        self.assertEqual(fourteen_days.status_code, 200)
+        self.assertEqual(fourteen_days.context["selected_period_days"], 14)
+        self.assertEqual(
+            fourteen_days.context["simple_mailing_report"]["period"]["end_date"],
+            self.start_date + timedelta(days=13),
+        )
+        self.assertEqual(arbitrary_period.status_code, 200)
+        self.assertEqual(arbitrary_period.context["selected_period_days"], 7)
+
     def test_all_six_lower_sections_are_collapsible_and_details_are_closed(self):
         response = self.client.get(
             reverse("reports_simple_mailings"),
