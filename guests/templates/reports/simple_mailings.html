@@ -1,0 +1,973 @@
+{% extends "base.html" %}
+
+{% block title %}Простые рассылки{% endblock %}
+
+{% block extra_css %}
+<style>
+  .simple-report-header,
+  .simple-report-selector,
+  .simple-report-card,
+  .simple-report-section {
+    border: 1px solid #e5e7eb;
+    background: #fff;
+    box-shadow: 0 8px 20px rgba(17, 24, 39, 0.05);
+  }
+
+  .simple-report-header {
+    border-radius: 0.9rem;
+    padding: 0.9rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .simple-report-header-layout {
+    display: grid;
+    grid-template-columns: 0.8fr 1.2fr;
+    gap: 12px;
+    align-items: start;
+  }
+
+  .simple-report-header-main {
+    min-width: 280px;
+  }
+
+  .simple-report-muted {
+    color: #64748b;
+    line-height: 1.35;
+  }
+
+  .simple-report-periods {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .simple-report-period {
+    border: 1px solid #c7ced9;
+    border-radius: 8px;
+    background: #fff;
+    color: #334155;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    text-decoration: none;
+  }
+
+  .simple-report-period.is-active {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+    font-weight: 600;
+  }
+
+  .simple-report-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .simple-report-metric {
+    border: 1px solid #dbe1ea;
+    border-radius: 10px;
+    background: #fff;
+    padding: 7px 9px;
+    box-shadow: 0 6px 14px rgba(17, 24, 39, 0.04);
+  }
+
+  .simple-report-metric-title {
+    font-size: 0.74rem;
+    font-weight: 650;
+    color: #0f172a;
+    line-height: 1.2;
+    margin-bottom: 2px;
+  }
+
+  .simple-report-metric-value {
+    font-size: 0.82rem;
+    color: #334155;
+    line-height: 1.2;
+  }
+
+  .simple-report-selector {
+    position: relative;
+    z-index: 20;
+    border-radius: 0.65rem;
+    padding: 0.7rem 0.9rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .simple-report-selector-row {
+    display: grid;
+    grid-template-columns: auto minmax(260px, 1fr) auto auto auto;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .simple-report-selector-label {
+    white-space: nowrap;
+  }
+
+  .simple-report-combobox {
+    position: relative;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 46px;
+  }
+
+  .simple-report-combobox .form-control {
+    border-radius: 0.375rem 0 0 0.375rem;
+  }
+
+  .simple-report-combobox-toggle {
+    border: 1px solid #adb5bd;
+    border-left: 0;
+    border-radius: 0 0.375rem 0.375rem 0;
+    background: #fff;
+    color: #64748b;
+  }
+
+  .simple-report-options {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    display: none;
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid #cbd5e1;
+    border-radius: 0.5rem;
+    background: #fff;
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+    padding: 4px;
+  }
+
+  .simple-report-options.is-open {
+    display: block;
+  }
+
+  .simple-report-option,
+  .simple-report-option-state {
+    width: 100%;
+    border: 0;
+    border-radius: 0.35rem;
+    background: transparent;
+    color: #0f172a;
+    padding: 8px 10px;
+    text-align: left;
+  }
+
+  .simple-report-option:hover,
+  .simple-report-option.is-active {
+    background: #eff6ff;
+    color: #1d4ed8;
+  }
+
+  .simple-report-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 0.9rem;
+  }
+
+  .simple-report-card {
+    border-radius: 0.6rem;
+    padding: 0.9rem;
+  }
+
+  .simple-report-conclusion {
+    border: 1px solid #9fd7bd;
+    border-radius: 0.45rem;
+    background: #dff3e9;
+    color: #064e3b;
+    padding: 0.7rem;
+    line-height: 1.35;
+  }
+
+  .simple-report-lines {
+    display: grid;
+    gap: 2px;
+  }
+
+  .simple-report-note {
+    color: #64748b;
+    line-height: 1.35;
+  }
+
+  .simple-report-section {
+    border-radius: 0.6rem;
+    margin-bottom: 0.9rem;
+    overflow: hidden;
+  }
+
+  .simple-report-section > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 0.75rem 1rem;
+    font-weight: 650;
+    border-bottom: 1px solid transparent;
+  }
+
+  .simple-report-section > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .simple-report-section > summary::before {
+    content: "▶";
+    display: inline-block;
+    margin-right: 0.45rem;
+    transition: transform 0.15s ease;
+  }
+
+  .simple-report-section[open] > summary {
+    border-bottom-color: #e5e7eb;
+  }
+
+  .simple-report-section[open] > summary::before {
+    transform: rotate(90deg);
+  }
+
+  .simple-report-section-body {
+    padding: 0.9rem 1rem 1rem;
+  }
+
+  .simple-report-daily-layout {
+    display: grid;
+    grid-template-columns: minmax(360px, 0.8fr) minmax(520px, 1.2fr);
+    gap: 16px;
+    align-items: stretch;
+  }
+
+  .simple-report-chart {
+    min-height: 310px;
+    width: 100%;
+  }
+
+  .simple-report-table th {
+    white-space: nowrap;
+  }
+
+  .simple-report-purchase-sort {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font-weight: inherit;
+    padding: 0;
+  }
+
+  .simple-report-order-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .simple-report-order-card {
+    border: 1px solid #dbe1ea;
+    border-radius: 0.5rem;
+    padding: 0.65rem 0.75rem;
+  }
+
+  .simple-report-order-main,
+  .simple-report-order-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1rem;
+  }
+
+  .simple-report-order-main {
+    font-weight: 600;
+  }
+
+  .simple-report-order-meta {
+    color: #64748b;
+    margin-top: 0.25rem;
+  }
+
+  @media (max-width: 1199.98px) {
+    .simple-report-header-layout,
+    .simple-report-daily-layout {
+      grid-template-columns: 1fr;
+    }
+
+    .simple-report-selector-row {
+      grid-template-columns: auto minmax(220px, 1fr) auto;
+    }
+
+    .simple-report-selector-row .simple-report-link-button {
+      grid-row: 2;
+    }
+
+    .simple-report-summary-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 767.98px) {
+    .simple-report-metrics {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .simple-report-selector-row {
+      grid-template-columns: 1fr;
+    }
+
+    .simple-report-selector-label {
+      display: none;
+    }
+
+    .simple-report-selector-row .simple-report-link-button {
+      grid-row: auto;
+    }
+
+    .simple-report-daily-layout {
+      display: block;
+    }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid px-0">
+  {% if selected_mailing and simple_mailing_report %}
+    <header class="simple-report-header">
+      <div class="simple-report-header-layout">
+        <div class="simple-report-header-main">
+          <h1 class="h3 mb-1">Простые рассылки</h1>
+          <div class="simple-report-muted">
+            <strong>#{{ selected_mailing.id }} · {{ selected_mailing.name }}</strong>
+            · {{ selected_mailing.scheduled_time_begin|date:"d.m, H:i" }}–{{ selected_mailing.scheduled_time_end|date:"H:i" }}
+            · <strong>{{ simple_mailing_report.period.start_date|date:"d.m" }}–{{ simple_mailing_report.period.end_date|date:"d.m" }}</strong>
+          </div>
+          <nav class="simple-report-periods" aria-label="Период отчёта">
+            {% for period in period_links %}
+              <a
+                class="simple-report-period{% if period.is_selected %} is-active{% endif %}"
+                href="{{ period.url }}"
+                {% if period.is_selected %}aria-current="page"{% endif %}
+              >
+                {{ period.days }} дней
+              </a>
+            {% endfor %}
+          </nav>
+        </div>
+        <div class="simple-report-metrics" aria-label="Ключевые показатели">
+          <div class="simple-report-metric">
+            <div class="simple-report-metric-title">Получатели</div>
+            <div class="simple-report-metric-value">{{ simple_mailing_report.audience.recipients_total|floatformat:"0g" }}</div>
+          </div>
+          <div class="simple-report-metric">
+            <div class="simple-report-metric-title">Отправлено</div>
+            <div class="simple-report-metric-value">{{ simple_mailing_report.audience.sent_total|floatformat:"0g" }}</div>
+          </div>
+          <div class="simple-report-metric">
+            <div class="simple-report-metric-title">С заказом за {{ selected_period_days }} дней</div>
+            <div class="simple-report-metric-value">{{ simple_mailing_report.orders.guests_count|floatformat:"0g" }}</div>
+          </div>
+          <div class="simple-report-metric">
+            <div class="simple-report-metric-title">Сумма за {{ selected_period_days }} дней</div>
+            <div class="simple-report-metric-value">{{ simple_mailing_report.orders.net_sum|floatformat:"0g" }} ₽</div>
+          </div>
+        </div>
+      </div>
+    </header>
+  {% else %}
+    <header class="simple-report-header">
+      <h1 class="h3 mb-1">Простые рассылки</h1>
+      <div class="simple-report-muted">Выберите простую рассылку без купонов.</div>
+    </header>
+  {% endif %}
+
+  <section class="simple-report-selector" aria-label="Выбор рассылки">
+    <form method="get" id="simpleMailingForm">
+      <input type="hidden" name="mailing_id" id="simpleMailingId" value="{% if selected_mailing %}{{ selected_mailing.id }}{% endif %}">
+      <input type="hidden" name="period_days" value="{{ selected_period_days }}">
+      <div class="simple-report-selector-row">
+        <label class="simple-report-selector-label" for="simpleMailingSearch">Выберите рассылку</label>
+        <div class="simple-report-combobox" id="simpleMailingCombobox">
+          <input
+            class="form-control"
+            id="simpleMailingSearch"
+            type="text"
+            value="{% if selected_mailing %}#{{ selected_mailing.id }} · {{ selected_mailing.name }} · {{ selected_mailing.scheduled_date|date:'d.m.Y' }}{% endif %}"
+            placeholder="Введите номер или название"
+            autocomplete="off"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-controls="simpleMailingOptions"
+            aria-expanded="false"
+          >
+          <button
+            class="simple-report-combobox-toggle"
+            id="simpleMailingToggle"
+            type="button"
+            aria-label="Раскрыть список рассылок"
+            aria-controls="simpleMailingOptions"
+            aria-expanded="false"
+          >▼</button>
+          <div class="simple-report-options" id="simpleMailingOptions" role="listbox">
+            {% for option in mailing_options %}
+              <button
+                class="simple-report-option"
+                type="button"
+                role="option"
+                id="simple-mailing-option-{{ option.id }}"
+                data-mailing-id="{{ option.id }}"
+                data-label="{{ option.label }}"
+                data-status-url="{{ option.status_url }}"
+                data-audience-url="{{ option.audience_url }}"
+                aria-selected="{% if selected_mailing and selected_mailing.id == option.id %}true{% else %}false{% endif %}"
+              >{{ option.label }}</button>
+            {% empty %}
+              <div class="simple-report-option-state text-muted" role="status">Простые рассылки не найдены.</div>
+            {% endfor %}
+          </div>
+        </div>
+        <button class="btn btn-primary" id="simpleMailingShow" type="submit"{% if not selected_mailing %} disabled{% endif %}>Показать</button>
+        <a
+          class="btn btn-outline-secondary simple-report-link-button{% if not selected_mailing %} disabled{% endif %}"
+          id="simpleMailingStatusLink"
+          href="{{ mailing_status_url|default:'#' }}"
+          {% if not selected_mailing %}aria-disabled="true" tabindex="-1"{% endif %}
+        >Карточка рассылки</a>
+        <a
+          class="btn btn-outline-primary simple-report-link-button{% if not selected_mailing %} disabled{% endif %}"
+          id="simpleMailingAudienceLink"
+          href="{{ mailing_audience_url|default:'#' }}"
+          {% if not selected_mailing %}aria-disabled="true" tabindex="-1"{% endif %}
+        >Получатели</a>
+      </div>
+    </form>
+  </section>
+
+  {% if selected_mailing and simple_mailing_report %}
+    <div class="simple-report-summary-grid">
+      <section class="simple-report-card">
+        <h2 class="h6 mb-2">Главный вывод</h2>
+        <div class="simple-report-conclusion">
+          За {{ selected_period_days }} дней, включая день отправки, заказ совершили
+          <strong>{{ simple_mailing_report.orders.guests_count|floatformat:"0g" }} из {{ simple_mailing_report.audience.sent_total|floatformat:"0g" }}</strong>
+          получателей сообщения ({{ simple_mailing_report.orders.guest_share_percent|floatformat:"1" }}%).
+          Найдено <strong>{{ simple_mailing_report.orders.orders_count|floatformat:"0g" }} заказов</strong>
+          на сумму <strong>{{ simple_mailing_report.orders.net_sum|floatformat:"0g" }} ₽</strong>.
+        </div>
+        {% for limitation in simple_mailing_report.limitations %}
+          <div class="simple-report-note mt-2">{{ limitation }}</div>
+        {% endfor %}
+      </section>
+
+      <section class="simple-report-card">
+        <h2 class="h6 mb-2">Основные метрики</h2>
+        <div class="simple-report-lines">
+          <div>Аудитория рассылки: <strong>{{ simple_mailing_report.audience.recipients_total|floatformat:"0g" }}</strong></div>
+          <div>Успешно отправлено: <strong>{{ simple_mailing_report.audience.sent_total|floatformat:"0g" }}</strong></div>
+          <div>Не отправлено: <strong>{{ simple_mailing_report.audience.not_sent_total|floatformat:"0g" }}</strong></div>
+          <div>Доля успешной отправки: <strong>{{ simple_mailing_report.audience.send_share_percent|floatformat:"1" }}%</strong></div>
+          <div>
+            Каналы:
+            <strong>
+              {% for channel in simple_mailing_report.audience.channels %}{{ channel }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}
+            </strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="simple-report-card">
+        <h2 class="h6 mb-2">Заказы и гости за {{ selected_period_days }} дней</h2>
+        <div class="simple-report-lines">
+          <div>Уникальных гостей с заказом: <strong>{{ simple_mailing_report.orders.guests_count|floatformat:"0g" }}</strong></div>
+          <div>Заказов: <strong>{{ simple_mailing_report.orders.orders_count|floatformat:"0g" }}</strong></div>
+          <div>Сумма заказов после скидок: <strong>{{ simple_mailing_report.orders.net_sum|floatformat:"0g" }} ₽</strong></div>
+          <div>Средний чек: <strong>{{ simple_mailing_report.orders.average_check|floatformat:"0g" }} ₽</strong></div>
+          <div>Среднее время до первого заказа: <strong>{{ simple_mailing_report.orders.average_first_order_days|floatformat:"1" }} дня</strong></div>
+        </div>
+        <div class="simple-report-note mt-2">По гостям, которым сообщение успешно отправлено.</div>
+      </section>
+    </div>
+
+    <details class="simple-report-section" id="dailyOrdersSection" open>
+      <summary>Заказы после рассылки по дням</summary>
+      <div class="simple-report-section-body">
+        <div class="simple-report-note mb-2">
+          {{ simple_mailing_report.period.start_date|date:"d.m.Y" }}–{{ simple_mailing_report.period.end_date|date:"d.m.Y" }} ·
+          {{ selected_period_days }} календарных дней, включая день отправки.
+        </div>
+        <div class="simple-report-daily-layout">
+          <div class="table-responsive">
+            <table class="table table-sm align-middle simple-report-table mb-0">
+              <thead>
+                <tr>
+                  <th>Дата</th>
+                  <th class="text-end">Гостей</th>
+                  <th class="text-end">Заказов</th>
+                  <th class="text-end">Сумма</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in simple_mailing_report.daily_rows %}
+                  <tr>
+                    <td>{{ row.business_date|date:"d.m" }}</td>
+                    <td class="text-end">{{ row.guests_count|floatformat:"0g" }}</td>
+                    <td class="text-end">{{ row.orders_count|floatformat:"0g" }}</td>
+                    <td class="text-end">{{ row.net_sum|floatformat:"0g" }} ₽</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div id="simpleMailingDailyChart" class="simple-report-chart" aria-label="График заказов и гостей по дням"></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="simple-report-section" open>
+      <summary>Итоги по периодам 7, 14 и 30 дней</summary>
+      <div class="simple-report-section-body table-responsive">
+        <table class="table table-sm align-middle simple-report-table mb-0">
+          <thead>
+            <tr>
+              <th>Период</th>
+              <th>Календарный диапазон</th>
+              <th class="text-end">Гостей с заказом</th>
+              <th class="text-end">Доля</th>
+              <th class="text-end">Заказов</th>
+              <th class="text-end">Сумма</th>
+              <th class="text-end">Средний чек</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in simple_mailing_report.period_summary_rows %}
+              <tr{% if row.is_selected %} class="table-primary"{% endif %}>
+                <td><strong>{{ row.period_days }} дней</strong></td>
+                <td>{{ row.start_date|date:"d.m.Y" }}–{{ row.end_date|date:"d.m.Y" }}</td>
+                <td class="text-end">{{ row.guests_count|floatformat:"0g" }}</td>
+                <td class="text-end">{{ row.guest_share_percent|floatformat:"1" }}%</td>
+                <td class="text-end">{{ row.orders_count|floatformat:"0g" }}</td>
+                <td class="text-end">{{ row.net_sum|floatformat:"0g" }} ₽</td>
+                <td class="text-end">{{ row.average_check|floatformat:"0g" }} ₽</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details class="simple-report-section" open>
+      <summary>Отправка по каналам</summary>
+      <div class="simple-report-section-body">
+        <div class="table-responsive">
+          <table class="table table-sm align-middle simple-report-table mb-0">
+            <thead>
+              <tr>
+                <th>Канал</th>
+                <th class="text-end">Получателей</th>
+                <th class="text-end">Успешно отправлено</th>
+                <th class="text-end">Не отправлено</th>
+                <th class="text-end">Доля отправки</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in simple_mailing_report.channel_rows %}
+                <tr{% if row.is_total %} class="table-light fw-semibold"{% endif %}>
+                  <td>{{ row.channel_name }}</td>
+                  <td class="text-end">{{ row.recipients_count|floatformat:"0g" }}</td>
+                  <td class="text-end">{{ row.sent_count|floatformat:"0g" }}</td>
+                  <td class="text-end">{{ row.not_sent_count|floatformat:"0g" }}</td>
+                  <td class="text-end">{{ row.send_share_percent|floatformat:"1" }}%</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="simple-report-note mt-2">
+          Гости уникальны внутри каждого канала; строка «Итого» содержит общие уникальные показатели.
+        </div>
+      </div>
+    </details>
+
+    <details class="simple-report-section" open>
+      <summary>Заказы по заведениям</summary>
+      <div class="simple-report-section-body table-responsive">
+        <table class="table table-sm align-middle simple-report-table mb-0">
+          <thead>
+            <tr>
+              <th>Заведение</th>
+              <th class="text-end">Гостей</th>
+              <th class="text-end">Заказов</th>
+              <th class="text-end">Сумма</th>
+              <th class="text-end">Средний чек</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in simple_mailing_report.venue_rows %}
+              <tr{% if row.is_other %} class="table-light"{% endif %}>
+                <td>{{ row.venue_name }}</td>
+                <td class="text-end">{{ row.guests_count|floatformat:"0g" }}</td>
+                <td class="text-end">{{ row.orders_count|floatformat:"0g" }}</td>
+                <td class="text-end">{{ row.net_sum|floatformat:"0g" }} ₽</td>
+                <td class="text-end">{{ row.average_check|floatformat:"0g" }} ₽</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="5" class="text-muted">В выбранном периоде заказов нет.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details class="simple-report-section" open>
+      <summary>Анализ покупок</summary>
+      <div class="simple-report-section-body table-responsive">
+        <table class="table table-sm align-middle simple-report-table mb-0" id="simpleMailingPurchaseTable">
+          <thead>
+            <tr>
+              <th><button class="simple-report-purchase-sort" type="button" data-sort="rank">№</button></th>
+              <th><button class="simple-report-purchase-sort" type="button" data-sort="name">Номенклатура и код</button></th>
+              <th><button class="simple-report-purchase-sort" type="button" data-sort="category">Категория</button></th>
+              <th><button class="simple-report-purchase-sort" type="button" data-sort="group">Группа</button></th>
+              <th class="text-end"><button class="simple-report-purchase-sort" type="button" data-sort="quantity">Количество</button></th>
+              <th class="text-end"><button class="simple-report-purchase-sort" type="button" data-sort="guests">Гости</button></th>
+              <th class="text-end"><button class="simple-report-purchase-sort" type="button" data-sort="orders">Чеки</button></th>
+              <th class="text-end"><button class="simple-report-purchase-sort" type="button" data-sort="share">Доля</button></th>
+              <th class="text-end"><button class="simple-report-purchase-sort" type="button" data-sort="revenue">Выручка</button></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in simple_mailing_report.purchase_rows %}
+              <tr
+                data-rank="{{ row.rank }}"
+                data-name="{{ row.dish_name }} {{ row.dish_code }}"
+                data-category="{{ row.category_name }}"
+                data-group="{{ row.group_name }}"
+                data-quantity="{{ row.quantity }}"
+                data-guests="{{ row.guests_count }}"
+                data-orders="{{ row.orders_count }}"
+                data-share="{{ row.guest_share_percent }}"
+                data-revenue="{{ row.net_sum }}"
+              >
+                <td>{{ row.rank }}</td>
+                <td><strong>{{ row.dish_name }}</strong><div class="simple-report-note">{{ row.dish_code }}</div></td>
+                <td>{{ row.category_name }}</td>
+                <td>{{ row.group_name }}</td>
+                <td class="text-end">{{ row.quantity|floatformat:"-3g" }}</td>
+                <td class="text-end">{{ row.guests_count|floatformat:"0g" }}</td>
+                <td class="text-end">{{ row.orders_count|floatformat:"0g" }}</td>
+                <td class="text-end">{{ row.guest_share_percent|floatformat:"1" }}%</td>
+                <td class="text-end">{{ row.net_sum|floatformat:"0g" }} ₽</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="9" class="text-muted">Данные о составе заказов пока отсутствуют.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details
+      class="simple-report-section"
+      id="simpleMailingOrdersSection"
+      data-orders-url="{{ simple_mailing_orders_url }}"
+      data-period-days="{{ selected_period_days }}"
+    >
+      <summary>Заказы гостей за выбранный период · {{ simple_mailing_report.orders.orders_count|floatformat:"0g" }}</summary>
+      <div class="simple-report-section-body">
+        <div class="simple-report-note mb-3">
+          Детали загружаются страницами по 50 заказов для точечной проверки.
+        </div>
+        <div id="simpleMailingOrdersState" class="text-muted" role="status">Раскройте блок для загрузки заказов.</div>
+        <div id="simpleMailingOrdersList" class="simple-report-order-list" aria-live="polite"></div>
+        <nav class="d-flex align-items-center justify-content-between gap-2 mt-3 d-none" id="simpleMailingOrdersPagination" aria-label="Страницы заказов">
+          <button class="btn btn-outline-secondary btn-sm" id="simpleMailingOrdersPrevious" type="button">Назад</button>
+          <span id="simpleMailingOrdersPageLabel" class="simple-report-note"></span>
+          <button class="btn btn-outline-secondary btn-sm" id="simpleMailingOrdersNext" type="button">Далее</button>
+        </nav>
+      </div>
+    </details>
+
+    {{ simple_mailing_chart_payload|json_script:"simple-mailing-chart-data" }}
+  {% else %}
+    <div class="alert alert-light border" role="status">Простые рассылки без купонов не найдены.</div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<script>
+  (() => {
+    const input = document.getElementById("simpleMailingSearch");
+    const hiddenId = document.getElementById("simpleMailingId");
+    const toggle = document.getElementById("simpleMailingToggle");
+    const options = document.getElementById("simpleMailingOptions");
+    const showButton = document.getElementById("simpleMailingShow");
+    const statusLink = document.getElementById("simpleMailingStatusLink");
+    const audienceLink = document.getElementById("simpleMailingAudienceLink");
+    const searchUrl = "{{ simple_mailing_search_url|escapejs }}";
+    let searchTimer = null;
+    let searchController = null;
+    let activeIndex = -1;
+
+    const optionButtons = () => Array.from(options?.querySelectorAll("[role='option']") || []);
+
+    const setOpen = (isOpen) => {
+      if (!options || !input || !toggle) return;
+      options.classList.toggle("is-open", isOpen);
+      input.setAttribute("aria-expanded", String(isOpen));
+      toggle.setAttribute("aria-expanded", String(isOpen));
+      if (!isOpen) {
+        activeIndex = -1;
+        input.removeAttribute("aria-activedescendant");
+      }
+    };
+
+    const setLinksEnabled = (enabled) => {
+      [statusLink, audienceLink].forEach((link) => {
+        if (!link) return;
+        link.classList.toggle("disabled", !enabled);
+        link.setAttribute("aria-disabled", String(!enabled));
+        if (enabled) link.removeAttribute("tabindex");
+        else link.setAttribute("tabindex", "-1");
+      });
+      if (showButton) showButton.disabled = !enabled;
+    };
+
+    const selectOption = (button) => {
+      if (!button || !input || !hiddenId) return;
+      hiddenId.value = button.dataset.mailingId || "";
+      input.value = button.dataset.label || button.textContent.trim();
+      if (statusLink) statusLink.href = button.dataset.statusUrl || "#";
+      if (audienceLink) audienceLink.href = button.dataset.audienceUrl || "#";
+      optionButtons().forEach((item) => item.setAttribute("aria-selected", String(item === button)));
+      setLinksEnabled(Boolean(hiddenId.value));
+      setOpen(false);
+    };
+
+    const bindOptions = () => {
+      optionButtons().forEach((button) => {
+        button.addEventListener("click", () => selectOption(button));
+      });
+    };
+
+    const renderState = (text) => {
+      if (!options) return;
+      options.replaceChildren();
+      const state = document.createElement("div");
+      state.className = "simple-report-option-state text-muted";
+      state.setAttribute("role", "status");
+      state.textContent = text;
+      options.appendChild(state);
+      setOpen(true);
+    };
+
+    const renderOptions = (items) => {
+      if (!options) return;
+      options.replaceChildren();
+      if (!items.length) {
+        renderState("Рассылки не найдены.");
+        return;
+      }
+      items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "simple-report-option";
+        button.setAttribute("role", "option");
+        button.setAttribute("aria-selected", "false");
+        button.id = `simple-mailing-option-${item.id}`;
+        button.dataset.mailingId = String(item.id);
+        button.dataset.label = item.label;
+        button.dataset.statusUrl = item.status_url;
+        button.dataset.audienceUrl = item.audience_url;
+        button.textContent = item.label;
+        options.appendChild(button);
+      });
+      bindOptions();
+      setOpen(true);
+    };
+
+    const loadOptions = async (query) => {
+      if (searchController) searchController.abort();
+      searchController = new AbortController();
+      renderState("Загрузка…");
+      try {
+        const url = new URL(searchUrl, window.location.origin);
+        url.searchParams.set("q", query);
+        const response = await fetch(url, {
+          headers: {"X-Requested-With": "XMLHttpRequest"},
+          signal: searchController.signal,
+        });
+        if (!response.ok) throw new Error("Не удалось выполнить поиск.");
+        const payload = await response.json();
+        renderOptions(Array.isArray(payload.results) ? payload.results : []);
+      } catch (error) {
+        if (error.name !== "AbortError") renderState("Не удалось загрузить список.");
+      }
+    };
+
+    bindOptions();
+    toggle?.addEventListener("click", () => {
+      const shouldOpen = !options.classList.contains("is-open");
+      setOpen(shouldOpen);
+      if (shouldOpen && !optionButtons().length) loadOptions(input?.value || "");
+    });
+    input?.addEventListener("focus", () => setOpen(true));
+    input?.addEventListener("input", () => {
+      hiddenId.value = "";
+      setLinksEnabled(false);
+      window.clearTimeout(searchTimer);
+      searchTimer = window.setTimeout(() => loadOptions(input.value.trim()), 250);
+    });
+    input?.addEventListener("keydown", (event) => {
+      const buttons = optionButtons();
+      if (event.key === "Escape") {
+        setOpen(false);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) return;
+      event.preventDefault();
+      if (!options.classList.contains("is-open")) setOpen(true);
+      if (event.key === "Enter" && activeIndex >= 0 && buttons[activeIndex]) {
+        selectOption(buttons[activeIndex]);
+        return;
+      }
+      if (!buttons.length) return;
+      activeIndex = event.key === "ArrowUp"
+        ? (activeIndex <= 0 ? buttons.length - 1 : activeIndex - 1)
+        : (activeIndex + 1) % buttons.length;
+      buttons.forEach((button, index) => button.classList.toggle("is-active", index === activeIndex));
+      input.setAttribute("aria-activedescendant", buttons[activeIndex].id);
+      buttons[activeIndex].scrollIntoView({block: "nearest"});
+    });
+    document.addEventListener("click", (event) => {
+      if (!document.getElementById("simpleMailingCombobox")?.contains(event.target)) setOpen(false);
+    });
+
+    const chartElement = document.getElementById("simpleMailingDailyChart");
+    const chartDataElement = document.getElementById("simple-mailing-chart-data");
+    let dailyChart = null;
+    if (chartElement && chartDataElement && window.echarts) {
+      const chartData = JSON.parse(chartDataElement.textContent);
+      dailyChart = window.echarts.init(chartElement);
+      dailyChart.setOption({
+        tooltip: {trigger: "axis"},
+        legend: {data: ["Заказы", "Гости"]},
+        grid: {left: 48, right: 24, top: 48, bottom: 42},
+        xAxis: {type: "category", data: chartData.dates},
+        yAxis: {type: "value", minInterval: 1},
+        series: [
+          {name: "Заказы", type: "bar", data: chartData.orders, itemStyle: {color: "#93c5fd"}},
+          {name: "Гости", type: "line", data: chartData.guests, smooth: false, itemStyle: {color: "#2563eb"}},
+        ],
+      });
+      window.addEventListener("resize", () => dailyChart?.resize());
+      document.getElementById("dailyOrdersSection")?.addEventListener("toggle", (event) => {
+        if (event.currentTarget.open) window.setTimeout(() => dailyChart?.resize(), 0);
+      });
+    }
+
+    const purchaseTable = document.getElementById("simpleMailingPurchaseTable");
+    purchaseTable?.querySelectorAll("[data-sort]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const key = button.dataset.sort;
+        const body = purchaseTable.tBodies[0];
+        const rows = Array.from(body.rows).filter((row) => row.dataset[key] !== undefined);
+        const descending = button.dataset.direction !== "desc";
+        purchaseTable.querySelectorAll("[data-sort]").forEach((item) => delete item.dataset.direction);
+        button.dataset.direction = descending ? "desc" : "asc";
+        rows.sort((left, right) => {
+          const leftValue = left.dataset[key] || "";
+          const rightValue = right.dataset[key] || "";
+          const leftNumber = Number(leftValue);
+          const rightNumber = Number(rightValue);
+          const comparison = Number.isFinite(leftNumber) && Number.isFinite(rightNumber)
+            ? leftNumber - rightNumber
+            : leftValue.localeCompare(rightValue, "ru");
+          return descending ? -comparison : comparison;
+        });
+        rows.forEach((row) => body.appendChild(row));
+      });
+    });
+
+    const ordersSection = document.getElementById("simpleMailingOrdersSection");
+    const ordersState = document.getElementById("simpleMailingOrdersState");
+    const ordersList = document.getElementById("simpleMailingOrdersList");
+    const ordersPagination = document.getElementById("simpleMailingOrdersPagination");
+    const previousButton = document.getElementById("simpleMailingOrdersPrevious");
+    const nextButton = document.getElementById("simpleMailingOrdersNext");
+    const pageLabel = document.getElementById("simpleMailingOrdersPageLabel");
+    let currentOrdersPage = 1;
+    let ordersLoaded = false;
+    let ordersLoading = false;
+
+    const appendOrderPart = (container, label, value) => {
+      const part = document.createElement("span");
+      part.textContent = `${label}: ${value}`;
+      container.appendChild(part);
+    };
+
+    const formatDate = (value) => {
+      const [year, month, day] = String(value || "").split("-");
+      return year && month && day ? `${day}.${month}.${year}` : String(value || "");
+    };
+
+    const formatMoney = (value) => `${new Intl.NumberFormat("ru-RU", {maximumFractionDigits: 2}).format(Number(value || 0))} ₽`;
+
+    const renderOrders = (payload) => {
+      ordersList.replaceChildren();
+      if (!payload.results.length) {
+        ordersState.textContent = payload.total ? "На этой странице заказов нет." : "В выбранном периоде заказов нет.";
+      } else {
+        ordersState.textContent = "";
+        payload.results.forEach((row) => {
+          const card = document.createElement("article");
+          card.className = "simple-report-order-card";
+          const main = document.createElement("div");
+          main.className = "simple-report-order-main";
+          appendOrderPart(main, "Дата", formatDate(row.business_date));
+          appendOrderPart(main, "Заказ", row.order_number);
+          appendOrderPart(main, "ID гостя", row.guest_id);
+          appendOrderPart(main, "Сумма", formatMoney(row.net_sum));
+          const meta = document.createElement("div");
+          meta.className = "simple-report-order-meta";
+          appendOrderPart(meta, "Заведение", row.venue_name);
+          const delay = document.createElement("span");
+          delay.textContent = row.calendar_delay_label;
+          meta.appendChild(delay);
+          if (row.channel) appendOrderPart(meta, "Канал", row.channel);
+          card.append(main, meta);
+          ordersList.appendChild(card);
+        });
+      }
+      currentOrdersPage = payload.page;
+      const hasPages = payload.num_pages > 0;
+      ordersPagination.classList.toggle("d-none", !hasPages);
+      previousButton.disabled = !payload.has_previous;
+      nextButton.disabled = !payload.has_next;
+      pageLabel.textContent = hasPages ? `Страница ${payload.page} из ${payload.num_pages}` : "";
+    };
+
+    const loadOrders = async (page) => {
+      if (!ordersSection || ordersLoading) return;
+      ordersLoading = true;
+      ordersState.textContent = "Загрузка заказов…";
+      previousButton.disabled = true;
+      nextButton.disabled = true;
+      try {
+        const url = new URL(ordersSection.dataset.ordersUrl, window.location.origin);
+        url.searchParams.set("period_days", ordersSection.dataset.periodDays);
+        url.searchParams.set("page", String(page));
+        url.searchParams.set("page_size", "50");
+        const response = await fetch(url, {headers: {"X-Requested-With": "XMLHttpRequest"}});
+        if (!response.ok) throw new Error("Не удалось загрузить заказы.");
+        renderOrders(await response.json());
+        ordersLoaded = true;
+      } catch (error) {
+        ordersState.textContent = "Не удалось загрузить заказы. Повторите попытку.";
+      } finally {
+        ordersLoading = false;
+      }
+    };
+
+    ordersSection?.addEventListener("toggle", () => {
+      if (ordersSection.open && !ordersLoaded) loadOrders(1);
+    });
+    previousButton?.addEventListener("click", () => loadOrders(Math.max(1, currentOrdersPage - 1)));
+    nextButton?.addEventListener("click", () => loadOrders(currentOrdersPage + 1));
+  })();
+</script>
+{% endblock %}

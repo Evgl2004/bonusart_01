@@ -232,11 +232,17 @@
 
         <a
           href="{% url 'reports' %}"
-          class="{% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'reports_coupon_autoscenarios' %}active{% endif %}"
+          class="{% if current == 'reports' or current == 'reports_simple_mailings' or current == 'reports_coupon_campaigns' or current == 'reports_coupon_autoscenarios' %}active{% endif %}"
         >
           Отчёты
         </a>
-        {% if current == 'reports' or current == 'reports_coupon_campaigns' or current == 'reports_coupon_autoscenarios' %}
+        {% if current == 'reports' or current == 'reports_simple_mailings' or current == 'reports_coupon_campaigns' or current == 'reports_coupon_autoscenarios' %}
+          <a
+            href="{% url 'reports_simple_mailings' %}"
+            class="submenu-link {% if current == 'reports_simple_mailings' %}active{% endif %}"
+          >
+            Простые рассылки
+          </a>
           <a
             href="{% url 'reports_coupon_campaigns' %}"
             class="submenu-link {% if current == 'reports_coupon_campaigns' %}active{% endif %}"

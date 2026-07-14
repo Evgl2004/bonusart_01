@@ -19,8 +19,8 @@ from django.contrib import messages
 from django.core.management import CommandError, call_command
 from django.core.paginator import Paginator
 from django.db.models import Count, Prefetch, Q, Sum
-from django.http import FileResponse, HttpResponseRedirect
-from django.shortcuts import redirect
+from django.http import FileResponse, Http404, HttpResponseRedirect, JsonResponse
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date
@@ -46,6 +46,15 @@ from guests.services.coupon_campaign_reporting import build_coupon_campaign_perf
 from guests.services.coupon_autoscenarios import COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED
 from guests.services.coupon_pool import CouponPoolGenerationError, CouponPoolService
 from guests.services.coupon_venues import build_coupon_venue_choices
+from guests.services.simple_mailing_reporting import (
+    ALLOWED_PERIOD_DAYS,
+    DEFAULT_PERIOD_DAYS,
+    build_simple_mailing_order_details_page,
+    build_simple_mailing_report_snapshot,
+    normalize_simple_mailing_period_days,
+    search_simple_mailings,
+    simple_mailings_queryset,
+)
 
 
 def _parse_positive_int(value: str | None) -> int | None:
@@ -170,8 +179,174 @@ class ReportsWorkbenchView(TemplateView):
         }
         context["coupon_campaign_reports_url"] = reverse("reports_coupon_campaigns")
         context["coupon_autoscenario_reports_url"] = reverse("reports_coupon_autoscenarios")
+        context["simple_mailing_reports_url"] = reverse("reports_simple_mailings")
         context["coupon_registry_url"] = reverse("coupon_registry")
         return context
+
+
+class SimpleMailingReportsView(TemplateView):
+    """Компактный отчёт по простой массовой рассылке без купонов."""
+
+    template_name = "reports/simple_mailings.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        raw_mailing_id = str(self.request.GET.get("mailing_id") or "").strip()
+        period_days = normalize_simple_mailing_period_days(
+            self.request.GET.get("period_days")
+        )
+        initial_mailings = list(search_simple_mailings())
+
+        selected_mailing = None
+        if raw_mailing_id:
+            if not raw_mailing_id.isascii() or not raw_mailing_id.isdecimal():
+                raise Http404("Простая рассылка не найдена.")
+            mailing_id = int(raw_mailing_id)
+            if mailing_id <= 0 or mailing_id > 9223372036854775807:
+                raise Http404("Простая рассылка не найдена.")
+            selected_mailing = get_object_or_404(
+                simple_mailings_queryset(),
+                id=mailing_id,
+            )
+        elif initial_mailings:
+            selected_mailing = initial_mailings[0]
+
+        if selected_mailing and all(
+            mailing.id != selected_mailing.id for mailing in initial_mailings
+        ):
+            initial_mailings.insert(0, selected_mailing)
+
+        report = None
+        chart_payload = {"dates": [], "guests": [], "orders": []}
+        period_links = []
+        status_url = ""
+        audience_url = ""
+        orders_url = ""
+        if selected_mailing is not None:
+            report = build_simple_mailing_report_snapshot(
+                mailing=selected_mailing,
+                period_days=period_days,
+            ).to_dict()
+            chart_payload = {
+                "dates": [row["business_date"].isoformat() for row in report["daily_rows"]],
+                "guests": [row["guests_count"] for row in report["daily_rows"]],
+                "orders": [row["orders_count"] for row in report["daily_rows"]],
+            }
+            for option_days in ALLOWED_PERIOD_DAYS:
+                params = urlencode(
+                    {
+                        "mailing_id": selected_mailing.id,
+                        "period_days": option_days,
+                    }
+                )
+                period_links.append(
+                    {
+                        "days": option_days,
+                        "is_selected": option_days == period_days,
+                        "url": f"{reverse('reports_simple_mailings')}?{params}",
+                    }
+                )
+            status_url = reverse(
+                "mailings_v2_campaigns_status",
+                kwargs={"pk": selected_mailing.id},
+            )
+            audience_url = reverse(
+                "mailings_v2_campaigns_audience",
+                kwargs={"pk": selected_mailing.id},
+            )
+            orders_url = reverse(
+                "reports_simple_mailings_orders",
+                kwargs={"mailing_id": selected_mailing.id},
+            )
+
+        context.update(
+            {
+                "mailing_options": [
+                    _serialize_simple_mailing_option(mailing)
+                    for mailing in initial_mailings[:10]
+                ],
+                "selected_mailing": selected_mailing,
+                "selected_period_days": period_days,
+                "period_links": period_links,
+                "simple_mailing_report": report,
+                "simple_mailing_chart_payload": chart_payload,
+                "simple_mailing_search_url": reverse("reports_simple_mailings_search"),
+                "simple_mailing_orders_url": orders_url,
+                "mailing_status_url": status_url,
+                "mailing_audience_url": audience_url,
+                "back_to_reports_url": reverse("reports"),
+            }
+        )
+        return context
+
+
+class SimpleMailingSearchView(View):
+    """Ограниченный серверный поиск простых рассылок для выпадающего списка."""
+
+    def get(self, request, *args, **kwargs):
+        results = [
+            _serialize_simple_mailing_option(mailing)
+            for mailing in search_simple_mailings(request.GET.get("q"))
+        ]
+        response = JsonResponse(
+            {"results": results},
+            json_dumps_params={"ensure_ascii": False},
+        )
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class SimpleMailingOrdersView(View):
+    """Ленивая серверная выдача одной страницы заказов выбранной рассылки."""
+
+    def get(self, request, mailing_id: int, *args, **kwargs):
+        raw_period_days = str(
+            request.GET.get("period_days") or DEFAULT_PERIOD_DAYS
+        ).strip()
+        if raw_period_days not in {str(value) for value in ALLOWED_PERIOD_DAYS}:
+            response = JsonResponse(
+                {"error": "Допустимы только периоды 7, 14 или 30 дней."},
+                status=400,
+                json_dumps_params={"ensure_ascii": False},
+            )
+            response["Cache-Control"] = "no-store"
+            return response
+
+        mailing = get_object_or_404(simple_mailings_queryset(), id=mailing_id)
+        page = build_simple_mailing_order_details_page(
+            mailing=mailing,
+            period_days=int(raw_period_days),
+            page_number=request.GET.get("page"),
+            page_size=request.GET.get("page_size"),
+        )
+        payload = page.to_dict()
+        payload["period_days"] = int(raw_period_days)
+        response = JsonResponse(
+            payload,
+            json_dumps_params={"ensure_ascii": False},
+        )
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+def _serialize_simple_mailing_option(mailing: Mailing) -> dict[str, object]:
+    """Формирует безопасную краткую запись рассылки для выпадающего списка."""
+
+    scheduled_date = mailing.scheduled_date
+    return {
+        "id": int(mailing.id),
+        "name": mailing.name,
+        "scheduled_date": scheduled_date.isoformat(),
+        "label": f"#{mailing.id} · {mailing.name} · {scheduled_date.strftime('%d.%m.%Y')}",
+        "status_url": reverse(
+            "mailings_v2_campaigns_status",
+            kwargs={"pk": mailing.id},
+        ),
+        "audience_url": reverse(
+            "mailings_v2_campaigns_audience",
+            kwargs={"pk": mailing.id},
+        ),
+    }
 
 
 class CouponAutoscenarioReportsView(TemplateView):

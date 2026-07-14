@@ -32,6 +32,9 @@ from .views_reports import (
     CouponRegistryOpsView,
     CouponRegistryView,
     ReportsWorkbenchView,
+    SimpleMailingOrdersView,
+    SimpleMailingReportsView,
+    SimpleMailingSearchView,
 )
 from .views_mailings_v2 import (
     MailingsV2CampaignAudienceView,
@@ -96,6 +99,21 @@ urlpatterns = [
         "reports/coupon-autoscenarios/",
         CouponAutoscenarioReportsView.as_view(),
         name="reports_coupon_autoscenarios",
+    ),
+    path(
+        "reports/simple-mailings/",
+        SimpleMailingReportsView.as_view(),
+        name="reports_simple_mailings",
+    ),
+    path(
+        "reports/simple-mailings/search/",
+        SimpleMailingSearchView.as_view(),
+        name="reports_simple_mailings_search",
+    ),
+    path(
+        "reports/simple-mailings/<int:mailing_id>/orders/",
+        SimpleMailingOrdersView.as_view(),
+        name="reports_simple_mailings_orders",
     ),
     path("reports/coupon-registry/", CouponRegistryView.as_view(), name="coupon_registry"),
     path("reports/coupon-registry/ops/", CouponRegistryOpsView.as_view(), name="coupon_registry_ops"),
