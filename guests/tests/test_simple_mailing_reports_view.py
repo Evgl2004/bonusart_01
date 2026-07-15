@@ -168,6 +168,25 @@ class SimpleMailingReportsViewTests(TestCase):
         self.assertEqual(arbitrary_period.status_code, 200)
         self.assertEqual(arbitrary_period.context["selected_period_days"], 7)
 
+    def test_daily_table_shows_ten_rows_and_keeps_all_period_data(self):
+        response = self.client.get(
+            reverse("reports_simple_mailings"),
+            {"mailing_id": self.mailing.id, "period_days": 30},
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            len(response.context["simple_mailing_report"]["daily_rows"]),
+            30,
+        )
+        self.assertContains(
+            response,
+            'class="table-responsive simple-report-daily-table" data-visible-rows="10"',
+        )
+        self.assertContains(response, "overflow-y: auto")
+        self.assertContains(response, "position: sticky")
+
     def test_all_six_lower_sections_are_collapsible_and_details_are_closed(self):
         response = self.client.get(
             reverse("reports_simple_mailings"),
