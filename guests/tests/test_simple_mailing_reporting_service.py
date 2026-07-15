@@ -20,6 +20,7 @@ from guests.models import (
     OlapNomenclatureDict,
     OlapSalesRawLine,
     OrderFact,
+    TerminalDepartmentMap,
 )
 from guests.services.simple_mailing_reporting import (
     DEFAULT_ORDER_PAGE_SIZE,
@@ -27,6 +28,7 @@ from guests.services.simple_mailing_reporting import (
     SimpleMailingReportError,
     build_simple_mailing_order_details_page,
     build_simple_mailing_report_snapshot,
+    normalize_simple_mailing_department_id,
     normalize_order_page_number,
     normalize_order_page_size,
     normalize_simple_mailing_period_days,
@@ -336,6 +338,106 @@ class SimpleMailingReportingServiceTests(TestCase):
         self.assertEqual(summaries[14]["orders_count"], 4)
         self.assertEqual(summaries[30]["orders_count"], 4)
 
+    def test_department_filter_limits_all_order_metrics_and_keeps_delivery_totals(self):
+        first_guest, _ = self._make_sent_guest()
+        second_guest, _ = self._make_sent_guest()
+        first_order = self._add_order(
+            first_guest,
+            business_date=self.start_date,
+            net_sum="100",
+            department_id="DEP-A",
+            department_name="Заведение A",
+        )
+        second_order = self._add_order(
+            second_guest,
+            business_date=self.start_date + timedelta(days=1),
+            net_sum="300",
+            department_id="DEP-B",
+            department_name="Заведение B",
+        )
+        self._add_raw_line(first_order, dish_code="DISH-A", dish_name="Блюдо A")
+        self._add_raw_line(second_order, dish_code="DISH-B", dish_name="Блюдо B")
+
+        network_snapshot = build_simple_mailing_report_snapshot(
+            mailing=self.mailing,
+        ).to_dict()
+        venue_snapshot = build_simple_mailing_report_snapshot(
+            mailing=self.mailing,
+            department_id=" DEP-A ",
+        ).to_dict()
+
+        self.assertEqual(network_snapshot["orders"]["orders_count"], 2)
+        self.assertEqual(venue_snapshot["department_filter"]["selected_id"], "DEP-A")
+        self.assertEqual(
+            venue_snapshot["department_filter"]["selected_name"],
+            "Заведение A",
+        )
+        self.assertEqual(
+            {item["id"] for item in venue_snapshot["department_filter"]["options"]},
+            {"DEP-A", "DEP-B"},
+        )
+        self.assertEqual(venue_snapshot["audience"]["sent_total"], 2)
+        self.assertEqual(venue_snapshot["orders"]["guests_count"], 1)
+        self.assertEqual(venue_snapshot["orders"]["orders_count"], 1)
+        self.assertEqual(venue_snapshot["orders"]["net_sum"], Decimal("100"))
+        self.assertEqual(venue_snapshot["orders"]["guest_share_percent"], Decimal("50.0"))
+        self.assertEqual(venue_snapshot["daily_rows"][0]["orders_count"], 1)
+        self.assertEqual(venue_snapshot["daily_rows"][1]["orders_count"], 0)
+        self.assertTrue(
+            all(row["orders_count"] == 1 for row in venue_snapshot["period_summary_rows"])
+        )
+        self.assertEqual(
+            [row["venue_name"] for row in venue_snapshot["venue_rows"]],
+            ["Заведение A"],
+        )
+        self.assertEqual(
+            [row["dish_code"] for row in venue_snapshot["purchase_rows"]],
+            ["DISH-A"],
+        )
+
+    def test_department_filter_with_no_orders_returns_zero_instead_of_network_totals(self):
+        guest, _ = self._make_sent_guest()
+        self._add_order(
+            guest,
+            business_date=self.start_date,
+            net_sum="500",
+            department_id="DEP-A",
+            department_name="Заведение A",
+        )
+        TerminalDepartmentMap.objects.create(
+            terminal_group_id="terminal-empty-venue",
+            department_id="DEP-EMPTY",
+            department_name="Заведение без заказов",
+            is_active=True,
+        )
+
+        snapshot = build_simple_mailing_report_snapshot(
+            mailing=self.mailing,
+            department_id="DEP-EMPTY",
+        ).to_dict()
+
+        self.assertEqual(snapshot["audience"]["sent_total"], 1)
+        self.assertEqual(snapshot["orders"]["orders_count"], 0)
+        self.assertEqual(snapshot["orders"]["net_sum"], Decimal("0"))
+        self.assertEqual(snapshot["purchase_rows"], [])
+        self.assertEqual(snapshot["venue_rows"], [])
+        self.assertEqual(
+            snapshot["department_filter"]["selected_name"],
+            "Заведение без заказов",
+        )
+
+        unknown = build_simple_mailing_report_snapshot(
+            mailing=self.mailing,
+            department_id="UNKNOWN",
+        ).to_dict()
+        self.assertEqual(unknown["orders"]["orders_count"], 0)
+        self.assertEqual(unknown["department_filter"]["selected_name"], "UNKNOWN")
+        self.assertEqual(normalize_simple_mailing_department_id(" DEP-A "), "DEP-A")
+        with self.assertRaises(SimpleMailingReportError):
+            normalize_simple_mailing_department_id("X" * 65)
+        with self.assertRaises(SimpleMailingReportError):
+            normalize_simple_mailing_department_id("DEP-A\x00")
+
     def test_venue_other_row_recomputes_distinct_guests_and_average_check(self):
         first_guest, _ = self._make_sent_guest()
         second_guest, _ = self._make_sent_guest()
@@ -503,6 +605,42 @@ class SimpleMailingReportingServiceTests(TestCase):
         self.assertEqual(normalize_order_page_size("0"), DEFAULT_ORDER_PAGE_SIZE)
         self.assertEqual(normalize_order_page_size("500"), MAX_ORDER_PAGE_SIZE)
 
+    def test_details_page_applies_the_same_department_filter(self):
+        guest, _ = self._make_sent_guest()
+        self._add_order(
+            guest,
+            business_date=self.start_date,
+            net_sum="100",
+            department_id="DEP-A",
+            department_name="Заведение A",
+            order_number=10,
+        )
+        self._add_order(
+            guest,
+            business_date=self.start_date,
+            net_sum="200",
+            department_id="DEP-B",
+            department_name="Заведение B",
+            order_number=20,
+        )
+
+        page = build_simple_mailing_order_details_page(
+            mailing=self.mailing,
+            period_days=7,
+            department_id="DEP-A",
+        ).to_dict()
+        unknown = build_simple_mailing_order_details_page(
+            mailing=self.mailing,
+            period_days=7,
+            department_id="UNKNOWN",
+        ).to_dict()
+
+        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["results"][0]["order_number"], 10)
+        self.assertEqual(page["results"][0]["venue_name"], "Заведение A")
+        self.assertEqual(unknown["total"], 0)
+        self.assertEqual(unknown["results"], [])
+
     def test_empty_and_historical_data_remain_zero_safe_without_status_fallback(self):
         guest = self._create_guest()
         self._add_audience(
@@ -570,5 +708,5 @@ class SimpleMailingReportingServiceTests(TestCase):
         with CaptureQueriesContext(connection) as expanded_scope_queries:
             build_simple_mailing_report_snapshot(mailing=self.mailing)
 
-        self.assertLessEqual(len(small_scope_queries), 12)
+        self.assertLessEqual(len(small_scope_queries), 14)
         self.assertEqual(len(expanded_scope_queries), len(small_scope_queries))

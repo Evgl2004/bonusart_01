@@ -97,13 +97,17 @@
 
   .simple-report-selector-row {
     display: grid;
-    grid-template-columns: auto minmax(260px, 1fr) auto auto auto;
+    grid-template-columns: auto minmax(260px, 1fr) minmax(190px, 260px) auto auto auto;
     gap: 10px;
     align-items: center;
   }
 
   .simple-report-selector-label {
     white-space: nowrap;
+  }
+
+  .simple-report-venue-select {
+    min-width: 0;
   }
 
   .simple-report-combobox {
@@ -301,18 +305,20 @@
     margin-top: 0.25rem;
   }
 
-  @media (max-width: 1199.98px) {
-    .simple-report-header-layout,
-    .simple-report-daily-layout {
-      grid-template-columns: 1fr;
-    }
-
+  @media (max-width: 1399.98px) {
     .simple-report-selector-row {
-      grid-template-columns: auto minmax(220px, 1fr) auto;
+      grid-template-columns: auto minmax(220px, 1fr) minmax(180px, 220px) auto;
     }
 
     .simple-report-selector-row .simple-report-link-button {
       grid-row: 2;
+    }
+  }
+
+  @media (max-width: 1199.98px) {
+    .simple-report-header-layout,
+    .simple-report-daily-layout {
+      grid-template-columns: 1fr;
     }
 
     .simple-report-summary-grid {
@@ -355,6 +361,7 @@
             <strong>#{{ selected_mailing.id }} · {{ selected_mailing.name }}</strong>
             · {{ selected_mailing.scheduled_time_begin|date:"d.m, H:i" }}–{{ selected_mailing.scheduled_time_end|date:"H:i" }}
             · <strong>{{ simple_mailing_report.period.start_date|date:"d.m" }}–{{ simple_mailing_report.period.end_date|date:"d.m" }}</strong>
+            · заказы: <strong>{{ selected_department_name }}</strong>
           </div>
           <nav class="simple-report-periods" aria-label="Период отчёта">
             {% for period in period_links %}
@@ -370,11 +377,11 @@
         </div>
         <div class="simple-report-metrics" aria-label="Ключевые показатели">
           <div class="simple-report-metric">
-            <div class="simple-report-metric-title">Получатели</div>
+            <div class="simple-report-metric-title">Получатели рассылки</div>
             <div class="simple-report-metric-value">{{ simple_mailing_report.audience.recipients_total|floatformat:"0g" }}</div>
           </div>
           <div class="simple-report-metric">
-            <div class="simple-report-metric-title">Отправлено</div>
+            <div class="simple-report-metric-title">Отправлено по рассылке</div>
             <div class="simple-report-metric-value">{{ simple_mailing_report.audience.sent_total|floatformat:"0g" }}</div>
           </div>
           <div class="simple-report-metric">
@@ -395,7 +402,7 @@
     </header>
   {% endif %}
 
-  <section class="simple-report-selector" aria-label="Выбор рассылки">
+  <section class="simple-report-selector" aria-label="Выбор рассылки и заведения">
     <form method="get" id="simpleMailingForm">
       <input type="hidden" name="mailing_id" id="simpleMailingId" value="{% if selected_mailing %}{{ selected_mailing.id }}{% endif %}">
       <input type="hidden" name="period_days" value="{{ selected_period_days }}">
@@ -440,6 +447,18 @@
             {% endfor %}
           </div>
         </div>
+        <label class="visually-hidden" for="simpleMailingDepartment">Заведение по заказу</label>
+        <select
+          class="form-select simple-report-venue-select"
+          id="simpleMailingDepartment"
+          name="department_id"
+          aria-label="Заведение по заказу"
+        >
+          <option value=""{% if not selected_department_id %} selected{% endif %}>Все заведения</option>
+          {% for department in department_options %}
+            <option value="{{ department.id }}"{% if department.id == selected_department_id %} selected{% endif %}>{{ department.name }}</option>
+          {% endfor %}
+        </select>
         <button class="btn btn-primary" id="simpleMailingShow" type="submit"{% if not selected_mailing %} disabled{% endif %}>Показать</button>
         <a
           class="btn btn-outline-secondary simple-report-link-button{% if not selected_mailing %} disabled{% endif %}"
@@ -462,7 +481,9 @@
       <section class="simple-report-card">
         <h2 class="h6 mb-2">Главный вывод</h2>
         <div class="simple-report-conclusion">
-          За {{ selected_period_days }} дней, включая день отправки, заказ совершили
+          За {{ selected_period_days }} дней, включая день отправки,
+          {% if selected_department_id %}в заведении «{{ selected_department_name }}»{% else %}во всех заведениях{% endif %}
+          заказ совершили
           <strong>{{ simple_mailing_report.orders.guests_count|floatformat:"0g" }} из {{ simple_mailing_report.audience.sent_total|floatformat:"0g" }}</strong>
           получателей сообщения ({{ simple_mailing_report.orders.guest_share_percent|floatformat:"1" }}%).
           Найдено <strong>{{ simple_mailing_report.orders.orders_count|floatformat:"0g" }} заказов</strong>
@@ -685,6 +706,7 @@
       id="simpleMailingOrdersSection"
       data-orders-url="{{ simple_mailing_orders_url }}"
       data-period-days="{{ selected_period_days }}"
+      data-department-id="{{ selected_department_id }}"
     >
       <summary>Заказы гостей за выбранный период · {{ simple_mailing_report.orders.orders_count|floatformat:"0g" }}</summary>
       <div class="simple-report-section-body">
@@ -971,6 +993,9 @@
       try {
         const url = new URL(ordersSection.dataset.ordersUrl, window.location.origin);
         url.searchParams.set("period_days", ordersSection.dataset.periodDays);
+        if (ordersSection.dataset.departmentId) {
+          url.searchParams.set("department_id", ordersSection.dataset.departmentId);
+        }
         url.searchParams.set("page", String(page));
         url.searchParams.set("page_size", "50");
         const response = await fetch(url, {headers: {"X-Requested-With": "XMLHttpRequest"}});

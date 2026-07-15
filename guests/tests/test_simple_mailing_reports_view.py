@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from urllib.parse import parse_qs, urlsplit
 
 from django.test import TestCase
 from django.urls import reverse
@@ -63,9 +64,16 @@ class SimpleMailingReportsViewTests(TestCase):
             coupon_series=coupon_series,
         )
 
-    def _create_sent_order(self, *, order_number: int = 4242) -> OrderFact:
+    def _create_sent_order(
+        self,
+        *,
+        order_number: int = 4242,
+        phone: str = "+79990000001",
+        department_id: str = "DEP-1",
+        department_name: str = "Заведение 1",
+    ) -> OrderFact:
         guest = Guest.objects.create(
-            phone="+79990000001",
+            phone=phone,
             first_name="Тестовый гость",
             created_at=self.now,
             updated_at=self.now,
@@ -92,8 +100,8 @@ class SimpleMailingReportsViewTests(TestCase):
         return OrderFact.objects.create(
             guest=guest,
             business_date=self.start_date,
-            department_id="DEP-1",
-            department_name="Заведение 1",
+            department_id=department_id,
+            department_name=department_name,
             order_number=order_number,
             uniq_order_id=f"order-{order_number}",
             gross_sum="550.00",
@@ -186,6 +194,79 @@ class SimpleMailingReportsViewTests(TestCase):
         )
         self.assertContains(response, "overflow-y: auto")
         self.assertContains(response, "position: sticky")
+
+    def test_department_selector_filters_orders_and_is_preserved_in_period_links(self):
+        self._create_sent_order(
+            order_number=100,
+            phone="+79990000001",
+            department_id="DEP-1",
+            department_name="Заведение 1",
+        )
+        self._create_sent_order(
+            order_number=200,
+            phone="+79990000002",
+            department_id="DEP-2",
+            department_name="Заведение 2",
+        )
+
+        response = self.client.get(
+            reverse("reports_simple_mailings"),
+            {
+                "mailing_id": self.mailing.id,
+                "period_days": 14,
+                "department_id": "DEP-1",
+            },
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_department_id"], "DEP-1")
+        self.assertEqual(response.context["selected_department_name"], "Заведение 1")
+        self.assertEqual(
+            response.context["simple_mailing_report"]["orders"]["orders_count"],
+            1,
+        )
+        self.assertContains(response, 'name="department_id"')
+        self.assertContains(response, 'aria-label="Заведение по заказу"')
+        self.assertContains(response, '<option value="DEP-1" selected>Заведение 1</option>')
+        self.assertContains(response, "заказы: <strong>Заведение 1</strong>")
+        self.assertContains(response, 'data-department-id="DEP-1"')
+        self.assertContains(response, 'url.searchParams.set("department_id"')
+
+        for period_link in response.context["period_links"]:
+            query = parse_qs(urlsplit(period_link["url"]).query)
+            self.assertEqual(query["mailing_id"], [str(self.mailing.id)])
+            self.assertEqual(query["department_id"], ["DEP-1"])
+            self.assertEqual(query["period_days"], [str(period_link["days"])])
+
+    def test_unknown_department_returns_zero_and_invalid_value_is_not_silently_ignored(self):
+        self._create_sent_order()
+
+        unknown = self.client.get(
+            reverse("reports_simple_mailings"),
+            {"mailing_id": self.mailing.id, "department_id": "UNKNOWN"},
+            secure=True,
+        )
+        invalid_page = self.client.get(
+            reverse("reports_simple_mailings"),
+            {"mailing_id": self.mailing.id, "department_id": "X" * 65},
+            secure=True,
+        )
+        invalid_orders = self.client.get(
+            reverse("reports_simple_mailings_orders", kwargs={"mailing_id": self.mailing.id}),
+            {"period_days": 7, "department_id": "X" * 65},
+            secure=True,
+        )
+
+        self.assertEqual(unknown.status_code, 200)
+        self.assertEqual(
+            unknown.context["simple_mailing_report"]["orders"]["orders_count"],
+            0,
+        )
+        self.assertEqual(unknown.context["selected_department_name"], "UNKNOWN")
+        self.assertEqual(invalid_page.status_code, 404)
+        self.assertEqual(invalid_orders.status_code, 400)
+        self.assertEqual(invalid_orders.json()["error"], "Некорректный идентификатор заведения.")
 
     def test_all_six_lower_sections_are_collapsible_and_details_are_closed(self):
         response = self.client.get(
@@ -338,6 +419,32 @@ class SimpleMailingReportsViewTests(TestCase):
         self.assertNotIn("gross_sum", response.content.decode("utf-8"))
         self.assertNotIn("discount_sum", response.content.decode("utf-8"))
         self.assertNotIn("phone", response.content.decode("utf-8"))
+
+    def test_order_endpoint_returns_only_selected_department(self):
+        self._create_sent_order(
+            order_number=100,
+            phone="+79990000001",
+            department_id="DEP-1",
+            department_name="Заведение 1",
+        )
+        self._create_sent_order(
+            order_number=200,
+            phone="+79990000002",
+            department_id="DEP-2",
+            department_name="Заведение 2",
+        )
+
+        response = self.client.get(
+            reverse("reports_simple_mailings_orders", kwargs={"mailing_id": self.mailing.id}),
+            {"period_days": 7, "department_id": "DEP-2"},
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["department_id"], "DEP-2")
+        self.assertEqual(response.json()["total"], 1)
+        self.assertEqual(response.json()["results"][0]["order_number"], 200)
+        self.assertEqual(response.json()["results"][0]["venue_name"], "Заведение 2")
 
     def test_order_endpoint_validates_period_caps_page_and_does_not_repeat_last_page(self):
         self._create_sent_order()

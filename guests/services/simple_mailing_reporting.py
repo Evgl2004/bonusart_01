@@ -6,7 +6,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from math import ceil
 from typing import Any
 
-from django.db.models import Count, Exists, Min, OuterRef, Q, QuerySet, Subquery, Sum, Value
+from django.db.models import Count, Exists, Max, Min, OuterRef, Q, QuerySet, Subquery, Sum, Value
 from django.db.models.functions import Coalesce, Trim
 from django.utils import timezone
 
@@ -18,6 +18,7 @@ from guests.models import (
     OlapNomenclatureDict,
     OlapSalesRawLine,
     OrderFact,
+    TerminalDepartmentMap,
 )
 
 
@@ -27,6 +28,7 @@ DEFAULT_ORDER_PAGE_SIZE = 50
 MAX_ORDER_PAGE_SIZE = 100
 PURCHASE_ROWS_LIMIT = 10
 VENUE_ROWS_LIMIT = 3
+MAX_DEPARTMENT_ID_LENGTH = 64
 
 
 class SimpleMailingReportError(ValueError):
@@ -39,6 +41,7 @@ class SimpleMailingReportSnapshot:
 
     mailing: dict[str, Any]
     period: dict[str, Any]
+    department_filter: dict[str, Any]
     audience: dict[str, Any]
     orders: dict[str, Any]
     daily_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -54,6 +57,7 @@ class SimpleMailingReportSnapshot:
         return {
             "mailing": dict(self.mailing),
             "period": dict(self.period),
+            "department_filter": dict(self.department_filter),
             "audience": dict(self.audience),
             "orders": dict(self.orders),
             "daily_rows": list(self.daily_rows),
@@ -106,6 +110,17 @@ def normalize_simple_mailing_period_days(value: int | str | None) -> int:
     return normalized if normalized in ALLOWED_PERIOD_DAYS else DEFAULT_PERIOD_DAYS
 
 
+def normalize_simple_mailing_department_id(value: str | None) -> str:
+    """Нормализует идентификатор заведения и отклоняет небезопасное значение."""
+
+    normalized = str(value or "").strip()
+    if len(normalized) > MAX_DEPARTMENT_ID_LENGTH or any(
+        ord(character) < 32 for character in normalized
+    ):
+        raise SimpleMailingReportError("Некорректный идентификатор заведения.")
+    return normalized
+
+
 def normalize_order_page_number(value: int | str | None) -> int:
     """Нормализует номер страницы к положительному целому числу."""
 
@@ -151,11 +166,13 @@ def build_simple_mailing_report_snapshot(
     *,
     mailing: Mailing,
     period_days: int | str | None = None,
+    department_id: str | None = None,
 ) -> SimpleMailingReportSnapshot:
     """Строит все агрегаты отчёта, кроме лениво загружаемых деталей заказов."""
 
     _validate_simple_mailing(mailing)
     selected_days = normalize_simple_mailing_period_days(period_days)
+    selected_department_id = normalize_simple_mailing_department_id(department_id)
     start_date = mailing.scheduled_date
     end_date = start_date + timedelta(days=selected_days - 1)
     end_30_date = start_date + timedelta(days=29)
@@ -169,10 +186,18 @@ def build_simple_mailing_report_snapshot(
     not_sent_total = max(0, recipients_total - sent_total)
     send_share_percent = _percent(sent_total, recipients_total)
 
-    max_orders_scope = _build_eligible_orders_scope(
+    unfiltered_max_orders_scope = _build_eligible_orders_scope(
         successful_guest_ids=successful_guest_ids,
         start_date=start_date,
         end_date=end_30_date,
+    )
+    department_filter = _build_department_filter_payload(
+        orders_scope=unfiltered_max_orders_scope,
+        selected_department_id=selected_department_id,
+    )
+    max_orders_scope = _filter_orders_by_department(
+        unfiltered_max_orders_scope,
+        department_id=selected_department_id,
     )
     period_summary_rows = _build_period_summary_rows(
         orders_scope=max_orders_scope,
@@ -224,6 +249,7 @@ def build_simple_mailing_report_snapshot(
             "end_date": end_date,
             "allowed_days": ALLOWED_PERIOD_DAYS,
         },
+        department_filter=department_filter,
         audience={
             "recipients_total": recipients_total,
             "sent_total": sent_total,
@@ -252,6 +278,7 @@ def build_simple_mailing_order_details_page(
     *,
     mailing: Mailing,
     period_days: int | str | None = None,
+    department_id: str | None = None,
     page_number: int | str | None = None,
     page_size: int | str | None = None,
 ) -> SimpleMailingOrderPage:
@@ -259,6 +286,7 @@ def build_simple_mailing_order_details_page(
 
     _validate_simple_mailing(mailing)
     selected_days = normalize_simple_mailing_period_days(period_days)
+    selected_department_id = normalize_simple_mailing_department_id(department_id)
     normalized_page = normalize_order_page_number(page_number)
     normalized_page_size = normalize_order_page_size(page_size)
     start_date = mailing.scheduled_date
@@ -266,10 +294,13 @@ def build_simple_mailing_order_details_page(
 
     successful_rows = _build_successful_mailing_guests_scope(mailing.id)
     successful_guest_ids = successful_rows.order_by().values("guest_id")
-    orders_scope = _build_eligible_orders_scope(
-        successful_guest_ids=successful_guest_ids,
-        start_date=start_date,
-        end_date=end_date,
+    orders_scope = _filter_orders_by_department(
+        _build_eligible_orders_scope(
+            successful_guest_ids=successful_guest_ids,
+            start_date=start_date,
+            end_date=end_date,
+        ),
+        department_id=selected_department_id,
     ).order_by(
         "business_date",
         "department_id",
@@ -359,6 +390,80 @@ def _build_eligible_orders_scope(
         business_date__gte=start_date,
         business_date__lte=end_date,
     )
+
+
+def _filter_orders_by_department(
+    orders_scope: QuerySet[OrderFact],
+    *,
+    department_id: str,
+) -> QuerySet[OrderFact]:
+    """Ограничивает единый набор заказов выбранным заведением."""
+
+    if not department_id:
+        return orders_scope
+    return orders_scope.filter(department_id=department_id)
+
+
+def _build_department_filter_payload(
+    *,
+    orders_scope: QuerySet[OrderFact],
+    selected_department_id: str,
+) -> dict[str, Any]:
+    """
+    Собирает заведения из активного справочника и фактов выбранной рассылки.
+
+    Активный справочник позволяет выбрать заведение даже при нулевом результате,
+    а факты заказов сохраняют исторические заведения в старых отчётах.
+    """
+
+    department_names: dict[str, str] = {}
+
+    def add_department(raw_id: Any, raw_name: Any) -> None:
+        department_id = str(raw_id or "").strip()
+        if not department_id:
+            return
+        department_name = str(raw_name or "").strip() or department_id
+        current_name = department_names.get(department_id)
+        if current_name is None or current_name == department_id:
+            department_names[department_id] = department_name
+
+    reference_rows = (
+        TerminalDepartmentMap.objects.filter(is_active=True)
+        .exclude(department_id="")
+        .values("department_id")
+        .annotate(department_name=Max("department_name"))
+    )
+    for row in reference_rows:
+        add_department(row.get("department_id"), row.get("department_name"))
+
+    order_rows = (
+        orders_scope.exclude(department_id="")
+        .values("department_id")
+        .annotate(department_name=Max("department_name"))
+    )
+    for row in order_rows:
+        add_department(row.get("department_id"), row.get("department_name"))
+
+    if selected_department_id and selected_department_id not in department_names:
+        department_names[selected_department_id] = selected_department_id
+
+    options = [
+        {"id": department_id, "name": department_name}
+        for department_id, department_name in sorted(
+            department_names.items(),
+            key=lambda item: (item[1].casefold(), item[0]),
+        )
+    ]
+    return {
+        "selected_id": selected_department_id,
+        "selected_name": (
+            department_names.get(selected_department_id, selected_department_id)
+            if selected_department_id
+            else "Все заведения"
+        ),
+        "is_all": not selected_department_id,
+        "options": options,
+    }
 
 
 def _build_period_summary_rows(

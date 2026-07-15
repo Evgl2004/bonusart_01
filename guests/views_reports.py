@@ -49,8 +49,10 @@ from guests.services.coupon_venues import build_coupon_venue_choices
 from guests.services.simple_mailing_reporting import (
     ALLOWED_PERIOD_DAYS,
     DEFAULT_PERIOD_DAYS,
+    SimpleMailingReportError,
     build_simple_mailing_order_details_page,
     build_simple_mailing_report_snapshot,
+    normalize_simple_mailing_department_id,
     normalize_simple_mailing_period_days,
     search_simple_mailings,
     simple_mailings_queryset,
@@ -195,6 +197,12 @@ class SimpleMailingReportsView(TemplateView):
         period_days = normalize_simple_mailing_period_days(
             self.request.GET.get("period_days")
         )
+        try:
+            department_id = normalize_simple_mailing_department_id(
+                self.request.GET.get("department_id")
+            )
+        except SimpleMailingReportError as error:
+            raise Http404(str(error)) from error
         initial_mailings = list(search_simple_mailings())
 
         selected_mailing = None
@@ -226,6 +234,7 @@ class SimpleMailingReportsView(TemplateView):
             report = build_simple_mailing_report_snapshot(
                 mailing=selected_mailing,
                 period_days=period_days,
+                department_id=department_id,
             ).to_dict()
             chart_payload = {
                 "dates": [row["business_date"].isoformat() for row in report["daily_rows"]],
@@ -233,12 +242,13 @@ class SimpleMailingReportsView(TemplateView):
                 "orders": [row["orders_count"] for row in report["daily_rows"]],
             }
             for option_days in ALLOWED_PERIOD_DAYS:
-                params = urlencode(
-                    {
-                        "mailing_id": selected_mailing.id,
-                        "period_days": option_days,
-                    }
-                )
+                query_params = {
+                    "mailing_id": selected_mailing.id,
+                    "period_days": option_days,
+                }
+                if department_id:
+                    query_params["department_id"] = department_id
+                params = urlencode(query_params)
                 period_links.append(
                     {
                         "days": option_days,
@@ -267,6 +277,15 @@ class SimpleMailingReportsView(TemplateView):
                 ],
                 "selected_mailing": selected_mailing,
                 "selected_period_days": period_days,
+                "selected_department_id": department_id,
+                "selected_department_name": (
+                    report["department_filter"]["selected_name"]
+                    if report
+                    else "Все заведения"
+                ),
+                "department_options": (
+                    report["department_filter"]["options"] if report else []
+                ),
                 "period_links": period_links,
                 "simple_mailing_report": report,
                 "simple_mailing_chart_payload": chart_payload,
@@ -313,14 +332,28 @@ class SimpleMailingOrdersView(View):
             return response
 
         mailing = get_object_or_404(simple_mailings_queryset(), id=mailing_id)
-        page = build_simple_mailing_order_details_page(
-            mailing=mailing,
-            period_days=int(raw_period_days),
-            page_number=request.GET.get("page"),
-            page_size=request.GET.get("page_size"),
-        )
+        try:
+            department_id = normalize_simple_mailing_department_id(
+                request.GET.get("department_id")
+            )
+            page = build_simple_mailing_order_details_page(
+                mailing=mailing,
+                period_days=int(raw_period_days),
+                department_id=department_id,
+                page_number=request.GET.get("page"),
+                page_size=request.GET.get("page_size"),
+            )
+        except SimpleMailingReportError as error:
+            response = JsonResponse(
+                {"error": str(error)},
+                status=400,
+                json_dumps_params={"ensure_ascii": False},
+            )
+            response["Cache-Control"] = "no-store"
+            return response
         payload = page.to_dict()
         payload["period_days"] = int(raw_period_days)
+        payload["department_id"] = department_id
         response = JsonResponse(
             payload,
             json_dumps_params={"ensure_ascii": False},
