@@ -19,6 +19,11 @@ from .services.coupon_autoscenarios import resolve_coupon_autoscenario_type
 from .services.coupon_series import build_available_coupon_series_choices
 from .services.coupon_venues import build_coupon_venue_choices
 from .services.guest_resolution import normalize_phone_e164
+from .services.mailing_import_audience import (
+    DEFAULT_MAILING_IMPORT_AUDIENCE,
+    MAILING_IMPORT_AUDIENCE_CHOICES,
+    normalize_mailing_import_audience,
+)
 
 
 COUPON_AUTOSCENARIO_STATE_CHOICES = [
@@ -717,10 +722,29 @@ class MailingForm(forms.ModelForm):
 
 
 class MailingImportPhonesForm(forms.Form):
+    audience_channel_group = forms.ChoiceField(
+        label="Группа гостей для импорта",
+        choices=MAILING_IMPORT_AUDIENCE_CHOICES,
+        initial=DEFAULT_MAILING_IMPORT_AUDIENCE,
+        required=False,
+        help_text="Определяет, гостей с какими доступными каналами добавить в кампанию.",
+    )
     file = forms.FileField(
         label="Excel файл (.xlsx) с телефонами",
-        help_text="Столбец phone обязателен; telegram_external_id можно добавить для legacy Telegram.",
+        help_text=(
+            "Столбец phone обязателен; telegram_external_id можно добавить "
+            "для исторического Telegram-канала."
+        ),
     )
+
+    def clean_audience_channel_group(self):
+        """
+        Сохраняет прежнее поведение для запросов без нового поля выбора.
+        """
+
+        return normalize_mailing_import_audience(
+            self.cleaned_data.get("audience_channel_group")
+        )
 
     def clean_file(self):
         file_obj = self.cleaned_data["file"]

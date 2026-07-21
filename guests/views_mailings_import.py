@@ -11,7 +11,10 @@ from django.http import HttpResponse
 from openpyxl import load_workbook, Workbook
 
 from .forms import MailingImportPhonesForm
-from .models import GuestBotBinding, Guest, Mailing, MailingGuest
+from .models import Guest, Mailing, MailingGuest
+from guests.services.mailing_import_audience import (
+    build_mailing_import_audience_selection,
+)
 from guests.services.template_render import render_message_for_guest
 
 
@@ -164,58 +167,40 @@ class MailingImportPhonesView(View):
 
         found_count = len(guests_found)
 
-        # 2) выясняем, кто уже есть в рассылке (у тебя уникальность mailing+guest)
+        # 2) Выясняем, кто уже есть в рассылке: пара mailing+guest уникальна.
         found_ids = [g.id for g in guests_found]
         already_ids = set(
             MailingGuest.objects.filter(mailing=mailing, guest_id__in=found_ids)
             .values_list("guest_id", flat=True)
         )
 
-        to_add = [g for g in guests_found if g.id not in already_ids]
         guest_external_ids = {
-            g.id: recipients_by_phone.get(normalize_phone(g.phone) or "", {}).get("telegram_external_id", "")
-            for g in to_add
+            g.id: recipients_by_phone.get(normalize_phone(g.phone) or "", {}).get(
+                "telegram_external_id",
+                "",
+            )
+            for g in guests_found
         }
 
-        # 2.5) Оставляем гостей только с активными привязками к ботам,
-        # выбранным в этой рассылке. Для legacy Telegram-файла разрешаем строку
-        # без новой привязки, если в Excel есть telegram_external_id.
+        # 2.5) Используем тот же планировщик, который применяется при фактической
+        # постановке рассылки в очередь. Это исключает расхождение между импортом
+        # и отправкой для новых и исторических каналов.
         selected_bot_ids = list(
             mailing.bot_profiles.filter(is_active=True).values_list("id", flat=True)
         )
-        has_selected_telegram_bot = mailing.bot_profiles.filter(
-            is_active=True,
-            provider_type="telegram",
-        ).exists()
-        if not selected_bot_ids:
-            to_add = []
-        elif to_add:
-            to_add_ids = [g.id for g in to_add]
-            eligible_bindings = (
-                GuestBotBinding.objects
-                .filter(
-                    guest_id__in=to_add_ids,
-                    bot_id__in=selected_bot_ids,
-                    is_active=True,
-                    is_opt_in=True,
-                    is_stop_sending=False,
-                )
-                .exclude(external_chat_id__isnull=True)
-                .exclude(external_chat_id="")
-            )
-
-            if mailing.target_mode == Mailing.TargetMode.PRIMARY_ONLY:
-                eligible_ids = set(
-                    eligible_bindings.filter(is_primary=True).values_list("guest_id", flat=True)
-                )
-            else:
-                eligible_ids = set(eligible_bindings.values_list("guest_id", flat=True).distinct())
-
-            to_add = [
-                g
-                for g in to_add
-                if g.id in eligible_ids or (has_selected_telegram_bot and guest_external_ids.get(g.id))
-            ]
+        audience_selection = build_mailing_import_audience_selection(
+            found_ids,
+            selected_bot_ids=selected_bot_ids,
+            target_mode=mailing.target_mode,
+            audience_group=form.cleaned_data["audience_channel_group"],
+            telegram_external_ids=guest_external_ids,
+        )
+        to_add = [
+            guest
+            for guest in guests_found
+            if guest.id in audience_selection.selected_guest_ids
+            and guest.id not in already_ids
+        ]
 
         # 3) создаём строки MailingGuest
         now = timezone.now()
@@ -233,7 +218,11 @@ class MailingImportPhonesView(View):
                 text_mailing_list=rendered_text,
                 scheduled_datetime=scheduled_dt,
                 status=MailingGuest.Status.PLANNED,
-                external_id=guest_external_ids.get(g.id) or None,
+                external_id=(
+                    guest_external_ids.get(g.id) or None
+                    if g.id in audience_selection.file_telegram_external_id_guest_ids
+                    else None
+                ),
                 created_at=now,
             ))
 
@@ -241,7 +230,9 @@ class MailingImportPhonesView(View):
             MailingGuest.objects.bulk_create(rows)
 
         added_count = len(rows)
-        already_count = len(already_ids)
+        already_count = len(
+            already_ids.intersection(audience_selection.selected_guest_ids)
+        )
         not_found_count = len(not_found)
         legacy_external_id_count = sum(1 for row in rows if row.external_id)
 
@@ -251,6 +242,17 @@ class MailingImportPhonesView(View):
             "unique_phones": len(phones_unique),
             "duplicate_rows": duplicate_rows,
             "found": found_count,
+            "audience_channel_group": audience_selection.audience_group,
+            "audience_channel_group_label": audience_selection.audience_group_label,
+            "sendable_new_bots": len(audience_selection.new_bot_guest_ids),
+            "sendable_historical": len(audience_selection.historical_guest_ids),
+            "sendable_total": len(audience_selection.sendable_guest_ids),
+            "excluded_without_channel": len(
+                audience_selection.without_sendable_channel_guest_ids
+            ),
+            "excluded_by_audience_group": len(
+                audience_selection.excluded_by_audience_group_guest_ids
+            ),
             "added": added_count,
             "already": already_count,
             "not_found": not_found_count,

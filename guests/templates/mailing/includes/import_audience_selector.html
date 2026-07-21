@@ -1,0 +1,26 @@
+<fieldset class="mb-3">
+  <legend class="form-label fw-semibold mb-2">Кого добавить из Excel</legend>
+  <div class="vstack gap-2">
+    <label class="border rounded p-2 d-flex gap-2 align-items-start">
+      <input class="form-check-input mt-1" type="radio" name="audience_channel_group" value="new_bots"{% if not selected_import_audience_group or selected_import_audience_group == "new_bots" %} checked{% endif %}>
+      <span>
+        <span class="fw-semibold d-block">Гости новых ботов</span>
+        <span class="text-muted small">Есть разрешённая активная привязка к одному из выбранных ботов кампании.</span>
+      </span>
+    </label>
+    <label class="border rounded p-2 d-flex gap-2 align-items-start">
+      <input class="form-check-input mt-1" type="radio" name="audience_channel_group" value="historical_telegram"{% if selected_import_audience_group == "historical_telegram" %} checked{% endif %}>
+      <span>
+        <span class="fw-semibold d-block">Исторические Telegram-гости (старый бот)</span>
+        <span class="text-muted small">Есть доступный исторический Telegram-канал и нет регистрации в новом контуре.</span>
+      </span>
+    </label>
+    <label class="border rounded p-2 d-flex gap-2 align-items-start">
+      <input class="form-check-input mt-1" type="radio" name="audience_channel_group" value="all_sendable"{% if selected_import_audience_group == "all_sendable" %} checked{% endif %}>
+      <span>
+        <span class="fw-semibold d-block">Все гости с доступным каналом отправки</span>
+        <span class="text-muted small">Объединение новых и исторических гостей; каждый гость добавляется один раз.</span>
+      </span>
+    </label>
+  </div>
+</fieldset>
