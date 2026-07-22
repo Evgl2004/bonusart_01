@@ -317,6 +317,36 @@ class MailingImportAudienceTests(TestCase):
         self.assertContains(response, "Все гости с доступным каналом отправки")
         self.assertContains(response, 'name="audience_channel_group"', html=False)
 
+    def test_import_forms_show_progress_and_block_repeated_submission(self):
+        """
+        Обе формы сообщают о выполнении импорта и защищены от повторной отправки.
+        """
+
+        page_urls = (
+            reverse(
+                "mailings_v2_campaigns_audience",
+                kwargs={"pk": self.mailing.id},
+            ),
+            reverse("mailing_edit", kwargs={"pk": self.mailing.id}),
+        )
+
+        for page_url in page_urls:
+            with self.subTest(page_url=page_url):
+                response = self.client.get(page_url, secure=True)
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "data-mailing-import-form", html=False)
+                self.assertContains(response, "data-mailing-import-submit", html=False)
+                self.assertContains(response, "data-mailing-import-progress", html=False)
+                self.assertContains(response, "Импорт выполняется…")
+                self.assertContains(
+                    response,
+                    "Не закрывайте страницу и не повторяйте импорт",
+                )
+                self.assertContains(response, "button.disabled = true", html=False)
+                self.assertContains(response, "event.preventDefault()", html=False)
+                self.assertContains(response, 'aria-busy", "true', html=False)
+
     def _post_import(self, rows, *, audience_group: str | None = None):
         """
         Выполняет импорт тестового Excel в текущую кампанию.

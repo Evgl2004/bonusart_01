@@ -61,12 +61,16 @@
         <div class="alert alert-danger">{{ mailing_import_error }}</div>
       {% endif %}
 
-      <form method="post" action="{% url 'mailing_import_phones' mailing.id %}" enctype="multipart/form-data">
+      <form method="post" action="{% url 'mailing_import_phones' mailing.id %}" enctype="multipart/form-data" data-mailing-import-form>
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
         {% include "mailing/includes/import_audience_selector.html" with selected_import_audience_group=mailing_import_report.audience_channel_group %}
         <input type="file" name="file" accept=".xlsx" class="form-control" required>
-        <button class="btn btn-primary mt-2" type="submit">Импортировать</button>
+        <button class="btn btn-primary mt-2" type="submit" data-mailing-import-submit>
+          <span class="spinner-border spinner-border-sm me-1" aria-hidden="true" data-mailing-import-button-spinner hidden></span>
+          <span data-mailing-import-button-label>Импортировать</span>
+        </button>
+        {% include "mailing/includes/import_progress.html" %}
       </form>
 
       {% if mailing_import_report %}

@@ -1,0 +1,100 @@
+<div
+  class="alert alert-info mt-3 mb-0"
+  role="status"
+  aria-live="polite"
+  aria-atomic="true"
+  data-mailing-import-progress
+  hidden
+>
+  <div class="d-flex align-items-start gap-2">
+    <span class="spinner-border spinner-border-sm mt-1" aria-hidden="true"></span>
+    <div>
+      <span class="fw-semibold d-block">Импорт выполняется…</span>
+      <span class="small">Файл загружается и проверяется. Не закрывайте страницу и не повторяйте импорт до появления отчёта.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  (function () {
+    "use strict";
+
+    function resetImportForm(form) {
+      const button = form.querySelector("[data-mailing-import-submit]");
+      const spinner = form.querySelector("[data-mailing-import-button-spinner]");
+      const label = form.querySelector("[data-mailing-import-button-label]");
+      const progress = form.querySelector("[data-mailing-import-progress]");
+
+      form.dataset.mailingImportSubmitting = "false";
+      form.removeAttribute("aria-busy");
+
+      if (button) {
+        button.disabled = false;
+      }
+      if (spinner) {
+        spinner.hidden = true;
+      }
+      if (label && label.dataset.defaultText) {
+        label.textContent = label.dataset.defaultText;
+      }
+      if (progress) {
+        progress.hidden = true;
+      }
+    }
+
+    function initializeImportForms() {
+      document.querySelectorAll("[data-mailing-import-form]").forEach(function (form) {
+        if (form.dataset.mailingImportInitialized === "true") {
+          return;
+        }
+
+        const label = form.querySelector("[data-mailing-import-button-label]");
+        if (label) {
+          label.dataset.defaultText = label.textContent.trim();
+        }
+
+        resetImportForm(form);
+        form.dataset.mailingImportInitialized = "true";
+
+        form.addEventListener("submit", function (event) {
+          if (form.dataset.mailingImportSubmitting === "true") {
+            event.preventDefault();
+            return;
+          }
+
+          const button = form.querySelector("[data-mailing-import-submit]");
+          const spinner = form.querySelector("[data-mailing-import-button-spinner]");
+          const buttonLabel = form.querySelector("[data-mailing-import-button-label]");
+          const progress = form.querySelector("[data-mailing-import-progress]");
+
+          form.dataset.mailingImportSubmitting = "true";
+          form.setAttribute("aria-busy", "true");
+
+          if (button) {
+            button.disabled = true;
+          }
+          if (spinner) {
+            spinner.hidden = false;
+          }
+          if (buttonLabel) {
+            buttonLabel.textContent = "Импорт выполняется…";
+          }
+          if (progress) {
+            progress.hidden = false;
+          }
+        });
+      });
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initializeImportForms);
+    } else {
+      initializeImportForms();
+    }
+
+    // Браузер может восстановить страницу из кэша переходов уже с заблокированной кнопкой.
+    window.addEventListener("pageshow", function () {
+      document.querySelectorAll("[data-mailing-import-form]").forEach(resetImportForm);
+    });
+  })();
+</script>

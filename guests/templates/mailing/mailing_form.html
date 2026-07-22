@@ -108,11 +108,15 @@
           </a>
         </div>
 
-        <form method="post" action="{% url 'mailing_import_phones' object.id %}" enctype="multipart/form-data">
+        <form method="post" action="{% url 'mailing_import_phones' object.id %}" enctype="multipart/form-data" data-mailing-import-form>
           {% csrf_token %}
           {% include "mailing/includes/import_audience_selector.html" with selected_import_audience_group=request.session.mailing_import_report.audience_channel_group %}
           <input type="file" name="file" accept=".xlsx" class="form-control" required style="max-width: 420px;">
-          <button class="btn btn-primary mt-2">Импортировать</button>
+          <button class="btn btn-primary mt-2" type="submit" data-mailing-import-submit>
+            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true" data-mailing-import-button-spinner hidden></span>
+            <span data-mailing-import-button-label>Импортировать</span>
+          </button>
+          {% include "mailing/includes/import_progress.html" %}
         </form>
 
         {% if request.session.mailing_import_report %}
