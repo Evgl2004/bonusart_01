@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -30,6 +32,17 @@ LIVE_COUPON_ASSIGNMENT_STATUSES = [
     CouponCampaignAssignment.Status.SENT,
 ]
 IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE = "Customer_CustomerHasNoCategory"
+IIKO_CATEGORY_BINDED_TO_ANOTHER_CUSTOMER_ERROR_CODE = "Common_CategoryBindedToAnotherCustomer"
+IIKO_CUSTOMER_CATEGORY_ADD_PATH = "/loyalty/iiko/customer_category/add"
+_IIKO_UUID_PATTERN = (
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+_IIKO_ALREADY_BOUND_MESSAGE_RE = re.compile(
+    rf"Category\s+with\s+id\s*=\s*(?P<category>{_IIKO_UUID_PATTERN}).*?"
+    rf"already\s+binded\s+to\s+customer\s+with\s+id\s*=\s*(?P<customer>{_IIKO_UUID_PATTERN})",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 class IikoCustomerCategorySyncError(Exception):
@@ -458,6 +471,7 @@ class IikoCustomerCategorySyncService:
             )
 
         result["processed"] = 1
+        customer_id = ""
         try:
             if (
                 event.action == IikoCustomerCategorySyncEvent.Action.ADD
@@ -485,6 +499,11 @@ class IikoCustomerCategorySyncService:
                 return result
 
             customer_id = self._resolve_iiko_customer_id(event=event)
+            self._persist_resolved_customer_id(
+                event_id=event_id,
+                customer_id=customer_id,
+            )
+            event.iiko_customer_id = customer_id
             if event.action == IikoCustomerCategorySyncEvent.Action.ADD:
                 self.client.add_customer_category(customer_id=customer_id, category_id=event.category_id)
             elif event.action == IikoCustomerCategorySyncEvent.Action.REMOVE:
@@ -504,6 +523,28 @@ class IikoCustomerCategorySyncService:
                 result["remove_acked"] = 1
             return result
         except IikoCustomerCategoryApiError as exc:
+            if (
+                event.action == IikoCustomerCategorySyncEvent.Action.ADD
+                and self._is_add_already_bound_to_same_customer(
+                    exc=exc,
+                    event=event,
+                    requested_customer_id=customer_id,
+                )
+            ):
+                self._mark_event_acked(
+                    event_id=event_id,
+                    customer_id=customer_id,
+                    acked_at=attempt_time,
+                )
+                logger.info(
+                    "Повторный add категории iikoCard подтверждён как идемпотентный: event_id=%s error_code=%s",
+                    event_id,
+                    IIKO_CATEGORY_BINDED_TO_ANOTHER_CUSTOMER_ERROR_CODE,
+                )
+                result["acked"] = 1
+                result["add_acked"] = 1
+                return result
+
             if (
                 event.action == IikoCustomerCategorySyncEvent.Action.REMOVE
                 and _is_customer_has_no_category_error(exc)
@@ -566,7 +607,35 @@ class IikoCustomerCategorySyncService:
             )
         return resolved_id
 
-    def _mark_event_acked(self, *, event_id: int, customer_id: str, acked_at) -> None:
+    def _persist_resolved_customer_id(
+        self,
+        *,
+        event_id: int,
+        customer_id: str,
+    ) -> None:
+        """
+        Сохраняет фактически выбранный customerId до HTTP add/remove.
+
+        Это делает диагностируемыми ошибки после поиска гостя по телефону.
+        """
+        normalized_customer_id = str(customer_id or "").strip()
+        if not normalized_customer_id:
+            return
+        with transaction.atomic():
+            event = self._queue_events_for_update_queryset().filter(id=int(event_id)).first()
+            if event is None:
+                return
+            if event.iiko_customer_id != normalized_customer_id:
+                event.iiko_customer_id = normalized_customer_id
+                event.save(update_fields=["iiko_customer_id", "updated_at"])
+
+    def _mark_event_acked(
+        self,
+        *,
+        event_id: int,
+        customer_id: str,
+        acked_at,
+    ) -> None:
         with transaction.atomic():
             event = (
                 self._queue_events_for_update_queryset()
@@ -643,6 +712,50 @@ class IikoCustomerCategorySyncService:
                 ]
             )
 
+    def _is_add_already_bound_to_same_customer(
+        self,
+        *,
+        exc: IikoCustomerCategoryApiError,
+        event: IikoCustomerCategorySyncEvent,
+        requested_customer_id: str,
+    ) -> bool:
+        if not _is_category_binded_to_another_customer_error(exc):
+            return False
+
+        body = getattr(exc, "body", None)
+        if not isinstance(body, dict):
+            return False
+        message = str(body.get("message") or "").strip()
+        match = _IIKO_ALREADY_BOUND_MESSAGE_RE.search(message)
+        if match is None:
+            return False
+
+        error_category_id = _normalize_uuid(match.group("category"))
+        error_customer_id = _normalize_uuid(match.group("customer"))
+        event_category_id = _normalize_uuid(event.category_id)
+        configured_category_id = _normalize_uuid(self.category_id)
+        request_customer_id = _normalize_uuid(requested_customer_id)
+        if not all(
+            [
+                error_category_id,
+                error_customer_id,
+                event_category_id,
+                configured_category_id,
+                request_customer_id,
+            ]
+        ):
+            return False
+        if error_category_id != event_category_id or event_category_id != configured_category_id:
+            return False
+        if error_customer_id != request_customer_id:
+            return False
+
+        event_organization_id = str(event.organization_id or "").strip().casefold()
+        client_organization_id = str(getattr(self.client, "organization_id", "") or "").strip().casefold()
+        if not event_organization_id or not client_organization_id:
+            return False
+        return event_organization_id == client_organization_id
+
     def _apply_post_add_ack_effects(self, *, event: IikoCustomerCategorySyncEvent) -> None:
         if not event.autoscenario_assignment_id:
             return
@@ -711,6 +824,30 @@ def _is_customer_has_no_category_error(exc: IikoCustomerCategoryApiError) -> boo
             return True
 
     return IIKO_CUSTOMER_HAS_NO_CATEGORY_ERROR_CODE in str(exc)
+
+
+def _normalize_uuid(value: object) -> str:
+    try:
+        return str(uuid.UUID(str(value or "").strip().strip("{}")))
+    except (AttributeError, TypeError, ValueError):
+        return ""
+
+
+def _is_category_binded_to_another_customer_error(exc: IikoCustomerCategoryApiError) -> bool:
+    """Проверяет строгий контракт конфликтного ответа именно для операции add."""
+    if int(getattr(exc, "status_code", 0) or 0) != 400:
+        return False
+    path = str(getattr(exc, "path", "") or "").strip().rstrip("/")
+    if path != IIKO_CUSTOMER_CATEGORY_ADD_PATH:
+        return False
+
+    error_code = str(getattr(exc, "error_code", "") or "").strip()
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        body_error_code = str(body.get("errorCode") or body.get("code") or "").strip()
+        if body_error_code:
+            error_code = body_error_code
+    return error_code == IIKO_CATEGORY_BINDED_TO_ANOTHER_CUSTOMER_ERROR_CODE
 
 
 def _assignment_source_type(assignment: CouponAssignment) -> str:
