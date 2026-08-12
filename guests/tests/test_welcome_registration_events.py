@@ -186,6 +186,12 @@ class WelcomeRegistrationEventProcessorTests(TestCase):
     def _processor(self) -> WelcomeRegistrationEventProcessor:
         return WelcomeRegistrationEventProcessor.from_settings()
 
+    def test_event_lock_targets_only_welcome_event_row(self):
+        queryset = self._processor()._events_for_update_queryset()
+
+        self.assertEqual(queryset.query.select_for_update_of, ("self",))
+        self.assertFalse(queryset.query.select_related)
+
     def test_process_event_reserves_coupon_and_waits_for_external_gates(self):
         self._create_coupon()
         event = self._create_event(event_id="evt-welcome-success")

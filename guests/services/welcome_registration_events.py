@@ -131,6 +131,17 @@ class WelcomeRegistrationEventProcessor:
             stats.failed += int(result.get("failed", 0))
         return stats
 
+    @staticmethod
+    def _events_for_update_queryset():
+        """
+        Блокирует только строку welcome-события, не nullable-связи события.
+
+        В PostgreSQL обычный ``FOR UPDATE`` нельзя применять к nullable-стороне
+        ``LEFT OUTER JOIN``. Для защиты от параллельной обработки достаточно
+        блокировки самой строки ``GuestWelcomeRegistrationEvent``.
+        """
+        return GuestWelcomeRegistrationEvent.objects.select_for_update(of=("self",))
+
     def _process_single_event(self, *, event_id: int, now: datetime) -> dict[str, int]:
         counters = {
             "processed": 0,
@@ -142,8 +153,7 @@ class WelcomeRegistrationEventProcessor:
         try:
             with transaction.atomic():
                 event = (
-                    GuestWelcomeRegistrationEvent.objects.select_for_update()
-                    .select_related("guest", "vtelemax_channel", "coupon_assignment")
+                    self._events_for_update_queryset()
                     .get(pk=event_id)
                 )
                 if event.status in {
