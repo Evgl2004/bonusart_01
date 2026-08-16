@@ -597,7 +597,6 @@ def build_guest_workbench_payload(
     selected_audience_channel_group = normalize_audience_channel_group(audience_channel_group)
     historical_audience_mode = selected_audience_channel_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT
     if historical_audience_mode:
-        selected_venue_selection_mode = VENUE_SELECTION_VISITED_ONCE
         selected_segment_code = ""
         selected_focus_category_code_raw = ""
     audience_channel_filter = _build_audience_channel_filter(selected_audience_channel_group)
@@ -620,6 +619,7 @@ def build_guest_workbench_payload(
             as_of_date=target_as_of,
             selected_window_days=selected_window_days,
             selected_department_id=selected_department_id,
+            selected_venue_selection_mode=selected_venue_selection_mode,
             selected_audience_channel_group=selected_audience_channel_group,
             audience_channel_filter=audience_channel_filter,
             normalized_complex_filters=normalized_complex_filters,
@@ -930,6 +930,7 @@ def _build_historical_telegram_all_time_payload(
     as_of_date: date | None,
     selected_window_days: int,
     selected_department_id: str,
+    selected_venue_selection_mode: str,
     selected_audience_channel_group: str,
     audience_channel_filter: dict[str, set[int] | None],
     normalized_complex_filters: list[dict[str, Any]],
@@ -941,13 +942,15 @@ def _build_historical_telegram_all_time_payload(
     """
     Строит строгий режим возвратной рассылки для исторической Telegram-аудитории.
 
-    В этом режиме не применяются оконные сегменты, категории и сложные условия:
-    аудитория определяется рабочим историческим Telegram-каналом и фактом
-    хотя бы одного посещения выбранного заведения за всё доступное время.
+    В этом режиме не применяются оконные сегменты, категории и сложные условия.
+    Аудитория определяется рабочим историческим Telegram-каналом и выбранной
+    связью с заведением за всё доступное время: посещение, любимое заведение
+    или самое последнее посещённое заведение.
     """
 
     selected_guest_rows = _collect_historical_telegram_all_time_rows(
         selected_department_id=selected_department_id,
+        selected_venue_selection_mode=selected_venue_selection_mode,
         audience_channel_filter=audience_channel_filter,
     )
     selected_guests = _build_selected_guests_rows(
@@ -967,11 +970,14 @@ def _build_historical_telegram_all_time_payload(
 
     historical_total = len(selected_guest_rows)
     department_required = not bool(selected_department_id)
+    venue_selection_mode_name = _historical_venue_selection_mode_name(
+        selected_venue_selection_mode
+    )
     venue_selection_summary = {
         "applied": bool(selected_department_id),
         "department_id": selected_department_id,
-        "mode": VENUE_SELECTION_VISITED_ONCE,
-        "mode_name": "Был хотя бы 1 раз за всё доступное время",
+        "mode": selected_venue_selection_mode,
+        "mode_name": venue_selection_mode_name,
         "total": int(historical_total),
         "date_from": "",
         "date_to": "",
@@ -984,8 +990,8 @@ def _build_historical_telegram_all_time_payload(
             "window_options": list(WINDOW_OPTIONS),
             "department_id": selected_department_id,
             "department_options": _build_department_options(),
-            "venue_selection_mode": VENUE_SELECTION_VISITED_ONCE,
-            "venue_selection_mode_name": "Был хотя бы 1 раз за всё доступное время",
+            "venue_selection_mode": selected_venue_selection_mode,
+            "venue_selection_mode_name": venue_selection_mode_name,
             "venue_selection_mode_options": _build_venue_selection_mode_options(),
             "venue_selection": venue_selection_summary,
             "segment_code": "",
@@ -1046,11 +1052,15 @@ def _build_historical_telegram_all_time_payload(
 def _collect_historical_telegram_all_time_rows(
     *,
     selected_department_id: str,
+    selected_venue_selection_mode: str,
     audience_channel_filter: dict[str, set[int] | None],
 ) -> list[tuple[Any, str]]:
     """
-    Возвращает гостей исторической Telegram-аудитории, которые были в заведении
-    хотя бы один раз за весь доступный период очищенных дневных фактов.
+    Возвращает исторических Telegram-гостей по выбранной связи с заведением.
+
+    Сначала режим связи вычисляется по дневным фактам за всё доступное время,
+    затем метрики результата агрегируются только по выбранному заведению.
+    Гости без дневных фактов с положительным числом заказов не включаются.
     """
 
     safe_department_id = (selected_department_id or "").strip()
@@ -1061,12 +1071,38 @@ def _collect_historical_telegram_all_time_rows(
     if include_guest_ids is not None and not include_guest_ids:
         return []
 
+    exclude_guest_ids = {
+        int(guest_id)
+        for guest_id in (audience_channel_filter.get("exclude_guest_ids") or set())
+    }
+    candidate_guest_ids = None
+    if include_guest_ids is not None:
+        candidate_guest_ids = {
+            int(guest_id)
+            for guest_id in include_guest_ids
+            if int(guest_id) not in exclude_guest_ids
+        }
+        if not candidate_guest_ids:
+            return []
+
+    venue_selection = build_guest_venue_selection(
+        department_id=safe_department_id,
+        selection_mode=selected_venue_selection_mode,
+        date_from=None,
+        date_to=None,
+        guest_ids=candidate_guest_ids,
+        limit_enabled=False,
+        limit_value=None,
+    )
+    selected_guest_ids = set(venue_selection.guest_ids) - exclude_guest_ids
+    if not selected_guest_ids:
+        return []
+
     scope = GuestRestaurantDailyOrderFact.objects.filter(
         department_id=safe_department_id,
         orders_count__gt=0,
+        guest_id__in=selected_guest_ids,
     )
-    if include_guest_ids is not None:
-        scope = scope.filter(guest_id__in=include_guest_ids)
 
     aggregate_rows = list(
         scope.values("guest_id", "department_id")
@@ -1135,6 +1171,18 @@ def _collect_historical_telegram_all_time_rows(
         )
     )
     return result
+
+
+def _historical_venue_selection_mode_name(selection_mode: str) -> str:
+    """
+    Возвращает русское название режима с явным указанием периода расчёта.
+    """
+
+    base_name = VENUE_SELECTION_MODE_LABELS.get(
+        selection_mode,
+        VENUE_SELECTION_MODE_LABELS[VENUE_SELECTION_VISITED_ONCE],
+    )
+    return f"{base_name} за всё доступное время"
 
 
 def _calculate_avg_check_net(*, sum_net: Decimal, orders_count: int) -> Decimal:

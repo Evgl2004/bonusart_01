@@ -213,7 +213,7 @@
     </div>
     <div class="col-12 col-lg-3">
       <label class="form-label">Связь с заведением</label>
-      <select id="wb-venue-selection-mode" name="venue_selection_mode" class="form-select" {% if payload.filters.historical_audience_mode %}disabled{% endif %}>
+      <select id="wb-venue-selection-mode" name="venue_selection_mode" class="form-select">
         {% for mode in payload.filters.venue_selection_mode_options %}
           <option value="{{ mode.code }}" {% if mode.code == selected_venue_selection_mode %}selected{% endif %}>{{ mode.name }}</option>
         {% endfor %}
@@ -247,7 +247,8 @@
 
   {% if payload.filters.historical_audience_mode %}
     <div class="alert alert-info border py-2 small my-2">
-      Историческая Telegram-аудитория считается за всё доступное время. Рабочий фильтр: выбранное заведение, где гость был хотя бы 1 раз.
+      Историческая Telegram-аудитория и выбранная связь с заведением считаются за всё доступное время.
+      Окно, сегменты, целевые категории и дополнительные условия в этом режиме не применяются.
       {% if payload.filters.historical_audience_requires_department %}
         Выберите заведение, чтобы получить аудиторию.
       {% endif %}
@@ -924,9 +925,6 @@
 
     const syncHistoricalAudienceControls = () => {
       const locked = isHistoricalAudienceMode();
-      if (venueSelectionModeSelect && locked) {
-        venueSelectionModeSelect.value = "visited_once";
-      }
       if (segmentSelect && locked) {
         segmentSelect.value = "";
       }
@@ -934,7 +932,7 @@
         focusSelect.value = "";
       }
 
-      [windowSelect, venueSelectionModeSelect, segmentSelect, focusSelect].forEach((node) => {
+      [windowSelect, segmentSelect, focusSelect].forEach((node) => {
         if (node) {
           node.disabled = locked;
         }

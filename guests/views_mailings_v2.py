@@ -4472,8 +4472,8 @@ def _get_workbench_snapshot(request, mailing: Mailing | int) -> dict | None:
     source_layer = str(raw_snapshot.get("source_layer") or "").strip()
     historical_audience_mode = source_layer == "historical_all_time"
     venue_selection_mode_label = _localize_workbench_venue_selection_mode(venue_selection_mode)
-    if historical_audience_mode and venue_selection_mode == "visited_once":
-        venue_selection_mode_label = "Был хотя бы 1 раз за всё доступное время"
+    if historical_audience_mode and venue_selection_mode:
+        venue_selection_mode_label = f"{venue_selection_mode_label} за всё доступное время"
 
     snapshot = {
         "as_of_date": str(raw_snapshot.get("as_of_date") or "").strip(),

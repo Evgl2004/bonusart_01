@@ -33,7 +33,7 @@ from guests.services.guest_workbench import (
     normalize_segment_code,
     normalize_window_days,
 )
-from guests.services.guest_venue_selection import VENUE_SELECTION_VISITED_ONCE, normalize_venue_selection_mode
+from guests.services.guest_venue_selection import normalize_venue_selection_mode
 from guests.services.mailing_delivery_targets import build_mailing_delivery_plan, normalize_mailing_target_mode
 from guests.services.template_render import render_message_for_guest
 
@@ -222,7 +222,6 @@ class GuestsWorkbenchActionsView(View):
         segment_code = normalize_segment_code((request.POST.get("segment_code") or "").strip())
         audience_channel_group = normalize_audience_channel_group(request.POST.get("audience_channel_group"))
         if audience_channel_group == AUDIENCE_CHANNEL_GROUP_LEGACY_NO_NEW_BOT:
-            venue_selection_mode = VENUE_SELECTION_VISITED_ONCE
             segment_code = ""
 
         focus_category_code = (request.POST.get("focus_category_code") or "").strip()

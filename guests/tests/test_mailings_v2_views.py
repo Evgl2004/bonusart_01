@@ -354,6 +354,41 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(status_response, "Источник аудитории")
         self.assertContains(status_response, "Открыть фильтры в экране «Гости»")
 
+    def test_historical_snapshot_shows_favorite_venue_for_all_time(self):
+        """
+        Экран кампании должен показывать фактический исторический режим и
+        восстанавливать его в ссылке возврата на экран «Гости».
+        """
+        mailing = self._create_mailing()
+        mailing.source_filter_snapshot = {
+            "as_of_date": self.now.date().isoformat(),
+            "window_days": "180",
+            "department_id": "dep-1",
+            "venue_selection_mode": "favorite",
+            "segment_code": "",
+            "focus_category_code": "",
+            "audience_channel_group": "legacy_no_new_bot",
+            "complex_filters": [],
+            "selected_total": 25,
+            "selected_rows_count": 25,
+            "source_layer": "historical_all_time",
+            "saved_at": self.now.isoformat(),
+        }
+        mailing.save(update_fields=["source_filter_snapshot", "updated_at"])
+
+        response = self.client.get(
+            reverse("mailings_v2_campaigns_audience", kwargs={"pk": mailing.id}),
+            secure=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Связь с заведением: Любимое заведение за всё доступное время",
+        )
+        self.assertContains(response, "venue_selection_mode=favorite")
+        self.assertContains(response, "audience_channel_group=legacy_no_new_bot")
+
     def test_completed_campaign_shows_computed_status(self):
         """
         Кампания с полностью обработанной аудиторией должна отображаться как завершённая.
