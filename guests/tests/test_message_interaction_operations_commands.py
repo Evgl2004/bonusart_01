@@ -19,8 +19,12 @@ from guests.models import (
     Guest,
     GuestBotBinding,
     InteractionButtonSet,
+    Mailing,
+    MailingGuest,
     MessageInteraction,
     MessageInteractionEvent,
+    MessageTemplate,
+    NotificationScenario,
 )
 
 
@@ -320,3 +324,86 @@ class MessageInteractionOperationsCommandTests(TestCase):
                 "not-a-uuid",
                 stdout=StringIO(),
             )
+
+    def test_diagnosis_filters_mailing_and_scenario_without_mixing_tasks(self):
+        """Фильтры источников возвращают только связанные интерактивности."""
+
+        now = timezone.now()
+        template = MessageTemplate.objects.create(
+            name="Диагностический шаблон",
+            message_text="Текст",
+            is_active=True,
+        )
+        mailing = Mailing.objects.create(
+            name="Диагностическая рассылка",
+            template=template,
+            scheduled_date=now.date(),
+            scheduled_time_begin=now,
+            scheduled_time_end=now,
+            is_active=True,
+            created_at=now,
+            updated_at=now,
+            send_window_begin=now.time(),
+            send_window_end=now.time(),
+        )
+        mailing_row = MailingGuest.objects.create(
+            mailing=mailing,
+            guest=self.guest,
+            text_mailing_list="Текст",
+            scheduled_datetime=now,
+            created_at=now,
+        )
+        scenario = NotificationScenario.objects.create(
+            code="diagnostic_scenario",
+            name="Диагностический сценарий",
+            template=template,
+            button_set=InteractionButtonSet.RATING_MENU,
+        )
+        mailing_task = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MAILING,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            mailing_guest=mailing_row,
+            status=DispatchTask.Status.DONE,
+        )
+        scenario_task = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.SYSTEM,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            notification_scenario=scenario,
+            status=DispatchTask.Status.DONE,
+        )
+        mailing_interaction = MessageInteraction.objects.create(
+            dispatch_task=mailing_task,
+            button_set=InteractionButtonSet.RATING_MENU,
+        )
+        scenario_interaction = MessageInteraction.objects.create(
+            dispatch_task=scenario_task,
+            button_set=InteractionButtonSet.RATING_MENU,
+        )
+
+        mailing_output = StringIO()
+        call_command(
+            "diagnose_message_interactions",
+            "--mailing-id",
+            str(mailing.id),
+            "--as-json",
+            stdout=mailing_output,
+        )
+        scenario_output = StringIO()
+        call_command(
+            "diagnose_message_interactions",
+            "--scenario-id",
+            str(scenario.id),
+            "--as-json",
+            stdout=scenario_output,
+        )
+
+        mailing_payload = json.loads(mailing_output.getvalue())
+        scenario_payload = json.loads(scenario_output.getvalue())
+        self.assertEqual(
+            [item["interaction_id"] for item in mailing_payload["interactions"]],
+            [mailing_interaction.id],
+        )
+        self.assertEqual(
+            [item["interaction_id"] for item in scenario_payload["interactions"]],
+            [scenario_interaction.id],
+        )
