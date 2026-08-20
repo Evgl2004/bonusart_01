@@ -251,6 +251,26 @@
 
         <div class="mb-3">
           <div class="mail-label-row">
+            {{ form.button_set.label_tag }}
+            <button
+              type="button"
+              class="btn btn-outline-secondary mail-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Набор определяет только действия кнопок. Текст и эмодзи можно менять без изменения смысла действий."
+            >?</button>
+          </div>
+          {{ form.button_set }}
+          {% if form.button_set.help_text %}
+            <small class="text-muted d-block mt-1">{{ form.button_set.help_text }}</small>
+          {% endif %}
+          {% if form.button_set.errors %}
+            <div class="text-danger small mt-1">{{ form.button_set.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <div class="mail-label-row">
             {{ form.coupon_series.label_tag }}
             <button
               type="button"

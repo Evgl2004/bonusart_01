@@ -68,6 +68,17 @@
         </div>
 
         <div class="mb-3">
+          {{ form.button_set.label_tag }}
+          {{ form.button_set }}
+          {% if form.button_set.help_text %}
+            <small class="text-muted d-block mt-1">{{ form.button_set.help_text }}</small>
+          {% endif %}
+          {% if form.button_set.errors %}
+            <div class="text-danger small mt-1">{{ form.button_set.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
           {{ form.bot_profiles.label_tag }}
           <div class="border rounded p-3">
             {{ form.bot_profiles }}

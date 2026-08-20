@@ -1,6 +1,7 @@
 import re
 from io import BytesIO
 
+from django.contrib import messages
 from django.db import transaction
 from django.views import View
 from django.shortcuts import get_object_or_404, redirect, render
@@ -11,7 +12,7 @@ from django.http import HttpResponse
 from openpyxl import load_workbook, Workbook
 
 from .forms import MailingImportPhonesForm
-from .models import Guest, Mailing, MailingGuest
+from .models import Guest, InteractionButtonSet, Mailing, MailingGuest
 from guests.services.mailing_import_audience import (
     build_mailing_import_audience_selection,
 )
@@ -195,6 +196,20 @@ class MailingImportPhonesView(View):
             audience_group=form.cleaned_data["audience_channel_group"],
             telegram_external_ids=guest_external_ids,
         )
+        selected_historical_guest_ids = (
+            audience_selection.selected_guest_ids
+            & audience_selection.historical_guest_ids
+        )
+        if selected_historical_guest_ids and mailing.button_set != InteractionButtonSet.NONE:
+            messages.error(
+                request,
+                (
+                    "Выбранная аудитория содержит исторические Telegram-маршруты, "
+                    "которые нельзя добавить в рассылку с кнопками. Сначала "
+                    "выберите вариант «Без кнопок»."
+                ),
+            )
+            return redirect(redirect_url)
         to_add = [
             guest
             for guest in guests_found
@@ -228,6 +243,21 @@ class MailingImportPhonesView(View):
 
         with transaction.atomic():
             MailingGuest.objects.bulk_create(rows)
+            source_snapshot = dict(mailing.source_filter_snapshot or {})
+            import_groups = source_snapshot.get("mailing_import_audience_groups") or []
+            if not isinstance(import_groups, (list, tuple, set)):
+                import_groups = []
+            normalized_groups = {
+                str(value or "").strip() for value in import_groups if str(value or "").strip()
+            }
+            normalized_groups.add(audience_selection.audience_group)
+            source_snapshot["mailing_import_audience_groups"] = sorted(normalized_groups)
+            source_snapshot["mailing_import_contains_historical"] = bool(
+                source_snapshot.get("mailing_import_contains_historical")
+                or selected_historical_guest_ids
+            )
+            mailing.source_filter_snapshot = source_snapshot
+            mailing.save(update_fields=["source_filter_snapshot"])
 
         added_count = len(rows)
         already_count = len(

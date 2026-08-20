@@ -1,0 +1,53 @@
+<section class="card border-0 shadow-sm mb-3" aria-label="Взаимодействия с сообщениями">
+  <div class="card-header bg-white">
+    <h3 class="h6 mb-1">Взаимодействия с сообщениями</h3>
+    <div class="text-muted small">
+      Доля взаимодействий — сообщения хотя бы с одним принятым нажатием от технически успешно отправленных сообщений с кнопками.
+      Открытие купонов не означает применение купона.
+    </div>
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-6 col-lg-3">
+        <div class="text-muted small">Сообщений с кнопками</div>
+        <div class="h5 mb-0">{{ interactions.messages_with_buttons_total }}</div>
+        <div class="text-muted small">Уникальных гостей: {{ interactions.guests_with_buttons_total }}</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="text-muted small">Сообщений с взаимодействием</div>
+        <div class="h5 mb-0">{{ interactions.interacted_messages_total }}</div>
+        <div class="text-muted small">Уникальных гостей: {{ interactions.interacted_guests_total }}</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="text-muted small">Доля взаимодействий</div>
+        <div class="h5 mb-0">{{ interactions.interaction_share_percent|floatformat:"2" }}%</div>
+        <div class="text-muted small">Знаменатель: {{ interactions.messages_with_buttons_total }} сообщений с кнопками</div>
+      </div>
+      <div class="col-6 col-lg-3">
+        <div class="text-muted small">Принятые оценки</div>
+        <div class="h5 mb-0">👍 {{ interactions.likes_total }} · 👎 {{ interactions.dislikes_total }}</div>
+        <div class="text-muted small">Повторно отклонённые оценки не включены</div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="border rounded p-3 h-100">
+          <div class="fw-semibold">Открывали купоны</div>
+          <div class="small mt-1">
+            Уникальных гостей: <b>{{ interactions.coupon_opened_guests_total }}</b> ·
+            сообщений: <b>{{ interactions.coupon_opened_messages_total }}</b> ·
+            всего нажатий: <b>{{ interactions.coupon_clicks_total }}</b>
+          </div>
+        </div>
+      </div>
+      <div class="col-12 col-lg-6">
+        <div class="border rounded p-3 h-100">
+          <div class="fw-semibold">Открывали главное меню</div>
+          <div class="small mt-1">
+            Уникальных гостей: <b>{{ interactions.menu_opened_guests_total }}</b> ·
+            сообщений: <b>{{ interactions.menu_opened_messages_total }}</b> ·
+            всего нажатий: <b>{{ interactions.menu_clicks_total }}</b>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>

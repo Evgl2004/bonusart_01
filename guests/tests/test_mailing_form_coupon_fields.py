@@ -6,7 +6,14 @@ from django.test import TestCase
 from django.utils import timezone
 
 from guests.forms import MailingForm
-from guests.models import BotProfile, CouponRegistryEntry, Mailing, MessageTemplate, TerminalDepartmentMap
+from guests.models import (
+    BotProfile,
+    CouponRegistryEntry,
+    InteractionButtonSet,
+    Mailing,
+    MessageTemplate,
+    TerminalDepartmentMap,
+)
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
 
 
@@ -134,6 +141,52 @@ class MailingFormCouponFieldsTests(TestCase):
         self.assertIsNone(instance.coupon_venue_name)
         self.assertIsNone(instance.coupon_title)
         self.assertIsNone(instance.coupon_promo_text)
+
+    def test_allows_rating_and_menu_for_mailing_without_coupons(self):
+        data = self._base_form_data()
+        data["button_set"] = InteractionButtonSet.RATING_MENU
+
+        form = MailingForm(data=data)
+
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+        self.assertEqual(form.save(commit=False).button_set, InteractionButtonSet.RATING_MENU)
+
+    def test_rejects_coupon_button_for_mailing_without_coupon_series(self):
+        data = self._base_form_data()
+        data["button_set"] = InteractionButtonSet.RATING_COUPONS
+
+        form = MailingForm(data=data)
+
+        self.assertFalse(form.is_valid())
+        self.assertEqual(
+            form.errors["button_set"],
+            ["Набор с переходом в купоны доступен только для купонной кампании."],
+        )
+
+    def test_forces_no_buttons_for_recorded_historical_audience(self):
+        mailing = Mailing.objects.create(
+            name="Историческая рассылка",
+            template=self.template,
+            scheduled_date=self.now.date(),
+            scheduled_time_begin=self.now,
+            scheduled_time_end=self.now + timedelta(hours=2),
+            is_active=False,
+            created_at=self.now,
+            updated_at=self.now,
+            send_window_begin=self.now.time(),
+            send_window_end=(self.now + timedelta(hours=3)).time(),
+            button_set=InteractionButtonSet.RATING_MENU,
+            source_filter_snapshot={"source_layer": "historical_all_time"},
+        )
+        mailing.bot_profiles.add(self.bot)
+        data = self._base_form_data()
+        data["button_set"] = InteractionButtonSet.RATING_MENU
+
+        form = MailingForm(data=data, instance=mailing)
+
+        self.assertTrue(form.is_valid(), form.errors.as_json())
+        self.assertTrue(form.fields["button_set"].disabled)
+        self.assertEqual(form.save(commit=False).button_set, InteractionButtonSet.NONE)
 
     def test_resolves_venue_name_for_coupon_mode(self):
         data = self._base_form_data()

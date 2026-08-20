@@ -477,6 +477,10 @@
   </section>
 
   {% if selected_mailing and simple_mailing_report %}
+    {% include "reports/includes/message_interaction_metrics.html" with interactions=simple_mailing_report.interactions only %}
+  {% endif %}
+
+  {% if selected_mailing and simple_mailing_report %}
     <div class="simple-report-summary-grid">
       <section class="simple-report-card">
         <h2 class="h6 mb-2">Главный вывод</h2>

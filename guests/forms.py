@@ -10,6 +10,7 @@ from .models import (
     Category,
     CouponAutomationConfig,
     CouponAutomationRule,
+    InteractionButtonSet,
     Mailing,
     MessageTemplate,
     NotificationScenario,
@@ -24,6 +25,34 @@ from .services.mailing_import_audience import (
     MAILING_IMPORT_AUDIENCE_CHOICES,
     normalize_mailing_import_audience,
 )
+
+
+_HISTORICAL_WORKBENCH_AUDIENCE = "legacy_no_new_bot"
+_HISTORICAL_IMPORT_AUDIENCE = "historical_telegram"
+
+
+def _mailing_uses_only_historical_audience(mailing: Mailing) -> bool:
+    """Определяет зафиксированную полностью историческую аудиторию рассылки."""
+
+    snapshot = mailing.source_filter_snapshot if isinstance(
+        getattr(mailing, "source_filter_snapshot", None), dict
+    ) else {}
+    if str(snapshot.get("source_layer") or "").strip() == "historical_all_time":
+        return True
+    if str(snapshot.get("audience_channel_group") or "").strip() in {
+        _HISTORICAL_WORKBENCH_AUDIENCE,
+        _HISTORICAL_IMPORT_AUDIENCE,
+    }:
+        return True
+    if bool(snapshot.get("mailing_import_contains_historical")):
+        return True
+
+    import_groups = snapshot.get("mailing_import_audience_groups") or []
+    if not isinstance(import_groups, (list, tuple, set)):
+        return False
+    normalized_groups = {str(value or "").strip() for value in import_groups}
+    normalized_groups.discard("")
+    return normalized_groups == {_HISTORICAL_IMPORT_AUDIENCE}
 
 
 COUPON_AUTOSCENARIO_STATE_CHOICES = [
@@ -179,6 +208,17 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             "required": "Выберите хотя бы один бот для отправки сообщений.",
         },
     )
+    notification_button_set = forms.ChoiceField(
+        label="Набор кнопок",
+        required=False,
+        initial=InteractionButtonSet.NONE,
+        choices=InteractionButtonSet.choices,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text=(
+            "Можно отправить сообщение без кнопок, с оценкой и главным меню "
+            "или с оценкой и переходом в купоны."
+        ),
+    )
 
     @staticmethod
     def _build_unique_copy_code(source_code: str) -> str:
@@ -217,6 +257,7 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             ),
             "template_text": str(getattr(source_template, "message_text", "") or ""),
             "notification_bot_profiles": source_bot_ids,
+            "notification_button_set": source_scenario.button_set,
         }
 
     def __init__(self, *args, **kwargs):
@@ -248,6 +289,16 @@ class CouponAutomationScenarioCreateForm(forms.Form):
         if NotificationScenario.objects.filter(code=code).exists():
             raise forms.ValidationError("Сценарий с таким кодом уже существует.")
         return code
+
+    def clean_notification_button_set(self) -> str:
+        """Сохраняет набор исходного сценария для старого запроса без нового поля."""
+
+        selected = str(self.cleaned_data.get("notification_button_set") or "").strip()
+        if selected:
+            return selected
+        if self.source_config is not None:
+            return self.source_config.scenario.button_set
+        return InteractionButtonSet.NONE
 
     def clean(self):
         cleaned_data = super().clean()
@@ -360,6 +411,10 @@ class CouponAutomationScenarioCreateForm(forms.Form):
                 "timezone": "Asia/Yekaterinburg",
                 "cooldown_minutes": 0,
                 "max_per_day_per_guest": None,
+                "button_set": (
+                    self.cleaned_data.get("notification_button_set")
+                    or InteractionButtonSet.NONE
+                ),
             }
             if source_scenario is not None:
                 scenario_kwargs.update(
@@ -510,6 +565,17 @@ class MessageTemplateForm(forms.ModelForm):
 
 
 class MailingForm(forms.ModelForm):
+    button_set = forms.ChoiceField(
+        label="Набор кнопок",
+        required=False,
+        initial=InteractionButtonSet.NONE,
+        choices=InteractionButtonSet.choices,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text=(
+            "Кнопки добавляются только для современных привязок к ботам. "
+            "Исторические маршруты всегда получают сообщение без кнопок."
+        ),
+    )
     coupon_series = forms.ChoiceField(
         label="Серия купонов",
         required=False,
@@ -529,6 +595,7 @@ class MailingForm(forms.ModelForm):
             "send_window_end",
             "target_mode",
             "queue_priority",
+            "button_set",
             "coupon_series",
             "coupon_venue_code",
             "coupon_title",
@@ -561,6 +628,7 @@ class MailingForm(forms.ModelForm):
             ),
             "target_mode": forms.Select(attrs={"class": "form-select"}),
             "queue_priority": forms.Select(attrs={"class": "form-select"}),
+            "button_set": forms.Select(attrs={"class": "form-select"}),
             "coupon_venue_code": forms.Select(
                 attrs={
                     "class": "form-select",
@@ -597,6 +665,7 @@ class MailingForm(forms.ModelForm):
             "send_window_end": "Конец окна отправки",
             "target_mode": "Режим получателей",
             "queue_priority": "Приоритет в очереди",
+            "button_set": "Набор кнопок",
             "coupon_series": "Серия купонов",
             "coupon_venue_code": "Заведение для купонной кампании",
             "coupon_title": "Название купона в vtelemax",
@@ -615,6 +684,13 @@ class MailingForm(forms.ModelForm):
         self.fields["send_window_begin"].input_formats = ["%H:%M"]
         self.fields["send_window_end"].input_formats = ["%H:%M"]
         self.fields["scheduled_date"].input_formats = ["%Y-%m-%d"]
+
+        if self.instance and _mailing_uses_only_historical_audience(self.instance):
+            self.fields["button_set"].disabled = True
+            self.initial["button_set"] = InteractionButtonSet.NONE
+            self.fields["button_set"].help_text = (
+                "Для полностью исторической аудитории кнопки недоступны."
+            )
 
         # Чтобы datetime-local корректно отображался при редактировании.
         if self.instance and self.instance.pk:
@@ -660,12 +736,32 @@ class MailingForm(forms.ModelForm):
             existing_venue_name=str(getattr(self.instance, "coupon_venue_name", "") or "").strip(),
         )
 
+    def clean_button_set(self) -> str:
+        """Нормализует безопасное значение и сохраняет старый контракт формы."""
+
+        if self.instance and _mailing_uses_only_historical_audience(self.instance):
+            return InteractionButtonSet.NONE
+        selected = str(self.cleaned_data.get("button_set") or "").strip()
+        if selected:
+            return selected
+        if self.instance and self.instance.pk:
+            return self.instance.button_set
+        return InteractionButtonSet.NONE
+
     def clean(self):
         cleaned_data = super().clean()
         series = str(cleaned_data.get("coupon_series") or "").strip()
+        button_set = str(cleaned_data.get("button_set") or InteractionButtonSet.NONE).strip()
         venue_code = str(cleaned_data.get("coupon_venue_code") or "").strip()
         coupon_title = str(cleaned_data.get("coupon_title") or "").strip()
         promo_text = str(cleaned_data.get("coupon_promo_text") or "").strip()
+
+        cleaned_data["button_set"] = button_set
+        if button_set == InteractionButtonSet.RATING_COUPONS and not series:
+            self.add_error(
+                "button_set",
+                "Набор с переходом в купоны доступен только для купонной кампании.",
+            )
 
         if not series:
             cleaned_data["coupon_venue_code"] = None
@@ -798,6 +894,17 @@ class CouponAutomationConfigForm(forms.ModelForm):
         required=False,
         choices=NotificationScenario.DistributionMode.choices,
         widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    notification_button_set = forms.ChoiceField(
+        label="Набор кнопок",
+        required=False,
+        initial=InteractionButtonSet.NONE,
+        choices=InteractionButtonSet.choices,
+        widget=forms.Select(attrs={"class": "form-select"}),
+        help_text=(
+            "Выберите отсутствие кнопок, оценку с главным меню или оценку "
+            "с переходом в купоны."
+        ),
     )
     notification_template = forms.ModelChoiceField(
         label="Шаблон сообщения",
@@ -974,6 +1081,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
             self.fields["birthday_preparation_window_days"].widget = forms.HiddenInput()
         if scenario is not None:
             self.initial["notification_distribution_mode"] = scenario.distribution_mode
+            self.initial["notification_button_set"] = scenario.button_set
             self.initial["notification_target_mode"] = scenario.target_mode
             self.initial["notification_bot_profiles"] = list(
                 scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True)
@@ -1014,6 +1122,15 @@ class CouponAutomationConfigForm(forms.ModelForm):
                 params={"phones": ", ".join(invalid)},
             )
         return result
+
+    def clean_notification_button_set(self) -> str:
+        """Не сбрасывает настройку сценария в старом запросе без нового поля."""
+
+        selected = str(self.cleaned_data.get("notification_button_set") or "").strip()
+        if selected:
+            return selected
+        scenario = getattr(self.instance, "scenario", None)
+        return getattr(scenario, "button_set", InteractionButtonSet.NONE)
 
     def clean(self):
         cleaned_data = super().clean()
@@ -1148,6 +1265,10 @@ class CouponAutomationConfigForm(forms.ModelForm):
                     or scenario.distribution_mode
                     or NotificationScenario.DistributionMode.IMMEDIATE
                 )
+                scenario.button_set = (
+                    self.cleaned_data.get("notification_button_set")
+                    or InteractionButtonSet.NONE
+                )
                 scenario.template = self.cleaned_data.get("notification_template") or scenario.template
                 scenario.target_mode = (
                     self.cleaned_data.get("notification_target_mode")
@@ -1170,6 +1291,7 @@ class CouponAutomationConfigForm(forms.ModelForm):
                         "is_active",
                         "template",
                         "distribution_mode",
+                        "button_set",
                         "target_mode",
                         "timezone",
                         "send_window_begin",

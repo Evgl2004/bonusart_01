@@ -6,7 +6,16 @@ from decimal import Decimal
 
 from django.db.models import Count, Q
 
-from guests.models import CouponCampaignAssignment, Mailing, OlapSalesRawLine, OrderFact
+from guests.models import (
+    CouponCampaignAssignment,
+    DispatchTask,
+    Mailing,
+    OlapSalesRawLine,
+    OrderFact,
+)
+from guests.services.message_interaction_reporting import (
+    build_message_interaction_report_snapshot,
+)
 
 
 def _to_decimal(value) -> Decimal:
@@ -112,6 +121,7 @@ class CouponCampaignPerformanceSnapshot:
     revenue_net_used: Decimal = Decimal("0")
     unique_used_guests: int = 0
     coupon_orders_total: int = 0
+    interactions: dict[str, object] = field(default_factory=dict)
     daily_usage_rows: list[dict[str, object]] = field(default_factory=list)
     product_rank_rows: list[dict[str, object]] = field(default_factory=list)
     order_detail_rows: list[dict[str, object]] = field(default_factory=list)
@@ -183,6 +193,7 @@ class CouponCampaignPerformanceSnapshot:
             "coupon_orders_avg_check": str(self.coupon_orders_avg_check),
             "unique_used_guests": int(self.unique_used_guests),
             "coupon_orders_total": int(self.coupon_orders_total),
+            "interactions": dict(self.interactions),
             "daily_usage_rows": list(self.daily_usage_rows),
             "product_rank_rows": list(self.product_rank_rows),
             "order_detail_rows": list(self.order_detail_rows),
@@ -220,6 +231,9 @@ def build_coupon_campaign_performance_snapshot(
         coupon_series=str(getattr(mailing, "coupon_series", "") or "").strip(),
     )
     snapshot.recipients_total = int(mailing.guests_rows.count())
+    snapshot.interactions = build_message_interaction_report_snapshot(
+        tasks_queryset=DispatchTask.objects.filter(mailing_guest__mailing=mailing)
+    ).to_dict()
 
     if not snapshot.coupon_series:
         return snapshot

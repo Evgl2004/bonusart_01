@@ -46,6 +46,9 @@ from guests.services.coupon_campaign_reporting import build_coupon_campaign_perf
 from guests.services.coupon_autoscenarios import COUPON_AUTOSCENARIO_STATUS_REASON_DELIVERY_FAILED
 from guests.services.coupon_pool import CouponPoolGenerationError, CouponPoolService
 from guests.services.coupon_venues import build_coupon_venue_choices
+from guests.services.message_interaction_reporting import (
+    build_message_interaction_report_snapshot,
+)
 from guests.services.simple_mailing_reporting import (
     ALLOWED_PERIOD_DAYS,
     DEFAULT_PERIOD_DAYS,
@@ -680,6 +683,9 @@ class CouponAutoscenarioReportsView(TemplateView):
             date_from=date_from,
             date_to=date_to,
         )
+        interactions = build_message_interaction_report_snapshot(
+            tasks_queryset=delivery_context["tasks_qs"]
+        ).to_dict()
 
         assignments_total = int(assignments_qs.count())
         sent_total = status_counts.get(CouponAutoscenarioAssignment.Status.SENT, 0)
@@ -841,6 +847,7 @@ class CouponAutoscenarioReportsView(TemplateView):
                 for row in daily_rows
             ),
             "pilot": pilot_summary,
+            "interactions": interactions,
         }
 
     def _build_assignment_delivery_context(

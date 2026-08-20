@@ -30,6 +30,7 @@ from guests.models import (
     DispatchTask,
     Guest,
     GuestBotBinding,
+    InteractionButtonSet,
     Mailing,
     MailingGuest,
     MessageTemplate,
@@ -555,7 +556,8 @@ class MailingsV2ViewsTests(TestCase):
         """
         mailing = self._create_mailing()
         mailing.name = "Promo source"
-        mailing.save(update_fields=["name", "updated_at"])
+        mailing.button_set = InteractionButtonSet.RATING_MENU
+        mailing.save(update_fields=["name", "button_set", "updated_at"])
 
         guest1 = Guest.objects.create(
             phone="+79990000661",
@@ -606,6 +608,7 @@ class MailingsV2ViewsTests(TestCase):
         )
         self.assertFalse(duplicate.is_active)
         self.assertFalse(duplicate.is_archived)
+        self.assertEqual(duplicate.button_set, InteractionButtonSet.RATING_MENU)
         self.assertEqual(duplicate.bot_profiles.count(), mailing.bot_profiles.count())
         self.assertEqual(duplicate.guests_rows.count(), mailing.guests_rows.count())
         self.assertEqual(
@@ -2656,6 +2659,7 @@ class MailingsV2ViewsTests(TestCase):
             priority=NotificationScenario.Priority.HIGH,
             target_mode=NotificationScenario.TargetMode.ALL_BOTS,
             distribution_mode=NotificationScenario.DistributionMode.UNIFORM,
+            button_set=InteractionButtonSet.RATING_COUPONS,
             send_window_begin=time(9, 0),
             send_window_end=time(18, 0),
             timezone="Asia/Yekaterinburg",
@@ -2686,6 +2690,10 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(form.initial["inactive_days"], 45)
         self.assertEqual(form.initial["template_text"], source_template.message_text)
         self.assertEqual(form.initial["notification_bot_profiles"], [self.bot.id])
+        self.assertEqual(
+            form.initial["notification_button_set"],
+            InteractionButtonSet.RATING_COUPONS,
+        )
 
     def test_coupon_autoscenario_create_view_copies_source_config_and_rules(self):
         """
@@ -2708,6 +2716,7 @@ class MailingsV2ViewsTests(TestCase):
             priority=NotificationScenario.Priority.HIGH,
             target_mode=NotificationScenario.TargetMode.ALL_BOTS,
             distribution_mode=NotificationScenario.DistributionMode.UNIFORM,
+            button_set=InteractionButtonSet.RATING_COUPONS,
             send_window_begin=time(9, 0),
             send_window_end=time(18, 0),
             timezone="Asia/Yekaterinburg",
@@ -2779,6 +2788,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertEqual(copied_scenario.priority, source_scenario.priority)
         self.assertEqual(copied_scenario.target_mode, source_scenario.target_mode)
         self.assertEqual(copied_scenario.distribution_mode, source_scenario.distribution_mode)
+        self.assertEqual(copied_scenario.button_set, InteractionButtonSet.RATING_COUPONS)
         self.assertEqual(copied_scenario.send_window_begin, time(9, 0))
         self.assertEqual(copied_scenario.send_window_end, time(18, 0))
         self.assertEqual(copied_scenario.cooldown_minutes, 60)
@@ -3960,6 +3970,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertContains(response, "Выберите активный шаблон")
         self.assertContains(response, "Окно отправки сообщений")
         self.assertContains(response, "Режим отправки сообщений")
+        self.assertContains(response, "Набор кнопок")
         self.assertContains(response, "Каналы отправки сообщений")
         self.assertContains(response, "Куда отправлять сообщение")
         self.assertContains(response, "Разрешённые боты")
@@ -3994,6 +4005,7 @@ class MailingsV2ViewsTests(TestCase):
                 "coupon_promo_text_template": "Тестовый купон автосценария.",
                 "notification_template": str(coupon_template.id),
                 "notification_distribution_mode": NotificationScenario.DistributionMode.UNIFORM,
+                "notification_button_set": InteractionButtonSet.RATING_COUPONS,
                 "notification_target_mode": NotificationScenario.TargetMode.ALL_BOTS,
                 "notification_bot_profiles": [str(self.bot.id)],
                 "notification_send_window_begin": "10:00",
@@ -4044,6 +4056,7 @@ class MailingsV2ViewsTests(TestCase):
         self.assertTrue(config.settings["pilot_include_unmatched"])
         scenario.refresh_from_db()
         self.assertEqual(scenario.distribution_mode, NotificationScenario.DistributionMode.UNIFORM)
+        self.assertEqual(scenario.button_set, InteractionButtonSet.RATING_COUPONS)
         self.assertEqual(scenario.template_id, coupon_template.id)
         self.assertEqual(scenario.target_mode, NotificationScenario.TargetMode.ALL_BOTS)
         self.assertEqual(list(scenario.bot_profiles.values_list("id", flat=True)), [self.bot.id])

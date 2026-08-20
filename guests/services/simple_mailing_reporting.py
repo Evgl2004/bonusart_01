@@ -20,6 +20,9 @@ from guests.models import (
     OrderFact,
     TerminalDepartmentMap,
 )
+from guests.services.message_interaction_reporting import (
+    build_message_interaction_report_snapshot,
+)
 
 
 ALLOWED_PERIOD_DAYS = (7, 14, 30)
@@ -44,6 +47,7 @@ class SimpleMailingReportSnapshot:
     department_filter: dict[str, Any]
     audience: dict[str, Any]
     orders: dict[str, Any]
+    interactions: dict[str, Any]
     daily_rows: list[dict[str, Any]] = field(default_factory=list)
     period_summary_rows: list[dict[str, Any]] = field(default_factory=list)
     channel_rows: list[dict[str, Any]] = field(default_factory=list)
@@ -60,6 +64,7 @@ class SimpleMailingReportSnapshot:
             "department_filter": dict(self.department_filter),
             "audience": dict(self.audience),
             "orders": dict(self.orders),
+            "interactions": dict(self.interactions),
             "daily_rows": list(self.daily_rows),
             "period_summary_rows": list(self.period_summary_rows),
             "channel_rows": list(self.channel_rows),
@@ -234,6 +239,9 @@ def build_simple_mailing_report_snapshot(
         recipients_total=recipients_total,
         tasks_total=tasks_total,
     )
+    interactions = build_message_interaction_report_snapshot(
+        tasks_queryset=DispatchTask.objects.filter(mailing_guest__mailing_id=mailing.id)
+    ).to_dict()
 
     return SimpleMailingReportSnapshot(
         mailing={
@@ -265,6 +273,7 @@ def build_simple_mailing_report_snapshot(
             "guest_share_percent": selected_period_row["guest_share_percent"],
             "average_first_order_days": average_first_order_days,
         },
+        interactions=interactions,
         daily_rows=daily_rows,
         period_summary_rows=period_summary_rows,
         channel_rows=channel_rows,

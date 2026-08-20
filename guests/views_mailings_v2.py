@@ -1804,6 +1804,7 @@ class MailingsV2CampaignOpsView(View):
                     send_window_end=mailing.send_window_end,
                     target_mode=mailing.target_mode,
                     queue_priority=mailing.queue_priority,
+                    button_set=mailing.button_set,
                     source_filter_snapshot=mailing.source_filter_snapshot or {},
                     coupon_series=mailing.coupon_series,
                     coupon_venue_code=mailing.coupon_venue_code,

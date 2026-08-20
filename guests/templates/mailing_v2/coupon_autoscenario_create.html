@@ -230,6 +230,22 @@
 
       <hr class="my-4">
 
+      <h2 class="h6 mb-3">Интерактивные кнопки</h2>
+      <div class="row g-3">
+        <div class="col-12 col-lg-6">
+          {{ form.notification_button_set.label_tag }}
+          {{ form.notification_button_set }}
+          {% if form.notification_button_set.help_text %}
+            <div class="form-text">{{ form.notification_button_set.help_text }}</div>
+          {% endif %}
+          {% if form.notification_button_set.errors %}
+            <div class="text-danger small mt-1">{{ form.notification_button_set.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <hr class="my-4">
+
       <h2 class="h6 mb-3">Разрешённые боты</h2>
       <div class="border rounded p-3">
         <div class="mail-bot-actions">

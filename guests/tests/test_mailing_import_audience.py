@@ -23,6 +23,7 @@ from guests.models import (
     Guest,
     GuestBotBinding,
     HistoricalTelegramChannel,
+    InteractionButtonSet,
     Mailing,
     MailingGuest,
     MessageTemplate,
@@ -181,6 +182,44 @@ class MailingImportAudienceTests(TestCase):
         self.assertEqual(report["excluded_without_channel"], 2)
         self.assertEqual(report["excluded_by_audience_group"], 1)
         self.assertEqual(report["added"], 1)
+        self.mailing.refresh_from_db()
+        self.assertEqual(
+            self.mailing.source_filter_snapshot["mailing_import_audience_groups"],
+            [MAILING_IMPORT_AUDIENCE_HISTORICAL_TELEGRAM],
+        )
+        self.assertTrue(
+            self.mailing.source_filter_snapshot["mailing_import_contains_historical"]
+        )
+
+    def test_historical_import_is_blocked_for_mailing_with_buttons(self):
+        guest = self._guest("+79990000125")
+        self._historical_channel(guest, chat_id="old-125")
+        self.mailing.button_set = InteractionButtonSet.RATING_MENU
+        self.mailing.save(update_fields=["button_set"])
+
+        self._post_import(
+            [guest.phone],
+            audience_group=MAILING_IMPORT_AUDIENCE_HISTORICAL_TELEGRAM,
+        )
+
+        self.assertFalse(MailingGuest.objects.filter(mailing=self.mailing).exists())
+        self.mailing.refresh_from_db()
+        self.assertEqual(self.mailing.source_filter_snapshot, {})
+
+    def test_all_sendable_import_with_historical_guest_is_blocked_for_buttons(self):
+        new_guest = self._guest("+79990000126")
+        historical_guest = self._guest("+79990000127")
+        self._binding(new_guest, self.telegram_bot, external_chat_id="new-126")
+        self._historical_channel(historical_guest, chat_id="old-127")
+        self.mailing.button_set = InteractionButtonSet.RATING_MENU
+        self.mailing.save(update_fields=["button_set"])
+
+        self._post_import(
+            [new_guest.phone, historical_guest.phone],
+            audience_group=MAILING_IMPORT_AUDIENCE_ALL_SENDABLE,
+        )
+
+        self.assertFalse(MailingGuest.objects.filter(mailing=self.mailing).exists())
 
     def test_all_sendable_import_combines_new_and_historical_guests(self):
         """
