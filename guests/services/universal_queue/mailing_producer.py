@@ -7,7 +7,7 @@ Producer для перевода строк массовой рассылки в
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Set
 
 from django.utils import timezone
@@ -21,8 +21,8 @@ from guests.models import (
     MailingGuest,
 )
 from guests.services.message_interaction_outgoing import (
-    DispatchTaskAlreadyExists,
-    create_dispatch_task_with_optional_interaction,
+    DispatchTaskCreationSpec,
+    create_dispatch_tasks_with_optional_interactions,
     interactions_enabled_for_new_task,
 )
 from guests.services.mailing_delivery_targets import (
@@ -46,6 +46,15 @@ class MailingDispatchSummary:
     rows_failed: int = 0
     tasks_created: int = 0
     tasks_duplicates: int = 0
+
+
+@dataclass
+class _MailingRowDispatchPlan:
+    """Связывает строку рассылки с позициями общего пакетного запроса."""
+
+    row: MailingGuest
+    assignment: CouponCampaignAssignment | None
+    specification_positions: list[int] = field(default_factory=list)
 
 
 def _resolve_target_mode_for_mailing(mailing: Mailing) -> str:
@@ -184,6 +193,10 @@ def enqueue_mailing_rows_as_dispatch_tasks(
     )
     coupon_assignments_map = _build_coupon_assignments_map(mailing, guest_ids)
 
+    specifications: list[DispatchTaskCreationSpec] = []
+    row_plans: list[_MailingRowDispatchPlan] = []
+    rows_to_update: list[MailingGuest] = []
+
     for row in rows:
         assignment = coupon_assignments_map.get(int(row.guest_id)) if row.guest_id else None
         row_targets = targets_map.get(int(row.guest_id), []) if row.guest_id else []
@@ -201,14 +214,13 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                 "Не найдено новой bot-привязки или доступного legacy Telegram-канала "
                 "для постановки в универсальную очередь; внешний Telegram ID в строке кампании также отсутствует."
             )
-            row.save(update_fields=["status", "delivery_status", "error_description"])
+            rows_to_update.append(row)
             summary.rows_failed += 1
             continue
 
         available_at = row.scheduled_datetime if row.scheduled_datetime and row.scheduled_datetime > now else now
-        row_created = 0
-        row_duplicates = 0
-        row_last_error: str | None = None
+        row_plan = _MailingRowDispatchPlan(row=row, assignment=assignment)
+        row_plans.append(row_plan)
 
         for target in row_targets:
             provider_type = target["provider_type"]
@@ -232,39 +244,59 @@ def enqueue_mailing_rows_as_dispatch_tasks(
             if provider_type == "max":
                 task_payload["max_user_id"] = external_user_id or external_chat_id
 
-            try:
-                create_dispatch_task_with_optional_interaction(
+            position = len(specifications)
+            row_plan.specification_positions.append(position)
+            specifications.append(
+                DispatchTaskCreationSpec(
                     button_set=getattr(mailing, "button_set", InteractionButtonSet.NONE),
                     interaction_enabled=(
                         channel_mode == CHANNEL_MODE_BINDING
                         and target.get("guest_binding") is not None
                         and interactions_enabled_for_new_task(provider_type)
                     ),
-                    source_type=DispatchTask.SourceType.MAILING,
-                    provider_type=provider_type,
-                    priority=priority,
-                    status=DispatchTask.Status.PENDING,
-                    guest_id=row.guest_id,
-                    mailing_guest=row,
-                    bot_profile=target["bot_profile"],
-                    guest_binding=target["guest_binding"],
-                    external_chat_id=external_chat_id,
-                    message_text=row.text_mailing_list or "",
-                    payload=task_payload,
-                    scheduled_at=row.scheduled_datetime,
-                    available_at=available_at,
-                    idempotency_key=idempotency_key,
+                    dispatch_task_fields={
+                        "source_type": DispatchTask.SourceType.MAILING,
+                        "provider_type": provider_type,
+                        "priority": priority,
+                        "status": DispatchTask.Status.PENDING,
+                        "guest_id": row.guest_id,
+                        "mailing_guest": row,
+                        "bot_profile": target["bot_profile"],
+                        "guest_binding": target["guest_binding"],
+                        "external_chat_id": external_chat_id,
+                        "message_text": row.text_mailing_list or "",
+                        "payload": task_payload,
+                        "scheduled_at": row.scheduled_datetime,
+                        "available_at": available_at,
+                        "idempotency_key": idempotency_key,
+                    },
                 )
-                row_created += 1
-            except DispatchTaskAlreadyExists:
-                row_duplicates += 1
-            except Exception as err:
-                row_last_error = str(err)[:2000]
-                logger.exception(
-                    "Ошибка постановки dispatch-задачи для mailing_row=%s guest_id=%s",
-                    row.id,
-                    row.guest_id,
-                )
+            )
+
+    creation_result = create_dispatch_tasks_with_optional_interactions(specifications)
+    assignments_to_update: list[CouponCampaignAssignment] = []
+    for row_plan in row_plans:
+        row = row_plan.row
+        row_created = sum(
+            position in creation_result.created_tasks
+            for position in row_plan.specification_positions
+        )
+        row_duplicates = sum(
+            position in creation_result.duplicate_positions
+            for position in row_plan.specification_positions
+        )
+        row_errors = [
+            creation_result.errors[position]
+            for position in row_plan.specification_positions
+            if position in creation_result.errors
+        ]
+        for error in row_errors:
+            logger.error(
+                "Ошибка пакетной постановки задачи рассылки: mailing_row=%s guest_id=%s тип=%s",
+                row.id,
+                row.guest_id,
+                type(error).__name__,
+            )
 
         summary.tasks_created += row_created
         summary.tasks_duplicates += row_duplicates
@@ -273,17 +305,37 @@ def enqueue_mailing_rows_as_dispatch_tasks(
             row.status = MailingGuest.Status.DONE
             row.delivery_status = "queued_to_dispatch"
             row.error_description = None
-            row.save(update_fields=["status", "delivery_status", "error_description"])
-            if assignment and assignment.status == CouponCampaignAssignment.Status.RESERVED:
-                assignment.status = CouponCampaignAssignment.Status.SENT
-                assignment.sent_at = now
-                assignment.save(update_fields=["status", "sent_at", "updated_at"])
+            if (
+                row_plan.assignment
+                and row_plan.assignment.status == CouponCampaignAssignment.Status.RESERVED
+            ):
+                row_plan.assignment.status = CouponCampaignAssignment.Status.SENT
+                row_plan.assignment.sent_at = now
+                row_plan.assignment.updated_at = now
+                assignments_to_update.append(row_plan.assignment)
             summary.rows_queued += 1
         else:
             row.status = MailingGuest.Status.ERROR
             row.delivery_status = "dispatch_enqueue_error"
-            row.error_description = row_last_error or "Не удалось поставить задачу в универсальную очередь."
-            row.save(update_fields=["status", "delivery_status", "error_description"])
+            row.error_description = (
+                str(row_errors[0])[:2000]
+                if row_errors
+                else "Не удалось поставить задачу в универсальную очередь."
+            )
             summary.rows_failed += 1
+        rows_to_update.append(row)
+
+    if rows_to_update:
+        MailingGuest.objects.bulk_update(
+            rows_to_update,
+            fields=["status", "delivery_status", "error_description"],
+            batch_size=500,
+        )
+    if assignments_to_update:
+        CouponCampaignAssignment.objects.bulk_update(
+            assignments_to_update,
+            fields=["status", "sent_at", "updated_at"],
+            batch_size=500,
+        )
 
     return summary

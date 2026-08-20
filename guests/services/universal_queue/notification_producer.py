@@ -20,8 +20,8 @@ from guests.models import (
     NotificationScenario,
 )
 from guests.services.message_interaction_outgoing import (
-    DispatchTaskAlreadyExists,
-    create_dispatch_task_with_optional_interaction,
+    DispatchTaskCreationSpec,
+    create_dispatch_tasks_with_optional_interactions,
     interactions_enabled_for_new_task,
 )
 
@@ -178,10 +178,10 @@ def enqueue_guest_notification_tasks(
         logger.info("Notification enqueue: нет доступных bot-привязок для guest_id=%s", guest.id)
         return 0
 
-    created_count = 0
     now = timezone.now()
     task_available_at = available_at if available_at is not None else now
     safe_source_key = str(source_key or "").strip()
+    specifications: list[DispatchTaskCreationSpec] = []
 
     for target in targets:
         provider_type = target["provider_type"]
@@ -193,32 +193,42 @@ def enqueue_guest_notification_tasks(
                 f"{source_type}:{safe_source_key}:guest:{guest.id}:provider:{provider_type}:chat:{external_chat_id}"
             )
 
-        try:
-            create_dispatch_task_with_optional_interaction(
+        specifications.append(
+            DispatchTaskCreationSpec(
                 button_set=(
                     notification_scenario.button_set
                     if notification_scenario is not None
                     else InteractionButtonSet.NONE
                 ),
                 interaction_enabled=interactions_enabled_for_new_task(provider_type),
-                source_type=source_type,
-                provider_type=provider_type,
-                priority=safe_priority,
-                status=DispatchTask.Status.PENDING,
-                guest=guest,
-                notification_scenario=notification_scenario,
-                notification_event=notification_event,
-                bot_profile=target["bot_profile"],
-                guest_binding=target["guest_binding"],
-                external_chat_id=external_chat_id,
-                message_text=safe_message,
-                payload=safe_payload,
-                scheduled_at=task_available_at,
-                available_at=task_available_at,
-                idempotency_key=idempotency_key,
+                dispatch_task_fields={
+                    "source_type": source_type,
+                    "provider_type": provider_type,
+                    "priority": safe_priority,
+                    "status": DispatchTask.Status.PENDING,
+                    "guest": guest,
+                    "notification_scenario": notification_scenario,
+                    "notification_event": notification_event,
+                    "bot_profile": target["bot_profile"],
+                    "guest_binding": target["guest_binding"],
+                    "external_chat_id": external_chat_id,
+                    "message_text": safe_message,
+                    "payload": safe_payload,
+                    "scheduled_at": task_available_at,
+                    "available_at": task_available_at,
+                    "idempotency_key": idempotency_key,
+                },
             )
-            created_count += 1
-        except DispatchTaskAlreadyExists:
-            logger.info("Постановка уведомления: дублирующая задача пропущена (%s)", idempotency_key)
+        )
 
-    return created_count
+    creation_result = create_dispatch_tasks_with_optional_interactions(specifications)
+    for position in sorted(creation_result.duplicate_positions):
+        duplicate_key = specifications[position].dispatch_task_fields.get("idempotency_key")
+        logger.info("Постановка уведомления: дублирующая задача пропущена (%s)", duplicate_key)
+    for position, error in creation_result.errors.items():
+        logger.error(
+            "Ошибка пакетной постановки уведомления: позиция=%s тип=%s",
+            position,
+            type(error).__name__,
+        )
+    return len(creation_result.created_tasks)

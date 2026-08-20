@@ -8,8 +8,9 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 from asgiref.sync import async_to_sync
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from guests.models import (
@@ -27,6 +28,7 @@ from guests.models import (
 from guests.services.message_interaction_outgoing import (
     MAX_SIGNED_BIGINT,
     TELEGRAM_CALLBACK_DATA_LIMIT_BYTES,
+    DispatchTaskCreationSpec,
     DispatchTaskAlreadyExists,
     MessageInteractionConfigurationError,
     build_max_attachments,
@@ -35,6 +37,7 @@ from guests.services.message_interaction_outgoing import (
     build_telegram_reply_markup,
     build_vk_keyboard,
     create_dispatch_task_with_optional_interaction,
+    create_dispatch_tasks_with_optional_interactions,
     interactions_enabled_for_new_task,
 )
 from guests.services.universal_queue.mailing_producer import enqueue_mailing_rows_as_dispatch_tasks
@@ -246,6 +249,108 @@ class DispatchTaskInteractionAtomicityTests(TestCase):
                 )
 
         self.assertFalse(DispatchTask.objects.filter(idempotency_key="interaction-rollback").exists())
+
+    def test_bulk_path_uses_one_insert_per_table(self):
+        """Нормальная порция не должна создавать по одному запросу на получателя."""
+
+        specifications = [
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.RATING_MENU,
+                interaction_enabled=True,
+                dispatch_task_fields=self._task_fields(f"interaction-bulk-{index}"),
+            )
+            for index in range(5)
+        ]
+
+        with CaptureQueriesContext(connection) as captured:
+            result = create_dispatch_tasks_with_optional_interactions(specifications)
+
+        insert_queries = [query["sql"] for query in captured.captured_queries if "INSERT INTO" in query["sql"]]
+        task_inserts = [sql for sql in insert_queries if '"dispatch_tasks"' in sql]
+        interaction_inserts = [sql for sql in insert_queries if '"message_interactions"' in sql]
+        self.assertEqual(len(result.created_tasks), 5)
+        self.assertEqual(len(task_inserts), 1)
+        self.assertEqual(len(interaction_inserts), 1)
+
+    def test_bulk_path_separates_existing_and_in_batch_duplicates(self):
+        """Дедупликация возвращает точный результат для каждой позиции."""
+
+        create_dispatch_task_with_optional_interaction(
+            button_set=InteractionButtonSet.RATING_MENU,
+            interaction_enabled=True,
+            **self._task_fields("interaction-existing"),
+        )
+        specifications = [
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.RATING_MENU,
+                interaction_enabled=True,
+                dispatch_task_fields=self._task_fields("interaction-existing"),
+            ),
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.RATING_MENU,
+                interaction_enabled=True,
+                dispatch_task_fields=self._task_fields("interaction-in-batch"),
+            ),
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.RATING_MENU,
+                interaction_enabled=True,
+                dispatch_task_fields=self._task_fields("interaction-in-batch"),
+            ),
+        ]
+
+        result = create_dispatch_tasks_with_optional_interactions(specifications)
+
+        self.assertEqual(result.duplicate_positions, {0, 2})
+        self.assertEqual(set(result.created_tasks), {1})
+        self.assertFalse(result.errors)
+        self.assertEqual(DispatchTask.objects.count(), 2)
+        self.assertEqual(MessageInteraction.objects.count(), 2)
+
+    def test_bulk_interaction_error_rolls_back_tasks_and_reports_positions(self):
+        """Ошибка связанной записи не оставляет задачи без обязательных кнопок."""
+
+        specifications = [
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.RATING_MENU,
+                interaction_enabled=True,
+                dispatch_task_fields=self._task_fields(f"interaction-failed-{index}"),
+            )
+            for index in range(2)
+        ]
+
+        with (
+            patch.object(MessageInteraction.objects, "bulk_create", side_effect=IntegrityError("forced")),
+            patch.object(MessageInteraction.objects, "create", side_effect=IntegrityError("forced")),
+        ):
+            result = create_dispatch_tasks_with_optional_interactions(specifications)
+
+        self.assertEqual(set(result.errors), {0, 1})
+        self.assertFalse(result.created_tasks)
+        self.assertFalse(result.duplicate_positions)
+        self.assertEqual(DispatchTask.objects.count(), 0)
+        self.assertEqual(MessageInteraction.objects.count(), 0)
+
+    def test_bulk_non_integrity_error_is_not_retried_individually(self):
+        """Недоступная база не должна получать дополнительный поштучный шторм."""
+
+        specifications = [
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.NONE,
+                interaction_enabled=False,
+                dispatch_task_fields=self._task_fields(f"plain-failed-{index}"),
+            )
+            for index in range(3)
+        ]
+
+        with (
+            patch.object(DispatchTask.objects, "bulk_create", side_effect=RuntimeError("db down")),
+            patch.object(DispatchTask.objects, "create") as individual_create,
+        ):
+            result = create_dispatch_tasks_with_optional_interactions(specifications)
+
+        self.assertEqual(set(result.errors), {0, 1, 2})
+        individual_create.assert_not_called()
+        self.assertEqual(DispatchTask.objects.count(), 0)
 
 
 @override_settings(

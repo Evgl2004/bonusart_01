@@ -36,6 +36,24 @@ class DispatchTaskAlreadyExists(Exception):
 
 
 @dataclass(frozen=True)
+class DispatchTaskCreationSpec:
+    """Описание одной задачи для пакетного атомарного создания."""
+
+    button_set: str
+    interaction_enabled: bool
+    dispatch_task_fields: dict[str, Any]
+
+
+@dataclass
+class BulkDispatchTaskCreationResult:
+    """Поэлементный результат пакетного создания задач."""
+
+    created_tasks: dict[int, DispatchTask]
+    duplicate_positions: set[int]
+    errors: dict[int, Exception]
+
+
+@dataclass(frozen=True)
 class NormalizedInteractionButton:
     """Платформенно-независимое описание одной кнопки."""
 
@@ -359,3 +377,150 @@ def create_dispatch_task_with_optional_interaction(
             raise DispatchTaskAlreadyExists from error
         raise
     return task
+
+
+def create_dispatch_tasks_with_optional_interactions(
+    specifications: list[DispatchTaskCreationSpec],
+    *,
+    batch_size: int = 500,
+) -> BulkDispatchTaskCreationResult:
+    """Пакетно создаёт задачи и интерактивности с поэлементным результатом.
+
+    Нормальный путь использует по одной пакетной вставке задач и связанных
+    интерактивностей на порцию. Предварительно найденные ключи идемпотентности
+    отмечаются как дубли. Если между проверкой и вставкой возник редкий
+    конфликт целостности, вся порция откатывается и повторяется проверенным
+    поэлементным способом. При иных ошибках повторные запросы не выполняются.
+    """
+
+    result = BulkDispatchTaskCreationResult(
+        created_tasks={},
+        duplicate_positions=set(),
+        errors={},
+    )
+    if not specifications:
+        return result
+
+    safe_batch_size = min(max(int(batch_size), 1), 1000)
+    normalized_specs: list[tuple[int, DispatchTaskCreationSpec, str]] = []
+    for position, specification in enumerate(specifications):
+        try:
+            normalized_set = _normalize_button_set(specification.button_set)
+        except Exception as error:  # noqa: BLE001 - нужен поэлементный результат.
+            result.errors[position] = error
+            continue
+        normalized_specs.append((position, specification, normalized_set))
+
+    for offset in range(0, len(normalized_specs), safe_batch_size):
+        chunk = normalized_specs[offset : offset + safe_batch_size]
+        _create_dispatch_task_chunk(
+            chunk=chunk,
+            result=result,
+            batch_size=safe_batch_size,
+        )
+    return result
+
+
+def _create_dispatch_task_chunk(
+    *,
+    chunk: list[tuple[int, DispatchTaskCreationSpec, str]],
+    result: BulkDispatchTaskCreationResult,
+    batch_size: int,
+) -> None:
+    """Создаёт одну порцию либо безопасно распределяет ошибку по позициям."""
+
+    idempotency_keys = {
+        str(specification.dispatch_task_fields.get("idempotency_key") or "").strip()
+        for _, specification, _ in chunk
+        if str(specification.dispatch_task_fields.get("idempotency_key") or "").strip()
+    }
+    try:
+        existing_keys = set(
+            DispatchTask.objects.filter(idempotency_key__in=idempotency_keys).values_list(
+                "idempotency_key",
+                flat=True,
+            )
+        )
+    except Exception as error:  # noqa: BLE001 - команда выше получит поэлементную ошибку.
+        for position, _, _ in chunk:
+            result.errors[position] = error
+        return
+
+    candidates: list[tuple[int, DispatchTaskCreationSpec, str]] = []
+    for item in chunk:
+        position, specification, _ = item
+        idempotency_key = str(
+            specification.dispatch_task_fields.get("idempotency_key") or ""
+        ).strip()
+        if idempotency_key and idempotency_key in existing_keys:
+            result.duplicate_positions.add(position)
+        else:
+            candidates.append(item)
+    if not candidates:
+        return
+
+    try:
+        with transaction.atomic():
+            task_objects = [
+                DispatchTask(**specification.dispatch_task_fields)
+                for _, specification, _ in candidates
+            ]
+            created_tasks = DispatchTask.objects.bulk_create(
+                task_objects,
+                batch_size=batch_size,
+            )
+            if len(created_tasks) != len(candidates) or any(task.pk is None for task in created_tasks):
+                raise MessageInteractionConfigurationError(
+                    "База данных не вернула идентификаторы пакетно созданных задач."
+                )
+
+            interactions = [
+                MessageInteraction(
+                    dispatch_task=task,
+                    button_set=normalized_set,
+                )
+                for task, (_, specification, normalized_set) in zip(
+                    created_tasks,
+                    candidates,
+                    strict=True,
+                )
+                if specification.interaction_enabled
+                and normalized_set != InteractionButtonSet.NONE
+            ]
+            if interactions:
+                MessageInteraction.objects.bulk_create(
+                    interactions,
+                    batch_size=batch_size,
+                )
+    except IntegrityError:
+        _create_dispatch_task_chunk_individually(candidates=candidates, result=result)
+        return
+    except Exception as error:  # noqa: BLE001 - поэлементный результат нужен вызывающей стороне.
+        for position, _, _ in candidates:
+            result.errors[position] = error
+        return
+
+    for task, (position, _, _) in zip(created_tasks, candidates, strict=True):
+        result.created_tasks[position] = task
+
+
+def _create_dispatch_task_chunk_individually(
+    *,
+    candidates: list[tuple[int, DispatchTaskCreationSpec, str]],
+    result: BulkDispatchTaskCreationResult,
+) -> None:
+    """Разбирает только порцию, в которой возник конфликт целостности."""
+
+    for position, specification, _ in candidates:
+        try:
+            task = create_dispatch_task_with_optional_interaction(
+                button_set=specification.button_set,
+                interaction_enabled=specification.interaction_enabled,
+                **specification.dispatch_task_fields,
+            )
+        except DispatchTaskAlreadyExists:
+            result.duplicate_positions.add(position)
+        except Exception as error:  # noqa: BLE001 - сохраняется изолированный результат позиции.
+            result.errors[position] = error
+        else:
+            result.created_tasks[position] = task

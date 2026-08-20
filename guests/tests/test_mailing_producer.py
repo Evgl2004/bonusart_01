@@ -24,7 +24,7 @@ from guests.models import (
     MessageTemplate,
 )
 from guests.services.mailing_delivery_targets import build_targets_from_bindings
-from guests.services.message_interaction_outgoing import DispatchTaskAlreadyExists
+from guests.services.message_interaction_outgoing import BulkDispatchTaskCreationResult
 from guests.services.universal_queue.mailing_producer import (
     _resolve_priority_for_mailing,
     _resolve_selected_bot_profiles,
@@ -327,11 +327,7 @@ class MailingProducerTests(TestCase):
         )
 
         first = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
-        with patch(
-            "guests.services.universal_queue.mailing_producer.DispatchTask.objects.create",
-            side_effect=IntegrityError("duplicate key"),
-        ):
-            second = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
+        second = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
 
         row.refresh_from_db()
         self.assertEqual(first.tasks_created, 1)
@@ -355,8 +351,13 @@ class MailingProducerTests(TestCase):
         )
 
         with patch(
-            "guests.services.universal_queue.mailing_producer.DispatchTask.objects.create",
-            side_effect=RuntimeError("db is down"),
+            "guests.services.universal_queue.mailing_producer."
+            "create_dispatch_tasks_with_optional_interactions",
+            return_value=BulkDispatchTaskCreationResult(
+                created_tasks={},
+                duplicate_positions=set(),
+                errors={0: RuntimeError("db is down")},
+            ),
         ):
             summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
 
@@ -382,8 +383,13 @@ class MailingProducerTests(TestCase):
         )
 
         with patch(
-            "guests.services.universal_queue.mailing_producer.create_dispatch_task_with_optional_interaction",
-            side_effect=DispatchTaskAlreadyExists,
+            "guests.services.universal_queue.mailing_producer."
+            "create_dispatch_tasks_with_optional_interactions",
+            return_value=BulkDispatchTaskCreationResult(
+                created_tasks={},
+                duplicate_positions={0},
+                errors={},
+            ),
         ):
             summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
 
@@ -408,8 +414,13 @@ class MailingProducerTests(TestCase):
         )
 
         with patch(
-            "guests.services.universal_queue.mailing_producer.DispatchTask.objects.create",
-            side_effect=IntegrityError("constraint violation"),
+            "guests.services.universal_queue.mailing_producer."
+            "create_dispatch_tasks_with_optional_interactions",
+            return_value=BulkDispatchTaskCreationResult(
+                created_tasks={},
+                duplicate_positions=set(),
+                errors={0: IntegrityError("constraint violation")},
+            ),
         ):
             summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
 
