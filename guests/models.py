@@ -7,6 +7,14 @@ import uuid
 from guests.services.notification_registry import is_registered_notification_scenario_code
 
 
+class InteractionButtonSet(models.TextChoices):
+    """Предопределённые наборы кнопок интерактивного сообщения."""
+
+    NONE = "none", "Без кнопок"
+    RATING_MENU = "rating_menu", "Оценка и главное меню"
+    RATING_COUPONS = "rating_coupons", "Оценка и купоны"
+
+
 class Guest(models.Model):
     id = models.BigAutoField(primary_key=True)
     iiko_id = models.CharField(max_length=50, blank=True, null=True)
@@ -199,6 +207,12 @@ class Mailing(models.Model):
         default=QueuePriority.BULK,
         help_text="Приоритет задач рассылки в универсальной очереди.",
     )
+    button_set = models.CharField(
+        max_length=20,
+        choices=InteractionButtonSet.choices,
+        default=InteractionButtonSet.NONE,
+        help_text="Набор интерактивных кнопок для современных маршрутов рассылки.",
+    )
     source_filter_snapshot = models.JSONField(
         default=dict,
         blank=True,
@@ -267,6 +281,10 @@ class Mailing(models.Model):
             models.CheckConstraint(
                 condition=models.Q(queue_priority__in=["high", "normal", "bulk"]),
                 name="mailings_queue_priority_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(button_set__in=["none", "rating_menu", "rating_coupons"]),
+                name="mailings_button_set_chk",
             ),
         ]
 
@@ -1959,6 +1977,12 @@ class NotificationScenario(models.Model):
         choices=DistributionMode.choices,
         default=DistributionMode.IMMEDIATE,
     )
+    button_set = models.CharField(
+        max_length=20,
+        choices=InteractionButtonSet.choices,
+        default=InteractionButtonSet.NONE,
+        help_text="Набор интерактивных кнопок для сообщений этого сценария.",
+    )
 
     send_window_begin = models.TimeField(blank=True, null=True)
     send_window_end = models.TimeField(blank=True, null=True)
@@ -2006,6 +2030,10 @@ class NotificationScenario(models.Model):
             models.CheckConstraint(
                 condition=models.Q(distribution_mode__in=["immediate", "uniform"]),
                 name="ns_distribution_mode_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(button_set__in=["none", "rating_menu", "rating_coupons"]),
+                name="ns_button_set_chk",
             ),
         ]
         indexes = [
@@ -2754,6 +2782,118 @@ class DispatchTask(models.Model):
 
     def __str__(self):
         return f"task={self.id} provider={self.provider_type} priority={self.priority} status={self.status}"
+
+
+class MessageInteraction(models.Model):
+    """Интерактивная часть одного конкретного отправляемого сообщения."""
+
+    id = models.BigAutoField(primary_key=True)
+    dispatch_task = models.OneToOneField(
+        "DispatchTask",
+        on_delete=models.PROTECT,
+        related_name="message_interaction",
+        help_text="Задача, представляющая конкретную отправку сообщения.",
+    )
+    button_set = models.CharField(
+        max_length=20,
+        choices=[
+            (InteractionButtonSet.RATING_MENU, InteractionButtonSet.RATING_MENU.label),
+            (InteractionButtonSet.RATING_COUPONS, InteractionButtonSet.RATING_COUPONS.label),
+        ],
+        help_text="Фактически отправленный набор интерактивных кнопок.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "message_interactions"
+        verbose_name = "Интерактивность сообщения"
+        verbose_name_plural = "Интерактивности сообщений"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(button_set__in=["rating_menu", "rating_coupons"]),
+                name="mi_button_set_chk",
+            ),
+        ]
+
+    def __str__(self):
+        return f"interaction={self.id} task={self.dispatch_task_id} set={self.button_set}"
+
+
+class MessageInteractionEvent(models.Model):
+    """Сохранённый факт взаимодействия гостя с интерактивным сообщением."""
+
+    class Action(models.TextChoices):
+        LIKE = "l", "Нравится"
+        DISLIKE = "d", "Не нравится"
+        COUPONS = "c", "В купоны"
+        MENU = "m", "Меню"
+
+    class Result(models.TextChoices):
+        ACCEPTED = "accepted", "Принято"
+        RATING_ALREADY_RECORDED = "rating_already_recorded", "Оценка уже зафиксирована"
+
+    id = models.BigAutoField(primary_key=True)
+    event_id = models.UUIDField(
+        unique=True,
+        help_text="Уникальный идентификатор события, сформированный vtelemax.",
+    )
+    interaction = models.ForeignKey(
+        "MessageInteraction",
+        on_delete=models.PROTECT,
+        related_name="events",
+        db_index=False,
+    )
+    action = models.CharField(max_length=1, choices=Action.choices)
+    occurred_at = models.DateTimeField(
+        help_text=(
+            "Время первой успешной долговечной фиксации обратного вызова "
+            "на сервере vtelemax."
+        ),
+    )
+    received_at = models.DateTimeField(auto_now_add=True)
+    result = models.CharField(max_length=32, choices=Result.choices)
+    provider_message_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Вспомогательный идентификатор сообщения на стороне платформы.",
+    )
+
+    class Meta:
+        db_table = "message_interaction_events"
+        verbose_name = "Событие взаимодействия с сообщением"
+        verbose_name_plural = "События взаимодействия с сообщениями"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(action__in=["l", "d", "c", "m"]),
+                name="mie_action_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(result__in=["accepted", "rating_already_recorded"]),
+                name="mie_result_chk",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(result="accepted")
+                    | models.Q(result="rating_already_recorded", action__in=["l", "d"])
+                ),
+                name="mie_result_action_chk",
+            ),
+            models.UniqueConstraint(
+                fields=["interaction"],
+                condition=models.Q(action__in=["l", "d"], result="accepted"),
+                name="mie_one_accepted_rating_uniq",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["interaction"], name="mie_interaction_idx"),
+        ]
+
+    def __str__(self):
+        return (
+            f"event={self.event_id} interaction={self.interaction_id} "
+            f"action={self.action} result={self.result}"
+        )
 
 
 class CouponPoolBatch(models.Model):
