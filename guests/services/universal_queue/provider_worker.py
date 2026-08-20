@@ -309,7 +309,11 @@ class AsyncProviderWorker:
         if updated == 0:
             return None
 
-        return DispatchTask.objects.select_related("bot_profile", "guest_binding").get(id=task_id)
+        return DispatchTask.objects.select_related(
+            "bot_profile",
+            "guest_binding",
+            "message_interaction",
+        ).get(id=task_id)
 
     @staticmethod
     def _mark_done_sync(task_id: int, result: ProviderSendResult) -> None:

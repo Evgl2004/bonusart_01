@@ -10,15 +10,19 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Set
 
-from django.db import IntegrityError
 from django.utils import timezone
 
 from guests.models import (
     BotProfile,
     CouponCampaignAssignment,
     DispatchTask,
+    InteractionButtonSet,
     Mailing,
     MailingGuest,
+)
+from guests.services.message_interaction_outgoing import (
+    DispatchTaskAlreadyExists,
+    create_dispatch_task_with_optional_interaction,
 )
 from guests.services.mailing_delivery_targets import (
     CHANNEL_MODE_BINDING,
@@ -209,11 +213,12 @@ def enqueue_mailing_rows_as_dispatch_tasks(
             provider_type = target["provider_type"]
             external_chat_id = target["external_chat_id"]
             external_user_id = target.get("external_user_id") or ""
+            channel_mode = target.get("channel_mode") or CHANNEL_MODE_BINDING
             idempotency_key = f"mailing:{mailing.id}:row:{row.id}:provider:{provider_type}:chat:{external_chat_id}"
             task_payload = {
                 "mailing_id": mailing.id,
                 "mailing_guest_id": row.id,
-                "channel_mode": target.get("channel_mode") or CHANNEL_MODE_BINDING,
+                "channel_mode": channel_mode,
                 "historical_telegram_channel_id": target.get("historical_telegram_channel_id"),
                 "vtelemax_channel_id": target.get("vtelemax_channel_id"),
                 "coupon_series": assignment.coupon_series if assignment else None,
@@ -227,7 +232,12 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                 task_payload["max_user_id"] = external_user_id or external_chat_id
 
             try:
-                DispatchTask.objects.create(
+                create_dispatch_task_with_optional_interaction(
+                    button_set=getattr(mailing, "button_set", InteractionButtonSet.NONE),
+                    interaction_enabled=(
+                        channel_mode == CHANNEL_MODE_BINDING
+                        and target.get("guest_binding") is not None
+                    ),
                     source_type=DispatchTask.SourceType.MAILING,
                     provider_type=provider_type,
                     priority=priority,
@@ -244,7 +254,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                     idempotency_key=idempotency_key,
                 )
                 row_created += 1
-            except IntegrityError:
+            except DispatchTaskAlreadyExists:
                 row_duplicates += 1
             except Exception as err:
                 row_last_error = str(err)[:2000]

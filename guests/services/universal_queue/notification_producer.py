@@ -9,10 +9,20 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
-from django.db import IntegrityError
 from django.utils import timezone
 
-from guests.models import DispatchTask, Guest, GuestBotBinding, NotificationEvent, NotificationScenario
+from guests.models import (
+    DispatchTask,
+    Guest,
+    GuestBotBinding,
+    InteractionButtonSet,
+    NotificationEvent,
+    NotificationScenario,
+)
+from guests.services.message_interaction_outgoing import (
+    DispatchTaskAlreadyExists,
+    create_dispatch_task_with_optional_interaction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +193,13 @@ def enqueue_guest_notification_tasks(
             )
 
         try:
-            DispatchTask.objects.create(
+            create_dispatch_task_with_optional_interaction(
+                button_set=(
+                    notification_scenario.button_set
+                    if notification_scenario is not None
+                    else InteractionButtonSet.NONE
+                ),
+                interaction_enabled=True,
                 source_type=source_type,
                 provider_type=provider_type,
                 priority=safe_priority,
@@ -201,7 +217,7 @@ def enqueue_guest_notification_tasks(
                 idempotency_key=idempotency_key,
             )
             created_count += 1
-        except IntegrityError:
-            logger.info("Notification enqueue: дубль задачи, пропуск (%s)", idempotency_key)
+        except DispatchTaskAlreadyExists:
+            logger.info("Постановка уведомления: дублирующая задача пропущена (%s)", idempotency_key)
 
     return created_count

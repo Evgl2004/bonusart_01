@@ -11,6 +11,10 @@ from django.conf import settings
 from django.utils import timezone
 
 from guests.models import DispatchTask
+from guests.services.message_interaction_outgoing import (
+    MessageInteractionConfigurationError,
+    build_provider_interaction_parameters,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +99,24 @@ def _get_payload(task: DispatchTask) -> Dict[str, Any]:
     return task.payload if isinstance(task.payload, dict) else {}
 
 
+def _get_interaction_parameters(task: DispatchTask, provider_type: str) -> Dict[str, Any]:
+    """Формирует клавиатуру или поднимает невосстановимую ошибку задачи.
+
+    Ошибка намеренно не приводит к отправке обычного текста: если для задачи
+    создана интерактивность, сообщение без обязательных кнопок недопустимо.
+    """
+
+    try:
+        return build_provider_interaction_parameters(
+            task=task,
+            provider_type=provider_type,
+        )
+    except MessageInteractionConfigurationError as error:
+        raise ProviderPermanentError(
+            f"Не удалось сформировать интерактивные кнопки: {error}"
+        ) from error
+
+
 async def _resolve_bot_token(task: DispatchTask, fallback_env_name: str) -> str:
     """
     Унифицированное разрешение токена бота:
@@ -169,6 +191,7 @@ class TelegramAsyncSender(BaseAsyncProviderSender):
             request_body["parse_mode"] = payload["parse_mode"]
         if payload.get("disable_web_page_preview") is not None:
             request_body["disable_web_page_preview"] = bool(payload["disable_web_page_preview"])
+        request_body.update(_get_interaction_parameters(task, self.provider_type))
 
         url = f"{self.base_url}/bot{token}/sendMessage"
         response = await self.client.post(url, json=request_body)
@@ -284,7 +307,8 @@ class MaxAsyncSender(BaseAsyncProviderSender):
             query_field = "user_id"
             chat_or_user_id = str(payload.get("max_user_id") or chat_id).strip()
 
-        request_body = {"text": text}
+        request_body: Dict[str, Any] = {"text": text}
+        request_body.update(_get_interaction_parameters(task, self.provider_type))
         request_url = f"{self.base_url}/messages"
         request_params = {
             query_field: chat_or_user_id,
@@ -393,6 +417,7 @@ class VkAsyncSender(BaseAsyncProviderSender):
             "random_id": random.randint(1, 2_147_483_647),
             "message": text,
         }
+        request_params.update(_get_interaction_parameters(task, self.provider_type))
         response = await self.client.post(request_url, data=request_params)
         response_data = self._safe_json(response)
 

@@ -24,6 +24,7 @@ from guests.models import (
     MessageTemplate,
 )
 from guests.services.mailing_delivery_targets import build_targets_from_bindings
+from guests.services.message_interaction_outgoing import DispatchTaskAlreadyExists
 from guests.services.universal_queue.mailing_producer import (
     _resolve_priority_for_mailing,
     _resolve_selected_bot_profiles,
@@ -365,9 +366,9 @@ class MailingProducerTests(TestCase):
         self.assertEqual(row.status, MailingGuest.Status.ERROR)
         self.assertEqual(row.delivery_status, "dispatch_enqueue_error")
 
-    def test_enqueue_rows_integrity_error_path_direct(self):
+    def test_enqueue_rows_confirmed_duplicate_path(self):
         """
-        IntegrityError обрабатывается как duplicate, строка при этом считается queued.
+        Подтверждённый дубликат считается ранее поставленной задачей.
         """
         row = self._create_row()
         GuestBotBinding.objects.create(
@@ -381,8 +382,8 @@ class MailingProducerTests(TestCase):
         )
 
         with patch(
-            "guests.services.universal_queue.mailing_producer.DispatchTask.objects.create",
-            side_effect=IntegrityError("duplicate key"),
+            "guests.services.universal_queue.mailing_producer.create_dispatch_task_with_optional_interaction",
+            side_effect=DispatchTaskAlreadyExists,
         ):
             summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
 
@@ -391,6 +392,32 @@ class MailingProducerTests(TestCase):
         self.assertEqual(summary.tasks_duplicates, 1)
         self.assertEqual(summary.rows_queued, 1)
         self.assertEqual(row.status, MailingGuest.Status.DONE)
+
+    def test_enqueue_rows_unconfirmed_integrity_error_is_not_duplicate(self):
+        """Иное нарушение целостности не должно маскироваться как дубликат."""
+
+        row = self._create_row()
+        GuestBotBinding.objects.create(
+            guest=self.guest,
+            bot=self.bot_tg,
+            external_chat_id="tg-integrity-error",
+            is_primary=True,
+            is_active=True,
+            is_opt_in=True,
+            is_stop_sending=False,
+        )
+
+        with patch(
+            "guests.services.universal_queue.mailing_producer.DispatchTask.objects.create",
+            side_effect=IntegrityError("constraint violation"),
+        ):
+            summary = enqueue_mailing_rows_as_dispatch_tasks(self.mailing, [row])
+
+        row.refresh_from_db()
+        self.assertEqual(summary.tasks_duplicates, 0)
+        self.assertEqual(summary.rows_failed, 1)
+        self.assertEqual(row.status, MailingGuest.Status.ERROR)
+        self.assertEqual(row.delivery_status, "dispatch_enqueue_error")
 
     def test_enqueue_rows_marks_coupon_assignment_sent_and_sets_payload(self):
         """
