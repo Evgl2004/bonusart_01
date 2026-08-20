@@ -15,6 +15,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 
 from guests.models import DispatchTask, InteractionButtonSet, MessageInteraction
@@ -83,6 +84,31 @@ VK_BUTTON_COLORS: dict[str, str] = {
     "c": "primary",
     "m": "primary",
 }
+
+
+def interactions_enabled_for_new_task(provider_type: str) -> bool:
+    """Проверяет эксплуатационный допуск кнопок для новой задачи.
+
+    Переключатели не применяются к уже созданным интерактивностям и входящим
+    нажатиям: их назначение — безопасно остановить только формирование новых
+    кнопок без потери ранее отправленных событий.
+    """
+
+    if not bool(getattr(settings, "MESSAGE_INTERACTIONS_ENABLED", False)):
+        return False
+    raw_allowed_providers = getattr(
+        settings,
+        "MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS",
+        set(),
+    )
+    if isinstance(raw_allowed_providers, str):
+        raw_allowed_providers = raw_allowed_providers.split(",")
+    allowed_providers = {
+        str(value or "").strip().lower()
+        for value in raw_allowed_providers
+        if str(value or "").strip()
+    }
+    return str(provider_type or "").strip().lower() in allowed_providers
 
 
 def _normalize_button_set(button_set: str) -> str:

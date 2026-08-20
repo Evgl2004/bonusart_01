@@ -60,9 +60,15 @@ from .views_mailings_v2 import (
     MailingsV2TemplatesView,
 )
 from .views_vtelemax_registration import vtelemax_registration_events
+from .views_message_interactions import vtelemax_message_interaction_events
 
 
 urlpatterns = [
+    path(
+        "internal/integration/v1/vtelemax/message-interactions/events",
+        vtelemax_message_interaction_events,
+        name="vtelemax_message_interaction_events",
+    ),
     path(
         "internal/integration/v1/vtelemax/registration-events",
         vtelemax_registration_events,

@@ -35,6 +35,7 @@ from guests.services.message_interaction_outgoing import (
     build_telegram_reply_markup,
     build_vk_keyboard,
     create_dispatch_task_with_optional_interaction,
+    interactions_enabled_for_new_task,
 )
 from guests.services.universal_queue.mailing_producer import enqueue_mailing_rows_as_dispatch_tasks
 from guests.services.universal_queue.notification_producer import enqueue_guest_notification_tasks
@@ -165,6 +166,15 @@ class MessageInteractionPayloadTests(SimpleTestCase):
                         action=action,
                     )
 
+    @override_settings(
+        MESSAGE_INTERACTIONS_ENABLED=True,
+        MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS="telegram, vk",
+    )
+    def test_string_provider_allowlist_is_split_by_commas(self):
+        self.assertTrue(interactions_enabled_for_new_task("telegram"))
+        self.assertTrue(interactions_enabled_for_new_task("VK"))
+        self.assertFalse(interactions_enabled_for_new_task("max"))
+
 
 class DispatchTaskInteractionAtomicityTests(TestCase):
     """Проверяет транзакционную границу задачи и интерактивности."""
@@ -238,6 +248,10 @@ class DispatchTaskInteractionAtomicityTests(TestCase):
         self.assertFalse(DispatchTask.objects.filter(idempotency_key="interaction-rollback").exists())
 
 
+@override_settings(
+    MESSAGE_INTERACTIONS_ENABLED=True,
+    MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS={"telegram", "vk", "max"},
+)
 class OutgoingInteractionProducerTests(TestCase):
     """Проверяет применение настройки к рассылкам и автосценариям."""
 
@@ -355,6 +369,29 @@ class OutgoingInteractionProducerTests(TestCase):
 
         self.assertEqual(created, 1)
         task = DispatchTask.objects.get()
+        self.assertFalse(MessageInteraction.objects.filter(dispatch_task=task).exists())
+
+    @override_settings(MESSAGE_INTERACTIONS_ENABLED=False)
+    def test_global_switch_disables_only_new_interaction(self):
+        mailing = self._create_mailing(button_set=InteractionButtonSet.RATING_MENU)
+        row = self._create_mailing_row(mailing)
+
+        summary = enqueue_mailing_rows_as_dispatch_tasks(mailing, [row], now=self.now)
+
+        self.assertEqual(summary.tasks_created, 1)
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertFalse(MessageInteraction.objects.filter(dispatch_task=task).exists())
+
+    @override_settings(MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS={"vk", "max"})
+    def test_provider_allowlist_keeps_plain_delivery_for_disabled_platform(self):
+        mailing = self._create_mailing(button_set=InteractionButtonSet.RATING_MENU)
+        row = self._create_mailing_row(mailing)
+
+        summary = enqueue_mailing_rows_as_dispatch_tasks(mailing, [row], now=self.now)
+
+        self.assertEqual(summary.tasks_created, 1)
+        task = DispatchTask.objects.get(mailing_guest=row)
+        self.assertEqual(task.provider_type, BotProfile.ProviderType.TELEGRAM)
         self.assertFalse(MessageInteraction.objects.filter(dispatch_task=task).exists())
 
 

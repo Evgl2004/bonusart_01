@@ -23,6 +23,7 @@ from guests.models import (
 from guests.services.message_interaction_outgoing import (
     DispatchTaskAlreadyExists,
     create_dispatch_task_with_optional_interaction,
+    interactions_enabled_for_new_task,
 )
 from guests.services.mailing_delivery_targets import (
     CHANNEL_MODE_BINDING,
@@ -237,6 +238,7 @@ def enqueue_mailing_rows_as_dispatch_tasks(
                     interaction_enabled=(
                         channel_mode == CHANNEL_MODE_BINDING
                         and target.get("guest_binding") is not None
+                        and interactions_enabled_for_new_task(provider_type)
                     ),
                     source_type=DispatchTask.SourceType.MAILING,
                     provider_type=provider_type,

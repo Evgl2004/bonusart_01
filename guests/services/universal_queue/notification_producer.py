@@ -22,6 +22,7 @@ from guests.models import (
 from guests.services.message_interaction_outgoing import (
     DispatchTaskAlreadyExists,
     create_dispatch_task_with_optional_interaction,
+    interactions_enabled_for_new_task,
 )
 
 logger = logging.getLogger(__name__)
@@ -199,7 +200,7 @@ def enqueue_guest_notification_tasks(
                     if notification_scenario is not None
                     else InteractionButtonSet.NONE
                 ),
-                interaction_enabled=True,
+                interaction_enabled=interactions_enabled_for_new_task(provider_type),
                 source_type=source_type,
                 provider_type=provider_type,
                 priority=safe_priority,

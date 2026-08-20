@@ -4,6 +4,25 @@ from django.test import SimpleTestCase
 
 
 class EnvSampleDocumentationTests(SimpleTestCase):
+    def test_message_interaction_variables_are_documented(self):
+        root_dir = Path(__file__).resolve().parents[2]
+        env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
+
+        expected_variables = (
+            "MESSAGE_INTERACTIONS_ENABLED",
+            "MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS",
+            "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_ENABLED",
+            "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_HMAC_SECRET",
+            "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_REQUIRE_HTTPS",
+            "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_TIMESTAMP_TOLERANCE_SECONDS",
+            "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_MAX_BODY_BYTES",
+            "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_RATE_LIMIT_PER_MINUTE",
+        )
+
+        for variable_name in expected_variables:
+            with self.subTest(variable_name=variable_name):
+                self.assertIn(f"{variable_name}=", env_sample)
+
     def test_coupon_autoscenario_schedule_variables_are_documented(self):
         root_dir = Path(__file__).resolve().parents[2]
         env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
