@@ -230,3 +230,112 @@ class TestMessageInteractionMigration:
             match=r"mie_interaction_idx.*несовместимую форму",
         ):
             _apply_migration(isolated_connection, previous_state)
+
+    def test_partial_unique_with_correct_name_and_wrong_condition_is_blocked(
+        self,
+        isolated_connection,
+    ):
+        """Правильные имя и столбец не маскируют неверное условие индекса."""
+
+        previous_state = _state_before_migration()
+        _create_required_previous_tables(isolated_connection, previous_state)
+        _apply_migration(isolated_connection, previous_state)
+        with isolated_connection.cursor() as cursor:
+            cursor.execute("DROP INDEX mie_one_accepted_rating_uniq")
+            cursor.execute(
+                "CREATE UNIQUE INDEX mie_one_accepted_rating_uniq "
+                "ON message_interaction_events (interaction_id) "
+                "WHERE action = 'm'"
+            )
+
+        migration_module = importlib.import_module(MIGRATION_MODULE)
+        with pytest.raises(
+            migration_module.InteractionSchemaError,
+            match=r"mie_one_accepted_rating_uniq.*несовместимую форму",
+        ):
+            _apply_migration(isolated_connection, previous_state)
+
+    def test_full_unique_with_partial_unique_name_is_blocked(
+        self,
+        isolated_connection,
+    ):
+        """Полная уникальность не принимается вместо утверждённой частичной."""
+
+        previous_state = _state_before_migration()
+        _create_required_previous_tables(isolated_connection, previous_state)
+        _apply_migration(isolated_connection, previous_state)
+        with isolated_connection.cursor() as cursor:
+            cursor.execute("DROP INDEX mie_one_accepted_rating_uniq")
+            cursor.execute(
+                "CREATE UNIQUE INDEX mie_one_accepted_rating_uniq "
+                "ON message_interaction_events (interaction_id)"
+            )
+
+        migration_module = importlib.import_module(MIGRATION_MODULE)
+        with pytest.raises(
+            migration_module.InteractionSchemaError,
+            match=r"mie_one_accepted_rating_uniq.*несовместимую форму",
+        ):
+            _apply_migration(isolated_connection, previous_state)
+
+    def test_equivalent_partial_unique_under_other_name_blocks_duplicate(
+        self,
+        isolated_connection,
+    ):
+        """Эквивалентный индекс под другим именем не дублируется автоматически."""
+
+        previous_state = _state_before_migration()
+        _create_required_previous_tables(isolated_connection, previous_state)
+        _apply_migration(isolated_connection, previous_state)
+        with isolated_connection.cursor() as cursor:
+            cursor.execute("DROP INDEX mie_one_accepted_rating_uniq")
+            cursor.execute(
+                "CREATE UNIQUE INDEX existing_rating_uniq "
+                "ON message_interaction_events (interaction_id) "
+                "WHERE action IN ('l', 'd') AND result = 'accepted'"
+            )
+
+        migration_module = importlib.import_module(MIGRATION_MODULE)
+        with pytest.raises(
+            migration_module.InteractionSchemaError,
+            match=r"existing_rating_uniq.*mie_one_accepted_rating_uniq.*дубликата",
+        ):
+            _apply_migration(isolated_connection, previous_state)
+
+    def test_incompatible_unique_under_other_name_blocks_duplicate(
+        self,
+        isolated_connection,
+    ):
+        """Несовместимая полная уникальность не остаётся рядом с частичной."""
+
+        previous_state = _state_before_migration()
+        _create_required_previous_tables(isolated_connection, previous_state)
+        _apply_migration(isolated_connection, previous_state)
+        with isolated_connection.cursor() as cursor:
+            cursor.execute("DROP INDEX mie_one_accepted_rating_uniq")
+            cursor.execute(
+                "CREATE UNIQUE INDEX existing_full_rating_uniq "
+                "ON message_interaction_events (interaction_id)"
+            )
+
+        migration_module = importlib.import_module(MIGRATION_MODULE)
+        with pytest.raises(
+            migration_module.InteractionSchemaError,
+            match=r"existing_full_rating_uniq.*mie_one_accepted_rating_uniq.*дубликата",
+        ):
+            _apply_migration(isolated_connection, previous_state)
+
+
+def test_postgresql_condition_normalization_matches_django_condition():
+    """Синтаксис ``ANY(ARRAY)`` PostgreSQL равен исходному условию ``IN``."""
+
+    migration_module = importlib.import_module(MIGRATION_MODULE)
+    expected = '"action" IN (\'l\', \'d\') AND "result" = \'accepted\''
+    actual = (
+        "(((action)::text = ANY ((ARRAY['l'::character varying, "
+        "'d'::character varying])::text[])) AND ((result)::text = 'accepted'::text))"
+    )
+
+    assert migration_module._canonical_condition_sql(actual) == (
+        migration_module._canonical_condition_sql(expected)
+    )
