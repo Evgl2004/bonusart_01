@@ -8,7 +8,9 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.core.cache import cache
+from django.db import connection
 from django.test import SimpleTestCase, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from guests.models import (
@@ -328,6 +330,31 @@ class MessageInteractionInboundTests(TestCase):
         self.assertEqual(first_response.json()["results"][0]["result"], "accepted")
         self.assertEqual(second_response.json()["results"][0]["result"], "duplicate")
         self.assertEqual(MessageInteractionEvent.objects.filter(event_id=event_id).count(), 1)
+
+    def test_duplicate_event_lookup_does_not_join_interaction_table(self):
+        """Для сравнения повтора достаточно сохранённого ``interaction_id`` события."""
+
+        event_id = str(uuid.uuid4())
+        payload = self._payload([self._item(event_id=event_id)])
+        first_response = self._post_payload(payload)
+        self.assertEqual(first_response.status_code, 200)
+
+        with CaptureQueriesContext(connection) as captured:
+            duplicate_response = self._post_payload(
+                self._payload(
+                    [self._item(event_id=event_id)],
+                    request_id=str(uuid.uuid4()),
+                )
+            )
+
+        event_queries = [
+            query["sql"]
+            for query in captured.captured_queries
+            if "message_interaction_events" in query["sql"]
+        ]
+        self.assertEqual(duplicate_response.json()["results"][0]["result"], "duplicate")
+        self.assertEqual(len(event_queries), 1)
+        self.assertNotIn("JOIN", event_queries[0].upper())
 
     def test_same_event_id_with_other_significant_content_is_conflict(self):
         variations = (

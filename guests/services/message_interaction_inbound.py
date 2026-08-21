@@ -410,9 +410,7 @@ def _validate_item(*, raw_item: Any, received_at: datetime) -> _NormalizedEvent:
 
 
 def _persist_item(*, index: int, item: _NormalizedEvent) -> dict[str, Any]:
-    existing = MessageInteractionEvent.objects.select_related("interaction").filter(
-        event_id=item.event_id
-    ).first()
+    existing = MessageInteractionEvent.objects.filter(event_id=item.event_id).first()
     if existing is not None:
         return _existing_event_result(index=index, item=item, existing=existing)
 
@@ -430,9 +428,7 @@ def _persist_item(*, index: int, item: _NormalizedEvent) -> dict[str, Any]:
 
             # Повторная проверка нужна после ожидания блокировки интерактивности:
             # параллельная транзакция могла уже сохранить тот же event_id.
-            existing = MessageInteractionEvent.objects.select_related("interaction").filter(
-                event_id=item.event_id
-            ).first()
+            existing = MessageInteractionEvent.objects.filter(event_id=item.event_id).first()
             if existing is not None:
                 return _existing_event_result(index=index, item=item, existing=existing)
 
@@ -471,9 +467,7 @@ def _persist_item(*, index: int, item: _NormalizedEvent) -> dict[str, Any]:
     except IntegrityError:
         # Уникальный event_id остаётся последней защитой для параллельных
         # запросов, которые могли блокировать разные интерактивности.
-        existing = MessageInteractionEvent.objects.select_related("interaction").filter(
-            event_id=item.event_id
-        ).first()
+        existing = MessageInteractionEvent.objects.filter(event_id=item.event_id).first()
         if existing is None:
             raise
         return _existing_event_result(index=index, item=item, existing=existing)
