@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,6 +26,10 @@ SERVICE_DATA_TYPE = "si"
 SERVICE_DATA_VERSION = 2
 MAX_SIGNED_BIGINT = 9_223_372_036_854_775_807
 TELEGRAM_CALLBACK_DATA_LIMIT_BYTES = 64
+MAX_INTEGRITY_ISOLATION_OPERATIONS = 64
+
+
+logger = logging.getLogger(__name__)
 
 
 class MessageInteractionConfigurationError(ValueError):
@@ -51,6 +56,19 @@ class BulkDispatchTaskCreationResult:
     created_tasks: dict[int, DispatchTask]
     duplicate_positions: set[int]
     errors: dict[int, Exception]
+
+
+@dataclass
+class _IntegrityIsolationBudget:
+    """Ограничивает число дополнительных операций после конфликта порции."""
+
+    remaining: int = MAX_INTEGRITY_ISOLATION_OPERATIONS
+
+    def consume(self) -> bool:
+        if self.remaining <= 0:
+            return False
+        self.remaining -= 1
+        return True
 
 
 @dataclass(frozen=True)
@@ -389,8 +407,9 @@ def create_dispatch_tasks_with_optional_interactions(
     Нормальный путь использует по одной пакетной вставке задач и связанных
     интерактивностей на порцию. Предварительно найденные ключи идемпотентности
     отмечаются как дубли. Если между проверкой и вставкой возник редкий
-    конфликт целостности, вся порция откатывается и повторяется проверенным
-    поэлементным способом. При иных ошибках повторные запросы не выполняются.
+    конфликт целостности, порция делится пополам до изоляции конфликтующих
+    элементов с жёстким пределом дополнительных операций. При иных ошибках
+    повторные запросы не выполняются.
     """
 
     result = BulkDispatchTaskCreationResult(
@@ -459,6 +478,22 @@ def _create_dispatch_task_chunk(
     if not candidates:
         return
 
+    _bulk_create_candidate_chunk(
+        candidates=candidates,
+        result=result,
+        batch_size=batch_size,
+    )
+
+
+def _bulk_create_candidate_chunk(
+    *,
+    candidates: list[tuple[int, DispatchTaskCreationSpec, str]],
+    result: BulkDispatchTaskCreationResult,
+    batch_size: int,
+    isolation_budget: _IntegrityIsolationBudget | None = None,
+) -> None:
+    """Пакетно создаёт кандидатов и при конфликте изолирует минимальную часть."""
+
     try:
         with transaction.atomic():
             task_objects = [
@@ -492,8 +527,22 @@ def _create_dispatch_task_chunk(
                     interactions,
                     batch_size=batch_size,
                 )
-    except IntegrityError:
-        _create_dispatch_task_chunk_individually(candidates=candidates, result=result)
+    except IntegrityError as error:
+        if isolation_budget is None:
+            isolation_budget = _IntegrityIsolationBudget()
+            logger.warning(
+                "Пакетное создание задач получило конфликт целостности: "
+                "размер_порции=%s предел_изоляции=%s",
+                len(candidates),
+                isolation_budget.remaining,
+            )
+        _isolate_integrity_conflict(
+            candidates=candidates,
+            result=result,
+            batch_size=batch_size,
+            isolation_budget=isolation_budget,
+            original_error=error,
+        )
         return
     except Exception as error:  # noqa: BLE001 - поэлементный результат нужен вызывающей стороне.
         for position, _, _ in candidates:
@@ -502,6 +551,37 @@ def _create_dispatch_task_chunk(
 
     for task, (position, _, _) in zip(created_tasks, candidates, strict=True):
         result.created_tasks[position] = task
+
+
+def _isolate_integrity_conflict(
+    *,
+    candidates: list[tuple[int, DispatchTaskCreationSpec, str]],
+    result: BulkDispatchTaskCreationResult,
+    batch_size: int,
+    isolation_budget: _IntegrityIsolationBudget,
+    original_error: IntegrityError,
+) -> None:
+    """Делит конфликтующую порцию, не допуская поштучного шторма запросов."""
+
+    if len(candidates) == 1:
+        if isolation_budget.consume():
+            _create_dispatch_task_chunk_individually(candidates=candidates, result=result)
+        else:
+            result.errors[candidates[0][0]] = original_error
+        return
+
+    midpoint = len(candidates) // 2
+    for part in (candidates[:midpoint], candidates[midpoint:]):
+        if not isolation_budget.consume():
+            for position, _, _ in part:
+                result.errors[position] = original_error
+            continue
+        _bulk_create_candidate_chunk(
+            candidates=part,
+            result=result,
+            batch_size=batch_size,
+            isolation_budget=isolation_budget,
+        )
 
 
 def _create_dispatch_task_chunk_individually(

@@ -26,6 +26,7 @@ from guests.models import (
     NotificationScenario,
 )
 from guests.services.message_interaction_outgoing import (
+    MAX_INTEGRITY_ISOLATION_OPERATIONS,
     MAX_SIGNED_BIGINT,
     TELEGRAM_CALLBACK_DATA_LIMIT_BYTES,
     DispatchTaskCreationSpec,
@@ -351,6 +352,91 @@ class DispatchTaskInteractionAtomicityTests(TestCase):
         self.assertEqual(set(result.errors), {0, 1, 2})
         individual_create.assert_not_called()
         self.assertEqual(DispatchTask.objects.count(), 0)
+
+    def test_bulk_integrity_conflict_isolates_only_failing_candidate(self):
+        """Один конфликт не переводит всю большую порцию на отдельные вставки."""
+
+        failing_key = "interaction-isolated-failure"
+        specifications = [
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.NONE,
+                interaction_enabled=False,
+                dispatch_task_fields=self._task_fields(
+                    failing_key if index == 37 else f"interaction-isolated-{index}"
+                ),
+            )
+            for index in range(64)
+        ]
+        original_bulk_create = DispatchTask.objects.bulk_create
+        original_individual_create = create_dispatch_task_with_optional_interaction
+
+        def selective_bulk_create(objects, **kwargs):
+            if any(task.idempotency_key == failing_key for task in objects):
+                raise IntegrityError("isolated conflict")
+            return original_bulk_create(objects, **kwargs)
+
+        def selective_individual_create(*, button_set, interaction_enabled, **fields):
+            if fields.get("idempotency_key") == failing_key:
+                raise IntegrityError("isolated conflict")
+            return original_individual_create(
+                button_set=button_set,
+                interaction_enabled=interaction_enabled,
+                **fields,
+            )
+
+        with (
+            patch.object(
+                DispatchTask.objects,
+                "bulk_create",
+                side_effect=selective_bulk_create,
+            ) as bulk_create,
+            patch(
+                "guests.services.message_interaction_outgoing."
+                "create_dispatch_task_with_optional_interaction",
+                side_effect=selective_individual_create,
+            ) as individual_create,
+        ):
+            result = create_dispatch_tasks_with_optional_interactions(specifications)
+
+        self.assertEqual(len(result.created_tasks), 63)
+        self.assertEqual(set(result.errors), {37})
+        self.assertFalse(result.duplicate_positions)
+        self.assertEqual(individual_create.call_count, 1)
+        self.assertLess(bulk_create.call_count, 20)
+
+    def test_systemic_integrity_error_respects_isolation_budget(self):
+        """Системная ошибка не порождает сотни дополнительных транзакций."""
+
+        specifications = [
+            DispatchTaskCreationSpec(
+                button_set=InteractionButtonSet.NONE,
+                interaction_enabled=False,
+                dispatch_task_fields=self._task_fields(f"systemic-failure-{index}"),
+            )
+            for index in range(500)
+        ]
+
+        with (
+            patch.object(
+                DispatchTask.objects,
+                "bulk_create",
+                side_effect=IntegrityError("systemic conflict"),
+            ) as bulk_create,
+            patch(
+                "guests.services.message_interaction_outgoing."
+                "create_dispatch_task_with_optional_interaction",
+                side_effect=IntegrityError("systemic conflict"),
+            ) as individual_create,
+        ):
+            result = create_dispatch_tasks_with_optional_interactions(specifications)
+
+        self.assertEqual(set(result.errors), set(range(500)))
+        self.assertFalse(result.created_tasks)
+        self.assertFalse(result.duplicate_positions)
+        self.assertLessEqual(
+            bulk_create.call_count + individual_create.call_count,
+            MAX_INTEGRITY_ISOLATION_OPERATIONS + 1,
+        )
 
 
 @override_settings(
