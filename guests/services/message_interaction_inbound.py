@@ -12,11 +12,14 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Any, Mapping
 
 from django.conf import settings
-from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from guests.models import InteractionButtonSet, MessageInteraction, MessageInteractionEvent
+from guests.services.message_interaction_rate_limit import (
+    MessageInteractionRateLimitUnavailable,
+    increment_message_interaction_rate_limit,
+)
 
 
 MESSAGE_INTERACTION_CALLBACK_PATH = (
@@ -544,11 +547,17 @@ def _enforce_rate_limit() -> None:
     )
     now_timestamp = int(timezone.now().timestamp())
     minute_bucket = now_timestamp // 60
-    cache_key = f"vtelemax:message-interactions:rate:{minute_bucket}"
-    if cache.add(cache_key, 1, timeout=70):
-        request_count = 1
-    else:
-        request_count = int(cache.incr(cache_key))
+    try:
+        request_count = increment_message_interaction_rate_limit(
+            minute_bucket=minute_bucket,
+        )
+    except MessageInteractionRateLimitUnavailable as error:
+        raise MessageInteractionCallbackError(
+            "Общее ограничение частоты временно недоступно.",
+            status_code=503,
+            code="rate_limit_unavailable",
+            retry_after_seconds=5,
+        ) from error
     if request_count > limit:
         raise MessageInteractionCallbackError(
             "Превышено допустимое число пакетных запросов за минуту.",

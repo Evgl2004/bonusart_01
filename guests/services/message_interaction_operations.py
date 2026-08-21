@@ -38,6 +38,10 @@ from guests.services.message_interaction_outgoing import (
     create_dispatch_task_with_optional_interaction,
     interactions_enabled_for_new_task,
 )
+from guests.services.message_interaction_rate_limit import (
+    MessageInteractionRateLimitUnavailable,
+    check_message_interaction_rate_limit_redis,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -184,6 +188,10 @@ def build_message_interaction_readiness_report(
         details={"required": require_https},
     )
 
+    _collect_rate_limit_redis_check(
+        checks,
+        strict=callback_enabled or require_enabled,
+    )
     _collect_schema_check(checks)
     _collect_provider_checks(
         checks,
@@ -205,6 +213,55 @@ def build_message_interaction_readiness_report(
         "checks": checks,
         "observations": observations,
     }
+
+
+def _collect_rate_limit_redis_check(
+    checks: list[dict[str, Any]],
+    *,
+    strict: bool,
+) -> None:
+    """Проверяет общее хранилище счётчика без вывода адреса Redis."""
+
+    configured = bool(
+        str(
+            getattr(settings, "UNIVERSAL_QUEUE_REDIS_URL", "")
+            or getattr(settings, "REDIS_QUEUE_URL", "")
+            or ""
+        ).strip()
+    )
+    if not configured:
+        _add_check(
+            checks,
+            code="callback_rate_limit_redis",
+            status="blocked" if strict else "warning",
+            message="Общее хранилище ограничения частоты не настроено.",
+            details={"configured": False, "reachable": False},
+        )
+        return
+
+    try:
+        check_message_interaction_rate_limit_redis()
+    except MessageInteractionRateLimitUnavailable as error:
+        _add_check(
+            checks,
+            code="callback_rate_limit_redis",
+            status="blocked" if strict else "warning",
+            message="Общее хранилище ограничения частоты недоступно.",
+            details={
+                "configured": True,
+                "reachable": False,
+                "error_type": type(error.__cause__ or error).__name__,
+            },
+        )
+        return
+
+    _add_check(
+        checks,
+        code="callback_rate_limit_redis",
+        status="ok",
+        message="Общее хранилище ограничения частоты доступно.",
+        details={"configured": True, "reachable": True},
+    )
 
 
 def run_message_interaction_pilot(

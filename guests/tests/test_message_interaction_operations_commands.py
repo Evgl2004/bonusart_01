@@ -26,6 +26,9 @@ from guests.models import (
     MessageTemplate,
     NotificationScenario,
 )
+from guests.services.message_interaction_rate_limit import (
+    MessageInteractionRateLimitUnavailable,
+)
 
 
 READY_SETTINGS = {
@@ -34,6 +37,7 @@ READY_SETTINGS = {
     "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_ENABLED": True,
     "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_HMAC_SECRET": "test-secret",
     "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_REQUIRE_HTTPS": True,
+    "UNIVERSAL_QUEUE_REDIS_URL": "redis://redis:6379/1",
 }
 
 
@@ -42,6 +46,13 @@ class MessageInteractionOperationsCommandTests(TestCase):
     """Проверяет безопасность, идемпотентность и диагностический вывод."""
 
     def setUp(self) -> None:
+        self._redis_readiness_patcher = patch(
+            "guests.services.message_interaction_operations."
+            "check_message_interaction_rate_limit_redis",
+            return_value=None,
+        )
+        self._redis_readiness_patcher.start()
+        self.addCleanup(self._redis_readiness_patcher.stop)
         self.guest = Guest.objects.create(phone="+79990000001", first_name="Пилот")
         self.bot = BotProfile.objects.create(
             code="pilot_telegram_bot",
@@ -91,6 +102,35 @@ class MessageInteractionOperationsCommandTests(TestCase):
         self.assertNotIn("test-secret", raw_output)
         self.assertNotIn("test-token", raw_output)
         self.assertNotIn("secret-recipient-id", raw_output)
+        checks = {item["code"]: item for item in payload["checks"]}
+        self.assertEqual(checks["callback_rate_limit_redis"]["status"], "ok")
+
+    def test_readiness_blocks_unavailable_redis_without_exposing_details(self):
+        """Строгий аудит безопасно блокирует недоступный общий счётчик."""
+
+        output = StringIO()
+        with patch(
+            "guests.services.message_interaction_operations."
+            "check_message_interaction_rate_limit_redis",
+            side_effect=MessageInteractionRateLimitUnavailable(
+                "redis://user:redis-password-marker@private-redis-host"
+            ),
+        ):
+            call_command(
+                "audit_message_interactions_readiness",
+                "--as-json",
+                "--require-enabled",
+                stdout=output,
+            )
+
+        raw_output = output.getvalue()
+        payload = json.loads(raw_output)
+        checks = {item["code"]: item for item in payload["checks"]}
+        redis_check = checks["callback_rate_limit_redis"]
+        self.assertEqual(redis_check["status"], "blocked")
+        self.assertFalse(redis_check["details"]["reachable"])
+        self.assertNotIn("redis-password-marker", raw_output)
+        self.assertNotIn("private-redis-host", raw_output)
 
     @override_settings(
         MESSAGE_INTERACTIONS_ENABLED=False,

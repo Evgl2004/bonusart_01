@@ -7,7 +7,6 @@ import uuid
 from datetime import timedelta
 from unittest.mock import patch
 
-from django.core.cache import cache
 from django.db import connection
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
@@ -23,6 +22,9 @@ from guests.models import (
 from guests.services.message_interaction_inbound import (
     MESSAGE_INTERACTION_CALLBACK_PATH,
     build_vtelemax_message_interaction_signature,
+)
+from guests.services.message_interaction_rate_limit import (
+    MessageInteractionRateLimitUnavailable,
 )
 
 
@@ -60,7 +62,14 @@ class MessageInteractionInboundTests(TestCase):
     """Проверяет полный HTTP-контракт и сохранение событий."""
 
     def setUp(self):
-        cache.clear()
+        self._rate_limit_counts: dict[int, int] = {}
+        self._rate_limit_patcher = patch(
+            "guests.services.message_interaction_inbound."
+            "increment_message_interaction_rate_limit",
+            side_effect=self._increment_rate_limit,
+        )
+        self._rate_limit_patcher.start()
+        self.addCleanup(self._rate_limit_patcher.stop)
         self.now = timezone.now()
         self.menu_interaction = self._create_interaction(
             button_set=InteractionButtonSet.RATING_MENU,
@@ -71,8 +80,10 @@ class MessageInteractionInboundTests(TestCase):
             suffix="coupon",
         )
 
-    def tearDown(self):
-        cache.clear()
+    def _increment_rate_limit(self, *, minute_bucket: int) -> int:
+        current = self._rate_limit_counts.get(minute_bucket, 0) + 1
+        self._rate_limit_counts[minute_bucket] = current
+        return current
 
     @staticmethod
     def _create_interaction(*, button_set: str, suffix: str) -> MessageInteraction:
@@ -607,7 +618,6 @@ class MessageInteractionInboundTests(TestCase):
 
     @override_settings(VTELEMAX_MESSAGE_INTERACTION_CALLBACK_RATE_LIMIT_PER_MINUTE=1)
     def test_rate_limit_returns_retry_after(self):
-        cache.clear()
         first_response = self._post_payload(
             self._payload([self._item(action="m")])
         )
@@ -619,6 +629,21 @@ class MessageInteractionInboundTests(TestCase):
         self.assertEqual(second_response.status_code, 429)
         self.assertEqual(second_response.json()["code"], "rate_limited")
         self.assertGreaterEqual(int(second_response["Retry-After"]), 1)
+
+    def test_unavailable_global_rate_limit_returns_retryable_503(self):
+        """Пакет не обрабатывается без подтверждённого общего счётчика."""
+
+        with patch(
+            "guests.services.message_interaction_inbound."
+            "increment_message_interaction_rate_limit",
+            side_effect=MessageInteractionRateLimitUnavailable("hidden redis details"),
+        ):
+            response = self._post_payload(self._payload([self._item(action="m")]))
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["code"], "rate_limit_unavailable")
+        self.assertEqual(response["Retry-After"], "5")
+        self.assertEqual(MessageInteractionEvent.objects.count(), 0)
 
     def test_unexpected_error_returns_safe_response_without_request_body(self):
         marker = "SECRET-BODY-MARKER"
