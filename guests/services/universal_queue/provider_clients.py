@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict
@@ -86,6 +87,33 @@ class BaseAsyncProviderSender:
         Отправляет одно сообщение и возвращает метаданные доставки.
         """
         raise NotImplementedError
+
+
+def _extract_max_message_id(response_data: Mapping[str, Any]) -> str | None:
+    """Извлекает подтверждённый идентификатор сообщения из ответа MAX.
+
+    Фактический ответ MAX содержит идентификатор в ``message.body.mid`` либо
+    ``body.mid``. Верхнеуровневые варианты сохранены для совместимости с
+    ранее встречавшимися ответами и тестовыми шлюзами.
+    """
+
+    nested_message = response_data.get("message")
+    message = nested_message if isinstance(nested_message, Mapping) else response_data
+    body = message.get("body") if isinstance(message, Mapping) else None
+    candidates = (
+        body.get("mid") if isinstance(body, Mapping) else None,
+        message.get("mid") if isinstance(message, Mapping) else None,
+        message.get("message_id") if isinstance(message, Mapping) else None,
+        response_data.get("message_id"),
+        response_data.get("id"),
+    )
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        normalized = str(candidate).strip()
+        if normalized:
+            return normalized
+    return None
 
 
 def _float_setting(name: str, default: float) -> float:
@@ -340,9 +368,9 @@ class MaxAsyncSender(BaseAsyncProviderSender):
                 f"MAX rejected request: status={response.status_code} body={response.text[:500]}"
             )
 
-        message_id = response_data.get("message_id") or response_data.get("id")
+        message_id = _extract_max_message_id(response_data)
         return ProviderSendResult(
-            provider_message_id=str(message_id) if message_id is not None else None,
+            provider_message_id=message_id,
             sent_at=timezone.now(),
             raw_response=response_data,
         )

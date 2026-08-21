@@ -46,6 +46,7 @@ from guests.services.universal_queue.provider_clients import (
     ProviderTemporaryError,
     TelegramAsyncSender,
     VkAsyncSender,
+    _extract_max_message_id,
     _resolve_bot_token,
     build_provider_sender,
 )
@@ -939,6 +940,46 @@ class ProviderClientHelpersTests(SimpleTestCase):
         self.assertEqual(call_kwargs["params"], {"user_id": "user-100"})
         self.assertEqual(call_kwargs["headers"], {"Authorization": "max_token_1"})
         self.assertEqual(call_kwargs["json"], {"text": "MAX text"})
+
+    @override_settings(MAX_API_BASE_URL="https://platform-api.max.ru")
+    def test_max_sender_returns_confirmed_nested_body_mid(self):
+        """Производственный отправитель сохраняет фактический ``Message.body.mid``."""
+
+        sender = MaxAsyncSender()
+        sender.client = Mock()
+        sender.client.post = AsyncMock(
+            return_value=self._response(
+                200,
+                json_data={
+                    "message": {"body": {"mid": " mid.confirmed.001 "}},
+                    "id": "legacy-top-level-id",
+                },
+            )
+        )
+        task = self._TaskStub(
+            bot_profile=self._BotProfileStub("max_token_nested"),
+            payload={"max_user_id": "user-101"},
+        )
+
+        result = async_to_sync(sender.send)(task, "chat-ignored", "MAX nested")
+
+        self.assertEqual(result.provider_message_id, "mid.confirmed.001")
+
+    def test_max_message_id_uses_supported_fallbacks_and_rejects_empty_values(self):
+        """Резервные форматы сохраняются, а пустой ответ не создаёт фиктивный ID."""
+
+        cases = (
+            ({"body": {"mid": "mid.body"}}, "mid.body"),
+            ({"mid": 12345}, "12345"),
+            ({"message_id": "message-id"}, "message-id"),
+            ({"id": "legacy-id"}, "legacy-id"),
+            ({"message": {"body": "invalid", "mid": "  "}, "id": "fallback"}, "fallback"),
+            ({"message": {"body": {"mid": None}}, "message_id": "  "}, None),
+        )
+
+        for response_data, expected in cases:
+            with self.subTest(response_data=response_data):
+                self.assertEqual(_extract_max_message_id(response_data), expected)
 
     @override_settings(MAX_API_BASE_URL="https://platform-api.max.ru")
     def test_max_sender_uses_external_chat_id_as_user_id_by_default(self):
