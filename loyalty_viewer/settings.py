@@ -331,14 +331,34 @@ LOGGING = {
         },
     },
 
+    "filters": {
+        "redact_telegram_bot_tokens": {
+            "()": "guests.logging_filters.TelegramBotTokenRedactingFilter",
+        },
+    },
+
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "simple",
+            "filters": ["redact_telegram_bot_tokens"],
         },
     },
 
     "loggers": {
+        # HTTPX включает полный URL запроса в сообщения уровня INFO. Для
+        # Telegram Bot API URL содержит токен, поэтому информационные записи
+        # HTTP-клиента запрещены независимо от уровня корневого логгера.
+        "httpx": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
+        "httpcore": {
+            "handlers": ["console"],
+            "level": "WARNING",
+            "propagate": False,
+        },
         # Логгер для приложения guests
         "guests": {
             "handlers": ["console"],
