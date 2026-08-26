@@ -52,8 +52,14 @@ PG_PASSWORD=your_password
 PG_HOST=localhost
 PG_PORT=5432
 
-IIKO_API_KEY=your_iiko_api_key
-IIKO_API_BASE_URL=
+IIKO_AUTH_MODE=legacy
+IIKO_LEGACY_API_LOGIN=your_current_api_login
+IIKO_LEGACY_AUTH_URL=https://api-ru.iiko.services/api/1/access_token
+IIKO_APP_ID=your_app_id
+IIKO_CLIENT_SECRET=your_client_secret
+IIKO_API_KEY=your_new_api_key
+IIKO_AUTH_URL=https://api-ru.iiko.services/api/v2/access_token
+IIKO_API_BASE_URL=https://api-ru.iiko.services/api/1
 IIKO_ORGANIZATION_ID=your_organization_id
 
 SAGUR_BASE_URL=
