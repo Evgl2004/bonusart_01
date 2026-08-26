@@ -614,6 +614,16 @@ MESSAGE_INTERACTIONS_ENABLED = _env_bool("MESSAGE_INTERACTIONS_ENABLED", False)
 MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS = _env_text_set(
     "MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS",
 )
+# Отдельный аварийный переключатель формирования новых отслеживаемых ссылок.
+MESSAGE_TRACKED_LINKS_ENABLED = _env_bool("MESSAGE_TRACKED_LINKS_ENABLED", False)
+# Точный внешний префикс, например https://sagur.example/r/v1/.
+MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL = str(
+    os.getenv("MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL", "") or ""
+).strip()
+# Закрытый перечень доменов конечного перенаправления без схемы и пути.
+MESSAGE_TRACKED_LINK_ALLOWED_HOSTS = _env_text_set(
+    "MESSAGE_TRACKED_LINK_ALLOWED_HOSTS",
+)
 VTELEMAX_MESSAGE_INTERACTION_CALLBACK_ENABLED = _env_bool(
     "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_ENABLED",
     False,

@@ -313,6 +313,7 @@ class AsyncProviderWorker:
             "bot_profile",
             "guest_binding",
             "message_interaction",
+            "message_interaction__tracked_link",
         ).get(id=task_id)
 
     @staticmethod

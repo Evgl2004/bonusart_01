@@ -192,6 +192,12 @@ def enqueue_mailing_rows_as_dispatch_tasks(
         target_mode=target_mode,
     )
     coupon_assignments_map = _build_coupon_assignments_map(mailing, guest_ids)
+    mailing_button_set = getattr(mailing, "button_set", InteractionButtonSet.NONE)
+    tracked_link_destination = (
+        mailing.tracked_link_destination
+        if mailing_button_set == InteractionButtonSet.RATING_MENU_LINK
+        else None
+    )
 
     specifications: list[DispatchTaskCreationSpec] = []
     row_plans: list[_MailingRowDispatchPlan] = []
@@ -248,12 +254,13 @@ def enqueue_mailing_rows_as_dispatch_tasks(
             row_plan.specification_positions.append(position)
             specifications.append(
                 DispatchTaskCreationSpec(
-                    button_set=getattr(mailing, "button_set", InteractionButtonSet.NONE),
+                    button_set=mailing_button_set,
                     interaction_enabled=(
                         channel_mode == CHANNEL_MODE_BINDING
                         and target.get("guest_binding") is not None
                         and interactions_enabled_for_new_task(provider_type)
                     ),
+                    tracked_link_destination=tracked_link_destination,
                     dispatch_task_fields={
                         "source_type": DispatchTask.SourceType.MAILING,
                         "provider_type": provider_type,

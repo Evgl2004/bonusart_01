@@ -13,13 +13,25 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import secrets
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
 from django.db import IntegrityError, transaction
 
-from guests.models import DispatchTask, InteractionButtonSet, MessageInteraction
+from guests.models import (
+    DispatchTask,
+    InteractionButtonSet,
+    InteractionLinkLabelCode,
+    MessageInteraction,
+    MessageInteractionLinkDestination,
+    MessageInteractionTrackedLink,
+)
 
 
 SERVICE_DATA_TYPE = "si"
@@ -27,6 +39,11 @@ SERVICE_DATA_VERSION = 2
 MAX_SIGNED_BIGINT = 9_223_372_036_854_775_807
 TELEGRAM_CALLBACK_DATA_LIMIT_BYTES = 64
 MAX_INTEGRITY_ISOLATION_OPERATIONS = 64
+PUBLIC_TOKEN_BYTES = 24
+PUBLIC_TOKEN_LENGTH = 32
+PUBLIC_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32}$")
+PUBLIC_REDIRECT_PATH_PREFIX = "/r/v1/"
+MAX_TRACKED_LINK_TOKEN_ATTEMPTS = 3
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +64,7 @@ class DispatchTaskCreationSpec:
     button_set: str
     interaction_enabled: bool
     dispatch_task_fields: dict[str, Any]
+    tracked_link_destination: MessageInteractionLinkDestination | None = None
 
 
 @dataclass
@@ -72,12 +90,39 @@ class _IntegrityIsolationBudget:
 
 
 @dataclass(frozen=True)
-class NormalizedInteractionButton:
-    """Платформенно-независимое описание одной кнопки."""
+class _TrackedLinkSnapshotSpec:
+    """Проверенные неизменяемые данные ссылки для конкретного сообщения."""
+
+    label_code: str
+    target_url: str
+
+
+_NormalizedCreationSpec = tuple[
+    int,
+    DispatchTaskCreationSpec,
+    str,
+    _TrackedLinkSnapshotSpec | None,
+]
+
+
+@dataclass(frozen=True)
+class NormalizedCallbackButton:
+    """Платформенно-независимое описание обратной кнопки."""
 
     action: str
     text: str
     service_data: str
+
+
+@dataclass(frozen=True)
+class NormalizedLinkButton:
+    """Платформенно-независимое описание обычной URL-кнопки."""
+
+    text: str
+    url: str
+
+
+NormalizedInteractionButton = NormalizedCallbackButton | NormalizedLinkButton
 
 
 BUTTON_LABELS: dict[str, str] = {
@@ -90,6 +135,7 @@ BUTTON_LABELS: dict[str, str] = {
 BUTTON_SET_ROWS: dict[str, tuple[tuple[str, ...], ...]] = {
     InteractionButtonSet.RATING_MENU: (("l", "d"), ("m",)),
     InteractionButtonSet.RATING_COUPONS: (("l", "d"), ("c",)),
+    InteractionButtonSet.RATING_MENU_LINK: (("l", "d"), ("link",), ("m",)),
 }
 
 # Первый символ обозначает фактически нажатую кнопку, оставшиеся символы —
@@ -104,6 +150,11 @@ COMPOSITE_ACTIONS: dict[str, dict[str, str]] = {
         "l": "ldc",
         "d": "dlc",
         "c": "cld",
+    },
+    InteractionButtonSet.RATING_MENU_LINK: {
+        "l": "ldm",
+        "d": "dlm",
+        "m": "mld",
     },
 }
 
@@ -120,6 +171,9 @@ VK_BUTTON_COLORS: dict[str, str] = {
     "c": "primary",
     "m": "primary",
 }
+
+LINK_LABELS = dict(InteractionLinkLabelCode.choices)
+URL_VALIDATOR = URLValidator(schemes=["https"])
 
 
 def interactions_enabled_for_new_task(provider_type: str) -> bool:
@@ -155,12 +209,182 @@ def _normalize_button_set(button_set: str) -> str:
         InteractionButtonSet.NONE,
         InteractionButtonSet.RATING_MENU,
         InteractionButtonSet.RATING_COUPONS,
+        InteractionButtonSet.RATING_MENU_LINK,
     }
     if normalized not in allowed:
         raise MessageInteractionConfigurationError(
             f"Неизвестный набор интерактивных кнопок: {normalized!r}."
         )
     return normalized
+
+
+def _normalize_allowed_destination_hosts() -> frozenset[str]:
+    """Возвращает закрытый перечень доменов конечного перенаправления."""
+
+    raw_hosts = getattr(settings, "MESSAGE_TRACKED_LINK_ALLOWED_HOSTS", set())
+    if isinstance(raw_hosts, str):
+        raw_hosts = raw_hosts.split(",")
+    return frozenset(
+        str(host or "").strip().lower().rstrip(".")
+        for host in raw_hosts
+        if str(host or "").strip()
+    )
+
+
+def _validate_https_url(*, value: str, purpose: str) -> str:
+    """Строго проверяет защищённый адрес без пользовательских данных."""
+
+    normalized = str(value or "").strip()
+    try:
+        URL_VALIDATOR(normalized)
+        parsed = urlsplit(normalized)
+        port = parsed.port
+    except (ValidationError, ValueError) as error:
+        raise MessageInteractionConfigurationError(
+            f"{purpose} должен быть корректным HTTPS-адресом."
+        ) from error
+
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        raise MessageInteractionConfigurationError(
+            f"{purpose} должен использовать HTTPS без пользовательских данных и нестандартного порта."
+        )
+    return normalized
+
+
+def _normalize_tracked_link_snapshot(
+    *,
+    button_set: str,
+    interaction_enabled: bool,
+    destination: MessageInteractionLinkDestination | None,
+) -> _TrackedLinkSnapshotSpec | None:
+    """Проверяет назначение и формирует неизменяемый снимок новой ссылки."""
+
+    if button_set != InteractionButtonSet.RATING_MENU_LINK:
+        if destination is not None:
+            raise MessageInteractionConfigurationError(
+                "Назначение ссылки передано для набора кнопок без ссылки."
+            )
+        return None
+
+    # Исторический маршрут намеренно получает обычное сообщение без кнопок.
+    if not interaction_enabled:
+        return None
+    if not bool(getattr(settings, "MESSAGE_TRACKED_LINKS_ENABLED", False)):
+        raise MessageInteractionConfigurationError(
+            "Формирование новых отслеживаемых ссылок выключено."
+        )
+    if destination is None:
+        raise MessageInteractionConfigurationError(
+            "Для набора «Оценка, ссылка и главное меню» не выбрано назначение ссылки."
+        )
+    if (
+        not isinstance(destination, MessageInteractionLinkDestination)
+        or destination.pk is None
+    ):
+        raise MessageInteractionConfigurationError(
+            "Назначение ссылки должно быть сохранённой записью утверждённого справочника."
+        )
+    if not destination.is_active:
+        raise MessageInteractionConfigurationError(
+            "Выбранное назначение отслеживаемой ссылки неактивно."
+        )
+
+    label_code = str(destination.label_code or "").strip()
+    if label_code not in LINK_LABELS:
+        raise MessageInteractionConfigurationError(
+            "У назначения ссылки указана неподдерживаемая подпись кнопки."
+        )
+    target_url = _validate_https_url(
+        value=destination.target_url,
+        purpose="Конечный адрес отслеживаемой ссылки",
+    )
+    target_host = str(urlsplit(target_url).hostname or "").lower().rstrip(".")
+    allowed_hosts = _normalize_allowed_destination_hosts()
+    if target_host not in allowed_hosts:
+        raise MessageInteractionConfigurationError(
+            "Домен конечного адреса отсутствует в разрешённом перечне."
+        )
+    return _TrackedLinkSnapshotSpec(
+        label_code=label_code,
+        target_url=target_url,
+    )
+
+
+def _generate_public_token() -> str:
+    """Создаёт 192-битный токен Base64URL без заполнения."""
+
+    token = secrets.token_urlsafe(PUBLIC_TOKEN_BYTES)
+    if len(token) != PUBLIC_TOKEN_LENGTH or PUBLIC_TOKEN_PATTERN.fullmatch(token) is None:
+        raise MessageInteractionConfigurationError(
+            "Генератор вернул публичный токен неожиданного формата."
+        )
+    return token
+
+
+def _create_tracked_link(
+    *,
+    interaction: MessageInteraction,
+    snapshot: _TrackedLinkSnapshotSpec,
+) -> MessageInteractionTrackedLink:
+    """Создаёт снимок ссылки, ограниченно повторяя только конфликт токена."""
+
+    last_error: IntegrityError | None = None
+    for attempt in range(1, MAX_TRACKED_LINK_TOKEN_ATTEMPTS + 1):
+        public_token = _generate_public_token()
+        try:
+            with transaction.atomic():
+                return MessageInteractionTrackedLink.objects.create(
+                    interaction=interaction,
+                    public_token=public_token,
+                    label_code=snapshot.label_code,
+                    target_url=snapshot.target_url,
+                )
+        except IntegrityError as error:
+            if not MessageInteractionTrackedLink.objects.filter(
+                public_token=public_token
+            ).exists():
+                raise
+            last_error = error
+            logger.warning(
+                "Конфликт публичного токена отслеживаемой ссылки: "
+                "interaction_id=%s попытка=%s из=%s",
+                interaction.id,
+                attempt,
+                MAX_TRACKED_LINK_TOKEN_ATTEMPTS,
+            )
+    if last_error is None:  # Защитная ветка при изменении числа попыток.
+        raise MessageInteractionConfigurationError(
+            "Не выполнена ни одна попытка создания отслеживаемой ссылки."
+        )
+    raise last_error
+
+
+def _build_public_redirect_url(public_token: str) -> str:
+    """Формирует точный внешний адрес перехода по публичному токену."""
+
+    if PUBLIC_TOKEN_PATTERN.fullmatch(str(public_token or "")) is None:
+        raise MessageInteractionConfigurationError(
+            "Публичный токен отслеживаемой ссылки имеет неверный формат."
+        )
+    raw_base_url = str(
+        getattr(settings, "MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL", "") or ""
+    ).strip()
+    base_url = _validate_https_url(
+        value=raw_base_url,
+        purpose="Публичный адрес службы переходов",
+    )
+    parsed = urlsplit(base_url)
+    if parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/r/v1":
+        raise MessageInteractionConfigurationError(
+            "Публичный адрес службы переходов должен оканчиваться точным путём /r/v1/."
+        )
+    return f"{parsed.scheme}://{parsed.netloc}{PUBLIC_REDIRECT_PATH_PREFIX}{public_token}"
 
 
 def build_service_data(*, interaction_id: int, button_set: str, action: str) -> str:
@@ -215,8 +439,9 @@ def build_normalized_button_rows(
     *,
     interaction_id: int,
     button_set: str,
+    tracked_link: MessageInteractionTrackedLink | None = None,
 ) -> tuple[tuple[NormalizedInteractionButton, ...], ...]:
-    """Строит утверждённую двухрядную раскладку без привязки к платформе."""
+    """Строит утверждённую раскладку без привязки к платформе."""
 
     normalized_set = _normalize_button_set(button_set)
     rows = BUTTON_SET_ROWS.get(normalized_set)
@@ -225,38 +450,73 @@ def build_normalized_button_rows(
             "Интерактивность сообщения не может использовать набор «Без кнопок»."
         )
 
-    return tuple(
-        tuple(
-            NormalizedInteractionButton(
-                action=action,
-                text=BUTTON_LABELS[action],
-                service_data=build_service_data(
-                    interaction_id=interaction_id,
-                    button_set=normalized_set,
-                    action=action,
-                ),
+    link_button: NormalizedLinkButton | None = None
+    if normalized_set == InteractionButtonSet.RATING_MENU_LINK:
+        if tracked_link is None:
+            raise MessageInteractionConfigurationError(
+                "Для ссылочного набора отсутствует неизменяемый снимок ссылки."
             )
-            for action in row
+        if tracked_link.disabled_at is not None:
+            raise MessageInteractionConfigurationError(
+                "Отслеживаемая ссылка отключена и не может быть отправлена."
+            )
+        link_text = LINK_LABELS.get(str(tracked_link.label_code or "").strip())
+        if not link_text:
+            raise MessageInteractionConfigurationError(
+                "Снимок отслеживаемой ссылки содержит неподдерживаемую подпись."
+            )
+        link_button = NormalizedLinkButton(
+            text=link_text,
+            url=_build_public_redirect_url(tracked_link.public_token),
         )
-        for row in rows
-    )
+    elif tracked_link is not None:
+        raise MessageInteractionConfigurationError(
+            "Снимок ссылки найден у набора кнопок без ссылки."
+        )
+
+    normalized_rows: list[tuple[NormalizedInteractionButton, ...]] = []
+    for row in rows:
+        normalized_row: list[NormalizedInteractionButton] = []
+        for action in row:
+            if action == "link":
+                if link_button is None:  # Защита от несогласованной схемы рядов.
+                    raise MessageInteractionConfigurationError(
+                        "Ссылочная кнопка не была подготовлена."
+                    )
+                normalized_row.append(link_button)
+                continue
+            normalized_row.append(
+                NormalizedCallbackButton(
+                    action=action,
+                    text=BUTTON_LABELS[action],
+                    service_data=build_service_data(
+                        interaction_id=interaction_id,
+                        button_set=normalized_set,
+                        action=action,
+                    ),
+                )
+            )
+        normalized_rows.append(tuple(normalized_row))
+    return tuple(normalized_rows)
 
 
-def build_telegram_reply_markup(*, interaction_id: int, button_set: str) -> dict[str, Any]:
+def build_telegram_reply_markup(
+    *,
+    interaction_id: int,
+    button_set: str,
+    tracked_link: MessageInteractionTrackedLink | None = None,
+) -> dict[str, Any]:
     """Формирует встроенную клавиатуру Telegram."""
 
     rows = build_normalized_button_rows(
         interaction_id=interaction_id,
         button_set=button_set,
+        tracked_link=tracked_link,
     )
     return {
         "inline_keyboard": [
             [
-                {
-                    "text": button.text,
-                    "callback_data": button.service_data,
-                    "style": TELEGRAM_BUTTON_STYLES[button.action],
-                }
+                _build_telegram_button(button)
                 for button in row
             ]
             for row in rows
@@ -264,26 +524,37 @@ def build_telegram_reply_markup(*, interaction_id: int, button_set: str) -> dict
     }
 
 
-def build_vk_keyboard(*, interaction_id: int, button_set: str) -> dict[str, Any]:
+def _build_telegram_button(button: NormalizedInteractionButton) -> dict[str, str]:
+    """Преобразует одну нормализованную кнопку для Telegram."""
+
+    if isinstance(button, NormalizedLinkButton):
+        return {"text": button.text, "url": button.url, "style": "primary"}
+    return {
+        "text": button.text,
+        "callback_data": button.service_data,
+        "style": TELEGRAM_BUTTON_STYLES[button.action],
+    }
+
+
+def build_vk_keyboard(
+    *,
+    interaction_id: int,
+    button_set: str,
+    tracked_link: MessageInteractionTrackedLink | None = None,
+) -> dict[str, Any]:
     """Формирует встроенную клавиатуру VK."""
 
     rows = build_normalized_button_rows(
         interaction_id=interaction_id,
         button_set=button_set,
+        tracked_link=tracked_link,
     )
     return {
         "one_time": False,
         "inline": True,
         "buttons": [
             [
-                {
-                    "action": {
-                        "type": "callback",
-                        "label": button.text,
-                        "payload": button.service_data,
-                    },
-                    "color": VK_BUTTON_COLORS[button.action],
-                }
+                _build_vk_button(button)
                 for button in row
             ]
             for row in rows
@@ -291,12 +562,40 @@ def build_vk_keyboard(*, interaction_id: int, button_set: str) -> dict[str, Any]
     }
 
 
-def build_max_attachments(*, interaction_id: int, button_set: str) -> list[dict[str, Any]]:
+def _build_vk_button(button: NormalizedInteractionButton) -> dict[str, Any]:
+    """Преобразует одну нормализованную кнопку для VK."""
+
+    if isinstance(button, NormalizedLinkButton):
+        return {
+            "action": {
+                "type": "open_link",
+                "label": button.text,
+                "link": button.url,
+            },
+            "color": "primary",
+        }
+    return {
+        "action": {
+            "type": "callback",
+            "label": button.text,
+            "payload": button.service_data,
+        },
+        "color": VK_BUTTON_COLORS[button.action],
+    }
+
+
+def build_max_attachments(
+    *,
+    interaction_id: int,
+    button_set: str,
+    tracked_link: MessageInteractionTrackedLink | None = None,
+) -> list[dict[str, Any]]:
     """Формирует вложение со встроенной клавиатурой MAX."""
 
     rows = build_normalized_button_rows(
         interaction_id=interaction_id,
         button_set=button_set,
+        tracked_link=tracked_link,
     )
     return [
         {
@@ -304,11 +603,7 @@ def build_max_attachments(*, interaction_id: int, button_set: str) -> list[dict[
             "payload": {
                 "buttons": [
                     [
-                        {
-                            "type": "callback",
-                            "text": button.text,
-                            "payload": button.service_data,
-                        }
+                        _build_max_button(button)
                         for button in row
                     ]
                     for row in rows
@@ -316,6 +611,18 @@ def build_max_attachments(*, interaction_id: int, button_set: str) -> list[dict[
             },
         }
     ]
+
+
+def _build_max_button(button: NormalizedInteractionButton) -> dict[str, str]:
+    """Преобразует одну нормализованную кнопку для MAX."""
+
+    if isinstance(button, NormalizedLinkButton):
+        return {"type": "link", "text": button.text, "url": button.url}
+    return {
+        "type": "callback",
+        "text": button.text,
+        "payload": button.service_data,
+    }
 
 
 def build_provider_interaction_parameters(
@@ -335,18 +642,29 @@ def build_provider_interaction_parameters(
     except (AttributeError, MessageInteraction.DoesNotExist):
         return {}
 
+    tracked_link: MessageInteractionTrackedLink | None = None
+    if interaction.button_set == InteractionButtonSet.RATING_MENU_LINK:
+        try:
+            tracked_link = interaction.tracked_link
+        except (AttributeError, MessageInteractionTrackedLink.DoesNotExist) as error:
+            raise MessageInteractionConfigurationError(
+                "Для ссылочного набора сообщения не найден снимок ссылки."
+            ) from error
+
     provider = str(provider_type or "").strip().lower()
     if provider == "telegram":
         return {
             "reply_markup": build_telegram_reply_markup(
                 interaction_id=interaction.id,
                 button_set=interaction.button_set,
+                tracked_link=tracked_link,
             )
         }
     if provider == "vk":
         keyboard = build_vk_keyboard(
             interaction_id=interaction.id,
             button_set=interaction.button_set,
+            tracked_link=tracked_link,
         )
         return {
             "keyboard": json.dumps(
@@ -360,6 +678,7 @@ def build_provider_interaction_parameters(
             "attachments": build_max_attachments(
                 interaction_id=interaction.id,
                 button_set=interaction.button_set,
+                tracked_link=tracked_link,
             )
         }
     raise MessageInteractionConfigurationError(
@@ -371,6 +690,7 @@ def create_dispatch_task_with_optional_interaction(
     *,
     button_set: str,
     interaction_enabled: bool,
+    tracked_link_destination: MessageInteractionLinkDestination | None = None,
     **dispatch_task_fields: Any,
 ) -> DispatchTask:
     """Атомарно создаёт задачу и, при необходимости, интерактивность.
@@ -381,14 +701,24 @@ def create_dispatch_task_with_optional_interaction(
     """
 
     normalized_set = _normalize_button_set(button_set)
+    link_snapshot = _normalize_tracked_link_snapshot(
+        button_set=normalized_set,
+        interaction_enabled=interaction_enabled,
+        destination=tracked_link_destination,
+    )
     try:
         with transaction.atomic():
             task = DispatchTask.objects.create(**dispatch_task_fields)
             if interaction_enabled and normalized_set != InteractionButtonSet.NONE:
-                MessageInteraction.objects.create(
+                interaction = MessageInteraction.objects.create(
                     dispatch_task=task,
                     button_set=normalized_set,
                 )
+                if link_snapshot is not None:
+                    _create_tracked_link(
+                        interaction=interaction,
+                        snapshot=link_snapshot,
+                    )
     except IntegrityError as error:
         idempotency_key = dispatch_task_fields.get("idempotency_key")
         if idempotency_key and DispatchTask.objects.filter(idempotency_key=idempotency_key).exists():
@@ -421,14 +751,21 @@ def create_dispatch_tasks_with_optional_interactions(
         return result
 
     safe_batch_size = min(max(int(batch_size), 1), 1000)
-    normalized_specs: list[tuple[int, DispatchTaskCreationSpec, str]] = []
+    normalized_specs: list[_NormalizedCreationSpec] = []
     for position, specification in enumerate(specifications):
         try:
             normalized_set = _normalize_button_set(specification.button_set)
+            link_snapshot = _normalize_tracked_link_snapshot(
+                button_set=normalized_set,
+                interaction_enabled=specification.interaction_enabled,
+                destination=specification.tracked_link_destination,
+            )
         except Exception as error:  # noqa: BLE001 - нужен поэлементный результат.
             result.errors[position] = error
             continue
-        normalized_specs.append((position, specification, normalized_set))
+        normalized_specs.append(
+            (position, specification, normalized_set, link_snapshot)
+        )
 
     for offset in range(0, len(normalized_specs), safe_batch_size):
         chunk = normalized_specs[offset : offset + safe_batch_size]
@@ -442,7 +779,7 @@ def create_dispatch_tasks_with_optional_interactions(
 
 def _create_dispatch_task_chunk(
     *,
-    chunk: list[tuple[int, DispatchTaskCreationSpec, str]],
+    chunk: list[_NormalizedCreationSpec],
     result: BulkDispatchTaskCreationResult,
     batch_size: int,
 ) -> None:
@@ -450,7 +787,7 @@ def _create_dispatch_task_chunk(
 
     idempotency_keys = {
         str(specification.dispatch_task_fields.get("idempotency_key") or "").strip()
-        for _, specification, _ in chunk
+        for _, specification, _, _ in chunk
         if str(specification.dispatch_task_fields.get("idempotency_key") or "").strip()
     }
     try:
@@ -461,13 +798,13 @@ def _create_dispatch_task_chunk(
             )
         )
     except Exception as error:  # noqa: BLE001 - команда выше получит поэлементную ошибку.
-        for position, _, _ in chunk:
+        for position, _, _, _ in chunk:
             result.errors[position] = error
         return
 
-    candidates: list[tuple[int, DispatchTaskCreationSpec, str]] = []
+    candidates: list[_NormalizedCreationSpec] = []
     for item in chunk:
-        position, specification, _ = item
+        position, specification, _, _ = item
         idempotency_key = str(
             specification.dispatch_task_fields.get("idempotency_key") or ""
         ).strip()
@@ -487,7 +824,7 @@ def _create_dispatch_task_chunk(
 
 def _bulk_create_candidate_chunk(
     *,
-    candidates: list[tuple[int, DispatchTaskCreationSpec, str]],
+    candidates: list[_NormalizedCreationSpec],
     result: BulkDispatchTaskCreationResult,
     batch_size: int,
     isolation_budget: _IntegrityIsolationBudget | None = None,
@@ -498,7 +835,7 @@ def _bulk_create_candidate_chunk(
         with transaction.atomic():
             task_objects = [
                 DispatchTask(**specification.dispatch_task_fields)
-                for _, specification, _ in candidates
+                for _, specification, _, _ in candidates
             ]
             created_tasks = DispatchTask.objects.bulk_create(
                 task_objects,
@@ -509,22 +846,47 @@ def _bulk_create_candidate_chunk(
                     "База данных не вернула идентификаторы пакетно созданных задач."
                 )
 
-            interactions = [
-                MessageInteraction(
-                    dispatch_task=task,
-                    button_set=normalized_set,
+            interactions: list[MessageInteraction] = []
+            link_snapshots: list[_TrackedLinkSnapshotSpec | None] = []
+            for task, (_, specification, normalized_set, link_snapshot) in zip(
+                created_tasks,
+                candidates,
+                strict=True,
+            ):
+                if (
+                    not specification.interaction_enabled
+                    or normalized_set == InteractionButtonSet.NONE
+                ):
+                    continue
+                interactions.append(
+                    MessageInteraction(
+                        dispatch_task=task,
+                        button_set=normalized_set,
+                    )
                 )
-                for task, (_, specification, normalized_set) in zip(
-                    created_tasks,
-                    candidates,
-                    strict=True,
-                )
-                if specification.interaction_enabled
-                and normalized_set != InteractionButtonSet.NONE
-            ]
+                link_snapshots.append(link_snapshot)
             if interactions:
                 MessageInteraction.objects.bulk_create(
                     interactions,
+                    batch_size=batch_size,
+                )
+            tracked_links = [
+                MessageInteractionTrackedLink(
+                    interaction=interaction,
+                    public_token=_generate_public_token(),
+                    label_code=link_snapshot.label_code,
+                    target_url=link_snapshot.target_url,
+                )
+                for interaction, link_snapshot in zip(
+                    interactions,
+                    link_snapshots,
+                    strict=True,
+                )
+                if link_snapshot is not None
+            ]
+            if tracked_links:
+                MessageInteractionTrackedLink.objects.bulk_create(
+                    tracked_links,
                     batch_size=batch_size,
                 )
     except IntegrityError as error:
@@ -545,17 +907,17 @@ def _bulk_create_candidate_chunk(
         )
         return
     except Exception as error:  # noqa: BLE001 - поэлементный результат нужен вызывающей стороне.
-        for position, _, _ in candidates:
+        for position, _, _, _ in candidates:
             result.errors[position] = error
         return
 
-    for task, (position, _, _) in zip(created_tasks, candidates, strict=True):
+    for task, (position, _, _, _) in zip(created_tasks, candidates, strict=True):
         result.created_tasks[position] = task
 
 
 def _isolate_integrity_conflict(
     *,
-    candidates: list[tuple[int, DispatchTaskCreationSpec, str]],
+    candidates: list[_NormalizedCreationSpec],
     result: BulkDispatchTaskCreationResult,
     batch_size: int,
     isolation_budget: _IntegrityIsolationBudget,
@@ -573,7 +935,7 @@ def _isolate_integrity_conflict(
     midpoint = len(candidates) // 2
     for part in (candidates[:midpoint], candidates[midpoint:]):
         if not isolation_budget.consume():
-            for position, _, _ in part:
+            for position, _, _, _ in part:
                 result.errors[position] = original_error
             continue
         _bulk_create_candidate_chunk(
@@ -586,16 +948,17 @@ def _isolate_integrity_conflict(
 
 def _create_dispatch_task_chunk_individually(
     *,
-    candidates: list[tuple[int, DispatchTaskCreationSpec, str]],
+    candidates: list[_NormalizedCreationSpec],
     result: BulkDispatchTaskCreationResult,
 ) -> None:
     """Разбирает только порцию, в которой возник конфликт целостности."""
 
-    for position, specification, _ in candidates:
+    for position, specification, _, _ in candidates:
         try:
             task = create_dispatch_task_with_optional_interaction(
                 button_set=specification.button_set,
                 interaction_enabled=specification.interaction_enabled,
+                tracked_link_destination=specification.tracked_link_destination,
                 **specification.dispatch_task_fields,
             )
         except DispatchTaskAlreadyExists:

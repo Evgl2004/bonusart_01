@@ -37,6 +37,7 @@ _OPTIONAL_ITEM_FIELDS = {"provider_message_id"}
 _ACTIONS_BY_BUTTON_SET = {
     InteractionButtonSet.RATING_MENU: {"l", "d", "m"},
     InteractionButtonSet.RATING_COUPONS: {"l", "d", "c"},
+    InteractionButtonSet.RATING_MENU_LINK: {"l", "d", "m"},
 }
 
 

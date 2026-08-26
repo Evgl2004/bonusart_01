@@ -181,6 +181,17 @@ def enqueue_guest_notification_tasks(
     now = timezone.now()
     task_available_at = available_at if available_at is not None else now
     safe_source_key = str(source_key or "").strip()
+    button_set = (
+        notification_scenario.button_set
+        if notification_scenario is not None
+        else InteractionButtonSet.NONE
+    )
+    tracked_link_destination = (
+        notification_scenario.tracked_link_destination
+        if notification_scenario is not None
+        and button_set == InteractionButtonSet.RATING_MENU_LINK
+        else None
+    )
     specifications: list[DispatchTaskCreationSpec] = []
 
     for target in targets:
@@ -195,12 +206,9 @@ def enqueue_guest_notification_tasks(
 
         specifications.append(
             DispatchTaskCreationSpec(
-                button_set=(
-                    notification_scenario.button_set
-                    if notification_scenario is not None
-                    else InteractionButtonSet.NONE
-                ),
+                button_set=button_set,
                 interaction_enabled=interactions_enabled_for_new_task(provider_type),
+                tracked_link_destination=tracked_link_destination,
                 dispatch_task_fields={
                     "source_type": source_type,
                     "provider_type": provider_type,
