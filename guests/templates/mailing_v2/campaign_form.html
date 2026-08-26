@@ -271,6 +271,26 @@
 
         <div class="mb-3">
           <div class="mail-label-row">
+            {{ form.tracked_link_destination.label_tag }}
+            <button
+              type="button"
+              class="btn btn-outline-secondary mail-help-btn"
+              data-bs-toggle="tooltip"
+              data-bs-placement="top"
+              title="Назначение определяет неизменяемые подпись кнопки и конечный адрес. Для уже отправленного сообщения они не меняются."
+            >?</button>
+          </div>
+          {{ form.tracked_link_destination }}
+          {% if form.tracked_link_destination.help_text %}
+            <small class="text-muted d-block mt-1">{{ form.tracked_link_destination.help_text }}</small>
+          {% endif %}
+          {% if form.tracked_link_destination.errors %}
+            <div class="text-danger small mt-1">{{ form.tracked_link_destination.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
+          <div class="mail-label-row">
             {{ form.coupon_series.label_tag }}
             <button
               type="button"

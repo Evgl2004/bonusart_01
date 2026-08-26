@@ -79,6 +79,17 @@
         </div>
 
         <div class="mb-3">
+          {{ form.tracked_link_destination.label_tag }}
+          {{ form.tracked_link_destination }}
+          {% if form.tracked_link_destination.help_text %}
+            <small class="text-muted d-block mt-1">{{ form.tracked_link_destination.help_text }}</small>
+          {% endif %}
+          {% if form.tracked_link_destination.errors %}
+            <div class="text-danger small mt-1">{{ form.tracked_link_destination.errors|join:", " }}</div>
+          {% endif %}
+        </div>
+
+        <div class="mb-3">
           {{ form.bot_profiles.label_tag }}
           <div class="border rounded p-3">
             {{ form.bot_profiles }}

@@ -12,6 +12,7 @@ from .models import (
     CouponAutomationRule,
     InteractionButtonSet,
     Mailing,
+    MessageInteractionLinkDestination,
     MessageTemplate,
     NotificationScenario,
 )
@@ -29,6 +30,45 @@ from .services.mailing_import_audience import (
 
 _HISTORICAL_WORKBENCH_AUDIENCE = "legacy_no_new_bot"
 _HISTORICAL_IMPORT_AUDIENCE = "historical_telegram"
+
+
+def _available_tracked_link_destinations(*, current_id: int | None = None):
+    """Возвращает активные назначения и текущее значение редактируемого объекта."""
+
+    destination_filter = Q(is_active=True)
+    if current_id:
+        destination_filter |= Q(pk=current_id)
+    return MessageInteractionLinkDestination.objects.filter(destination_filter).order_by(
+        "name",
+        "code",
+    )
+
+
+def _validate_tracked_link_selection(
+    form: forms.BaseForm,
+    cleaned_data: dict,
+    *,
+    button_set_field: str,
+    destination_field: str,
+) -> None:
+    """Проверяет согласованность набора кнопок и назначения ссылки."""
+
+    button_set = str(cleaned_data.get(button_set_field) or InteractionButtonSet.NONE).strip()
+    destination = cleaned_data.get(destination_field)
+    if button_set != InteractionButtonSet.RATING_MENU_LINK:
+        cleaned_data[destination_field] = None
+        return
+    if destination is None:
+        form.add_error(
+            destination_field,
+            "Для набора с отслеживаемой ссылкой выберите назначение перехода.",
+        )
+        return
+    if not destination.is_active:
+        form.add_error(
+            destination_field,
+            "Выбранное назначение отключено. Выберите активную запись справочника.",
+        )
 
 
 def _mailing_uses_only_historical_audience(mailing: Mailing) -> bool:
@@ -219,6 +259,17 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             "или с оценкой и переходом в купоны."
         ),
     )
+    notification_tracked_link_destination = forms.ModelChoiceField(
+        label="Назначение отслеживаемой ссылки",
+        required=False,
+        queryset=MessageInteractionLinkDestination.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+        empty_label="— Выберите назначение —",
+        help_text=(
+            "Используется только с набором «Оценка, ссылка и главное меню». "
+            "Подпись и конечный адрес берутся из утверждённого справочника."
+        ),
+    )
 
     @staticmethod
     def _build_unique_copy_code(source_code: str) -> str:
@@ -258,6 +309,9 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             "template_text": str(getattr(source_template, "message_text", "") or ""),
             "notification_bot_profiles": source_bot_ids,
             "notification_button_set": source_scenario.button_set,
+            "notification_tracked_link_destination": (
+                source_scenario.tracked_link_destination_id
+            ),
         }
 
     def __init__(self, *args, **kwargs):
@@ -283,6 +337,14 @@ class CouponAutomationScenarioCreateForm(forms.Form):
             "name",
             "id",
         )
+        current_destination_id = getattr(
+            getattr(self.source_config, "scenario", None),
+            "tracked_link_destination_id",
+            None,
+        )
+        self.fields["notification_tracked_link_destination"].queryset = (
+            _available_tracked_link_destinations(current_id=current_destination_id)
+        )
 
     def clean_code(self):
         code = str(self.cleaned_data.get("code") or "").strip().lower()
@@ -299,6 +361,16 @@ class CouponAutomationScenarioCreateForm(forms.Form):
         if self.source_config is not None:
             return self.source_config.scenario.button_set
         return InteractionButtonSet.NONE
+
+    def clean_notification_tracked_link_destination(
+        self,
+    ) -> MessageInteractionLinkDestination | None:
+        """Сохраняет назначение исходного сценария для старого запроса без поля."""
+
+        field_name = self.add_prefix("notification_tracked_link_destination")
+        if self.is_bound and field_name not in self.data and self.source_config is not None:
+            return self.source_config.scenario.tracked_link_destination
+        return self.cleaned_data.get("notification_tracked_link_destination")
 
     def clean(self):
         cleaned_data = super().clean()
@@ -345,6 +417,13 @@ class CouponAutomationScenarioCreateForm(forms.Form):
                     validate_coupon_code_placeholder(template_text)
                 except forms.ValidationError as exc:
                     self.add_error("template_text", exc)
+
+        _validate_tracked_link_selection(
+            self,
+            cleaned_data,
+            button_set_field="notification_button_set",
+            destination_field="notification_tracked_link_destination",
+        )
 
         return cleaned_data
 
@@ -414,6 +493,9 @@ class CouponAutomationScenarioCreateForm(forms.Form):
                 "button_set": (
                     self.cleaned_data.get("notification_button_set")
                     or InteractionButtonSet.NONE
+                ),
+                "tracked_link_destination": self.cleaned_data.get(
+                    "notification_tracked_link_destination"
                 ),
             }
             if source_scenario is not None:
@@ -576,6 +658,17 @@ class MailingForm(forms.ModelForm):
             "Исторические маршруты всегда получают сообщение без кнопок."
         ),
     )
+    tracked_link_destination = forms.ModelChoiceField(
+        label="Назначение отслеживаемой ссылки",
+        required=False,
+        queryset=MessageInteractionLinkDestination.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+        empty_label="— Выберите назначение —",
+        help_text=(
+            "Используется только с набором «Оценка, ссылка и главное меню». "
+            "Подпись и адрес берутся из справочника и фиксируются в момент отправки."
+        ),
+    )
     coupon_series = forms.ChoiceField(
         label="Серия купонов",
         required=False,
@@ -596,6 +689,7 @@ class MailingForm(forms.ModelForm):
             "target_mode",
             "queue_priority",
             "button_set",
+            "tracked_link_destination",
             "coupon_series",
             "coupon_venue_code",
             "coupon_title",
@@ -629,6 +723,7 @@ class MailingForm(forms.ModelForm):
             "target_mode": forms.Select(attrs={"class": "form-select"}),
             "queue_priority": forms.Select(attrs={"class": "form-select"}),
             "button_set": forms.Select(attrs={"class": "form-select"}),
+            "tracked_link_destination": forms.Select(attrs={"class": "form-select"}),
             "coupon_venue_code": forms.Select(
                 attrs={
                     "class": "form-select",
@@ -666,6 +761,7 @@ class MailingForm(forms.ModelForm):
             "target_mode": "Режим получателей",
             "queue_priority": "Приоритет в очереди",
             "button_set": "Набор кнопок",
+            "tracked_link_destination": "Назначение отслеживаемой ссылки",
             "coupon_series": "Серия купонов",
             "coupon_venue_code": "Заведение для купонной кампании",
             "coupon_title": "Название купона в vtelemax",
@@ -685,11 +781,25 @@ class MailingForm(forms.ModelForm):
         self.fields["send_window_end"].input_formats = ["%H:%M"]
         self.fields["scheduled_date"].input_formats = ["%Y-%m-%d"]
 
+        current_destination_id = getattr(
+            self.instance,
+            "tracked_link_destination_id",
+            None,
+        )
+        self.fields["tracked_link_destination"].queryset = (
+            _available_tracked_link_destinations(current_id=current_destination_id)
+        )
+
         if self.instance and _mailing_uses_only_historical_audience(self.instance):
             self.fields["button_set"].disabled = True
+            self.fields["tracked_link_destination"].disabled = True
             self.initial["button_set"] = InteractionButtonSet.NONE
+            self.initial["tracked_link_destination"] = None
             self.fields["button_set"].help_text = (
                 "Для полностью исторической аудитории кнопки недоступны."
+            )
+            self.fields["tracked_link_destination"].help_text = (
+                "Для полностью исторической аудитории отслеживаемые ссылки недоступны."
             )
 
         # Чтобы datetime-local корректно отображался при редактировании.
@@ -757,6 +867,12 @@ class MailingForm(forms.ModelForm):
         promo_text = str(cleaned_data.get("coupon_promo_text") or "").strip()
 
         cleaned_data["button_set"] = button_set
+        _validate_tracked_link_selection(
+            self,
+            cleaned_data,
+            button_set_field="button_set",
+            destination_field="tracked_link_destination",
+        )
         if button_set == InteractionButtonSet.RATING_COUPONS and not series:
             self.add_error(
                 "button_set",
@@ -904,6 +1020,17 @@ class CouponAutomationConfigForm(forms.ModelForm):
         help_text=(
             "Выберите отсутствие кнопок, оценку с главным меню или оценку "
             "с переходом в купоны."
+        ),
+    )
+    notification_tracked_link_destination = forms.ModelChoiceField(
+        label="Назначение отслеживаемой ссылки",
+        required=False,
+        queryset=MessageInteractionLinkDestination.objects.none(),
+        widget=forms.Select(attrs={"class": "form-select"}),
+        empty_label="— Выберите назначение —",
+        help_text=(
+            "Используется только с набором «Оценка, ссылка и главное меню». "
+            "Для новых отправок доступны только активные записи справочника."
         ),
     )
     notification_template = forms.ModelChoiceField(
@@ -1056,6 +1183,10 @@ class CouponAutomationConfigForm(forms.ModelForm):
         self.initial["pilot_phones"] = ", ".join(str(phone) for phone in pilot_phones if str(phone).strip())
         self.initial["pilot_include_unmatched"] = bool(settings.get("pilot_include_unmatched"))
         scenario = getattr(self.instance, "scenario", None)
+        current_destination_id = getattr(scenario, "tracked_link_destination_id", None)
+        self.fields["notification_tracked_link_destination"].queryset = (
+            _available_tracked_link_destinations(current_id=current_destination_id)
+        )
         current_template_id = getattr(scenario, "template_id", None)
         template_filter = Q(is_active=True)
         if current_template_id:
@@ -1082,6 +1213,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
         if scenario is not None:
             self.initial["notification_distribution_mode"] = scenario.distribution_mode
             self.initial["notification_button_set"] = scenario.button_set
+            self.initial["notification_tracked_link_destination"] = (
+                scenario.tracked_link_destination_id
+            )
             self.initial["notification_target_mode"] = scenario.target_mode
             self.initial["notification_bot_profiles"] = list(
                 scenario.bot_profiles.filter(is_active=True).values_list("id", flat=True)
@@ -1132,6 +1266,17 @@ class CouponAutomationConfigForm(forms.ModelForm):
         scenario = getattr(self.instance, "scenario", None)
         return getattr(scenario, "button_set", InteractionButtonSet.NONE)
 
+    def clean_notification_tracked_link_destination(
+        self,
+    ) -> MessageInteractionLinkDestination | None:
+        """Не сбрасывает назначение сценария в старом запросе без нового поля."""
+
+        field_name = self.add_prefix("notification_tracked_link_destination")
+        scenario = getattr(self.instance, "scenario", None)
+        if self.is_bound and field_name not in self.data and scenario is not None:
+            return scenario.tracked_link_destination
+        return self.cleaned_data.get("notification_tracked_link_destination")
+
     def clean(self):
         cleaned_data = super().clean()
         execution_mode = cleaned_data.get("execution_mode")
@@ -1157,6 +1302,13 @@ class CouponAutomationConfigForm(forms.ModelForm):
         )
         send_window_begin = cleaned_data.get("notification_send_window_begin")
         send_window_end = cleaned_data.get("notification_send_window_end")
+
+        _validate_tracked_link_selection(
+            self,
+            cleaned_data,
+            button_set_field="notification_button_set",
+            destination_field="notification_tracked_link_destination",
+        )
 
         if execution_mode == CouponAutomationConfig.ExecutionMode.PILOT and not pilot_phones:
             self.add_error(
@@ -1269,6 +1421,9 @@ class CouponAutomationConfigForm(forms.ModelForm):
                     self.cleaned_data.get("notification_button_set")
                     or InteractionButtonSet.NONE
                 )
+                scenario.tracked_link_destination = self.cleaned_data.get(
+                    "notification_tracked_link_destination"
+                )
                 scenario.template = self.cleaned_data.get("notification_template") or scenario.template
                 scenario.target_mode = (
                     self.cleaned_data.get("notification_target_mode")
@@ -1286,12 +1441,14 @@ class CouponAutomationConfigForm(forms.ModelForm):
                     CouponAutomationConfig.ExecutionMode.PILOT,
                     CouponAutomationConfig.ExecutionMode.AUTOMATIC,
                 }
+                scenario.full_clean()
                 scenario.save(
                     update_fields=[
                         "is_active",
                         "template",
                         "distribution_mode",
                         "button_set",
+                        "tracked_link_destination",
                         "target_mode",
                         "timezone",
                         "send_window_begin",

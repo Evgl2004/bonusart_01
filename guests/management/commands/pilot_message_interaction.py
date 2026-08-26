@@ -30,9 +30,21 @@ class Command(BaseCommand):
         parser.add_argument("--bot-code", required=True, help="Точный код профиля бота.")
         parser.add_argument(
             "--button-set",
-            choices=(InteractionButtonSet.RATING_MENU, InteractionButtonSet.RATING_COUPONS),
+            choices=(
+                InteractionButtonSet.RATING_MENU,
+                InteractionButtonSet.RATING_COUPONS,
+                InteractionButtonSet.RATING_MENU_LINK,
+            ),
             default=InteractionButtonSet.RATING_MENU,
             help="Набор кнопок пилотного сообщения.",
+        )
+        parser.add_argument(
+            "--tracked-link-destination-code",
+            default="",
+            help=(
+                "Точный код активного назначения из справочника; обязателен только "
+                "для набора rating_menu_link."
+            ),
         )
         parser.add_argument(
             "--message-text",
@@ -57,6 +69,9 @@ class Command(BaseCommand):
                 guest_id=options["guest_id"],
                 bot_code=options["bot_code"],
                 button_set=options["button_set"],
+                tracked_link_destination_code=options[
+                    "tracked_link_destination_code"
+                ],
                 message_text=options["message_text"],
                 run_id=options["run_id"],
                 confirm=bool(options["confirm"]),
@@ -75,6 +90,11 @@ class Command(BaseCommand):
         self.stdout.write(f"Бот: {result['bot_code']}")
         self.stdout.write(f"Платформа: {result['provider'] or '-'}")
         self.stdout.write(f"Набор кнопок: {result['button_set']}")
+        if result.get("tracked_link_destination_code"):
+            self.stdout.write(
+                "Назначение ссылки: "
+                f"{result['tracked_link_destination_code']}"
+            )
         self.stdout.write(f"Готовность: {'да' if result['ready'] else 'нет'}")
         for blocker in result["blockers"]:
             self.stdout.write(f"[БЛОКИРОВКА] {blocker}")

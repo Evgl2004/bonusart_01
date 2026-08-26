@@ -32,6 +32,15 @@ from guests.models import (
     InteractionButtonSet,
     MessageInteraction,
     MessageInteractionEvent,
+    MessageInteractionLinkDestination,
+    MessageInteractionLinkTransition,
+    MessageInteractionTrackedLink,
+)
+from guests.services.message_interaction_links import (
+    MessageInteractionConfigurationError,
+    build_public_redirect_url,
+    normalize_allowed_destination_hosts,
+    validate_tracked_link_target_url,
 )
 from guests.services.message_interaction_outgoing import (
     DispatchTaskAlreadyExists,
@@ -57,6 +66,7 @@ PILOT_BUTTON_SETS = frozenset(
     {
         InteractionButtonSet.RATING_MENU,
         InteractionButtonSet.RATING_COUPONS,
+        InteractionButtonSet.RATING_MENU_LINK,
     }
 )
 PILOT_RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$")
@@ -193,6 +203,7 @@ def build_message_interaction_readiness_report(
         strict=callback_enabled or require_enabled,
     )
     _collect_schema_check(checks)
+    _collect_tracked_links_check(checks, strict=require_enabled)
     _collect_provider_checks(
         checks,
         providers=supported_allowed_providers,
@@ -270,6 +281,7 @@ def run_message_interaction_pilot(
     bot_code: str,
     button_set: str,
     message_text: str,
+    tracked_link_destination_code: str = "",
     run_id: str = "",
     confirm: bool = False,
 ) -> dict[str, Any]:
@@ -281,10 +293,11 @@ def run_message_interaction_pilot(
     """
 
     normalized_run_id = str(run_id or "").strip()
-    plan, binding = _build_pilot_plan(
+    plan, binding, tracked_link_destination = _build_pilot_plan(
         guest_id=guest_id,
         bot_code=bot_code,
         button_set=button_set,
+        tracked_link_destination_code=tracked_link_destination_code,
         message_text=message_text,
         run_id=normalized_run_id,
         confirm=confirm,
@@ -313,6 +326,7 @@ def run_message_interaction_pilot(
             task=existing_task,
             binding=binding,
             button_set=button_set,
+            tracked_link_destination=tracked_link_destination,
             message_text=message_text,
         )
 
@@ -320,6 +334,7 @@ def run_message_interaction_pilot(
         task = create_dispatch_task_with_optional_interaction(
             button_set=button_set,
             interaction_enabled=True,
+            tracked_link_destination=tracked_link_destination,
             source_type=DispatchTask.SourceType.MANUAL,
             provider_type=binding.bot.provider_type,
             priority=DispatchTask.Priority.HIGH,
@@ -333,6 +348,9 @@ def run_message_interaction_pilot(
                 "message_interaction_pilot": True,
                 "run_id": normalized_run_id,
                 "button_set": button_set,
+                "tracked_link_destination_code": (
+                    tracked_link_destination.code if tracked_link_destination else None
+                ),
             },
             idempotency_key=idempotency_key,
         )
@@ -343,6 +361,7 @@ def run_message_interaction_pilot(
             task=task,
             binding=binding,
             button_set=button_set,
+            tracked_link_destination=tracked_link_destination,
             message_text=message_text,
         )
 
@@ -476,14 +495,20 @@ def _build_pilot_plan(
     guest_id: int,
     bot_code: str,
     button_set: str,
+    tracked_link_destination_code: str,
     message_text: str,
     run_id: str,
     confirm: bool,
-) -> tuple[dict[str, Any], GuestBotBinding | None]:
+) -> tuple[
+    dict[str, Any],
+    GuestBotBinding | None,
+    MessageInteractionLinkDestination | None,
+]:
     blockers: list[str] = []
     warnings: list[str] = []
     normalized_bot_code = str(bot_code or "").strip()
     normalized_message = str(message_text or "")
+    normalized_destination_code = str(tracked_link_destination_code or "").strip()
 
     if isinstance(guest_id, bool) or not isinstance(guest_id, int) or guest_id <= 0:
         blockers.append("Идентификатор гостя должен быть положительным целым числом.")
@@ -508,7 +533,7 @@ def _build_pilot_plan(
             blockers.append("Для выбранного профиля бота не найден действующий токен.")
 
     if button_set not in PILOT_BUTTON_SETS:
-        blockers.append("Для пилота разрешены только два утверждённых набора кнопок.")
+        blockers.append("Для пилота выбран неподдерживаемый набор кнопок.")
     if not normalized_message.strip():
         blockers.append("Текст пилотного сообщения не может быть пустым.")
     elif len(normalized_message) > PILOT_MESSAGE_MAX_LENGTH:
@@ -546,6 +571,31 @@ def _build_pilot_plan(
             "Формирование интерактивных сообщений выключено для выбранной платформы."
         )
 
+    tracked_link_destination = None
+    if button_set == InteractionButtonSet.RATING_MENU_LINK:
+        if not bool(getattr(settings, "MESSAGE_TRACKED_LINKS_ENABLED", False)):
+            blockers.append("Формирование новых отслеживаемых ссылок выключено.")
+        if not normalized_destination_code:
+            blockers.append("Для ссылочного пилота обязателен код назначения перехода.")
+        else:
+            tracked_link_destination = MessageInteractionLinkDestination.objects.filter(
+                code=normalized_destination_code
+            ).first()
+            if tracked_link_destination is None:
+                blockers.append("Назначение отслеживаемой ссылки с указанным кодом не найдено.")
+            elif not tracked_link_destination.is_active:
+                blockers.append("Выбранное назначение отслеживаемой ссылки выключено.")
+            else:
+                try:
+                    validate_tracked_link_target_url(tracked_link_destination.target_url)
+                    build_public_redirect_url("A" * 32)
+                except MessageInteractionConfigurationError as error:
+                    blockers.append(str(error))
+    elif normalized_destination_code:
+        blockers.append(
+            "Код назначения перехода допустим только для набора с отслеживаемой ссылкой."
+        )
+
     if not confirm:
         warnings.append("Сухой режим: задача и интерактивность не создаются.")
 
@@ -555,12 +605,14 @@ def _build_pilot_plan(
             "bot_code": normalized_bot_code,
             "provider": provider_type,
             "button_set": button_set,
+            "tracked_link_destination_code": normalized_destination_code or None,
             "run_id": run_id or None,
             "blockers": blockers,
             "warnings": warnings,
             "ready": not blockers,
         },
         binding,
+        tracked_link_destination,
     )
 
 
@@ -570,6 +622,7 @@ def _build_existing_pilot_result(
     task: DispatchTask,
     binding: GuestBotBinding,
     button_set: str,
+    tracked_link_destination: MessageInteractionLinkDestination | None,
     message_text: str,
 ) -> dict[str, Any]:
     try:
@@ -579,6 +632,20 @@ def _build_existing_pilot_result(
             "Идентификатор запуска уже занят задачей без интерактивности."
         ) from error
 
+    try:
+        existing_tracked_link = interaction.tracked_link
+    except MessageInteractionTrackedLink.DoesNotExist:
+        existing_tracked_link = None
+    expected_tracked_link = tracked_link_destination is not None
+    same_tracked_link = (
+        existing_tracked_link is None
+        if not expected_tracked_link
+        else (
+            existing_tracked_link is not None
+            and existing_tracked_link.label_code == tracked_link_destination.label_code
+            and existing_tracked_link.target_url == tracked_link_destination.target_url
+        )
+    )
     same_parameters = (
         task.guest_id == binding.guest_id
         and task.bot_profile_id == binding.bot_id
@@ -586,6 +653,9 @@ def _build_existing_pilot_result(
         and task.provider_type == binding.bot.provider_type
         and task.message_text == message_text
         and interaction.button_set == button_set
+        and (task.payload or {}).get("tracked_link_destination_code")
+        == (tracked_link_destination.code if tracked_link_destination else None)
+        and same_tracked_link
     )
     if not same_parameters:
         raise MessageInteractionOperationError(
@@ -609,7 +679,14 @@ def _build_existing_pilot_result(
 
 
 def _collect_schema_check(checks: list[dict[str, Any]]) -> None:
-    expected_tables = {"dispatch_tasks", "message_interactions", "message_interaction_events"}
+    expected_tables = {
+        "dispatch_tasks",
+        "message_interactions",
+        "message_interaction_events",
+        "message_interaction_link_destinations",
+        "message_interaction_tracked_links",
+        "message_interaction_link_transitions",
+    }
     try:
         existing_tables = set(connection.introspection.table_names())
     except Exception as error:  # noqa: BLE001 - аудит обязан вернуть управляемый результат.
@@ -633,6 +710,84 @@ def _collect_schema_check(checks: list[dict[str, Any]]) -> None:
             else "В базе отсутствуют обязательные таблицы интерактивных сообщений."
         ),
         details={"missing_tables": missing_tables},
+    )
+
+
+def _collect_tracked_links_check(
+    checks: list[dict[str, Any]],
+    *,
+    strict: bool,
+) -> None:
+    """Проверяет переключатель, публичный адрес и активный справочник ссылок."""
+
+    enabled = bool(getattr(settings, "MESSAGE_TRACKED_LINKS_ENABLED", False))
+    if not enabled:
+        _add_check(
+            checks,
+            code="tracked_links_configuration",
+            status="blocked" if strict else "warning",
+            message="Формирование новых отслеживаемых ссылок выключено.",
+            details={"enabled": False, "active_destinations": 0},
+        )
+        return
+
+    configuration_errors: list[str] = []
+    try:
+        build_public_redirect_url("A" * 32)
+    except MessageInteractionConfigurationError as error:
+        configuration_errors.append(str(error))
+
+    allowed_hosts = normalize_allowed_destination_hosts()
+    if not allowed_hosts:
+        configuration_errors.append("Не задан перечень разрешённых конечных доменов.")
+
+    try:
+        active_destinations = list(
+            MessageInteractionLinkDestination.objects.filter(is_active=True).only(
+                "id",
+                "target_url",
+            )
+        )
+    except Exception as error:  # noqa: BLE001 - аудит возвращает безопасный результат.
+        _add_check(
+            checks,
+            code="tracked_links_configuration",
+            status="blocked",
+            message="Не удалось проверить справочник назначений ссылок.",
+            details={"enabled": True, "error_type": type(error).__name__},
+        )
+        return
+
+    invalid_destinations = 0
+    for destination in active_destinations:
+        try:
+            validate_tracked_link_target_url(destination.target_url)
+        except MessageInteractionConfigurationError:
+            invalid_destinations += 1
+    if not active_destinations:
+        configuration_errors.append("В справочнике нет активных назначений ссылок.")
+    if invalid_destinations:
+        configuration_errors.append("Часть активных назначений не прошла проверку адреса.")
+
+    _add_check(
+        checks,
+        code="tracked_links_configuration",
+        status="blocked" if configuration_errors else "ok",
+        message=(
+            "Формирование отслеживаемых ссылок настроено."
+            if not configuration_errors
+            else "Конфигурация отслеживаемых ссылок содержит ошибки."
+        ),
+        details={
+            "enabled": True,
+            "public_base_url_configured": bool(
+                str(getattr(settings, "MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL", "") or "").strip()
+            ),
+            "allowed_hosts_total": len(allowed_hosts),
+            "active_destinations": len(active_destinations),
+            "invalid_destinations": invalid_destinations,
+            "errors": configuration_errors,
+        },
     )
 
 
@@ -700,6 +855,11 @@ def _collect_readiness_observations() -> dict[str, Any]:
             status=DispatchTask.Status.FAILED,
             message_interaction__isnull=False,
         ).count()
+        tracked_links_total = MessageInteractionTrackedLink.objects.count()
+        link_transitions_total = MessageInteractionLinkTransition.objects.count()
+        last_link_transition_at = MessageInteractionLinkTransition.objects.aggregate(
+            value=Max("received_at")
+        )["value"]
     except Exception as error:  # noqa: BLE001 - результат аудита должен оставаться безопасным.
         return {"available": False, "error_type": type(error).__name__}
     return {
@@ -708,6 +868,11 @@ def _collect_readiness_observations() -> dict[str, Any]:
         "events_total": events_total,
         "failed_interactive_tasks_total": failed_interactive_tasks,
         "last_event_received_at": last_event_at.isoformat() if last_event_at else None,
+        "tracked_links_total": tracked_links_total,
+        "link_transitions_total": link_transitions_total,
+        "last_link_transition_at": (
+            last_link_transition_at.isoformat() if last_link_transition_at else None
+        ),
     }
 
 

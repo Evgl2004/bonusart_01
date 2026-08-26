@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from django import forms
 from django.contrib import admin, messages
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 
 from .models import (
@@ -30,6 +30,7 @@ from .models import (
     Mailing,
     MailingBotProfileLink,
     MailingGuest,
+    MessageInteractionLinkDestination,
     NotificationEvent,
     NotificationScenario,
     NotificationScenarioBotProfileLink,
@@ -414,6 +415,8 @@ class MailingAdmin(admin.ModelAdmin):
         "id",
         "name",
         "template",
+        "button_set",
+        "tracked_link_destination",
         "coupon_series",
         "is_active",
         "target_mode",
@@ -422,11 +425,61 @@ class MailingAdmin(admin.ModelAdmin):
         "scheduled_time_begin",
         "scheduled_time_end",
     )
-    list_filter = ("is_active", "target_mode", "queue_priority", "scheduled_date", "coupon_series")
+    list_filter = (
+        "is_active",
+        "target_mode",
+        "queue_priority",
+        "button_set",
+        "scheduled_date",
+        "coupon_series",
+    )
     search_fields = ("name", "template__name", "coupon_series")
     raw_id_fields = ("template",)
     inlines = (MailingBotProfileLinkInline,)
     list_per_page = 50
+
+
+@admin.register(MessageInteractionLinkDestination)
+class MessageInteractionLinkDestinationAdmin(admin.ModelAdmin):
+    """Управляет предопределёнными назначениями новых отслеживаемых ссылок."""
+
+    list_display = (
+        "id",
+        "code",
+        "name",
+        "label_code",
+        "target_url",
+        "is_active",
+        "updated_at",
+    )
+    list_filter = ("is_active", "label_code")
+    search_fields = ("code", "name", "target_url")
+    readonly_fields = ("created_at", "updated_at")
+    actions = ("action_activate", "action_deactivate")
+    list_per_page = 50
+
+    def get_readonly_fields(self, request, obj=None):
+        """После создания оставляет изменяемыми только название и состояние."""
+
+        readonly_fields = list(super().get_readonly_fields(request, obj))
+        if obj is not None:
+            readonly_fields.extend(("code", "label_code", "target_url"))
+        return tuple(readonly_fields)
+
+    @admin.action(description="Включить выбранные назначения")
+    def action_activate(self, request, queryset):
+        updated = queryset.update(is_active=True, updated_at=timezone.now())
+        self.message_user(request, f"Включено назначений: {updated}", level=messages.SUCCESS)
+
+    @admin.action(description="Отключить выбранные назначения")
+    def action_deactivate(self, request, queryset):
+        updated = queryset.update(is_active=False, updated_at=timezone.now())
+        self.message_user(request, f"Отключено назначений: {updated}", level=messages.WARNING)
+
+    def has_delete_permission(self, request, obj=None):
+        """Исторические назначения отключаются, но не удаляются."""
+
+        return False
 
 
 @admin.register(MailingGuest)
@@ -823,6 +876,20 @@ class NotificationScenarioAdminForm(forms.ModelForm):
             "Выберите код сценария из зарегистрированного списка. "
             "Свободный ввод кода запрещён."
         )
+        current_destination_id = getattr(
+            self.instance,
+            "tracked_link_destination_id",
+            None,
+        )
+        destination_filter = Q(is_active=True)
+        if current_destination_id:
+            destination_filter |= Q(pk=current_destination_id)
+        self.fields["tracked_link_destination"].queryset = (
+            MessageInteractionLinkDestination.objects.filter(destination_filter).order_by(
+                "name",
+                "code",
+            )
+        )
 
     def clean_code(self) -> str:
         code = str(self.cleaned_data.get("code") or "").strip()
@@ -1004,7 +1071,13 @@ class NotificationScenarioAdmin(admin.ModelAdmin):
         (
             "Маршрутизация и приоритет",
             {
-                "fields": ("priority", "target_mode", "distribution_mode"),
+                "fields": (
+                    "priority",
+                    "target_mode",
+                    "distribution_mode",
+                    "button_set",
+                    "tracked_link_destination",
+                ),
             },
         ),
         (

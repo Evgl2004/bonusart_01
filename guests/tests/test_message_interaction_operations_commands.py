@@ -19,10 +19,13 @@ from guests.models import (
     Guest,
     GuestBotBinding,
     InteractionButtonSet,
+    InteractionLinkLabelCode,
     Mailing,
     MailingGuest,
     MessageInteraction,
     MessageInteractionEvent,
+    MessageInteractionLinkDestination,
+    MessageInteractionTrackedLink,
     MessageTemplate,
     NotificationScenario,
 )
@@ -34,6 +37,9 @@ from guests.services.message_interaction_rate_limit import (
 READY_SETTINGS = {
     "MESSAGE_INTERACTIONS_ENABLED": True,
     "MESSAGE_INTERACTIONS_ALLOWED_PROVIDERS": {"telegram"},
+    "MESSAGE_TRACKED_LINKS_ENABLED": True,
+    "MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL": "https://sagur.example/r/v1/",
+    "MESSAGE_TRACKED_LINK_ALLOWED_HOSTS": {"rest.market"},
     "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_ENABLED": True,
     "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_HMAC_SECRET": "test-secret",
     "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_REQUIRE_HTTPS": True,
@@ -70,6 +76,13 @@ class MessageInteractionOperationsCommandTests(TestCase):
             is_opt_in=True,
             is_stop_sending=False,
         )
+        self.link_destination = MessageInteractionLinkDestination.objects.create(
+            code="pilot_delivery",
+            name="Пилотная доставка",
+            label_code=InteractionLinkLabelCode.DELIVERY,
+            target_url="https://rest.market/",
+            is_active=True,
+        )
 
     def _call_pilot(self, *extra_arguments: str) -> dict[str, object]:
         output = StringIO()
@@ -104,6 +117,48 @@ class MessageInteractionOperationsCommandTests(TestCase):
         self.assertNotIn("secret-recipient-id", raw_output)
         checks = {item["code"]: item for item in payload["checks"]}
         self.assertEqual(checks["callback_rate_limit_redis"]["status"], "ok")
+        self.assertEqual(checks["tracked_links_configuration"]["status"], "ok")
+        self.assertEqual(
+            checks["tracked_links_configuration"]["details"]["active_destinations"],
+            1,
+        )
+
+    @override_settings(MESSAGE_TRACKED_LINKS_ENABLED=False)
+    def test_readiness_blocks_disabled_tracked_links_in_strict_mode(self):
+        """Строгая готовность не маскирует выключенный ссылочный контур."""
+
+        output = StringIO()
+        call_command(
+            "audit_message_interactions_readiness",
+            "--as-json",
+            "--require-enabled",
+            stdout=output,
+        )
+
+        payload = json.loads(output.getvalue())
+        checks = {item["code"]: item for item in payload["checks"]}
+        self.assertEqual(checks["tracked_links_configuration"]["status"], "blocked")
+
+    @override_settings(
+        MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL="https://sagur.example/wrong/",
+        MESSAGE_TRACKED_LINK_ALLOWED_HOSTS={"rest.market"},
+    )
+    def test_readiness_blocks_invalid_public_link_configuration_safely(self):
+        """Ошибочный публичный путь блокирует готовность без вывода конечных адресов."""
+
+        output = StringIO()
+        call_command(
+            "audit_message_interactions_readiness",
+            "--as-json",
+            "--require-enabled",
+            stdout=output,
+        )
+
+        raw_output = output.getvalue()
+        payload = json.loads(raw_output)
+        checks = {item["code"]: item for item in payload["checks"]}
+        self.assertEqual(checks["tracked_links_configuration"]["status"], "blocked")
+        self.assertNotIn(self.link_destination.target_url, raw_output)
 
     def test_readiness_blocks_unavailable_redis_without_exposing_details(self):
         """Строгий аудит безопасно блокирует недоступный общий счётчик."""
@@ -223,6 +278,103 @@ class MessageInteractionOperationsCommandTests(TestCase):
             task.message_interaction.button_set,
             InteractionButtonSet.RATING_MENU,
         )
+
+    def test_confirmed_link_pilot_creates_tracked_link_atomically(self):
+        """Ссылочный пилот создаёт задачу, интерактивность и снимок назначения."""
+
+        result = self._call_pilot(
+            "--button-set",
+            InteractionButtonSet.RATING_MENU_LINK,
+            "--tracked-link-destination-code",
+            self.link_destination.code,
+            "--confirm",
+            "--run-id",
+            "pilot-link-20260826-01",
+        )
+
+        task = DispatchTask.objects.select_related("message_interaction").get()
+        tracked_link = MessageInteractionTrackedLink.objects.get(
+            interaction=task.message_interaction
+        )
+        self.assertTrue(result["created"])
+        self.assertEqual(
+            result["tracked_link_destination_code"],
+            self.link_destination.code,
+        )
+        self.assertEqual(tracked_link.label_code, self.link_destination.label_code)
+        self.assertEqual(tracked_link.target_url, self.link_destination.target_url)
+        self.assertEqual(
+            task.payload["tracked_link_destination_code"],
+            self.link_destination.code,
+        )
+
+    def test_link_pilot_rejects_missing_unknown_inactive_or_extraneous_destination(self):
+        """Пилот не допускает неоднозначное или неразрешённое назначение."""
+
+        missing = self._call_pilot(
+            "--button-set",
+            InteractionButtonSet.RATING_MENU_LINK,
+        )
+        unknown = self._call_pilot(
+            "--button-set",
+            InteractionButtonSet.RATING_MENU_LINK,
+            "--tracked-link-destination-code",
+            "unknown_destination",
+        )
+        self.link_destination.is_active = False
+        self.link_destination.save(update_fields=["is_active"])
+        inactive = self._call_pilot(
+            "--button-set",
+            InteractionButtonSet.RATING_MENU_LINK,
+            "--tracked-link-destination-code",
+            self.link_destination.code,
+        )
+        extraneous = self._call_pilot(
+            "--button-set",
+            InteractionButtonSet.RATING_MENU,
+            "--tracked-link-destination-code",
+            self.link_destination.code,
+        )
+
+        for result in (missing, unknown, inactive, extraneous):
+            self.assertFalse(result["ready"])
+        self.assertEqual(DispatchTask.objects.count(), 0)
+        self.assertEqual(MessageInteractionTrackedLink.objects.count(), 0)
+
+    def test_link_pilot_idempotency_rejects_another_destination_code(self):
+        """Один запуск нельзя переопределить другой записью справочника."""
+
+        duplicate_destination = MessageInteractionLinkDestination.objects.create(
+            code="pilot_delivery_duplicate",
+            name="Пилотная доставка, дубль смысла",
+            label_code=self.link_destination.label_code,
+            target_url=self.link_destination.target_url,
+            is_active=True,
+        )
+        common_arguments = (
+            "--button-set",
+            InteractionButtonSet.RATING_MENU_LINK,
+            "--confirm",
+            "--run-id",
+            "pilot-link-idempotency",
+        )
+        self._call_pilot(
+            *common_arguments,
+            "--tracked-link-destination-code",
+            self.link_destination.code,
+        )
+
+        with self.assertRaisesMessage(
+            CommandError,
+            "Идентификатор запуска уже использован с другими параметрами.",
+        ):
+            self._call_pilot(
+                *common_arguments,
+                "--tracked-link-destination-code",
+                duplicate_destination.code,
+            )
+        self.assertEqual(DispatchTask.objects.count(), 1)
+        self.assertEqual(MessageInteractionTrackedLink.objects.count(), 1)
 
     def test_repeated_pilot_is_idempotent_but_parameter_conflict_is_rejected(self):
         """Один идентификатор запуска не создаёт дубль и не маскирует конфликт."""
