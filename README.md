@@ -53,14 +53,16 @@ PG_HOST=localhost
 PG_PORT=5432
 
 IIKO_AUTH_MODE=legacy
-IIKO_LEGACY_API_LOGIN=your_current_api_login
+IIKO_LEGACY_API_LOGIN=your_iikoweb_api_key
 IIKO_LEGACY_AUTH_URL=https://api-ru.iiko.services/api/1/access_token
 IIKO_APP_ID=your_app_id
 IIKO_CLIENT_SECRET=your_client_secret
-IIKO_API_KEY=your_new_api_key
+IIKO_API_KEY=your_iikoweb_api_key
 IIKO_AUTH_URL=https://api-ru.iiko.services/api/v2/access_token
 IIKO_API_BASE_URL=https://api-ru.iiko.services/api/1
 IIKO_ORGANIZATION_ID=your_organization_id
+
+`IIKO_LEGACY_API_LOGIN` и `IIKO_API_KEY` содержат один ключ из iikoWeb. Разные имена нужны только потому, что старая точка авторизации принимает поле `apiLogin`, а новая — `apiKey`. Для `v2` дополнительно требуются `IIKO_APP_ID` и `IIKO_CLIENT_SECRET` из портала разработчика.
 
 SAGUR_BASE_URL=
 SAGUR_USERNAME=business_service

@@ -33,6 +33,15 @@ class EnvSampleDocumentationTests(SimpleTestCase):
             with self.subTest(variable_name=variable_name):
                 self.assertIn(f"{variable_name}=", env_sample)
 
+        env_values = {
+            line.split("=", 1)[0]: line.split("=", 1)[1]
+            for line in env_sample.splitlines()
+            if line and not line.startswith("#") and "=" in line
+        }
+        self.assertEqual(
+            env_values["IIKO_LEGACY_API_LOGIN"],
+            env_values["IIKO_API_KEY"],
+        )
         self.assertIn("IIKO_API_BASE_URL=https://api-ru.iiko.services/api/1", env_sample)
 
     def test_message_interaction_variables_are_documented(self):

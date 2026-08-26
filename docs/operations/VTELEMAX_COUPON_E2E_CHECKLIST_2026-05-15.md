@@ -40,7 +40,7 @@
 - [ ] HMAC-секрет и endpoint совпадают на обеих сторонах.
 - [ ] В SAGUR включен `VTELEMAX_COUPON_SYNC_ENABLED=True`.
 - [ ] В SAGUR настроен `VTELEMAX_COUPON_SYNC_BATCH_SIZE=100` или согласованное значение.
-- [ ] В SAGUR явно задан `IIKO_AUTH_MODE=legacy|v2`, настроены `IIKO_API_BASE_URL`, `IIKO_ORGANIZATION_ID` и полный набор выбранного режима: `IIKO_LEGACY_API_LOGIN` для `legacy` либо `IIKO_APP_ID`, `IIKO_CLIENT_SECRET`, `IIKO_API_KEY` для `v2`.
+- [ ] В SAGUR явно задан `IIKO_AUTH_MODE=legacy|v2`, настроены `IIKO_API_BASE_URL` и `IIKO_ORGANIZATION_ID`. Один ключ iikoWeb передан как `IIKO_LEGACY_API_LOGIN` для `legacy` и как `IIKO_API_KEY` для `v2`; для `v2` дополнительно заданы `IIKO_APP_ID` и `IIKO_CLIENT_SECRET`.
 - [ ] Есть минимум 3 тестовых гостя с валидными `phone_e164` и vtelemax-каналами.
 - [ ] Для reassign-сценария подготовлен отдельный гость D: гости A/B/C используются в ветках `used/expired/canceled`.
 - [ ] Перед стартом нет неизвестных старых pending/error событий по тестовой серии.
