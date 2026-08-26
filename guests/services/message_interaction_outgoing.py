@@ -13,15 +13,11 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import secrets
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
 
 from django.conf import settings
-from django.core.exceptions import ValidationError
-from django.core.validators import URLValidator
 from django.db import IntegrityError, transaction
 
 from guests.models import (
@@ -32,6 +28,14 @@ from guests.models import (
     MessageInteractionLinkDestination,
     MessageInteractionTrackedLink,
 )
+from guests.services.message_interaction_links import (
+    PUBLIC_TOKEN_BYTES,
+    PUBLIC_TOKEN_LENGTH,
+    PUBLIC_TOKEN_PATTERN,
+    MessageInteractionConfigurationError,
+    build_public_redirect_url,
+    validate_tracked_link_target_url,
+)
 
 
 SERVICE_DATA_TYPE = "si"
@@ -39,18 +43,10 @@ SERVICE_DATA_VERSION = 2
 MAX_SIGNED_BIGINT = 9_223_372_036_854_775_807
 TELEGRAM_CALLBACK_DATA_LIMIT_BYTES = 64
 MAX_INTEGRITY_ISOLATION_OPERATIONS = 64
-PUBLIC_TOKEN_BYTES = 24
-PUBLIC_TOKEN_LENGTH = 32
-PUBLIC_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32}$")
-PUBLIC_REDIRECT_PATH_PREFIX = "/r/v1/"
 MAX_TRACKED_LINK_TOKEN_ATTEMPTS = 3
 
 
 logger = logging.getLogger(__name__)
-
-
-class MessageInteractionConfigurationError(ValueError):
-    """Ошибка согласованной конфигурации исходящей интерактивности."""
 
 
 class DispatchTaskAlreadyExists(Exception):
@@ -173,7 +169,6 @@ VK_BUTTON_COLORS: dict[str, str] = {
 }
 
 LINK_LABELS = dict(InteractionLinkLabelCode.choices)
-URL_VALIDATOR = URLValidator(schemes=["https"])
 
 
 def interactions_enabled_for_new_task(provider_type: str) -> bool:
@@ -214,45 +209,6 @@ def _normalize_button_set(button_set: str) -> str:
     if normalized not in allowed:
         raise MessageInteractionConfigurationError(
             f"Неизвестный набор интерактивных кнопок: {normalized!r}."
-        )
-    return normalized
-
-
-def _normalize_allowed_destination_hosts() -> frozenset[str]:
-    """Возвращает закрытый перечень доменов конечного перенаправления."""
-
-    raw_hosts = getattr(settings, "MESSAGE_TRACKED_LINK_ALLOWED_HOSTS", set())
-    if isinstance(raw_hosts, str):
-        raw_hosts = raw_hosts.split(",")
-    return frozenset(
-        str(host or "").strip().lower().rstrip(".")
-        for host in raw_hosts
-        if str(host or "").strip()
-    )
-
-
-def _validate_https_url(*, value: str, purpose: str) -> str:
-    """Строго проверяет защищённый адрес без пользовательских данных."""
-
-    normalized = str(value or "").strip()
-    try:
-        URL_VALIDATOR(normalized)
-        parsed = urlsplit(normalized)
-        port = parsed.port
-    except (ValidationError, ValueError) as error:
-        raise MessageInteractionConfigurationError(
-            f"{purpose} должен быть корректным HTTPS-адресом."
-        ) from error
-
-    if (
-        parsed.scheme.lower() != "https"
-        or not parsed.hostname
-        or parsed.username is not None
-        or parsed.password is not None
-        or port not in (None, 443)
-    ):
-        raise MessageInteractionConfigurationError(
-            f"{purpose} должен использовать HTTPS без пользовательских данных и нестандартного порта."
         )
     return normalized
 
@@ -300,16 +256,7 @@ def _normalize_tracked_link_snapshot(
         raise MessageInteractionConfigurationError(
             "У назначения ссылки указана неподдерживаемая подпись кнопки."
         )
-    target_url = _validate_https_url(
-        value=destination.target_url,
-        purpose="Конечный адрес отслеживаемой ссылки",
-    )
-    target_host = str(urlsplit(target_url).hostname or "").lower().rstrip(".")
-    allowed_hosts = _normalize_allowed_destination_hosts()
-    if target_host not in allowed_hosts:
-        raise MessageInteractionConfigurationError(
-            "Домен конечного адреса отсутствует в разрешённом перечне."
-        )
+    target_url = validate_tracked_link_target_url(destination.target_url)
     return _TrackedLinkSnapshotSpec(
         label_code=label_code,
         target_url=target_url,
@@ -363,28 +310,6 @@ def _create_tracked_link(
             "Не выполнена ни одна попытка создания отслеживаемой ссылки."
         )
     raise last_error
-
-
-def _build_public_redirect_url(public_token: str) -> str:
-    """Формирует точный внешний адрес перехода по публичному токену."""
-
-    if PUBLIC_TOKEN_PATTERN.fullmatch(str(public_token or "")) is None:
-        raise MessageInteractionConfigurationError(
-            "Публичный токен отслеживаемой ссылки имеет неверный формат."
-        )
-    raw_base_url = str(
-        getattr(settings, "MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL", "") or ""
-    ).strip()
-    base_url = _validate_https_url(
-        value=raw_base_url,
-        purpose="Публичный адрес службы переходов",
-    )
-    parsed = urlsplit(base_url)
-    if parsed.query or parsed.fragment or parsed.path.rstrip("/") != "/r/v1":
-        raise MessageInteractionConfigurationError(
-            "Публичный адрес службы переходов должен оканчиваться точным путём /r/v1/."
-        )
-    return f"{parsed.scheme}://{parsed.netloc}{PUBLIC_REDIRECT_PATH_PREFIX}{public_token}"
 
 
 def build_service_data(*, interaction_id: int, button_set: str, action: str) -> str:
@@ -467,7 +392,7 @@ def build_normalized_button_rows(
             )
         link_button = NormalizedLinkButton(
             text=link_text,
-            url=_build_public_redirect_url(tracked_link.public_token),
+            url=build_public_redirect_url(tracked_link.public_token),
         )
     elif tracked_link is not None:
         raise MessageInteractionConfigurationError(
