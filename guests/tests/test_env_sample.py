@@ -71,7 +71,7 @@ class EnvSampleDocumentationTests(SimpleTestCase):
     def test_redirect_bonus_environment_is_minimal_and_consistent(self):
         root_dir = Path(__file__).resolve().parents[2]
         main_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
-        redirect_sample = (root_dir / "redirect-bonus.env.sample").read_text(
+        redirect_sample = (root_dir / ".env.redirect-bonus.sample").read_text(
             encoding="utf-8"
         )
 

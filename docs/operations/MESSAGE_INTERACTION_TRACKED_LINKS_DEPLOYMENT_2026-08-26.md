@@ -33,7 +33,7 @@ MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL=https://sagur.24vds.ru/r/v1/
 MESSAGE_TRACKED_LINK_ALLOWED_HOSTS=rest.market,susami.rest.market,uzbechka.rest.market,gruzinka.rest.market,china.rest.market,gruzinka.restoplace.ws,susami.restoplace.ws,china.restoplace.ws,usbechka.restoplace.ws
 ```
 
-Отдельно по шаблону `redirect-bonus.env.sample` создаётся неотслеживаемый файл `/var/www/sagur_project/loyalty_service/redirect-bonus.env`:
+Отдельно по шаблону `.env.redirect-bonus.sample` создаётся неотслеживаемый файл `/var/www/sagur_project/loyalty_service/.env.redirect-bonus`:
 
 ```dotenv
 SECRET_KEY=<отдельный случайный секрет Django>
@@ -48,7 +48,7 @@ MESSAGE_TRACKED_LINK_ALLOWED_HOSTS=rest.market,susami.rest.market,uzbechka.rest.
 
 Имя и пароль роли переходов не должны совпадать с `DATABASES_USER` и `DATABASES_PASSWORD`. Два значения `MESSAGE_TRACKED_LINK_ALLOWED_HOSTS` должны совпадать; это проверяется регрессионным тестом шаблонов. Секреты генерируются и переносятся вне чата и журналов команд. `docker compose config` без параметра `--quiet` не используется: его вывод может раскрыть подставленные значения.
 
-Публичный контейнер читает только `redirect-bonus.env` и не получает полный файл окружения Loyalty с токенами ботов, секретом vtelemax и настройками очередей.
+Публичный контейнер читает только `.env.redirect-bonus` и не получает полный файл окружения Loyalty с токенами ботов, секретом vtelemax и настройками очередей.
 
 ## 3. Проверка исходного состояния
 

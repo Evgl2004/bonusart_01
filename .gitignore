@@ -1,5 +1,5 @@
 .env
-redirect-bonus.env
+.env.redirect-bonus
 __pycache__/
 *.pyc
 db.sqlite3
