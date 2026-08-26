@@ -4,6 +4,34 @@ from django.test import SimpleTestCase
 
 
 class EnvSampleDocumentationTests(SimpleTestCase):
+    def test_iiko_cloud_auth_variables_are_documented(self):
+        root_dir = Path(__file__).resolve().parents[2]
+        env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
+
+        expected_variables = (
+            "IIKO_AUTH_MODE",
+            "IIKO_LEGACY_API_LOGIN",
+            "IIKO_LEGACY_AUTH_URL",
+            "IIKO_APP_ID",
+            "IIKO_CLIENT_SECRET",
+            "IIKO_API_KEY",
+            "IIKO_AUTH_URL",
+            "IIKO_API_BASE_URL",
+            "IIKO_ORGANIZATION_ID",
+            "IIKO_AUTH_CONNECT_TIMEOUT_SECONDS",
+            "IIKO_AUTH_READ_TIMEOUT_SECONDS",
+            "IIKO_AUTH_MAX_RETRIES",
+            "IIKO_AUTH_RETRY_BASE_SECONDS",
+            "IIKO_AUTH_RETRY_MAX_SECONDS",
+            "IIKO_AUTH_TOKEN_REFRESH_MARGIN_SECONDS",
+        )
+
+        for variable_name in expected_variables:
+            with self.subTest(variable_name=variable_name):
+                self.assertIn(f"{variable_name}=", env_sample)
+
+        self.assertIn("IIKO_API_BASE_URL=https://api-ru.iiko.services/api/1", env_sample)
+
     def test_message_interaction_variables_are_documented(self):
         root_dir = Path(__file__).resolve().parents[2]
         env_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")

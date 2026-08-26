@@ -398,9 +398,54 @@ SAGUR_BASE_URL = os.getenv("SAGUR_BASE_URL", "").strip()
 SAGUR_USERNAME = os.getenv("SAGUR_USERNAME", "").strip()
 SAGUR_PASSWORD = os.getenv("SAGUR_PASSWORD", "").strip()
 
-IIKO_API_KEY = os.getenv("IIKO_API_KEY")
-IIKO_API_BASE_URL = os.getenv("IIKO_API_BASE_URL")
-IIKO_ORGANIZATION_ID = os.getenv("IIKO_ORGANIZATION_ID")
+IIKO_AUTH_MODE = os.getenv("IIKO_AUTH_MODE", "").strip().lower()
+IIKO_LEGACY_API_LOGIN = os.getenv("IIKO_LEGACY_API_LOGIN", "").strip()
+IIKO_LEGACY_AUTH_URL = os.getenv(
+    "IIKO_LEGACY_AUTH_URL",
+    "https://api-ru.iiko.services/api/1/access_token",
+).strip()
+IIKO_APP_ID = os.getenv("IIKO_APP_ID", "").strip()
+IIKO_CLIENT_SECRET = os.getenv("IIKO_CLIENT_SECRET", "").strip()
+IIKO_API_KEY = os.getenv("IIKO_API_KEY", "").strip()
+IIKO_AUTH_URL = os.getenv(
+    "IIKO_AUTH_URL",
+    "https://api-ru.iiko.services/api/v2/access_token",
+).strip()
+IIKO_API_BASE_URL = os.getenv("IIKO_API_BASE_URL", "").strip()
+IIKO_ORGANIZATION_ID = os.getenv("IIKO_ORGANIZATION_ID", "").strip()
+
+try:
+    IIKO_AUTH_CONNECT_TIMEOUT_SECONDS = float(os.getenv("IIKO_AUTH_CONNECT_TIMEOUT_SECONDS", "5"))
+except ValueError:
+    IIKO_AUTH_CONNECT_TIMEOUT_SECONDS = 5.0
+
+try:
+    IIKO_AUTH_READ_TIMEOUT_SECONDS = float(os.getenv("IIKO_AUTH_READ_TIMEOUT_SECONDS", "15"))
+except ValueError:
+    IIKO_AUTH_READ_TIMEOUT_SECONDS = 15.0
+
+try:
+    IIKO_AUTH_MAX_RETRIES = max(0, int(os.getenv("IIKO_AUTH_MAX_RETRIES", "2")))
+except ValueError:
+    IIKO_AUTH_MAX_RETRIES = 2
+
+try:
+    IIKO_AUTH_RETRY_BASE_SECONDS = float(os.getenv("IIKO_AUTH_RETRY_BASE_SECONDS", "0.5"))
+except ValueError:
+    IIKO_AUTH_RETRY_BASE_SECONDS = 0.5
+
+try:
+    IIKO_AUTH_RETRY_MAX_SECONDS = float(os.getenv("IIKO_AUTH_RETRY_MAX_SECONDS", "5"))
+except ValueError:
+    IIKO_AUTH_RETRY_MAX_SECONDS = 5.0
+
+try:
+    IIKO_AUTH_TOKEN_REFRESH_MARGIN_SECONDS = float(
+        os.getenv("IIKO_AUTH_TOKEN_REFRESH_MARGIN_SECONDS", "60")
+    )
+except ValueError:
+    IIKO_AUTH_TOKEN_REFRESH_MARGIN_SECONDS = 60.0
+
 IIKO_OLAP_BASE_URL = os.getenv("IIKO_OLAP_BASE_URL", "").strip()
 IIKO_OLAP_LOGIN = os.getenv("IIKO_OLAP_LOGIN", "").strip()
 IIKO_OLAP_PASS_HASH = os.getenv("IIKO_OLAP_PASS_HASH", "").strip()
