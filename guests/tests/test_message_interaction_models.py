@@ -65,13 +65,14 @@ class TestMessageInteractionModels:
         assert Mailing().button_set == InteractionButtonSet.NONE
         assert NotificationScenario().button_set == InteractionButtonSet.NONE
 
-    def test_button_set_contains_only_three_approved_source_values(self):
-        """Источник сообщения не допускает произвольную сборку кнопок."""
+    def test_button_set_contains_only_approved_source_values(self):
+        """Источник допускает только четыре утверждённых набора кнопок."""
 
         assert set(InteractionButtonSet.values) == {
             "none",
             "rating_menu",
             "rating_coupons",
+            "rating_menu_link",
         }
 
     @pytest.mark.parametrize("source_model", ["mailing", "scenario"])

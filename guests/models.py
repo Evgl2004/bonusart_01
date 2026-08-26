@@ -1,5 +1,6 @@
 ﻿from django.db import models
 from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.utils import timezone
 import os
 import uuid
@@ -13,6 +14,16 @@ class InteractionButtonSet(models.TextChoices):
     NONE = "none", "Без кнопок"
     RATING_MENU = "rating_menu", "Оценка и главное меню"
     RATING_COUPONS = "rating_coupons", "Оценка и купоны"
+    RATING_MENU_LINK = "rating_menu_link", "Оценка, ссылка и главное меню"
+
+
+class InteractionLinkLabelCode(models.TextChoices):
+    """Предопределённые подписи кнопки отслеживаемой ссылки."""
+
+    BOOKING = "booking", "Забронировать столик"
+    DELIVERY = "delivery", "Заказать доставку"
+    WEBSITE = "website", "Перейти на сайт"
+    DETAILS = "details", "Подробнее"
 
 
 class Guest(models.Model):
@@ -213,6 +224,14 @@ class Mailing(models.Model):
         default=InteractionButtonSet.NONE,
         help_text="Набор интерактивных кнопок для современных маршрутов рассылки.",
     )
+    tracked_link_destination = models.ForeignKey(
+        "MessageInteractionLinkDestination",
+        on_delete=models.PROTECT,
+        related_name="mailings",
+        blank=True,
+        null=True,
+        help_text="Предопределённое назначение отслеживаемой ссылки.",
+    )
     source_filter_snapshot = models.JSONField(
         default=dict,
         blank=True,
@@ -283,8 +302,28 @@ class Mailing(models.Model):
                 name="mailings_queue_priority_chk",
             ),
             models.CheckConstraint(
-                condition=models.Q(button_set__in=["none", "rating_menu", "rating_coupons"]),
+                condition=models.Q(
+                    button_set__in=[
+                        "none",
+                        "rating_menu",
+                        "rating_coupons",
+                        "rating_menu_link",
+                    ]
+                ),
                 name="mailings_button_set_chk",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        button_set="rating_menu_link",
+                        tracked_link_destination__isnull=False,
+                    )
+                    | (
+                        ~models.Q(button_set="rating_menu_link")
+                        & models.Q(tracked_link_destination__isnull=True)
+                    )
+                ),
+                name="mailings_link_destination_chk",
             ),
         ]
 
@@ -1983,6 +2022,14 @@ class NotificationScenario(models.Model):
         default=InteractionButtonSet.NONE,
         help_text="Набор интерактивных кнопок для сообщений этого сценария.",
     )
+    tracked_link_destination = models.ForeignKey(
+        "MessageInteractionLinkDestination",
+        on_delete=models.PROTECT,
+        related_name="notification_scenarios",
+        blank=True,
+        null=True,
+        help_text="Предопределённое назначение отслеживаемой ссылки.",
+    )
 
     send_window_begin = models.TimeField(blank=True, null=True)
     send_window_end = models.TimeField(blank=True, null=True)
@@ -2032,8 +2079,28 @@ class NotificationScenario(models.Model):
                 name="ns_distribution_mode_chk",
             ),
             models.CheckConstraint(
-                condition=models.Q(button_set__in=["none", "rating_menu", "rating_coupons"]),
+                condition=models.Q(
+                    button_set__in=[
+                        "none",
+                        "rating_menu",
+                        "rating_coupons",
+                        "rating_menu_link",
+                    ]
+                ),
                 name="ns_button_set_chk",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        button_set="rating_menu_link",
+                        tracked_link_destination__isnull=False,
+                    )
+                    | (
+                        ~models.Q(button_set="rating_menu_link")
+                        & models.Q(tracked_link_destination__isnull=True)
+                    )
+                ),
+                name="ns_link_destination_chk",
             ),
         ]
         indexes = [
@@ -2799,6 +2866,10 @@ class MessageInteraction(models.Model):
         choices=[
             (InteractionButtonSet.RATING_MENU, InteractionButtonSet.RATING_MENU.label),
             (InteractionButtonSet.RATING_COUPONS, InteractionButtonSet.RATING_COUPONS.label),
+            (
+                InteractionButtonSet.RATING_MENU_LINK,
+                InteractionButtonSet.RATING_MENU_LINK.label,
+            ),
         ],
         help_text="Фактически отправленный набор интерактивных кнопок.",
     )
@@ -2810,13 +2881,248 @@ class MessageInteraction(models.Model):
         verbose_name_plural = "Интерактивности сообщений"
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(button_set__in=["rating_menu", "rating_coupons"]),
+                condition=models.Q(
+                    button_set__in=[
+                        "rating_menu",
+                        "rating_coupons",
+                        "rating_menu_link",
+                    ]
+                ),
                 name="mi_button_set_chk",
             ),
         ]
 
     def __str__(self):
         return f"interaction={self.id} task={self.dispatch_task_id} set={self.button_set}"
+
+
+class MessageInteractionLinkDestination(models.Model):
+    """Управляемое назначение для новых отслеживаемых ссылок."""
+
+    code = models.CharField(
+        max_length=80,
+        unique=True,
+        validators=[
+            RegexValidator(
+                regex=r"^[a-z][a-z0-9_]*$",
+                message=(
+                    "Код должен начинаться со строчной латинской буквы и содержать "
+                    "только строчные латинские буквы, цифры и подчёркивания."
+                ),
+            )
+        ],
+        help_text="Неизменяемый технический код назначения.",
+    )
+    name = models.CharField(
+        max_length=150,
+        help_text="Понятное пользователю название назначения.",
+    )
+    label_code = models.CharField(
+        max_length=16,
+        choices=InteractionLinkLabelCode.choices,
+        help_text="Предопределённая подпись ссылочной кнопки.",
+    )
+    target_url = models.URLField(
+        max_length=2048,
+        help_text="Конечный защищённый адрес перенаправления.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Разрешает выбирать назначение для новых сообщений.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "message_interaction_link_destinations"
+        verbose_name = "Назначение отслеживаемой ссылки"
+        verbose_name_plural = "Назначения отслеживаемых ссылок"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    label_code__in=["booking", "delivery", "website", "details"]
+                ),
+                name="mild_label_code_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(target_url__startswith="https://"),
+                name="mild_target_https_chk",
+            ),
+        ]
+
+    def _validate_immutable_fields(self) -> None:
+        """Запрещает менять технический смысл уже созданной записи."""
+
+        if not self.pk:
+            return
+        original = type(self).objects.filter(pk=self.pk).values(
+            "code",
+            "label_code",
+            "target_url",
+        ).first()
+        if original is None:
+            return
+
+        errors = {}
+        for field_name in ("code", "label_code", "target_url"):
+            if getattr(self, field_name) != original[field_name]:
+                errors[field_name] = (
+                    "Поле нельзя изменять после создания назначения; "
+                    "создайте новую запись справочника."
+                )
+        if errors:
+            raise ValidationError(errors)
+
+    def clean(self):
+        """Проверяет неизменяемость кода, подписи и конечного адреса."""
+
+        super().clean()
+        self._validate_immutable_fields()
+
+    def save(self, *args, **kwargs):
+        """Сохраняет запись, не позволяя обойти неизменяемость через код."""
+
+        self._validate_immutable_fields()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} ({self.get_label_code_display()})"
+
+
+class MessageInteractionTrackedLink(models.Model):
+    """Неизменяемый снимок отслеживаемой ссылки конкретного сообщения."""
+
+    interaction = models.OneToOneField(
+        "MessageInteraction",
+        on_delete=models.PROTECT,
+        related_name="tracked_link",
+        primary_key=True,
+    )
+    public_token = models.CharField(
+        max_length=32,
+        unique=True,
+        validators=[
+            RegexValidator(
+                regex=r"^[A-Za-z0-9_-]{32}$",
+                message="Токен должен содержать ровно 32 символа Base64URL без заполнения.",
+            )
+        ],
+        help_text="Криптографически случайный публичный токен Base64URL.",
+    )
+    label_code = models.CharField(
+        max_length=16,
+        choices=InteractionLinkLabelCode.choices,
+        help_text="Неизменяемый снимок подписи ссылочной кнопки.",
+    )
+    target_url = models.URLField(
+        max_length=2048,
+        help_text="Неизменяемый снимок конечного защищённого адреса.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    disabled_at = models.DateTimeField(
+        blank=True,
+        null=True,
+        help_text="Время аварийного вывода уже отправленной ссылки из эксплуатации.",
+    )
+
+    class Meta:
+        db_table = "message_interaction_tracked_links"
+        verbose_name = "Отслеживаемая ссылка сообщения"
+        verbose_name_plural = "Отслеживаемые ссылки сообщений"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(public_token__regex=r"^[A-Za-z0-9_-]{32}$"),
+                name="mitl_token_format_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    label_code__in=["booking", "delivery", "website", "details"]
+                ),
+                name="mitl_label_code_chk",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(target_url__startswith="https://"),
+                name="mitl_target_https_chk",
+            ),
+        ]
+
+    def _validate_link_invariants(self) -> None:
+        """Проверяет набор сообщения и неизменяемые поля снимка."""
+
+        if self.interaction_id:
+            button_set = (
+                MessageInteraction.objects.filter(pk=self.interaction_id)
+                .values_list("button_set", flat=True)
+                .first()
+            )
+            if button_set and button_set != InteractionButtonSet.RATING_MENU_LINK:
+                raise ValidationError(
+                    {
+                        "interaction": (
+                            "Отслеживаемая ссылка допустима только для набора "
+                            "«Оценка, ссылка и главное меню»."
+                        )
+                    }
+                )
+
+        if not self.pk:
+            return
+        original = type(self).objects.filter(pk=self.pk).values(
+            "public_token",
+            "label_code",
+            "target_url",
+        ).first()
+        if original is None:
+            return
+
+        errors = {}
+        for field_name in ("public_token", "label_code", "target_url"):
+            if getattr(self, field_name) != original[field_name]:
+                errors[field_name] = "Неизменяемый снимок отправленной ссылки нельзя править."
+        if errors:
+            raise ValidationError(errors)
+
+    def clean(self):
+        """Проверяет принадлежность набору и неизменяемость снимка."""
+
+        super().clean()
+        self._validate_link_invariants()
+
+    def save(self, *args, **kwargs):
+        """Не позволяет обойти инварианты обычным программным сохранением."""
+
+        self._validate_link_invariants()
+        return super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"interaction={self.interaction_id} label={self.label_code}"
+
+
+class MessageInteractionLinkTransition(models.Model):
+    """Один допустимый запрос отслеживаемой ссылки."""
+
+    id = models.BigAutoField(primary_key=True)
+    tracked_link = models.ForeignKey(
+        "MessageInteractionTrackedLink",
+        on_delete=models.PROTECT,
+        related_name="transitions",
+        db_index=False,
+    )
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "message_interaction_link_transitions"
+        verbose_name = "Переход по отслеживаемой ссылке"
+        verbose_name_plural = "Переходы по отслеживаемым ссылкам"
+        indexes = [
+            models.Index(
+                fields=["tracked_link", "received_at"],
+                name="milt_link_received_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"transition={self.id} interaction={self.tracked_link_id}"
 
 
 class MessageInteractionEvent(models.Model):
