@@ -25,17 +25,7 @@
 
 ## 2. Обязательные реквизиты без раскрытия значений
 
-В корневом `/var/www/sagur_project/.env` задаются:
-
-```dotenv
-TRACKED_LINK_SECRET_KEY=<отдельный случайный секрет Django>
-TRACKED_LINK_PG_USER=sagur_tracked_link
-TRACKED_LINK_PG_PASSWORD=<отдельный случайный пароль PostgreSQL>
-```
-
-Имя и пароль роли переходов не должны совпадать с `DATABASES_USER` и `DATABASES_PASSWORD`. Секреты генерируются и переносятся вне чата и журналов команд. `docker compose config` без параметра `--quiet` не используется: его вывод может раскрыть подставленные значения.
-
-В `/var/www/sagur_project/loyalty_service/.env` на первом этапе задаются:
+В основном `/var/www/sagur_project/loyalty_service/.env` задаются:
 
 ```dotenv
 MESSAGE_TRACKED_LINKS_ENABLED=False
@@ -43,7 +33,22 @@ MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL=https://sagur.24vds.ru/r/v1/
 MESSAGE_TRACKED_LINK_ALLOWED_HOSTS=rest.market,susami.rest.market,uzbechka.rest.market,gruzinka.rest.market,china.rest.market,gruzinka.restoplace.ws,susami.restoplace.ws,china.restoplace.ws,usbechka.restoplace.ws
 ```
 
-Публичный контейнер не читает полный файл окружения Loyalty. Compose передаёт ему только отдельный секрет, минимальные реквизиты базы, допустимые имена узлов Django и перечень конечных доменов.
+Отдельно по шаблону `redirect-bonus.env.sample` создаётся неотслеживаемый файл `/var/www/sagur_project/loyalty_service/redirect-bonus.env`:
+
+```dotenv
+SECRET_KEY=<отдельный случайный секрет Django>
+ALLOWED_HOSTS=sagur.24vds.ru
+PG_NAME=<имя действующей базы SAGUR>
+PG_USER=sagur_tracked_link
+PG_PASSWORD=<отдельный случайный пароль PostgreSQL>
+PG_HOST=db
+PG_PORT=5432
+MESSAGE_TRACKED_LINK_ALLOWED_HOSTS=rest.market,susami.rest.market,uzbechka.rest.market,gruzinka.rest.market,china.rest.market,gruzinka.restoplace.ws,susami.restoplace.ws,china.restoplace.ws,usbechka.restoplace.ws
+```
+
+Имя и пароль роли переходов не должны совпадать с `DATABASES_USER` и `DATABASES_PASSWORD`. Два значения `MESSAGE_TRACKED_LINK_ALLOWED_HOSTS` должны совпадать; это проверяется регрессионным тестом шаблонов. Секреты генерируются и переносятся вне чата и журналов команд. `docker compose config` без параметра `--quiet` не используется: его вывод может раскрыть подставленные значения.
+
+Публичный контейнер читает только `redirect-bonus.env` и не получает полный файл окружения Loyalty с токенами ботов, секретом vtelemax и настройками очередей.
 
 ## 3. Проверка исходного состояния
 

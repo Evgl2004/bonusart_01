@@ -54,13 +54,6 @@ class EnvSampleDocumentationTests(SimpleTestCase):
             "MESSAGE_TRACKED_LINKS_ENABLED",
             "MESSAGE_TRACKED_LINK_PUBLIC_BASE_URL",
             "MESSAGE_TRACKED_LINK_ALLOWED_HOSTS",
-            "TRACKED_LINK_SECRET_KEY",
-            "TRACKED_LINK_DJANGO_ALLOWED_HOSTS",
-            "TRACKED_LINK_PG_NAME",
-            "TRACKED_LINK_PG_USER",
-            "TRACKED_LINK_PG_PASSWORD",
-            "TRACKED_LINK_PG_HOST",
-            "TRACKED_LINK_PG_PORT",
             "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_ENABLED",
             "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_HMAC_SECRET",
             "VTELEMAX_MESSAGE_INTERACTION_CALLBACK_REQUIRE_HTTPS",
@@ -72,6 +65,45 @@ class EnvSampleDocumentationTests(SimpleTestCase):
         for variable_name in expected_variables:
             with self.subTest(variable_name=variable_name):
                 self.assertIn(f"{variable_name}=", env_sample)
+
+        self.assertNotIn("TRACKED_LINK_SECRET_KEY=", env_sample)
+
+    def test_redirect_bonus_environment_is_minimal_and_consistent(self):
+        root_dir = Path(__file__).resolve().parents[2]
+        main_sample = (root_dir / ".env.sample").read_text(encoding="utf-8")
+        redirect_sample = (root_dir / "redirect-bonus.env.sample").read_text(
+            encoding="utf-8"
+        )
+
+        def values(source: str) -> dict[str, str]:
+            return {
+                line.split("=", 1)[0]: line.split("=", 1)[1]
+                for line in source.splitlines()
+                if line and not line.startswith("#") and "=" in line
+            }
+
+        main_values = values(main_sample)
+        redirect_values = values(redirect_sample)
+        self.assertEqual(
+            set(redirect_values),
+            {
+                "SECRET_KEY",
+                "ALLOWED_HOSTS",
+                "PG_NAME",
+                "PG_USER",
+                "PG_PASSWORD",
+                "PG_HOST",
+                "PG_PORT",
+                "MESSAGE_TRACKED_LINK_ALLOWED_HOSTS",
+            },
+        )
+        self.assertEqual(
+            redirect_values["MESSAGE_TRACKED_LINK_ALLOWED_HOSTS"],
+            main_values["MESSAGE_TRACKED_LINK_ALLOWED_HOSTS"],
+        )
+        self.assertNotIn("TRACKED_LINK_SECRET_KEY", redirect_values)
+        self.assertNotIn("TRACKED_LINK_PG_USER", redirect_values)
+        self.assertNotIn("TRACKED_LINK_PG_PASSWORD", redirect_values)
 
     def test_coupon_autoscenario_schedule_variables_are_documented(self):
         root_dir = Path(__file__).resolve().parents[2]
