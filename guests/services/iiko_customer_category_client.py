@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
 from typing import Any
 
 import requests
+from django.conf import settings
+
+from guests.services.iiko_cloud_auth import IikoCloudAuthError, IikoCloudTokenProvider
+from guests.services.iiko_cloud_transport import (
+    IikoCloudJsonTransport,
+    IikoCloudTransportError,
+    normalize_iiko_cloud_api_base_url,
+)
 
 
 class IikoCustomerCategoryApiError(Exception):
@@ -17,144 +24,89 @@ class IikoCustomerCategoryApiError(Exception):
         path: str = "",
         body: Any | None = None,
         error_code: str = "",
+        correlation_id: str = "",
     ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.path = str(path or "").strip()
         self.body = body
         self.error_code = str(error_code or "").strip()
+        self.correlation_id = str(correlation_id or "").strip()
 
 
 class IikoCustomerCategoryClient:
-    """
-    Клиент iikoCloud API для управления категориями гостей iikoCard.
+    """Клиент методов категорий гостей iiko Cloud API версии 1."""
 
-    Поддерживаемые endpoints:
-    1. `/api/1/access_token`;
-    2. `/api/1/loyalty/iiko/customer/info`;
-    3. `/api/1/loyalty/iiko/customer_category`;
-    4. `/api/1/loyalty/iiko/customer_category/add`;
-    5. `/api/1/loyalty/iiko/customer_category/remove`.
-    """
-
-    API_V1_PREFIX = "/api/1"
+    _MUTATING_PATHS = frozenset(
+        {
+            "/loyalty/iiko/customer_category/add",
+            "/loyalty/iiko/customer_category/remove",
+        }
+    )
 
     def __init__(
         self,
         *,
-        api_key: str,
         base_url: str,
         organization_id: str,
+        token_provider: IikoCloudTokenProvider,
         timeout_seconds: float = 15.0,
+        close_token_provider: bool = False,
+        max_retries: int | None = None,
     ) -> None:
-        self.api_key = str(api_key or "").strip()
-        self.base_url = self._normalize_base_url(base_url)
+        self.base_url = normalize_iiko_cloud_api_base_url(base_url)
         self.organization_id = str(organization_id or "").strip()
         self.timeout_seconds = max(1.0, float(timeout_seconds or 15.0))
-
+        self._token_provider = token_provider
+        self._close_token_provider = bool(close_token_provider)
         self._session = requests.Session()
-        self._token: str | None = None
-        self._token_expires_at: datetime | None = None
-
-    @classmethod
-    def _normalize_base_url(cls, base_url: str) -> str:
-        normalized = str(base_url or "").strip().rstrip("/")
-        if not normalized:
-            return ""
-        if normalized.endswith(cls.API_V1_PREFIX):
-            return normalized
-        return f"{normalized}{cls.API_V1_PREFIX}"
-
-    def close(self) -> None:
-        self._session.close()
-
-    def _is_token_valid(self) -> bool:
-        return bool(
-            self._token
-            and self._token_expires_at
-            and datetime.utcnow() < self._token_expires_at
+        self._transport = IikoCloudJsonTransport(
+            base_url=self.base_url,
+            token_provider=token_provider,
+            session=self._session,
+            connect_timeout_seconds=min(5.0, self.timeout_seconds),
+            read_timeout_seconds=self.timeout_seconds,
+            max_retries=(
+                int(getattr(settings, "IIKO_API_MAX_RETRIES", 2))
+                if max_retries is None
+                else int(max_retries)
+            ),
+            retry_base_seconds=float(getattr(settings, "IIKO_API_RETRY_BASE_SECONDS", 0.5)),
+            retry_max_seconds=float(getattr(settings, "IIKO_API_RETRY_MAX_SECONDS", 5.0)),
         )
 
-    def _get_token(self) -> str:
-        if self._is_token_valid():
-            return str(self._token)
-        if not self.api_key:
-            raise IikoCustomerCategoryApiError("Не задан IIKO_API_KEY для iikoCard.")
-        if not self.base_url:
-            raise IikoCustomerCategoryApiError("Не задан IIKO_API_BASE_URL для iikoCard.")
-
-        url = f"{self.base_url}/access_token"
-        try:
-            response = self._session.post(
-                url,
-                json={"apiLogin": self.api_key},
-                headers={"Content-Type": "application/json"},
-                timeout=self.timeout_seconds,
-            )
-        except requests.RequestException as exc:
-            raise IikoCustomerCategoryApiError(f"Сетевая ошибка запроса токена iikoCard: {exc}") from exc
-
-        if response.status_code != 200:
-            raise IikoCustomerCategoryApiError(
-                f"Ошибка токена iikoCard: status={response.status_code}, body={response.text[:300]}"
-            )
-
-        body = response.json()
-        token = str(body.get("token") or "").strip()
-        if not token:
-            raise IikoCustomerCategoryApiError("В ответе iikoCard отсутствует token.")
-
-        self._token = token
-        self._token_expires_at = datetime.utcnow() + timedelta(minutes=14)
-        return token
-
-    def _build_headers(self) -> dict[str, str]:
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._get_token()}",
-        }
+    def close(self) -> None:
+        """Закрывает клиент и при необходимости принадлежащий ему поставщик токена."""
+        self._session.close()
+        if self._close_token_provider:
+            self._token_provider.close()
 
     def _post(self, *, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.organization_id:
             raise IikoCustomerCategoryApiError("Не задан IIKO_ORGANIZATION_ID для iikoCard.")
 
-        url = f"{self.base_url}{path}"
         try:
-            response = self._session.post(
-                url,
-                json=payload,
-                headers=self._build_headers(),
-                timeout=self.timeout_seconds,
-            )
-        except requests.RequestException as exc:
-            raise IikoCustomerCategoryApiError(f"Сетевая ошибка iikoCard API `{path}`: {exc}") from exc
-
-        if response.status_code != 200:
-            error_body = None
-            error_code = ""
-            if str(response.text or "").strip():
-                try:
-                    error_body = response.json()
-                except ValueError:
-                    error_body = None
-            if isinstance(error_body, dict):
-                error_code = str(
-                    error_body.get("errorCode") or error_body.get("code") or ""
-                ).strip()
-            raise IikoCustomerCategoryApiError(
-                f"iikoCard API `{path}` вернул status={response.status_code}, body={response.text[:500]}",
-                status_code=response.status_code,
+            return self._transport.post_json(
                 path=path,
-                body=error_body,
-                error_code=error_code,
+                payload=payload,
+                retry_transient=path not in self._MUTATING_PATHS,
+                allow_empty=True,
             )
-        if not str(response.text or "").strip():
-            return {}
-        try:
-            body = response.json()
-        except ValueError as exc:
-            raise IikoCustomerCategoryApiError(f"iikoCard API `{path}` вернул не JSON-ответ.") from exc
-        return body if isinstance(body, dict) else {"result": body}
+        except IikoCloudAuthError as exc:
+            raise IikoCustomerCategoryApiError(
+                f"Ошибка авторизации iikoCard: {exc}",
+                status_code=exc.status_code,
+                correlation_id=exc.correlation_id,
+            ) from exc
+        except IikoCloudTransportError as exc:
+            raise IikoCustomerCategoryApiError(
+                str(exc),
+                status_code=exc.status_code,
+                path=exc.path,
+                body=exc.body,
+                error_code=exc.error_code,
+                correlation_id=exc.correlation_id,
+            ) from exc
 
     @staticmethod
     def normalize_phone_ru(raw_value: str | None) -> str:

@@ -1,159 +1,169 @@
-"""
-Тесты сервиса iiko_client.
-"""
+"""Регрессионные тесты клиента поиска гостя в iiko Cloud API."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import requests
-from django.conf import settings
 from django.test import SimpleTestCase
 
-# Модуль iiko_client создаёт глобальный singleton при импорте,
-# поэтому задаём безопасные значения заранее для тестового окружения.
-if not getattr(settings, "IIKO_API_KEY", None):
-    settings.IIKO_API_KEY = "test-api-key"
-if not getattr(settings, "IIKO_API_BASE_URL", None):
-    settings.IIKO_API_BASE_URL = "https://iiko.example/api"
-if not getattr(settings, "IIKO_ORGANIZATION_ID", None):
-    settings.IIKO_ORGANIZATION_ID = "test-org-id"
-
 from guests.services.iiko_client import IikoClient
+from guests.services.iiko_cloud_auth import IikoCloudAuthError
+
+
+class _FakeTokenProvider:
+    def __init__(self, token: str = "token-1"):
+        self.token = token
+        self.invalidated: list[str | None] = []
+
+    def get_token(self):
+        return self.token
+
+    def invalidate_token(self, *, expected_token=None):
+        self.invalidated.append(expected_token)
+
+    def close(self):
+        return None
+
+
+class _FakeResponse:
+    def __init__(self, *, status_code=200, body=None, text="json"):
+        self.status_code = status_code
+        self._body = body if body is not None else {}
+        self.text = text
+        self.headers = {}
+
+    def json(self):
+        return self._body
+
+
+class _FakeSession:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.posts: list[dict[str, object]] = []
+
+    def post(self, url, **kwargs):
+        self.posts.append({"url": url, **kwargs})
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    def close(self):
+        return None
 
 
 class IikoClientServiceTests(SimpleTestCase):
-    """
-    Покрытие ключевых веток IikoClient.
-    """
+    """Проверки публичного поведения `IikoClient` после замены авторизации."""
 
     @staticmethod
-    def _response(*, status_code=200, json_data=None, text="ok", raise_exc=None):
-        response = Mock()
-        response.status_code = status_code
-        response.text = text
-        response.json.return_value = json_data if json_data is not None else {}
-        if raise_exc is None:
-            response.raise_for_status.return_value = None
-        else:
-            response.raise_for_status.side_effect = raise_exc
-        return response
-
-    def _client(self) -> IikoClient:
-        return IikoClient(
-            api_key="api-key",
-            base_url="https://iiko.example/api/",
-            organization_id="org-1",
+    def _client(*, responses, base_url="https://iiko.example", organization_id="org-1"):
+        provider = _FakeTokenProvider()
+        session = _FakeSession(responses)
+        client = IikoClient(
+            base_url=base_url,
+            organization_id=organization_id,
             timeout=5,
+            token_provider=provider,
+            max_retries=0,
         )
+        client._session = session
+        return client, provider, session
 
     def test_normalize_phone_variants(self):
-        """
-        _normalize_phone должен корректно приводить телефон к единому формату.
-        """
-        client = self._client()
-        self.assertEqual(client._normalize_phone("+7 (999) 123-45-67"), "+79991234567")
-        self.assertEqual(client._normalize_phone("8 (999) 123-45-67"), "+79991234567")
-        self.assertEqual(client._normalize_phone("9991234567"), "+79991234567")
+        self.assertEqual(IikoClient._normalize_phone("+7 (999) 123-45-67"), "+79991234567")
+        self.assertEqual(IikoClient._normalize_phone("8 (999) 123-45-67"), "+79991234567")
+        self.assertEqual(IikoClient._normalize_phone("9991234567"), "+79991234567")
 
-    def test_get_token_uses_cached_token_when_valid(self):
-        """
-        При валидном кэше _get_token должен вернуть токен без сетевого запроса.
-        """
-        client = self._client()
-        client._token = "cached-token"
-        fixed_now = datetime(2026, 3, 18, 12, 0, 0)
-        client._token_expires_at = fixed_now + timedelta(minutes=1)
+    def test_phone_lookup_uses_api_v1_and_existing_response_contract(self):
+        client, _provider, session = self._client(
+            responses=[_FakeResponse(body={"customer": {"id": "guest-1"}})]
+        )
 
-        with patch("guests.services.iiko_client.datetime") as mocked_datetime:
-            mocked_datetime.now.return_value = fixed_now
-            token = client._get_token()
+        result = client.get_customer_by_phone("8 (999) 123-45-67")
 
-        self.assertEqual(token, "cached-token")
+        self.assertEqual(result, {"customer": {"id": "guest-1"}})
+        self.assertEqual(
+            session.posts[0]["url"],
+            "https://iiko.example/api/1/loyalty/iiko/customer/info",
+        )
+        self.assertEqual(
+            session.posts[0]["json"],
+            {
+                "phone": "+79991234567",
+                "type": "phone",
+                "organizationId": "org-1",
+            },
+        )
 
-    def test_get_token_returns_none_on_request_error_or_missing_token(self):
-        """
-        _get_token должен возвращать None при сетевой ошибке и при ответе без token.
-        """
-        client = self._client()
-        client._session.post = Mock(side_effect=requests.RequestException("network down"))
-        self.assertIsNone(client._get_token())
+    def test_id_lookup_keeps_existing_payload(self):
+        client, _provider, session = self._client(
+            responses=[_FakeResponse(body={"customer": {"id": "guest-1"}})]
+        )
 
-        client = self._client()
-        client._session.post = Mock(return_value=self._response(json_data={"access": "wrong-field"}))
-        self.assertIsNone(client._get_token())
+        result = client.get_customer_by_id("guest-1")
 
-    def test_get_token_fetches_and_caches_new_token(self):
-        """
-        Успешный _get_token должен сохранить token и срок его жизни.
-        """
-        client = self._client()
-        client._session.post = Mock(return_value=self._response(json_data={"token": "fresh-token"}))
+        self.assertEqual(result, {"customer": {"id": "guest-1"}})
+        self.assertEqual(
+            session.posts[0]["json"],
+            {"id": "guest-1", "type": "id", "organizationId": "org-1"},
+        )
 
-        token = client._get_token()
+    def test_not_found_and_other_http_errors_return_none_without_body_in_log(self):
+        for status_code in (400, 404, 500):
+            with self.subTest(status_code=status_code):
+                private_body = "private-response-body"
+                client, _provider, _session = self._client(
+                    responses=[
+                        _FakeResponse(
+                            status_code=status_code,
+                            body={"message": private_body, "correlationId": "corr-1"},
+                        )
+                    ]
+                )
+                with self.assertLogs("guests.services.iiko_client", level="INFO") as logs:
+                    result = client.get_customer_by_phone("+79990000000")
 
-        self.assertEqual(token, "fresh-token")
-        self.assertEqual(client._token, "fresh-token")
-        self.assertIsNotNone(client._token_expires_at)
+                self.assertIsNone(result)
+                self.assertNotIn(private_body, "\n".join(logs.output))
+                self.assertNotIn("+79990000000", "\n".join(logs.output))
 
-    def test_auth_headers_returns_none_when_token_unavailable(self):
-        """
-        _auth_headers должен вернуть None, если получить токен не удалось.
-        """
-        client = self._client()
-        with patch.object(client, "_get_token", return_value=None):
-            headers = client._auth_headers()
-        self.assertIsNone(headers)
+    def test_network_error_returns_none(self):
+        client, _provider, session = self._client(
+            responses=[requests.Timeout("private-network-detail")]
+        )
 
-    def test_get_customer_by_phone_branches(self):
-        """
-        get_customer_by_phone: success/not-found/error/request-exception.
-        """
-        client = self._client()
+        with self.assertLogs("guests.services.iiko_client", level="ERROR") as logs:
+            result = client.get_customer_by_phone("+79990000000")
 
-        with patch.object(client, "_auth_headers", return_value=None):
-            self.assertIsNone(client.get_customer_by_phone("+79990000000"))
+        self.assertIsNone(result)
+        self.assertEqual(len(session.posts), 1)
+        self.assertNotIn("private-network-detail", "\n".join(logs.output))
 
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(return_value=self._response(status_code=200, json_data={"customer": {"id": "1"}}))
-            data = client.get_customer_by_phone("+79990000000")
-            self.assertEqual(data, {"customer": {"id": "1"}})
+    def test_missing_configuration_is_local_to_iiko_operation(self):
+        client = IikoClient(
+            base_url="https://iiko.example/api/1",
+            organization_id="org-1",
+            max_retries=0,
+        )
 
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(return_value=self._response(status_code=404, text="not found"))
-            self.assertIsNone(client.get_customer_by_phone("+79990000000"))
+        with patch(
+            "guests.services.iiko_client.build_iiko_cloud_token_provider_from_settings",
+            side_effect=IikoCloudAuthError("Не задан корректный IIKO_AUTH_MODE."),
+        ):
+            with self.assertLogs("guests.services.iiko_client", level="ERROR"):
+                result = client.get_customer_by_phone("+79990000000")
 
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(return_value=self._response(status_code=500, text="server error"))
-            self.assertIsNone(client.get_customer_by_phone("+79990000000"))
+        self.assertIsNone(result)
 
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(side_effect=requests.RequestException("timeout"))
-            self.assertIsNone(client.get_customer_by_phone("+79990000000"))
+    def test_missing_organization_returns_none_without_network(self):
+        client, _provider, session = self._client(
+            responses=[],
+            organization_id="",
+        )
 
-    def test_get_customer_by_id_branches(self):
-        """
-        get_customer_by_id: success/not-found/error/request-exception.
-        """
-        client = self._client()
+        with self.assertLogs("guests.services.iiko_client", level="ERROR"):
+            result = client.get_customer_by_phone("+79990000000")
 
-        with patch.object(client, "_auth_headers", return_value=None):
-            self.assertIsNone(client.get_customer_by_id("guest-id"))
-
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(return_value=self._response(status_code=200, json_data={"customer": {"id": "guest-id"}}))
-            data = client.get_customer_by_id("guest-id")
-            self.assertEqual(data, {"customer": {"id": "guest-id"}})
-
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(return_value=self._response(status_code=400, text="bad request"))
-            self.assertIsNone(client.get_customer_by_id("guest-id"))
-
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(return_value=self._response(status_code=503, text="server error"))
-            self.assertIsNone(client.get_customer_by_id("guest-id"))
-
-        with patch.object(client, "_auth_headers", return_value={"Authorization": "Bearer t"}):
-            client._session.post = Mock(side_effect=requests.RequestException("network"))
-            self.assertIsNone(client.get_customer_by_id("guest-id"))
+        self.assertIsNone(result)
+        self.assertEqual(session.posts, [])

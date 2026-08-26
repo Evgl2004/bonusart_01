@@ -446,6 +446,21 @@ try:
 except ValueError:
     IIKO_AUTH_TOKEN_REFRESH_MARGIN_SECONDS = 60.0
 
+try:
+    IIKO_API_MAX_RETRIES = max(0, int(os.getenv("IIKO_API_MAX_RETRIES", "2")))
+except ValueError:
+    IIKO_API_MAX_RETRIES = 2
+
+try:
+    IIKO_API_RETRY_BASE_SECONDS = float(os.getenv("IIKO_API_RETRY_BASE_SECONDS", "0.5"))
+except ValueError:
+    IIKO_API_RETRY_BASE_SECONDS = 0.5
+
+try:
+    IIKO_API_RETRY_MAX_SECONDS = float(os.getenv("IIKO_API_RETRY_MAX_SECONDS", "5"))
+except ValueError:
+    IIKO_API_RETRY_MAX_SECONDS = 5.0
+
 IIKO_OLAP_BASE_URL = os.getenv("IIKO_OLAP_BASE_URL", "").strip()
 IIKO_OLAP_LOGIN = os.getenv("IIKO_OLAP_LOGIN", "").strip()
 IIKO_OLAP_PASS_HASH = os.getenv("IIKO_OLAP_PASS_HASH", "").strip()

@@ -24,6 +24,9 @@ class EnvSampleDocumentationTests(SimpleTestCase):
             "IIKO_AUTH_RETRY_BASE_SECONDS",
             "IIKO_AUTH_RETRY_MAX_SECONDS",
             "IIKO_AUTH_TOKEN_REFRESH_MARGIN_SECONDS",
+            "IIKO_API_MAX_RETRIES",
+            "IIKO_API_RETRY_BASE_SECONDS",
+            "IIKO_API_RETRY_MAX_SECONDS",
         )
 
         for variable_name in expected_variables:

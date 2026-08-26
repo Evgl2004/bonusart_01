@@ -22,6 +22,10 @@ from guests.services.iiko_customer_category_client import (
     IikoCustomerCategoryApiError,
     IikoCustomerCategoryClient,
 )
+from guests.services.iiko_cloud_auth import (
+    IikoCloudAuthError,
+    build_iiko_cloud_token_provider_from_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -357,23 +361,25 @@ class IikoCustomerCategorySyncService:
         """
         Собирает service-конфигурацию из Django settings.
         """
-        api_key = str(getattr(settings, "IIKO_API_KEY", "") or "").strip()
         base_url = str(getattr(settings, "IIKO_API_BASE_URL", "") or "").strip()
         organization_id = str(getattr(settings, "IIKO_ORGANIZATION_ID", "") or "").strip()
-        if not api_key:
-            raise ValueError("Не задан IIKO_API_KEY для iikoCard.")
         if not base_url:
             raise ValueError("Не задан IIKO_API_BASE_URL для iikoCard.")
         if not organization_id:
             raise ValueError("Не задан IIKO_ORGANIZATION_ID для iikoCard.")
+        try:
+            token_provider = build_iiko_cloud_token_provider_from_settings()
+        except IikoCloudAuthError as exc:
+            raise ValueError(str(exc)) from exc
         timeout_seconds = float(
             getattr(settings, "IIKO_CUSTOMER_CATEGORY_SYNC_HTTP_TIMEOUT_SECONDS", 15.0) or 15.0
         )
         client = IikoCustomerCategoryClient(
-            api_key=api_key,
             base_url=base_url,
             organization_id=organization_id,
+            token_provider=token_provider,
             timeout_seconds=timeout_seconds,
+            close_token_provider=True,
         )
         return cls(
             client=client,

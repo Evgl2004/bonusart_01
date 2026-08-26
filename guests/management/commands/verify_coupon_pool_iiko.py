@@ -8,6 +8,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from guests.models import CouponPoolBatch, CouponRegistryEntry
+from guests.services.iiko_cloud_auth import (
+    IikoCloudAuthError,
+    build_iiko_cloud_token_provider_from_settings,
+)
 from guests.services.iiko_coupon_client import IikoCouponApiError, IikoCouponClient
 
 
@@ -79,17 +83,24 @@ class Command(BaseCommand):
         if not coupons:
             raise CommandError("В выбранной области нет купонов для проверки.")
 
-        client = IikoCouponClient(
-            api_key=str(getattr(settings, "IIKO_API_KEY", "") or "").strip(),
-            base_url=str(getattr(settings, "IIKO_API_BASE_URL", "") or "").strip(),
-            organization_id=str(getattr(settings, "IIKO_ORGANIZATION_ID", "") or "").strip(),
-            timeout_seconds=15.0,
-        )
-
-        if not client.api_key or not client.base_url or not client.organization_id:
+        base_url = str(getattr(settings, "IIKO_API_BASE_URL", "") or "").strip()
+        organization_id = str(getattr(settings, "IIKO_ORGANIZATION_ID", "") or "").strip()
+        if not base_url or not organization_id:
             raise CommandError(
-                "Не заполнены настройки IIKO_API_KEY / IIKO_API_BASE_URL / IIKO_ORGANIZATION_ID."
+                "Не заполнены настройки IIKO_API_BASE_URL / IIKO_ORGANIZATION_ID."
             )
+        try:
+            token_provider = build_iiko_cloud_token_provider_from_settings()
+        except IikoCloudAuthError as exc:
+            raise CommandError(str(exc)) from exc
+
+        client = IikoCouponClient(
+            base_url=base_url,
+            organization_id=organization_id,
+            token_provider=token_provider,
+            timeout_seconds=15.0,
+            close_token_provider=True,
+        )
 
         stats = VerifyStats(total=len(coupons))
         updated_at = timezone.now()

@@ -1,131 +1,92 @@
 from __future__ import annotations
 
-import logging
-from datetime import datetime, timedelta
 from typing import Any
 
 import requests
+from django.conf import settings
 
-logger = logging.getLogger(__name__)
-
+from guests.services.iiko_cloud_auth import IikoCloudAuthError, IikoCloudTokenProvider
+from guests.services.iiko_cloud_transport import (
+    IikoCloudJsonTransport,
+    IikoCloudTransportError,
+    normalize_iiko_cloud_api_base_url,
+)
 
 class IikoCouponApiError(Exception):
-    """Ошибка работы с API купонов iiko."""
+    """Безопасная ошибка работы с API купонов iiko."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        path: str = "",
+        correlation_id: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.path = str(path or "").strip()
+        self.correlation_id = str(correlation_id or "").strip()
 
 
 class IikoCouponClient:
-    """
-    Клиент API купонов iiko.
-
-    Поддерживаемые endpoints:
-    1. `/api/1/access_token`;
-    2. `/api/1/loyalty/iiko/coupons/series`;
-    3. `/api/1/loyalty/iiko/coupons/by_series`;
-    4. `/api/1/loyalty/iiko/coupons/info`.
-    """
-
-    API_V1_PREFIX = "/api/1"
+    """Клиент read-only методов купонов iiko Cloud API версии 1."""
 
     def __init__(
         self,
         *,
-        api_key: str,
         base_url: str,
         organization_id: str,
+        token_provider: IikoCloudTokenProvider,
         timeout_seconds: float = 15.0,
+        close_token_provider: bool = False,
+        max_retries: int | None = None,
     ) -> None:
-        self.api_key = str(api_key or "").strip()
-        self.base_url = self._normalize_base_url(base_url)
+        self.base_url = normalize_iiko_cloud_api_base_url(base_url)
         self.organization_id = str(organization_id or "").strip()
-        self.timeout_seconds = float(timeout_seconds)
-
+        self.timeout_seconds = max(0.1, float(timeout_seconds or 15.0))
+        self._token_provider = token_provider
+        self._close_token_provider = bool(close_token_provider)
         self._session = requests.Session()
-        self._token: str | None = None
-        self._token_expires_at: datetime | None = None
-
-    @classmethod
-    def _normalize_base_url(cls, base_url: str) -> str:
-        """
-        Приводит URL iiko к версии API v1.
-
-        В настройках удобнее хранить официальный корневой адрес iiko, но
-        endpoints купонов живут под `/api/1`. Если оператор уже указал URL с
-        `/api/1`, повторно суффикс не добавляем.
-        """
-        normalized = str(base_url or "").strip().rstrip("/")
-        if not normalized:
-            return ""
-        if normalized.endswith(cls.API_V1_PREFIX):
-            return normalized
-        return f"{normalized}{cls.API_V1_PREFIX}"
-
-    def close(self) -> None:
-        self._session.close()
-
-    def _is_token_valid(self) -> bool:
-        return bool(
-            self._token
-            and self._token_expires_at
-            and datetime.utcnow() < self._token_expires_at
+        self._transport = IikoCloudJsonTransport(
+            base_url=self.base_url,
+            token_provider=token_provider,
+            session=self._session,
+            connect_timeout_seconds=min(5.0, self.timeout_seconds),
+            read_timeout_seconds=self.timeout_seconds,
+            max_retries=(
+                int(getattr(settings, "IIKO_API_MAX_RETRIES", 2))
+                if max_retries is None
+                else int(max_retries)
+            ),
+            retry_base_seconds=float(getattr(settings, "IIKO_API_RETRY_BASE_SECONDS", 0.5)),
+            retry_max_seconds=float(getattr(settings, "IIKO_API_RETRY_MAX_SECONDS", 5.0)),
         )
 
-    def _get_token(self) -> str:
-        if self._is_token_valid():
-            return str(self._token)
-
-        url = f"{self.base_url}/access_token"
-        payload = {"apiLogin": self.api_key}
-        headers = {"Content-Type": "application/json"}
-        try:
-            response = self._session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=self.timeout_seconds,
-            )
-        except requests.RequestException as exc:
-            raise IikoCouponApiError(f"Сетевая ошибка запроса токена iiko: {exc}") from exc
-
-        if response.status_code != 200:
-            raise IikoCouponApiError(
-                f"Ошибка токена iiko: status={response.status_code}, body={response.text[:300]}"
-            )
-
-        body = response.json()
-        token = str(body.get("token") or "").strip()
-        if not token:
-            raise IikoCouponApiError("В ответе iiko отсутствует токен.")
-
-        self._token = token
-        # Страховка: обновляем немного раньше официального TTL.
-        self._token_expires_at = datetime.utcnow() + timedelta(minutes=14)
-        return token
-
-    def _build_headers(self) -> dict[str, str]:
-        token = self._get_token()
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        }
+    def close(self) -> None:
+        """Закрывает клиент и при необходимости принадлежащий ему поставщик токена."""
+        self._session.close()
+        if self._close_token_provider:
+            self._token_provider.close()
 
     def _post(self, *, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self.base_url}{path}"
-        headers = self._build_headers()
+        if not self.organization_id:
+            raise IikoCouponApiError("Не задан IIKO_ORGANIZATION_ID для API купонов iiko.")
         try:
-            response = self._session.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=self.timeout_seconds,
+            return self._transport.post_json(
+                path=path,
+                payload=payload,
+                retry_transient=True,
             )
-        except requests.RequestException as exc:
-            raise IikoCouponApiError(f"Сетевая ошибка iiko API `{path}`: {exc}") from exc
-
-        if response.status_code != 200:
+        except IikoCloudAuthError as exc:
+            raise IikoCouponApiError(f"Ошибка авторизации API купонов iiko: {exc}") from exc
+        except IikoCloudTransportError as exc:
             raise IikoCouponApiError(
-                f"iiko API `{path}` вернул status={response.status_code}, body={response.text[:500]}"
-            )
-        return response.json()
+                str(exc),
+                status_code=exc.status_code,
+                path=exc.path,
+                correlation_id=exc.correlation_id,
+            ) from exc
 
     def get_coupon_series_with_non_activated(self) -> list[dict[str, Any]]:
         payload = {"organizationId": self.organization_id}

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from guests.models import CouponPoolBatch, CouponRegistryEntry
 from guests.services.coupon_constants import COUPON_VENUE_GLOBAL_CODE, COUPON_VENUE_GLOBAL_NAME
@@ -109,9 +109,9 @@ class GenerateCouponPoolCommandTests(TestCase):
 class IikoCouponClientUrlTests(TestCase):
     def test_normalizes_root_base_url_to_api_v1(self):
         client = IikoCouponClient(
-            api_key="key",
             base_url="https://api-ru.iiko.services/",
             organization_id="org",
+            token_provider=Mock(),
         )
 
         self.assertEqual(client.base_url, "https://api-ru.iiko.services/api/1")
@@ -119,9 +119,9 @@ class IikoCouponClientUrlTests(TestCase):
 
     def test_keeps_existing_api_v1_base_url(self):
         client = IikoCouponClient(
-            api_key="key",
             base_url="https://api-ru.iiko.services/api/1/",
             organization_id="org",
+            token_provider=Mock(),
         )
 
         self.assertEqual(client.base_url, "https://api-ru.iiko.services/api/1")
@@ -163,10 +163,14 @@ class VerifyCouponPoolIikoCommandTests(TestCase):
             pool_status=CouponRegistryEntry.PoolStatus.UPLOADED_PENDING_CHECK,
         )
 
+    @override_settings(
+        IIKO_API_BASE_URL="https://iiko.example/api/1",
+        IIKO_ORGANIZATION_ID="org-1",
+    )
+    @patch("guests.management.commands.verify_coupon_pool_iiko.build_iiko_cloud_token_provider_from_settings")
     @patch("guests.management.commands.verify_coupon_pool_iiko.IikoCouponClient")
-    def test_verify_command_updates_found_and_not_found_statuses(self, client_cls):
+    def test_verify_command_updates_found_and_not_found_statuses(self, client_cls, provider_builder):
         client = client_cls.return_value
-        client.api_key = "key"
         client.base_url = "https://example.com/api/1"
         client.organization_id = "org"
         client.get_coupon_series_with_non_activated.return_value = [{"number": "TEST"}]
@@ -191,10 +195,14 @@ class VerifyCouponPoolIikoCommandTests(TestCase):
         self.assertEqual(self.batch.verified_found_count, 2)
         self.assertEqual(self.batch.verified_not_found_count, 1)
 
+    @override_settings(
+        IIKO_API_BASE_URL="https://iiko.example/api/1",
+        IIKO_ORGANIZATION_ID="org-1",
+    )
+    @patch("guests.management.commands.verify_coupon_pool_iiko.build_iiko_cloud_token_provider_from_settings")
     @patch("guests.management.commands.verify_coupon_pool_iiko.IikoCouponClient")
-    def test_verify_command_dry_run_does_not_persist_changes(self, client_cls):
+    def test_verify_command_dry_run_does_not_persist_changes(self, client_cls, provider_builder):
         client = client_cls.return_value
-        client.api_key = "key"
         client.base_url = "https://example.com/api/1"
         client.organization_id = "org"
         client.get_coupon_series_with_non_activated.return_value = [{"number": "TEST"}]

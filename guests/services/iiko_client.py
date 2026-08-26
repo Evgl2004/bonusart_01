@@ -3,89 +3,87 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import requests
 from django.conf import settings
+
+from guests.services.iiko_cloud_auth import (
+    IikoCloudAuthError,
+    IikoCloudTokenProvider,
+    build_iiko_cloud_token_provider_from_settings,
+)
+from guests.services.iiko_cloud_transport import (
+    IikoCloudJsonTransport,
+    IikoCloudTransportError,
+    normalize_iiko_cloud_api_base_url,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class IikoClient:
     """
-    клиент для iiko API:
-    - получить токен
-    - найти гостя по телефону или customerId
-    Никаких текстов для бота, только словари с данными.
+    Клиент поиска гостя в iiko Cloud API.
+
+    Авторизация создаётся лениво при первом вызове, поэтому неполная настройка
+    iiko не останавливает запуск остальных частей Django-приложения.
     """
 
     def __init__(
         self,
-        api_key: str,
+        *,
         base_url: str,
         organization_id: str,
-        timeout: int = 10,
+        timeout: float = 10.0,
+        token_provider: IikoCloudTokenProvider | None = None,
+        close_token_provider: bool | None = None,
+        max_retries: int | None = None,
     ) -> None:
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
-        self.organization_id = organization_id
-        self.timeout = timeout
-
+        self.base_url = normalize_iiko_cloud_api_base_url(base_url)
+        self.organization_id = str(organization_id or "").strip()
+        self.timeout = max(0.1, float(timeout or 10.0))
         self._session = requests.Session()
-        self._token: Optional[str] = None
-        self._token_expires_at: Optional[datetime] = None
-
-    # ------- служебное --------
-
-    def _is_token_valid(self) -> bool:
-        return bool(
-            self._token and self._token_expires_at
-            and datetime.now() < self._token_expires_at
+        self._token_provider = token_provider
+        self._close_token_provider = (
+            token_provider is None if close_token_provider is None else bool(close_token_provider)
         )
+        self._max_retries = max_retries
+        self._transport: IikoCloudJsonTransport | None = None
 
-    def _get_token(self) -> Optional[str]:
-        """Берём существующий токен или запрашиваем новый."""
-        if self._is_token_valid():
-            return self._token
+    def close(self) -> None:
+        """Закрывает HTTP-сессии клиента и принадлежащего ему поставщика токена."""
+        self._session.close()
+        if self._close_token_provider and self._token_provider is not None:
+            self._token_provider.close()
 
-        url = f"{self.base_url}/access_token"
-        payload = {"apiLogin": self.api_key}
-        headers = {"Content-Type": "application/json"}
+    def _get_token_provider(self) -> IikoCloudTokenProvider:
+        if self._token_provider is None:
+            self._token_provider = build_iiko_cloud_token_provider_from_settings()
+        return self._token_provider
 
-        try:
-            resp = self._session.post(
-                url, json=payload, headers=headers, timeout=self.timeout
+    def _get_transport(self) -> IikoCloudJsonTransport:
+        if self._transport is None:
+            self._transport = IikoCloudJsonTransport(
+                base_url=self.base_url,
+                token_provider=self._get_token_provider(),
+                session=self._session,
+                connect_timeout_seconds=min(5.0, self.timeout),
+                read_timeout_seconds=self.timeout,
+                max_retries=(
+                    int(getattr(settings, "IIKO_API_MAX_RETRIES", 2))
+                    if self._max_retries is None
+                    else int(self._max_retries)
+                ),
+                retry_base_seconds=float(getattr(settings, "IIKO_API_RETRY_BASE_SECONDS", 0.5)),
+                retry_max_seconds=float(getattr(settings, "IIKO_API_RETRY_MAX_SECONDS", 5.0)),
             )
-            resp.raise_for_status()
-        except requests.RequestException as exc:
-            logger.error("Ошибка запроса токена iiko: %s", exc)
-            return None
-
-        data = resp.json()
-        token = data.get("token")
-        if not token:
-            logger.error("В ответе iiko нет поля token: %r", data)
-            return None
-
-        self._token = token
-        # по документации токен живёт 15 минут — оставим небольшой запас
-        self._token_expires_at = datetime.now() + timedelta(minutes=14)
-        return token
-
-    def _auth_headers(self) -> Optional[Dict[str, str]]:
-        token = self._get_token()
-        if not token:
-            return None
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {token}",
-        }
+        return self._transport
 
     @staticmethod
     def _normalize_phone(phone: str) -> str:
-        """Превращаем номер в формат +7XXXXXXXXXX (как у тебя в старом коде)."""
-        digits = "".join(ch for ch in phone if ch.isdigit())
+        """Приводит телефон к формату `+7XXXXXXXXXX`."""
+        digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
         if digits.startswith("7"):
             return "+" + digits
         if digits.startswith("8"):
@@ -94,82 +92,50 @@ class IikoClient:
             return "+7" + digits
         return "+" + digits
 
-    # ------- публичные методы --------
-
     def get_customer_by_phone(self, phone: str) -> Optional[Dict[str, Any]]:
-        """
-        Возвращает СЫРОЙ dict клиента из iiko по телефону
-        или None, если не найден / ошибка.
-        """
-        headers = self._auth_headers()
-        if not headers:
-            return None
-
+        """Возвращает исходный ответ iiko для гостя по телефону либо `None`."""
         formatted_phone = self._normalize_phone(phone)
-
-        payload = {
+        return self._get_customer(payload={
             "phone": formatted_phone,
             "type": "phone",
             "organizationId": self.organization_id,
-        }
-
-        url = f"{self.base_url}/loyalty/iiko/customer/info"
-        try:
-            resp = self._session.post(
-                url, json=payload, headers=headers, timeout=self.timeout
-            )
-        except requests.RequestException as exc:
-            logger.error("Ошибка сети при запросе клиента по телефону: %s", exc)
-            return None
-
-        if resp.status_code == 200:
-            data = resp.json()
-            # В твоём старом коде ты сразу передавала data в _extract_customer_info.
-            # Здесь мы возвращаем как есть, а разбор делаем уже в Django.
-            return data
-        elif resp.status_code in (400, 404):
-            logger.info("Гость с телефоном %s в iiko не найден: %s", formatted_phone, resp.text)
-            return None
-        else:
-            logger.error("Неожиданный код iiko %s: %s", resp.status_code, resp.text)
-            return None
+        })
 
     def get_customer_by_id(self, customer_id: str) -> Optional[Dict[str, Any]]:
-        """
-        То же самое, но по customerId (iiko_id).
-        """
-        headers = self._auth_headers()
-        if not headers:
-            return None
-
-        payload = {
-            "id": customer_id,
+        """Возвращает исходный ответ iiko для гостя по идентификатору либо `None`."""
+        return self._get_customer(payload={
+            "id": str(customer_id or "").strip(),
             "type": "id",
             "organizationId": self.organization_id,
-        }
+        })
 
-        url = f"{self.base_url}/loyalty/iiko/customer/info"
+    def _get_customer(self, *, payload: dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not self.organization_id:
+            logger.error("Не задан IIKO_ORGANIZATION_ID для поиска гостя в iiko Cloud API.")
+            return None
         try:
-            resp = self._session.post(
-                url, json=payload, headers=headers, timeout=self.timeout
+            return self._get_transport().post_json(
+                path="/loyalty/iiko/customer/info",
+                payload=payload,
+                retry_transient=True,
             )
-        except requests.RequestException as exc:
-            logger.error("Ошибка сети при запросе клиента по id: %s", exc)
+        except IikoCloudAuthError as exc:
+            logger.error("Ошибка авторизации при поиске гостя в iiko Cloud API: %s", exc)
             return None
-
-        if resp.status_code == 200:
-            return resp.json()
-        elif resp.status_code in (400, 404):
-            logger.info("Гость с id %s в iiko не найден: %s", customer_id, resp.text)
-            return None
-        else:
-            logger.error("Неожиданный код iiko %s: %s", resp.status_code, resp.text)
+        except IikoCloudTransportError as exc:
+            if exc.status_code in {400, 404}:
+                logger.info(
+                    "Гость не найден в iiko Cloud API: статус=%s correlation_id=%s",
+                    exc.status_code,
+                    exc.correlation_id or "-",
+                )
+            else:
+                logger.error("Ошибка поиска гостя в iiko Cloud API: %s", exc)
             return None
 
 
 # Один общий экземпляр клиента, чтобы переиспользовать сессию и токен
 iiko_client = IikoClient(
-    api_key=settings.IIKO_API_KEY,
-    base_url=settings.IIKO_API_BASE_URL,
-    organization_id=settings.IIKO_ORGANIZATION_ID,
+    base_url=getattr(settings, "IIKO_API_BASE_URL", ""),
+    organization_id=getattr(settings, "IIKO_ORGANIZATION_ID", ""),
 )

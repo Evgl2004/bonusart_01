@@ -55,6 +55,19 @@ class _FakeIikoHttpSession:
         return None
 
 
+class _FakeIikoTokenProvider:
+    """Поставщик фиксированного токена без сетевой авторизации."""
+
+    def get_token(self):
+        return "token-1"
+
+    def invalidate_token(self, *, expected_token=None):
+        return None
+
+    def close(self):
+        return None
+
+
 class IikoCustomerCategoryClientTests(SimpleTestCase):
     """
     Проверки HTTP-клиента iikoCard для категорий гостей.
@@ -66,16 +79,17 @@ class IikoCustomerCategoryClientTests(SimpleTestCase):
         """
         session = _FakeIikoHttpSession(
             [
-                _FakeIikoHttpResponse(text='{"token":"token-1"}', json_body={"token": "token-1"}),
                 _FakeIikoHttpResponse(text="", json_body=None),
             ]
         )
         client = IikoCustomerCategoryClient(
-            api_key="api-key",
             base_url="https://iiko.example.test",
             organization_id="org-1",
+            token_provider=_FakeIikoTokenProvider(),
+            max_retries=0,
         )
         client._session = session
+        client._transport._session = session
 
         result = client.add_customer_category(
             customer_id="customer-1",
@@ -83,11 +97,71 @@ class IikoCustomerCategoryClientTests(SimpleTestCase):
         )
 
         self.assertEqual(result, {})
-        self.assertEqual(len(session.posts), 2)
+        self.assertEqual(len(session.posts), 1)
         self.assertEqual(
-            session.posts[1]["url"],
+            session.posts[0]["url"],
             "https://iiko.example.test/api/1/loyalty/iiko/customer_category/add",
         )
+
+    def test_mutating_error_is_structured_without_response_body_in_text(self):
+        private_message = "private-response-body"
+        session = _FakeIikoHttpSession(
+            [
+                _FakeIikoHttpResponse(
+                    status_code=400,
+                    text="json",
+                    json_body={
+                        "errorCode": "BAD_CATEGORY",
+                        "correlationId": "corr-1",
+                        "message": private_message,
+                    },
+                )
+            ]
+        )
+        client = IikoCustomerCategoryClient(
+            base_url="https://iiko.example.test/api/1",
+            organization_id="org-1",
+            token_provider=_FakeIikoTokenProvider(),
+            max_retries=2,
+        )
+        client._session = session
+        client._transport._session = session
+
+        with self.assertRaises(IikoCustomerCategoryApiError) as error_context:
+            client.add_customer_category(customer_id="customer-1", category_id="category-1")
+
+        error = error_context.exception
+        self.assertEqual(len(session.posts), 1)
+        self.assertEqual(error.error_code, "BAD_CATEGORY")
+        self.assertEqual(error.correlation_id, "corr-1")
+        self.assertEqual(error.body["message"], private_message)
+        self.assertNotIn(private_message, str(error))
+
+    @override_settings(
+        IIKO_AUTH_MODE="v2",
+        IIKO_APP_ID="app-test",
+        IIKO_CLIENT_SECRET="secret-test",
+        IIKO_API_KEY="key-test",
+        IIKO_API_BASE_URL="https://iiko.example/api/1",
+        IIKO_ORGANIZATION_ID="org-1",
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="category-1",
+    )
+    def test_service_from_settings_builds_selected_mode_locally(self):
+        service = IikoCustomerCategorySyncService.from_settings()
+
+        self.assertEqual(service.client._token_provider.mode, "v2")
+        self.assertEqual(service.client.base_url, "https://iiko.example/api/1")
+        service.client.close()
+
+    @override_settings(
+        IIKO_AUTH_MODE="",
+        IIKO_API_BASE_URL="https://iiko.example/api/1",
+        IIKO_ORGANIZATION_ID="org-1",
+        IIKO_ACTIVE_COUPON_CATEGORY_ID="category-1",
+    )
+    def test_service_from_settings_reports_mode_error_only_when_called(self):
+        with self.assertRaisesRegex(ValueError, "IIKO_AUTH_MODE"):
+            IikoCustomerCategorySyncService.from_settings()
 
 
 class _FakeIikoCategoryClient:
