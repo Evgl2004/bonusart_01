@@ -119,6 +119,22 @@ def build_message_interaction_report_snapshot(
                 message_interaction__button_set=InteractionButtonSet.RATING_MENU_LINK,
             ),
         ),
+        link_opened_messages_total=Count(
+            "id",
+            distinct=True,
+            filter=Q(has_link_transition=True),
+        ),
+        link_opened_guests_total=Count(
+            "guest_id",
+            distinct=True,
+            filter=Q(
+                guest_id__isnull=False,
+                has_link_transition=True,
+            ),
+        ),
+        link_clicks_total=Count(
+            "message_interaction__tracked_link__transitions__id",
+        ),
     )
 
     accepted_events = MessageInteractionEvent.objects.filter(
@@ -170,29 +186,11 @@ def build_message_interaction_report_snapshot(
         ),
     )
 
-    transitions = MessageInteractionLinkTransition.objects.filter(
-        tracked_link__interaction__dispatch_task__in=successful_interactive_tasks,
-    )
-    transition_totals = transitions.aggregate(
-        link_opened_messages_total=Count("tracked_link_id", distinct=True),
-        link_opened_guests_total=Count(
-            "tracked_link__interaction__dispatch_task__guest_id",
-            distinct=True,
-            filter=Q(
-                tracked_link__interaction__dispatch_task__guest_id__isnull=False
-            ),
-        ),
-        link_clicks_total=Count("id"),
-    )
-
     normalized_task_totals = {
         name: int(value or 0) for name, value in task_totals.items()
     }
     normalized_event_totals = {
         name: int(value or 0) for name, value in event_totals.items()
-    }
-    normalized_transition_totals = {
-        name: int(value or 0) for name, value in transition_totals.items()
     }
     denominator = normalized_task_totals["messages_with_buttons_total"]
     interacted_messages = normalized_task_totals["interacted_messages_total"]
@@ -205,9 +203,7 @@ def build_message_interaction_report_snapshot(
         else Decimal("0.00")
     )
     link_denominator = normalized_task_totals["messages_with_links_total"]
-    link_opened_messages = normalized_transition_totals[
-        "link_opened_messages_total"
-    ]
+    link_opened_messages = normalized_task_totals["link_opened_messages_total"]
     link_share = (
         (
             Decimal(link_opened_messages)
@@ -224,7 +220,6 @@ def build_message_interaction_report_snapshot(
     return MessageInteractionReportSnapshot(
         **normalized_task_totals,
         **normalized_event_totals,
-        **normalized_transition_totals,
         interaction_share_percent=interaction_share,
         link_share_percent=link_share,
     )

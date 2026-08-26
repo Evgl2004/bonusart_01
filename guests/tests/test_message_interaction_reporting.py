@@ -206,7 +206,7 @@ class MessageInteractionReportingTests(TestCase):
         self.assertEqual(snapshot.link_clicks_total, 3)
         self.assertEqual(snapshot.interaction_share_percent, Decimal("66.67"))
         self.assertEqual(snapshot.link_share_percent, Decimal("66.67"))
-        self.assertEqual(len(captured), 3)
+        self.assertEqual(len(captured), 2)
         self.assertTrue(
             any("EXISTS" in query["sql"].upper() for query in captured.captured_queries)
         )
