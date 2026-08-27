@@ -9,24 +9,23 @@ from django.core.exceptions import ImproperlyConfigured
 from .settings import *  # noqa: F401,F403
 
 
-SECRET_KEY = str(os.getenv("TRACKED_LINK_SECRET_KEY", "") or "").strip()
+SECRET_KEY = str(os.getenv("SECRET_KEY", "") or "").strip()
 if not SECRET_KEY:
     raise ImproperlyConfigured(
-        "Для службы переходов не задан отдельный TRACKED_LINK_SECRET_KEY."
+        "Для службы переходов не задан отдельный SECRET_KEY."
     )
 
 DEBUG = False
+
 ALLOWED_HOSTS = [
-    host.strip()
-    for host in str(
-        os.getenv(
-            "TRACKED_LINK_DJANGO_ALLOWED_HOSTS",
-            "localhost,127.0.0.1",
-        )
-        or ""
-    ).split(",")
-    if host.strip()
+    str(host).strip()
+    for host in ALLOWED_HOSTS  # noqa: F405
+    if str(host).strip()
 ]
+if not ALLOWED_HOSTS:
+    raise ImproperlyConfigured(
+        "Для службы переходов не задан ни один допустимый узел ALLOWED_HOSTS."
+    )
 
 INSTALLED_APPS = [
     "django.contrib.contenttypes",
@@ -43,20 +42,22 @@ TEMPLATES = []
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": os.getenv("TRACKED_LINK_PG_NAME"),
-        "USER": os.getenv("TRACKED_LINK_PG_USER"),
-        "PASSWORD": os.getenv("TRACKED_LINK_PG_PASSWORD"),
-        "HOST": os.getenv("TRACKED_LINK_PG_HOST", "db"),
-        "PORT": os.getenv("TRACKED_LINK_PG_PORT", "5432"),
+        "NAME": os.getenv("PG_NAME"),
+        "USER": os.getenv("PG_USER"),
+        "PASSWORD": os.getenv("PG_PASSWORD"),
+        "HOST": os.getenv("PG_HOST"),
+        "PORT": os.getenv("PG_PORT"),
         "CONN_MAX_AGE": 60,
         "CONN_HEALTH_CHECKS": True,
     }
 }
 
 for variable_name in (
-    "TRACKED_LINK_PG_NAME",
-    "TRACKED_LINK_PG_USER",
-    "TRACKED_LINK_PG_PASSWORD",
+    "PG_NAME",
+    "PG_USER",
+    "PG_PASSWORD",
+    "PG_HOST",
+    "PG_PORT",
 ):
     if not str(os.getenv(variable_name, "") or "").strip():
         raise ImproperlyConfigured(
