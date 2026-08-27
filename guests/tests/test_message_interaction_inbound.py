@@ -79,6 +79,10 @@ class MessageInteractionInboundTests(TestCase):
             button_set=InteractionButtonSet.RATING_COUPONS,
             suffix="coupon",
         )
+        self.link_interaction = self._create_interaction(
+            button_set=InteractionButtonSet.RATING_MENU_LINK,
+            suffix="menu-link",
+        )
 
     def _increment_rate_limit(self, *, minute_bucket: int) -> int:
         current = self._rate_limit_counts.get(minute_bucket, 0) + 1
@@ -232,6 +236,64 @@ class MessageInteractionInboundTests(TestCase):
             ],
         )
         self.assertEqual(MessageInteractionEvent.objects.count(), 2)
+
+    def test_rating_menu_link_accepts_ratings_and_repeated_menu_only(self):
+        """Точный ссылочный набор принимает l/d/m и отклоняет действие купона."""
+
+        event_ids = [str(uuid.uuid4()) for _ in range(5)]
+        payload = self._payload(
+            [
+                self._item(
+                    event_id=event_ids[0],
+                    interaction_id=self.link_interaction.id,
+                    action="l",
+                ),
+                self._item(
+                    event_id=event_ids[1],
+                    interaction_id=self.link_interaction.id,
+                    action="d",
+                ),
+                self._item(
+                    event_id=event_ids[2],
+                    interaction_id=self.link_interaction.id,
+                    action="m",
+                ),
+                self._item(
+                    event_id=event_ids[3],
+                    interaction_id=self.link_interaction.id,
+                    action="m",
+                ),
+                self._item(
+                    event_id=event_ids[4],
+                    interaction_id=self.link_interaction.id,
+                    action="c",
+                ),
+            ]
+        )
+
+        response = self._post_payload(payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "partial")
+        self.assertEqual(
+            [item["result"] for item in response.json()["results"]],
+            [
+                "accepted",
+                "rating_already_recorded",
+                "accepted",
+                "accepted",
+                "action_not_allowed_for_button_set",
+            ],
+        )
+        stored_events = MessageInteractionEvent.objects.filter(
+            interaction=self.link_interaction
+        )
+        self.assertEqual(stored_events.count(), 4)
+        self.assertEqual(
+            stored_events.filter(action=MessageInteractionEvent.Action.MENU).count(),
+            2,
+        )
+        self.assertFalse(stored_events.filter(event_id=event_ids[4]).exists())
 
     def test_partial_batch_does_not_roll_back_valid_item(self):
         accepted_event_id = str(uuid.uuid4())
