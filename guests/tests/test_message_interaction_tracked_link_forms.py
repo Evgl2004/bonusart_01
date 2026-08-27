@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.admin.sites import AdminSite
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from guests.admin import MessageInteractionLinkDestinationAdmin
+from guests.admin import (
+    MailingAdminForm,
+    MessageInteractionLinkDestinationAdmin,
+    MessageInteractionLinkDestinationAdminForm,
+)
 from guests.forms import (
     CouponAutomationConfigForm,
     CouponAutomationScenarioCreateForm,
@@ -26,6 +31,7 @@ from guests.models import (
 )
 
 
+@override_settings(MESSAGE_TRACKED_LINK_ALLOWED_HOSTS={"rest.market"})
 class TrackedLinkFormTests(TestCase):
     """Проверяет согласованность набора кнопок и назначения во всех формах."""
 
@@ -233,3 +239,128 @@ class TrackedLinkFormTests(TestCase):
             {"code", "label_code", "target_url", "created_at", "updated_at"},
         )
         self.assertFalse(model_admin.has_delete_permission(None, self.destination))
+
+    def test_destination_admin_form_validates_creation_and_reactivation(self):
+        allowed_creation = MessageInteractionLinkDestinationAdminForm(
+            data={
+                "code": "allowed_creation",
+                "name": "Разрешённое назначение",
+                "label_code": InteractionLinkLabelCode.WEBSITE,
+                "target_url": "https://rest.market/page",
+                "is_active": "on",
+            }
+        )
+        forbidden_creation = MessageInteractionLinkDestinationAdminForm(
+            data={
+                "code": "forbidden_creation",
+                "name": "Запрещённое назначение",
+                "label_code": InteractionLinkLabelCode.WEBSITE,
+                "target_url": "https://example.org/",
+                "is_active": "on",
+            }
+        )
+        forbidden_existing = MessageInteractionLinkDestination.objects.create(
+            code="forbidden_existing",
+            name="Ранее созданное назначение",
+            label_code=InteractionLinkLabelCode.DETAILS,
+            target_url="https://example.org/",
+            is_active=False,
+        )
+        forbidden_reactivation = MessageInteractionLinkDestinationAdminForm(
+            data={
+                "code": forbidden_existing.code,
+                "name": forbidden_existing.name,
+                "label_code": forbidden_existing.label_code,
+                "target_url": forbidden_existing.target_url,
+                "is_active": "on",
+            },
+            instance=forbidden_existing,
+        )
+
+        self.assertTrue(allowed_creation.is_valid(), allowed_creation.errors.as_json())
+        self.assertFalse(forbidden_creation.is_valid())
+        self.assertIn("target_url", forbidden_creation.errors)
+        self.assertFalse(forbidden_reactivation.is_valid())
+        self.assertIn("target_url", forbidden_reactivation.errors)
+
+    def test_mailing_admin_form_checks_button_set_and_active_destination(self):
+        base_data = {
+            "name": "Рассылка через административную панель",
+            "template": str(self.template.pk),
+            "scheduled_date": self.now.date().isoformat(),
+            "scheduled_time_begin": self.now.strftime("%Y-%m-%d %H:%M:%S"),
+            "scheduled_time_end": (self.now + timedelta(hours=1)).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+            "created_at": self.now.strftime("%Y-%m-%d %H:%M:%S"),
+            "updated_at": self.now.strftime("%Y-%m-%d %H:%M:%S"),
+            "is_active": "on",
+            "send_window_begin": self.now.strftime("%H:%M:%S"),
+            "send_window_end": (self.now + timedelta(hours=1)).strftime("%H:%M:%S"),
+            "target_mode": Mailing.TargetMode.PRIMARY_ONLY,
+            "queue_priority": Mailing.QueuePriority.NORMAL,
+            "button_set": InteractionButtonSet.RATING_MENU_LINK,
+            "tracked_link_destination": str(self.destination.pk),
+            "coupon_series": "",
+            "coupon_venue_code": "",
+            "coupon_venue_name": "",
+            "coupon_title": "",
+            "coupon_promo_text": "",
+            "source_filter_snapshot": "{}",
+            "bot_profiles": [str(self.bot.pk)],
+        }
+        valid_form = MailingAdminForm(data=base_data)
+        inactive_form = MailingAdminForm(
+            data={
+                **base_data,
+                "tracked_link_destination": str(self.inactive_destination.pk),
+            }
+        )
+        without_link_set = MailingAdminForm(
+            data={
+                **base_data,
+                "button_set": InteractionButtonSet.RATING_MENU,
+            }
+        )
+
+        self.assertTrue(valid_form.is_valid(), valid_form.errors.as_json())
+        self.assertFalse(inactive_form.is_valid())
+        self.assertIn("tracked_link_destination", inactive_form.errors)
+        self.assertTrue(without_link_set.is_valid(), without_link_set.errors.as_json())
+        self.assertIsNone(
+            without_link_set.save(commit=False).tracked_link_destination
+        )
+
+    def test_destination_bulk_activation_is_all_or_nothing(self):
+        allowed = MessageInteractionLinkDestination.objects.create(
+            code="allowed_bulk_activation",
+            name="Разрешённое массовое включение",
+            label_code=InteractionLinkLabelCode.WEBSITE,
+            target_url="https://rest.market/bulk",
+            is_active=False,
+        )
+        forbidden = MessageInteractionLinkDestination.objects.create(
+            code="forbidden_bulk_activation",
+            name="Запрещённое массовое включение",
+            label_code=InteractionLinkLabelCode.WEBSITE,
+            target_url="https://example.org/bulk",
+            is_active=False,
+        )
+        model_admin = MessageInteractionLinkDestinationAdmin(
+            MessageInteractionLinkDestination,
+            AdminSite(),
+        )
+
+        with patch.object(model_admin, "message_user") as message_user:
+            model_admin.action_activate(
+                None,
+                MessageInteractionLinkDestination.objects.filter(
+                    pk__in=[allowed.pk, forbidden.pk]
+                ),
+            )
+
+        allowed.refresh_from_db()
+        forbidden.refresh_from_db()
+        self.assertFalse(allowed.is_active)
+        self.assertFalse(forbidden.is_active)
+        message_user.assert_called_once()

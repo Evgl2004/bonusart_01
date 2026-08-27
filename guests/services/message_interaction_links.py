@@ -17,6 +17,8 @@ PUBLIC_TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9_-]{32}$")
 PUBLIC_REDIRECT_PATH_PREFIX = "/r/v1/"
 
 _HTTPS_URL_VALIDATOR = URLValidator(schemes=["https"])
+_FORBIDDEN_DESTINATION_HOSTS = frozenset({"localhost"})
+_FORBIDDEN_DESTINATION_SUFFIXES = (".localhost", ".local", ".internal")
 
 
 class MessageInteractionConfigurationError(ValueError):
@@ -73,18 +75,33 @@ def validate_https_url(*, value: str, purpose: str) -> str:
 
 
 def validate_tracked_link_target_url(value: str) -> str:
-    """Проверяет конечный адрес по точному эксплуатационному перечню."""
+    """Проверяет новое назначение по защитным правилам и закрытому перечню."""
 
     target_url = validate_https_url(
         value=value,
         purpose="Конечный адрес отслеживаемой ссылки",
     )
     target_host = str(urlsplit(target_url).hostname or "").lower().rstrip(".")
+    if target_host in _FORBIDDEN_DESTINATION_HOSTS or target_host.endswith(
+        _FORBIDDEN_DESTINATION_SUFFIXES
+    ):
+        raise MessageInteractionConfigurationError(
+            "Конечный адрес отслеживаемой ссылки не может использовать локальное имя."
+        )
     if target_host not in normalize_allowed_destination_hosts():
         raise MessageInteractionConfigurationError(
             "Домен конечного адреса отсутствует в разрешённом перечне."
         )
     return target_url
+
+
+def validate_tracked_link_snapshot_url(value: str) -> str:
+    """Проверяет структуру уже зафиксированного неизменяемого адреса."""
+
+    return validate_https_url(
+        value=value,
+        purpose="Снимок конечного адреса отслеживаемой ссылки",
+    )
 
 
 def build_public_redirect_url(public_token: str) -> str:

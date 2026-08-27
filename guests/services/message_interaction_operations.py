@@ -40,6 +40,7 @@ from guests.services.message_interaction_links import (
     MessageInteractionConfigurationError,
     build_public_redirect_url,
     normalize_allowed_destination_hosts,
+    validate_tracked_link_snapshot_url,
     validate_tracked_link_target_url,
 )
 from guests.services.message_interaction_outgoing import (
@@ -587,7 +588,9 @@ def _build_pilot_plan(
                 blockers.append("Выбранное назначение отслеживаемой ссылки выключено.")
             else:
                 try:
-                    validate_tracked_link_target_url(tracked_link_destination.target_url)
+                    validate_tracked_link_snapshot_url(
+                        tracked_link_destination.target_url
+                    )
                     build_public_redirect_url("A" * 32)
                 except MessageInteractionConfigurationError as error:
                     blockers.append(str(error))

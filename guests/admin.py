@@ -27,6 +27,7 @@ from .models import (
     GuestRestaurantWindowCategoryMetrics,
     GuestRestaurantWindowMetrics,
     GuestCategory,
+    InteractionButtonSet,
     Mailing,
     MailingBotProfileLink,
     MailingGuest,
@@ -49,6 +50,10 @@ from .models import (
 from guests.services.notification_registry import (
     get_registered_notification_scenario_code_choices,
     is_registered_notification_scenario_code,
+)
+from guests.services.message_interaction_links import (
+    MessageInteractionConfigurationError,
+    validate_tracked_link_target_url,
 )
 
 
@@ -405,12 +410,109 @@ class MailingBotProfileLinkInline(admin.TabularInline):
     verbose_name_plural = "Боты рассылки"
 
 
+def _configure_admin_destination_field(form: forms.ModelForm) -> None:
+    """Оставляет в выборе активные назначения и текущее значение карточки."""
+
+    current_destination_id = getattr(
+        form.instance,
+        "tracked_link_destination_id",
+        None,
+    )
+    destination_filter = Q(is_active=True)
+    if current_destination_id:
+        destination_filter |= Q(pk=current_destination_id)
+    form.fields["tracked_link_destination"].queryset = (
+        MessageInteractionLinkDestination.objects.filter(destination_filter).order_by(
+            "name",
+            "code",
+        )
+    )
+
+
+def _validate_admin_destination_selection(form: forms.ModelForm) -> None:
+    """Проверяет соответствие набора кнопок выбранному назначению."""
+
+    button_set = str(
+        form.cleaned_data.get("button_set") or InteractionButtonSet.NONE
+    ).strip()
+    destination = form.cleaned_data.get("tracked_link_destination")
+    if button_set != InteractionButtonSet.RATING_MENU_LINK:
+        form.cleaned_data["tracked_link_destination"] = None
+        return
+    if destination is None:
+        form.add_error(
+            "tracked_link_destination",
+            "Для набора с отслеживаемой ссылкой выберите назначение перехода.",
+        )
+        return
+    if not destination.is_active:
+        form.add_error(
+            "tracked_link_destination",
+            "Выбранное назначение отключено. Выберите активную запись справочника.",
+        )
+
+
+class MailingAdminForm(forms.ModelForm):
+    """Защищает связь рассылки с назначением отслеживаемой ссылки."""
+
+    class Meta:
+        model = Mailing
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        _configure_admin_destination_field(self)
+
+    def clean(self):
+        cleaned_data = super().clean()
+        _validate_admin_destination_selection(self)
+        return cleaned_data
+
+
+class MessageInteractionLinkDestinationAdminForm(forms.ModelForm):
+    """Проверяет адрес при создании и повторном включении назначения."""
+
+    class Meta:
+        model = MessageInteractionLinkDestination
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._was_active = None
+        if self.instance.pk:
+            self._was_active = (
+                MessageInteractionLinkDestination.objects.filter(pk=self.instance.pk)
+                .values_list("is_active", flat=True)
+                .first()
+            )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        is_creation = self.instance.pk is None
+        is_reactivation = self._was_active is False and bool(
+            cleaned_data.get("is_active")
+        )
+        if not (is_creation or is_reactivation):
+            return cleaned_data
+
+        target_url = str(
+            cleaned_data.get("target_url") or getattr(self.instance, "target_url", "")
+        ).strip()
+        try:
+            validate_tracked_link_target_url(target_url)
+        except MessageInteractionConfigurationError as error:
+            error_field = "target_url" if "target_url" in self.fields else "is_active"
+            self.add_error(error_field, str(error))
+        return cleaned_data
+
+
 @admin.register(Mailing)
 class MailingAdmin(admin.ModelAdmin):
     """
     Сервисная админ-панель карточек рассылок.
     """
 
+    form = MailingAdminForm
     list_display = (
         "id",
         "name",
@@ -443,6 +545,7 @@ class MailingAdmin(admin.ModelAdmin):
 class MessageInteractionLinkDestinationAdmin(admin.ModelAdmin):
     """Управляет предопределёнными назначениями новых отслеживаемых ссылок."""
 
+    form = MessageInteractionLinkDestinationAdminForm
     list_display = (
         "id",
         "code",
@@ -468,6 +571,19 @@ class MessageInteractionLinkDestinationAdmin(admin.ModelAdmin):
 
     @admin.action(description="Включить выбранные назначения")
     def action_activate(self, request, queryset):
+        invalid_destinations = []
+        for destination in queryset.only("id", "code", "target_url"):
+            try:
+                validate_tracked_link_target_url(destination.target_url)
+            except MessageInteractionConfigurationError as error:
+                invalid_destinations.append(f"{destination.code}: {error}")
+        if invalid_destinations:
+            self.message_user(
+                request,
+                "Назначения не включены: " + "; ".join(invalid_destinations),
+                level=messages.ERROR,
+            )
+            return
         updated = queryset.update(is_active=True, updated_at=timezone.now())
         self.message_user(request, f"Включено назначений: {updated}", level=messages.SUCCESS)
 
@@ -876,20 +992,7 @@ class NotificationScenarioAdminForm(forms.ModelForm):
             "Выберите код сценария из зарегистрированного списка. "
             "Свободный ввод кода запрещён."
         )
-        current_destination_id = getattr(
-            self.instance,
-            "tracked_link_destination_id",
-            None,
-        )
-        destination_filter = Q(is_active=True)
-        if current_destination_id:
-            destination_filter |= Q(pk=current_destination_id)
-        self.fields["tracked_link_destination"].queryset = (
-            MessageInteractionLinkDestination.objects.filter(destination_filter).order_by(
-                "name",
-                "code",
-            )
-        )
+        _configure_admin_destination_field(self)
 
     def clean_code(self) -> str:
         code = str(self.cleaned_data.get("code") or "").strip()
@@ -898,6 +1001,11 @@ class NotificationScenarioAdminForm(forms.ModelForm):
                 f"Код сценария '{code}' не зарегистрирован. Выберите значение из списка."
             )
         return code
+
+    def clean(self):
+        cleaned_data = super().clean()
+        _validate_admin_destination_selection(self)
+        return cleaned_data
 
 
 class NotificationScenarioBotProfileLinkInline(admin.TabularInline):

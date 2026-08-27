@@ -34,7 +34,7 @@ from guests.services.message_interaction_links import (
     PUBLIC_TOKEN_PATTERN,
     MessageInteractionConfigurationError,
     build_public_redirect_url,
-    validate_tracked_link_target_url,
+    validate_tracked_link_snapshot_url,
 )
 
 
@@ -256,7 +256,7 @@ def _normalize_tracked_link_snapshot(
         raise MessageInteractionConfigurationError(
             "У назначения ссылки указана неподдерживаемая подпись кнопки."
         )
-    target_url = validate_tracked_link_target_url(destination.target_url)
+    target_url = validate_tracked_link_snapshot_url(destination.target_url)
     return _TrackedLinkSnapshotSpec(
         label_code=label_code,
         target_url=target_url,

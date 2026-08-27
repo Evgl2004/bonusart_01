@@ -39,6 +39,10 @@ class TrackedLinkAddressSecurityTests(SimpleTestCase):
         invalid_urls = (
             "https://127.0.0.1/",
             "https://sub.rest.market/",
+            "https://localhost/",
+            "https://service.localhost/",
+            "https://service.local/",
+            "https://service.internal/",
             "https://user:password@rest.market/",
             "https://rest.market:8443/",
         )
@@ -58,7 +62,6 @@ class TrackedLinkAddressSecurityTests(SimpleTestCase):
 
 @override_settings(
     ROOT_URLCONF="loyalty_viewer.redirect_urls",
-    MESSAGE_TRACKED_LINK_ALLOWED_HOSTS={"rest.market"},
     SECURE_SSL_REDIRECT=False,
 )
 class TrackedLinkRedirectTests(TestCase):
@@ -128,15 +131,23 @@ class TrackedLinkRedirectTests(TestCase):
         self.assertEqual(unknown_response.content, disabled_response.content)
         self.assertEqual(MessageInteractionLinkTransition.objects.count(), 0)
 
-    def test_disallowed_stored_target_returns_410_without_transition(self):
+    def test_invalid_stored_target_returns_410_without_transition(self):
         MessageInteractionTrackedLink.objects.filter(pk=self.tracked_link.pk).update(
-            target_url="https://example.org/"
+            target_url="https://user:password@example.org/"
         )
 
         response = self.client.get(self.path)
 
         self.assertEqual(response.status_code, 410)
         self.assertEqual(MessageInteractionLinkTransition.objects.count(), 0)
+
+    @override_settings(MESSAGE_TRACKED_LINK_ALLOWED_HOSTS=set())
+    def test_saved_snapshot_does_not_depend_on_current_allowed_hosts(self):
+        response = self.client.get(self.path)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], TARGET_URL)
+        self.assertEqual(MessageInteractionLinkTransition.objects.count(), 1)
 
     def test_database_read_error_returns_503_without_redirect(self):
         with patch.object(

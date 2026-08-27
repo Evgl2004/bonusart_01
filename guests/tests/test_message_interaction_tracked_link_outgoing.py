@@ -224,20 +224,13 @@ class TrackedLinkAtomicCreationTests(TestCase):
         self.assertRegex(tracked_link.public_token, r"^[A-Za-z0-9_-]{32}$")
         self.assertEqual(MessageInteractionTrackedLink.objects.count(), 1)
 
-    def test_missing_inactive_disallowed_or_http_destination_creates_nothing(self):
+    def test_missing_inactive_unsaved_or_http_destination_creates_nothing(self):
         inactive = MessageInteractionLinkDestination.objects.create(
             code="inactive_test",
             name="Неактивное назначение",
             label_code=InteractionLinkLabelCode.DETAILS,
             target_url="https://rest.market/details",
             is_active=False,
-        )
-        disallowed = MessageInteractionLinkDestination.objects.create(
-            code="disallowed_test",
-            name="Чужой домен",
-            label_code=InteractionLinkLabelCode.WEBSITE,
-            target_url="https://example.org/",
-            is_active=True,
         )
         insecure = MessageInteractionLinkDestination(
             code="insecure_test",
@@ -255,7 +248,7 @@ class TrackedLinkAtomicCreationTests(TestCase):
         )
 
         for index, destination in enumerate(
-            (None, inactive, disallowed, insecure, unsaved)
+            (None, inactive, insecure, unsaved)
         ):
             with self.subTest(destination=destination):
                 with self.assertRaises(MessageInteractionConfigurationError):
@@ -269,6 +262,15 @@ class TrackedLinkAtomicCreationTests(TestCase):
         self.assertEqual(DispatchTask.objects.count(), 0)
         self.assertEqual(MessageInteraction.objects.count(), 0)
         self.assertEqual(MessageInteractionTrackedLink.objects.count(), 0)
+
+    @override_settings(MESSAGE_TRACKED_LINK_ALLOWED_HOSTS=set())
+    def test_task_uses_saved_snapshot_without_rechecking_allowed_hosts(self):
+        task = self._create_link_task("tracked-link-saved-snapshot")
+
+        self.assertEqual(
+            task.message_interaction.tracked_link.target_url,
+            self.destination.target_url,
+        )
 
     @override_settings(MESSAGE_TRACKED_LINKS_ENABLED=False)
     def test_link_switch_blocks_only_new_modern_link(self):

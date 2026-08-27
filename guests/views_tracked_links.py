@@ -20,7 +20,7 @@ from guests.models import (
 from guests.services.message_interaction_links import (
     PUBLIC_TOKEN_PATTERN,
     MessageInteractionConfigurationError,
-    validate_tracked_link_target_url,
+    validate_tracked_link_snapshot_url,
 )
 
 
@@ -97,7 +97,7 @@ def tracked_link_redirect(request: HttpRequest, public_token: str) -> HttpRespon
     if tracked_link is None:
         return _unavailable_response()
     try:
-        target_url = validate_tracked_link_target_url(tracked_link.target_url)
+        target_url = validate_tracked_link_snapshot_url(tracked_link.target_url)
     except MessageInteractionConfigurationError as error:
         logger.error(
             "Снимок отслеживаемой ссылки отклонён защитной проверкой: "
