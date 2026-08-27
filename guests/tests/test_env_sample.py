@@ -94,13 +94,10 @@ class EnvSampleDocumentationTests(SimpleTestCase):
                 "PG_PASSWORD",
                 "PG_HOST",
                 "PG_PORT",
-                "MESSAGE_TRACKED_LINK_ALLOWED_HOSTS",
             },
         )
-        self.assertEqual(
-            redirect_values["MESSAGE_TRACKED_LINK_ALLOWED_HOSTS"],
-            main_values["MESSAGE_TRACKED_LINK_ALLOWED_HOSTS"],
-        )
+        self.assertIn("MESSAGE_TRACKED_LINK_ALLOWED_HOSTS", main_values)
+        self.assertNotIn("MESSAGE_TRACKED_LINK_ALLOWED_HOSTS", redirect_values)
         self.assertNotIn("TRACKED_LINK_SECRET_KEY", redirect_values)
         self.assertNotIn("TRACKED_LINK_PG_USER", redirect_values)
         self.assertNotIn("TRACKED_LINK_PG_PASSWORD", redirect_values)
