@@ -177,6 +177,13 @@ class TestTrackedLinkMigration:
             details.get("index") and details.get("columns") == ["tracked_link_id"]
             for details in transition_constraints.values()
         )
+        for table_name in ("mailings", "notification_scenarios"):
+            source_constraints = _constraints(isolated_connection, table_name)
+            assert not any(
+                details.get("index")
+                and details.get("columns") == ["tracked_link_destination_id"]
+                for details in source_constraints.values()
+            )
 
     def test_empty_compatible_partial_table_is_completed(self, isolated_connection):
         """Пустая неполная таблица справочника восстанавливается без дублей."""

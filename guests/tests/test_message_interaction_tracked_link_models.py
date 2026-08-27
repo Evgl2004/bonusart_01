@@ -138,6 +138,15 @@ class TestTrackedLinkModels:
             "received_at",
         ]
 
+    def test_source_destination_relations_do_not_create_single_column_indexes(self):
+        """Связи источников не создают лишние индексы низкой полезности."""
+
+        assert Mailing._meta.get_field("tracked_link_destination").db_index is False
+        assert (
+            NotificationScenario._meta.get_field("tracked_link_destination").db_index
+            is False
+        )
+
     def test_source_requires_destination_only_for_link_button_set(self):
         """База не допускает ссылочный набор без назначения и назначение без набора."""
 
