@@ -17,11 +17,12 @@ from __future__ import annotations
 import logging
 import re
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 from django.conf import settings
 from django.db import connection
-from django.db.models import Count, Max, Q
+from django.db.models import Count, Max, Min, Q
 from django.utils import timezone
 
 from guests.models import (
@@ -466,7 +467,19 @@ def build_message_interaction_diagnostic_report(
         queryset = queryset.filter(dispatch_task__notification_scenario_id=int(selector_value))
 
     total = queryset.count()
-    interactions = [_serialize_interaction(row) for row in queryset[:safe_limit]]
+    interaction_rows = list(queryset[:safe_limit])
+    tracked_link_diagnostics = _load_tracked_link_diagnostics(
+        interaction.id
+        for interaction in interaction_rows
+        if interaction.button_set == InteractionButtonSet.RATING_MENU_LINK
+    )
+    interactions = [
+        _serialize_interaction(
+            row,
+            tracked_link_diagnostic=tracked_link_diagnostics.get(row.id),
+        )
+        for row in interaction_rows
+    ]
     selected_event = None
     if selector_name == "event_id":
         event = MessageInteractionEvent.objects.filter(event_id=selector_value).first()
@@ -879,7 +892,70 @@ def _collect_readiness_observations() -> dict[str, Any]:
     }
 
 
-def _serialize_interaction(interaction: MessageInteraction) -> dict[str, Any]:
+def _load_tracked_link_diagnostics(
+    interaction_ids: Iterable[int],
+) -> dict[int, dict[str, Any]]:
+    """Одним запросом агрегирует безопасные сведения о показанных ссылках."""
+
+    normalized_ids = tuple(int(value) for value in interaction_ids)
+    if not normalized_ids:
+        return {}
+
+    rows = (
+        MessageInteractionTrackedLink.objects.filter(interaction_id__in=normalized_ids)
+        .annotate(
+            transitions_total=Count("transitions"),
+            first_transition_at=Min("transitions__received_at"),
+            last_transition_at=Max("transitions__received_at"),
+        )
+        .values(
+            "interaction_id",
+            "label_code",
+            "disabled_at",
+            "transitions_total",
+            "first_transition_at",
+            "last_transition_at",
+        )
+    )
+    return {int(row["interaction_id"]): row for row in rows}
+
+
+def _serialize_tracked_link_diagnostic(
+    diagnostic: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Сериализует ссылочную диагностику без токена и конечного адреса."""
+
+    if diagnostic is None:
+        return {
+            "exists": False,
+            "label_code": None,
+            "disabled": None,
+            "transitions_total": 0,
+            "first_transition_at": None,
+            "last_transition_at": None,
+        }
+
+    first_transition_at = diagnostic["first_transition_at"]
+    last_transition_at = diagnostic["last_transition_at"]
+    return {
+        "exists": True,
+        "label_code": diagnostic["label_code"],
+        "disabled": diagnostic["disabled_at"] is not None,
+        "transitions_total": diagnostic["transitions_total"],
+        "first_transition_at": (
+            first_transition_at.isoformat() if first_transition_at else None
+        ),
+        "last_transition_at": (
+            last_transition_at.isoformat() if last_transition_at else None
+        ),
+    }
+
+
+def _serialize_interaction(
+    interaction: MessageInteraction,
+    *,
+    tracked_link_diagnostic: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     task = interaction.dispatch_task
     mailing_id = (
         task.mailing_guest.mailing_id
@@ -906,6 +982,9 @@ def _serialize_interaction(interaction: MessageInteraction) -> dict[str, Any]:
             interaction.last_event_received_at.isoformat()
             if interaction.last_event_received_at
             else None
+        ),
+        "tracked_link": _serialize_tracked_link_diagnostic(
+            tracked_link_diagnostic
         ),
     }
 

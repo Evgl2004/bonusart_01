@@ -14,7 +14,7 @@ from guests.services.message_interaction_operations import (
 
 
 class Command(BaseCommand):
-    """Ищет интерактивности без вывода текста и внешних адресатов."""
+    """Ищет интерактивности без текста, адресатов, токенов и конечных адресов."""
 
     help = "Диагностирует интерактивности по сообщению, событию, рассылке или сценарию."
 
@@ -51,12 +51,30 @@ class Command(BaseCommand):
             f"обрезано: {'да' if report['truncated'] else 'нет'}"
         )
         for item in report["interactions"]:
+            tracked_link = item["tracked_link"]
+            disabled_text = (
+                "да"
+                if tracked_link["disabled"] is True
+                else "нет" if tracked_link["disabled"] is False else "—"
+            )
             self.stdout.write(
                 "Интерактивность={interaction_id} задача={dispatch_task_id} "
                 "платформа={provider} статус={task_status} набор={button_set} "
                 "события={events_total} оценки={accepted_ratings_total} "
                 "повторные_оценки={repeated_ratings_total} "
-                "купоны={coupon_actions_total} меню={menu_actions_total}".format(**item)
+                "купоны={coupon_actions_total} меню={menu_actions_total} "
+                "ссылка={link_exists} подпись_ссылки={link_label_code} "
+                "переходы={transitions_total} ссылка_отключена={link_disabled} "
+                "первый_переход={first_transition_at} "
+                "последний_переход={last_transition_at}".format(
+                    **item,
+                    link_exists="да" if tracked_link["exists"] else "нет",
+                    link_label_code=tracked_link["label_code"] or "—",
+                    transitions_total=tracked_link["transitions_total"],
+                    link_disabled=disabled_text,
+                    first_transition_at=tracked_link["first_transition_at"] or "—",
+                    last_transition_at=tracked_link["last_transition_at"] or "—",
+                )
             )
         if report["selected_event"] is not None:
             event = report["selected_event"]

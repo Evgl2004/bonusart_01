@@ -29,6 +29,9 @@ from guests.models import (
     MessageTemplate,
     NotificationScenario,
 )
+from guests.services.message_interaction_operations import (
+    build_message_interaction_diagnostic_report,
+)
 from guests.services.message_interaction_rate_limit import (
     MessageInteractionRateLimitUnavailable,
 )
@@ -464,6 +467,12 @@ class MessageInteractionOperationsCommandTests(TestCase):
             for action, result in events
         ]
 
+        with self.assertNumQueries(2):
+            report = build_message_interaction_diagnostic_report(
+                interaction_id=interaction.id
+            )
+        self.assertFalse(report["interactions"][0]["tracked_link"]["exists"])
+
         output = StringIO()
         call_command(
             "diagnose_message_interactions",
@@ -479,6 +488,17 @@ class MessageInteractionOperationsCommandTests(TestCase):
         self.assertEqual(row["accepted_ratings_total"], 1)
         self.assertEqual(row["repeated_ratings_total"], 1)
         self.assertEqual(row["menu_actions_total"], 2)
+        self.assertEqual(
+            row["tracked_link"],
+            {
+                "exists": False,
+                "label_code": None,
+                "disabled": None,
+                "transitions_total": 0,
+                "first_transition_at": None,
+                "last_transition_at": None,
+            },
+        )
         self.assertNotIn("secret-message-text", raw_output)
         self.assertNotIn("secret-recipient-id", raw_output)
         self.assertNotIn("secret-provider-message-id", raw_output)
@@ -494,6 +514,105 @@ class MessageInteractionOperationsCommandTests(TestCase):
         event_payload = json.loads(event_output.getvalue())
         self.assertTrue(event_payload["selected_event"]["provider_message_id_present"])
         self.assertEqual(event_payload["selected_event"]["action"], "l")
+
+    def test_diagnosis_reports_tracked_link_transitions_without_secrets(self):
+        """Диагностика агрегирует переходы и не раскрывает ссылку или токен."""
+
+        pilot = self._call_pilot(
+            "--button-set",
+            InteractionButtonSet.RATING_MENU_LINK,
+            "--tracked-link-destination-code",
+            self.link_destination.code,
+            "--confirm",
+            "--run-id",
+            "pilot-link-diagnostics",
+        )
+        interaction = MessageInteraction.objects.get(pk=pilot["interaction_id"])
+        tracked_link = MessageInteractionTrackedLink.objects.get(
+            interaction=interaction
+        )
+        tracked_link.transitions.create()
+        tracked_link.transitions.create()
+        MessageInteractionTrackedLink.objects.filter(pk=tracked_link.pk).update(
+            disabled_at=timezone.now()
+        )
+
+        with self.assertNumQueries(3):
+            report = build_message_interaction_diagnostic_report(
+                interaction_id=interaction.id
+            )
+
+        tracked_link_report = report["interactions"][0]["tracked_link"]
+        self.assertTrue(tracked_link_report["exists"])
+        self.assertEqual(
+            tracked_link_report["label_code"],
+            InteractionLinkLabelCode.DELIVERY,
+        )
+        self.assertTrue(tracked_link_report["disabled"])
+        self.assertEqual(tracked_link_report["transitions_total"], 2)
+        self.assertIsNotNone(tracked_link_report["first_transition_at"])
+        self.assertIsNotNone(tracked_link_report["last_transition_at"])
+        self.assertLessEqual(
+            tracked_link_report["first_transition_at"],
+            tracked_link_report["last_transition_at"],
+        )
+
+        json_output = StringIO()
+        call_command(
+            "diagnose_message_interactions",
+            "--interaction-id",
+            str(interaction.id),
+            "--as-json",
+            stdout=json_output,
+        )
+        human_output = StringIO()
+        call_command(
+            "diagnose_message_interactions",
+            "--interaction-id",
+            str(interaction.id),
+            stdout=human_output,
+        )
+
+        combined_output = json_output.getvalue() + human_output.getvalue()
+        self.assertIn("ссылка=да", human_output.getvalue())
+        self.assertIn("подпись_ссылки=delivery", human_output.getvalue())
+        self.assertIn("переходы=2", human_output.getvalue())
+        self.assertIn("ссылка_отключена=да", human_output.getvalue())
+        self.assertIn("первый_переход=", human_output.getvalue())
+        self.assertIn("последний_переход=", human_output.getvalue())
+        self.assertNotIn(tracked_link.public_token, combined_output)
+        self.assertNotIn(tracked_link.target_url, combined_output)
+
+    def test_diagnosis_marks_missing_tracked_link_without_failure(self):
+        """Отсутствующий снимок ссылочного набора отражается безопасно."""
+
+        task = DispatchTask.objects.create(
+            source_type=DispatchTask.SourceType.MANUAL,
+            provider_type=BotProfile.ProviderType.TELEGRAM,
+            guest=self.guest,
+            bot_profile=self.bot,
+            status=DispatchTask.Status.DONE,
+        )
+        interaction = MessageInteraction.objects.create(
+            dispatch_task=task,
+            button_set=InteractionButtonSet.RATING_MENU_LINK,
+        )
+
+        report = build_message_interaction_diagnostic_report(
+            interaction_id=interaction.id
+        )
+
+        self.assertEqual(
+            report["interactions"][0]["tracked_link"],
+            {
+                "exists": False,
+                "label_code": None,
+                "disabled": None,
+                "transitions_total": 0,
+                "first_transition_at": None,
+                "last_transition_at": None,
+            },
+        )
 
     def test_diagnosis_requires_exactly_one_valid_selector(self):
         """Пустой, множественный и некорректный поиск завершаются ошибкой."""
