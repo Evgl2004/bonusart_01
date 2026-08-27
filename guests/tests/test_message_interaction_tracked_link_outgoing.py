@@ -107,8 +107,8 @@ class TrackedLinkPlatformContractTests(SimpleTestCase):
         self.assertEqual(rows[1][0], {
             "text": "Заказать доставку",
             "url": PUBLIC_URL,
-            "style": "primary",
         })
+        self.assertNotIn("style", rows[1][0])
         self.assertNotIn("callback_data", rows[1][0])
         self.assertEqual(json.loads(rows[0][0]["callback_data"])["a"], "ldm")
         self.assertEqual(json.loads(rows[2][0]["callback_data"])["a"], "mld")
@@ -130,8 +130,8 @@ class TrackedLinkPlatformContractTests(SimpleTestCase):
                 "label": "Забронировать столик",
                 "link": PUBLIC_URL,
             },
-            "color": "primary",
         })
+        self.assertNotIn("color", rows[1][0])
         self.assertNotIn("payload", rows[1][0]["action"])
         self.assertEqual(rows[2][0]["action"]["type"], "callback")
 

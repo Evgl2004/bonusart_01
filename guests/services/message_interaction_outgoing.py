@@ -453,7 +453,7 @@ def _build_telegram_button(button: NormalizedInteractionButton) -> dict[str, str
     """Преобразует одну нормализованную кнопку для Telegram."""
 
     if isinstance(button, NormalizedLinkButton):
-        return {"text": button.text, "url": button.url, "style": "primary"}
+        return {"text": button.text, "url": button.url}
     return {
         "text": button.text,
         "callback_data": button.service_data,
@@ -497,7 +497,6 @@ def _build_vk_button(button: NormalizedInteractionButton) -> dict[str, Any]:
                 "label": button.text,
                 "link": button.url,
             },
-            "color": "primary",
         }
     return {
         "action": {
