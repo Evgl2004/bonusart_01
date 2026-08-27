@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import os
 
 from django.core.exceptions import ImproperlyConfigured
@@ -38,6 +39,17 @@ MIDDLEWARE = [
 ROOT_URLCONF = "loyalty_viewer.redirect_urls"
 WSGI_APPLICATION = "loyalty_viewer.redirect_wsgi.application"
 TEMPLATES = []
+
+# Специализированный фильтр подключается только к публичной службе переходов.
+# Глубокая копия не изменяет общий словарь настроек остальных процессов SAGUR.
+LOGGING = deepcopy(LOGGING)  # noqa: F405
+LOGGING["filters"]["redact_tracked_link_tokens"] = {
+    "()": "guests.logging_filters.TrackedLinkTokenRedactingFilter",
+}
+LOGGING["handlers"]["console"]["filters"] = [
+    *LOGGING["handlers"]["console"].get("filters", []),
+    "redact_tracked_link_tokens",
+]
 
 DATABASES = {
     "default": {

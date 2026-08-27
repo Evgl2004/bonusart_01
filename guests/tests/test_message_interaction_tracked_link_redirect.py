@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 from django.db import DatabaseError
@@ -20,6 +21,7 @@ from guests.services.message_interaction_links import (
     MessageInteractionConfigurationError,
     validate_tracked_link_target_url,
 )
+from guests.logging_filters import TrackedLinkTokenRedactingFilter
 
 
 PUBLIC_TOKEN = "C" * 32
@@ -173,6 +175,40 @@ class TrackedLinkRedirectTests(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertNotIn("Location", response)
         self.assertEqual(MessageInteractionLinkTransition.objects.count(), 0)
+
+    def test_unexpected_error_returns_500_without_logging_full_token(self):
+        records = []
+
+        class _CaptureHandler(logging.Handler):
+            def emit(self, record):
+                records.append(record)
+
+        handler = _CaptureHandler()
+        handler.addFilter(TrackedLinkTokenRedactingFilter())
+        request_logger = logging.getLogger("django.request")
+        request_logger.addHandler(handler)
+        previous_level = request_logger.level
+        request_logger.setLevel(logging.ERROR)
+        self.client.raise_request_exception = False
+        try:
+            with patch.object(
+                MessageInteractionTrackedLink.objects,
+                "only",
+                side_effect=RuntimeError("forced unexpected redirect error"),
+            ):
+                response = self.client.get(self.path)
+        finally:
+            request_logger.removeHandler(handler)
+            request_logger.setLevel(previous_level)
+
+        rendered_records = [logging.Formatter().format(record) for record in records]
+        rendered_log = "\n".join(rendered_records)
+        self.assertEqual(response.status_code, 500)
+        self.assertTrue(any(record.exc_info for record in records))
+        self.assertNotIn(PUBLIC_TOKEN, rendered_log)
+        self.assertIn(f"link_marker={PUBLIC_TOKEN[:10]}", rendered_log)
+        self.assertIn("RuntimeError", rendered_log)
+        self.assertIn("forced unexpected redirect error", rendered_log)
 
     def test_unsupported_method_returns_hardened_405(self):
         response = self.client.post(self.path, data={"ignored": True})

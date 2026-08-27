@@ -1,13 +1,16 @@
 """Проверки защиты секретов в журналах приложения."""
 
 import logging
+import sys
 
 from django.conf import settings
 from django.test import SimpleTestCase
 
 from guests.logging_filters import (
     TelegramBotTokenRedactingFilter,
+    TrackedLinkTokenRedactingFilter,
     redact_telegram_bot_tokens,
+    redact_tracked_link_tokens,
 )
 
 
@@ -54,3 +57,54 @@ class TelegramLoggingSecurityTests(SimpleTestCase):
             filter_settings["()"],
             "guests.logging_filters.TelegramBotTokenRedactingFilter",
         )
+
+
+class TrackedLinkLoggingSecurityTests(SimpleTestCase):
+    """Не допускает полный публичный токен в журнал службы переходов."""
+
+    def test_redacts_exact_token_and_keeps_ten_character_marker(self):
+        token = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+        message = f"Internal Server Error: /r/v1/{token}"
+
+        redacted = redact_tracked_link_tokens(message)
+
+        self.assertNotIn(token, redacted)
+        self.assertIn("link_marker=AbCdEfGhIj", redacted)
+        self.assertIn("/r/v1/[СКРЫТО]", redacted)
+
+    def test_does_not_change_short_or_long_token_like_segments(self):
+        values = (
+            "/r/v1/short",
+            "/r/v1/AbCdEfGhIjKlMnOpQrStUvWxYz0123456",
+            "/reports/r/v1/not-a-public-token",
+        )
+
+        for value in values:
+            with self.subTest(value=value):
+                self.assertEqual(redact_tracked_link_tokens(value), value)
+
+    def test_filter_preserves_exception_information(self):
+        token = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"
+        try:
+            raise RuntimeError("forced unexpected error")
+        except RuntimeError:
+            exception_info = sys.exc_info()
+
+        record = logging.LogRecord(
+            name="django.request",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="Internal Server Error: %s",
+            args=(f"/r/v1/{token}",),
+            exc_info=exception_info,
+        )
+
+        allowed = TrackedLinkTokenRedactingFilter().filter(record)
+        rendered = logging.Formatter().format(record)
+
+        self.assertTrue(allowed)
+        self.assertNotIn(token, rendered)
+        self.assertIn("link_marker=AbCdEfGhIj", rendered)
+        self.assertIn("RuntimeError", rendered)
+        self.assertIn("forced unexpected error", rendered)
