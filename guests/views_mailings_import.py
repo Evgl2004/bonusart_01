@@ -1,5 +1,6 @@
 import re
 from io import BytesIO
+from itertools import chain
 
 from django.contrib import messages
 from django.db import transaction
@@ -15,6 +16,15 @@ from .forms import MailingImportPhonesForm
 from .models import Guest, InteractionButtonSet, Mailing, MailingGuest
 from guests.services.mailing_import_audience import (
     build_mailing_import_audience_selection,
+)
+from guests.services.mailing_reverse_import import (
+    MAILING_IMPORT_OPERATION_EXCLUDE,
+    MAILING_IMPORT_OPERATION_INCLUDE,
+    ReverseMailingImportError,
+    build_reverse_mailing_import_calculation,
+    confirm_reverse_mailing_import,
+    create_reverse_import_preview_token,
+    read_reverse_exclusion_xlsx,
 )
 from guests.services.template_render import render_message_for_guest
 
@@ -44,55 +54,58 @@ def normalize_header(raw: str) -> str:
 
 def read_recipients_from_xlsx(file_obj) -> list[dict[str, str]]:
     wb = load_workbook(filename=file_obj, read_only=True, data_only=True)
-    ws = wb.active
+    try:
+        ws = wb.active
+        rows = ws.iter_rows(values_only=True)
+        try:
+            first_row = next(rows) or ()
+        except StopIteration:
+            return []
 
-    rows = list(ws.iter_rows(values_only=True))
-    if not rows:
-        return []
+        headers = {
+            normalize_header(value): index
+            for index, value in enumerate(first_row)
+            if normalize_header(value)
+        }
+        phone_index = None
+        telegram_index = None
+        for header_name in ("phone", "телефон", "phone_e164", "phone_number"):
+            if header_name in headers:
+                phone_index = headers[header_name]
+                break
+        for header_name in ("telegram_external_id", "external_id", "telegram_id", "telegram_chat_id"):
+            if header_name in headers:
+                telegram_index = headers[header_name]
+                break
 
-    first_row = rows[0] or ()
-    headers = {
-        normalize_header(value): index
-        for index, value in enumerate(first_row)
-        if normalize_header(value)
-    }
-    phone_index = None
-    telegram_index = None
-    for header_name in ("phone", "телефон", "phone_e164", "phone_number"):
-        if header_name in headers:
-            phone_index = headers[header_name]
-            break
-    for header_name in ("telegram_external_id", "external_id", "telegram_id", "telegram_chat_id"):
-        if header_name in headers:
-            telegram_index = headers[header_name]
-            break
+        has_header = phone_index is not None
+        if phone_index is None:
+            phone_index = 0
+        if telegram_index is None and len(first_row) > 1:
+            telegram_index = 1
 
-    has_header = phone_index is not None
-    if phone_index is None:
-        phone_index = 0
-    if telegram_index is None and len(first_row) > 1:
-        telegram_index = 1
+        recipients: list[dict[str, str]] = []
+        data_rows = rows if has_header else chain((first_row,), rows)
+        for row in data_rows:
+            if not row:
+                continue
+            phone_raw = row[phone_index] if phone_index < len(row) else None
+            phone = normalize_phone(phone_raw)
+            if not phone:
+                continue
+            telegram_external_id = ""
+            if telegram_index is not None and telegram_index < len(row):
+                telegram_external_id = str(row[telegram_index] or "").strip()
+            recipients.append(
+                {
+                    "phone": phone,
+                    "telegram_external_id": telegram_external_id[:32],
+                }
+            )
 
-    recipients: list[dict[str, str]] = []
-    data_rows = rows[1:] if has_header else rows
-    for row in data_rows:
-        if not row:
-            continue
-        phone_raw = row[phone_index] if phone_index < len(row) else None
-        phone = normalize_phone(phone_raw)
-        if not phone:
-            continue
-        telegram_external_id = ""
-        if telegram_index is not None and telegram_index < len(row):
-            telegram_external_id = str(row[telegram_index] or "").strip()
-        recipients.append(
-            {
-                "phone": phone,
-                "telegram_external_id": telegram_external_id[:32],
-            }
-        )
-
-    return recipients
+        return recipients
+    finally:
+        wb.close()
 
 
 def resolve_next_url(request, fallback_url: str) -> str:
@@ -126,7 +139,83 @@ class MailingImportPhonesView(View):
             request.session["mailing_import_error"] = str(form.errors)
             return redirect(redirect_url)
 
-        recipients_raw = read_recipients_from_xlsx(form.cleaned_data["file"])
+        operation = form.cleaned_data["import_operation"]
+        if operation == MAILING_IMPORT_OPERATION_EXCLUDE:
+            return self._handle_reverse_import(
+                request=request,
+                mailing=mailing,
+                form=form,
+                redirect_url=redirect_url,
+            )
+        return self._handle_include_import(
+            request=request,
+            mailing=mailing,
+            form=form,
+            redirect_url=redirect_url,
+        )
+
+    def _handle_reverse_import(self, *, request, mailing, form, redirect_url):
+        """Выполняет безопасный предпросмотр либо подтверждение комплемента."""
+
+        try:
+            excel = read_reverse_exclusion_xlsx(form.cleaned_data["file"])
+        except ReverseMailingImportError as exc:
+            return self._redirect_with_error(request, redirect_url, str(exc))
+
+        audience_group = form.cleaned_data["audience_channel_group"]
+        import_action = str(request.POST.get("import_action") or "preview").strip().lower()
+        if import_action == "confirm":
+            try:
+                _locked_mailing, calculation, created_count = confirm_reverse_mailing_import(
+                    mailing_id=int(mailing.id),
+                    excel=excel,
+                    audience_group=audience_group,
+                    preview_token=str(request.POST.get("preview_token") or ""),
+                )
+            except ReverseMailingImportError as exc:
+                return self._redirect_with_error(request, redirect_url, str(exc))
+
+            request.session["mailing_import_report"] = calculation.public_report(
+                added=created_count
+            )
+            messages.success(
+                request,
+                f"Обратная аудитория подтверждена: добавлено гостей {created_count}.",
+            )
+            return redirect(redirect_url)
+
+        calculation = build_reverse_mailing_import_calculation(
+            mailing=mailing,
+            excel=excel,
+            audience_group=audience_group,
+        )
+        preview_token = (
+            create_reverse_import_preview_token(calculation)
+            if calculation.can_confirm
+            else ""
+        )
+        return render(
+            request,
+            "mailing/import_reverse_confirm.html",
+            {
+                "mailing": mailing,
+                "preview": calculation.public_report(),
+                "preview_token": preview_token,
+                "next_url": redirect_url,
+            },
+        )
+
+    def _handle_include_import(self, *, request, mailing, form, redirect_url):
+        """Сохраняет прежний прямой импорт значением по умолчанию."""
+
+        try:
+            recipients_raw = read_recipients_from_xlsx(form.cleaned_data["file"])
+        except Exception:
+            return self._redirect_with_error(
+                request,
+                redirect_url,
+                "Не удалось прочитать Excel. Проверьте, что это исправный файл .xlsx.",
+            )
 
         total_loaded = len(recipients_raw)
         recipients_by_phone: dict[str, dict[str, str]] = {}
@@ -268,6 +357,8 @@ class MailingImportPhonesView(View):
 
         # 4) сохраняем отчёт (проще всего в session, чтобы показать на странице)
         request.session["mailing_import_report"] = {
+            "import_operation": MAILING_IMPORT_OPERATION_INCLUDE,
+            "import_operation_label": "Добавить гостей, указанных в Excel",
             "total_loaded": total_loaded,
             "unique_phones": len(phones_unique),
             "duplicate_rows": duplicate_rows,
@@ -289,6 +380,12 @@ class MailingImportPhonesView(View):
             "legacy_external_id": legacy_external_id_count,
         }
 
+        return redirect(redirect_url)
+
+    @staticmethod
+    def _redirect_with_error(request, redirect_url: str, error: str):
+        messages.error(request, error)
+        request.session["mailing_import_error"] = error
         return redirect(redirect_url)
 
 

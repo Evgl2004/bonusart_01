@@ -1,0 +1,38 @@
+{% if report.import_operation == "exclude" %}
+  <div class="alert alert-info mt-3 mb-0">
+    <div class="fw-semibold mb-2">Отчёт подтверждённого обратного импорта</div>
+    <div>Операция: <b>{{ report.import_operation_label }}</b></div>
+    <div>Группа каналов: <b>{{ report.audience_channel_group_label }}</b></div>
+    <div>Строк данных в Excel: {{ report.total_rows }}</div>
+    <div>Уникальных корректных телефонов: {{ report.unique_phones }}</div>
+    <div>Некорректных строк: {{ report.invalid_rows }}</div>
+    <div>Повторных строк: {{ report.duplicate_rows }}</div>
+    <div>Телефонов найдено в базе: {{ report.matched_phones }}</div>
+    <div>Соответствующих записей гостей: {{ report.matched_guest_records }}</div>
+    <div>Исходная доставляемая аудитория: {{ report.source_deliverable_guests }}</div>
+    <div>Исключено записей гостей: {{ report.excluded_guest_records }}</div>
+    <div>Без нормализуемого телефона: {{ report.guests_without_normalized_phone }}</div>
+    <div>Telegram: {{ report.provider_telegram }}, VK: {{ report.provider_vk }}, MAX: {{ report.provider_max }}</div>
+    <div>Доля итоговой аудитории: {{ report.final_share_percent|floatformat:2 }}%</div>
+    <div>Добавлено в кампанию: <b>{{ report.added }}</b></div>
+  </div>
+{% else %}
+  <div class="alert alert-info mt-3 mb-0">
+    <b>Отчёт импорта</b><br>
+    Операция: <b>{{ report.import_operation_label|default:"Добавить гостей, указанных в Excel" }}</b><br>
+    Выбранная группа: <b>{{ report.audience_channel_group_label|default:"Гости новых ботов" }}</b><br>
+    Загружено строк: {{ report.total_loaded }}<br>
+    Уникальных телефонов: {{ report.unique_phones }}<br>
+    Найдено гостей в базе: {{ report.found }}<br>
+    Доступна отправка через новые боты: {{ report.sendable_new_bots|default:0 }}<br>
+    Доступна отправка через исторический Telegram: {{ report.sendable_historical|default:0 }}<br>
+    Всего гостей с доступным каналом: {{ report.sendable_total|default:0 }}<br>
+    Найдены, но нет доступного канала: {{ report.excluded_without_channel|default:0 }}<br>
+    Есть доступный канал, но не входят в выбранную группу: {{ report.excluded_by_audience_group|default:0 }}<br>
+    Добавлено в кампанию: <b>{{ report.added }}</b><br>
+    Добавлено строк с Telegram ID из файла: {{ report.legacy_external_id|default:0 }}<br>
+    Уже были в кампании из выбранной группы: {{ report.already }}<br>
+    Дубли в файле: {{ report.duplicate_rows|default:0 }}<br>
+    Не найдено в базе: {{ report.not_found }}<br>
+  </div>
+{% endif %}

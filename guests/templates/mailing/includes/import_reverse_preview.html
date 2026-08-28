@@ -1,0 +1,53 @@
+{% if preview.blockers %}
+  <div class="alert alert-danger">
+    <div class="fw-semibold mb-1">Подтверждение заблокировано</div>
+    <ul class="mb-0">
+      {% for blocker in preview.blockers %}<li>{{ blocker }}</li>{% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+{% if preview.warning_large_audience %}
+  <div class="alert alert-warning border-warning">
+    <div class="fw-semibold">Внимание: большая аудитория</div>
+    В кампанию войдёт {{ preview.final_recipients }} из {{ preview.source_deliverable_guests }}
+    технически доставляемых гостей — {{ preview.final_share_percent|floatformat:2 }}%.
+    Проверьте режим «Исключить перечисленных» и выбранный Excel.
+  </div>
+{% endif %}
+
+{% if preview.warnings %}
+  <div class="alert alert-secondary">
+    <div class="fw-semibold mb-1">Дополнительные результаты проверки</div>
+    <ul class="mb-0">
+      {% for warning in preview.warnings %}<li>{{ warning }}</li>{% endfor %}
+    </ul>
+  </div>
+{% endif %}
+
+<div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <tbody>
+      <tr><th scope="row">Операция</th><td>{{ preview.import_operation_label }}</td></tr>
+      <tr><th scope="row">Группа каналов</th><td>{{ preview.audience_channel_group_label }}</td></tr>
+      <tr><th scope="row">Строк данных в Excel</th><td>{{ preview.total_rows }}</td></tr>
+      <tr><th scope="row">Корректных строк</th><td>{{ preview.valid_rows }}</td></tr>
+      <tr><th scope="row">Некорректных строк</th><td>{{ preview.invalid_rows }}</td></tr>
+      <tr><th scope="row">Повторных строк</th><td>{{ preview.duplicate_rows }}</td></tr>
+      <tr><th scope="row">Уникальных корректных телефонов</th><td>{{ preview.unique_phones }}</td></tr>
+      <tr><th scope="row">Телефонов найдено в базе</th><td>{{ preview.matched_phones }}</td></tr>
+      <tr><th scope="row">Соответствующих записей гостей</th><td>{{ preview.matched_guest_records }}</td></tr>
+      <tr><th scope="row">Исходная доставляемая аудитория</th><td>{{ preview.source_deliverable_guests }}</td></tr>
+      <tr><th scope="row">Исключено записей гостей</th><td>{{ preview.excluded_guest_records }}</td></tr>
+      <tr><th scope="row">Без нормализуемого телефона</th><td>{{ preview.guests_without_normalized_phone }}</td></tr>
+      <tr class="table-primary"><th scope="row">Итоговых получателей</th><td><strong>{{ preview.final_recipients }} ({{ preview.final_share_percent|floatformat:2 }}%)</strong></td></tr>
+      <tr><th scope="row">Telegram</th><td>{{ preview.provider_telegram }}</td></tr>
+      <tr><th scope="row">VK</th><td>{{ preview.provider_vk }}</td></tr>
+      <tr><th scope="row">MAX</th><td>{{ preview.provider_max }}</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="small text-muted mt-2 mb-0">
+  При режиме «Все активные боты» один гость может учитываться в нескольких каналах.
+  Исходные телефоны в отчёте и служебных данных не сохраняются.
+</p>

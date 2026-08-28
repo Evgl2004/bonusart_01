@@ -26,6 +26,11 @@ from .services.mailing_import_audience import (
     MAILING_IMPORT_AUDIENCE_CHOICES,
     normalize_mailing_import_audience,
 )
+from .services.mailing_reverse_import import (
+    MAILING_IMPORT_OPERATION_CHOICES,
+    MAILING_IMPORT_OPERATION_INCLUDE,
+    normalize_mailing_import_operation,
+)
 
 
 _HISTORICAL_WORKBENCH_AUDIENCE = "legacy_no_new_bot"
@@ -934,6 +939,12 @@ class MailingForm(forms.ModelForm):
 
 
 class MailingImportPhonesForm(forms.Form):
+    import_operation = forms.ChoiceField(
+        label="Операция с Excel",
+        choices=MAILING_IMPORT_OPERATION_CHOICES,
+        initial=MAILING_IMPORT_OPERATION_INCLUDE,
+        required=False,
+    )
     audience_channel_group = forms.ChoiceField(
         label="Группа гостей для импорта",
         choices=MAILING_IMPORT_AUDIENCE_CHOICES,
@@ -956,6 +967,13 @@ class MailingImportPhonesForm(forms.Form):
 
         return normalize_mailing_import_audience(
             self.cleaned_data.get("audience_channel_group")
+        )
+
+    def clean_import_operation(self):
+        """Старые запросы без поля продолжают выполнять прямой импорт."""
+
+        return normalize_mailing_import_operation(
+            self.cleaned_data.get("import_operation")
         )
 
     def clean_file(self):

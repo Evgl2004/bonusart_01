@@ -132,7 +132,7 @@
 
         <form method="post" action="{% url 'mailing_import_phones' object.id %}" enctype="multipart/form-data" data-mailing-import-form>
           {% csrf_token %}
-          {% include "mailing/includes/import_audience_selector.html" with selected_import_audience_group=request.session.mailing_import_report.audience_channel_group %}
+          {% include "mailing/includes/import_audience_selector.html" with selected_import_audience_group=request.session.mailing_import_report.audience_channel_group selected_import_operation=request.session.mailing_import_report.import_operation %}
           <input type="file" name="file" accept=".xlsx" class="form-control" required style="max-width: 420px;">
           <button class="btn btn-primary mt-2" type="submit" data-mailing-import-submit>
             <span class="spinner-border spinner-border-sm me-1" aria-hidden="true" data-mailing-import-button-spinner hidden></span>
@@ -142,22 +142,8 @@
         </form>
 
         {% if request.session.mailing_import_report %}
-        <div id="import-report" class="alert alert-info mt-3">
-            <b>Отчёт импорта:</b><br>
-            Выбранная группа: <b>{{ request.session.mailing_import_report.audience_channel_group_label|default:"Гости новых ботов" }}</b><br>
-            Загружено строк: {{ request.session.mailing_import_report.total_loaded }}<br>
-            Уникальных телефонов: {{ request.session.mailing_import_report.unique_phones }}<br>
-            Найдено гостей в базе: {{ request.session.mailing_import_report.found }}<br>
-            Доступна отправка через новые боты: {{ request.session.mailing_import_report.sendable_new_bots|default:0 }}<br>
-            Доступна отправка через исторический Telegram: {{ request.session.mailing_import_report.sendable_historical|default:0 }}<br>
-            Всего гостей с доступным каналом: {{ request.session.mailing_import_report.sendable_total|default:0 }}<br>
-            Найдены, но нет доступного канала: {{ request.session.mailing_import_report.excluded_without_channel|default:0 }}<br>
-            Есть доступный канал, но не входят в выбранную группу: {{ request.session.mailing_import_report.excluded_by_audience_group|default:0 }}<br>
-            Добавлено в рассылку: <b>{{ request.session.mailing_import_report.added }}</b><br>
-            Добавлено строк с Telegram ID из файла: {{ request.session.mailing_import_report.legacy_external_id|default:0 }}<br>
-            Уже были в рассылке из выбранной группы: {{ request.session.mailing_import_report.already }}<br>
-            Дубли в файле: {{ request.session.mailing_import_report.duplicate_rows|default:0 }}<br>
-            Не найдено в базе: {{ request.session.mailing_import_report.not_found }}<br>
+          <div id="import-report">
+            {% include "mailing/includes/import_report.html" with report=request.session.mailing_import_report %}
           </div>
         {% endif %}
       {% endif %}

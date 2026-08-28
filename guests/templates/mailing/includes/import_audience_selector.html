@@ -1,3 +1,23 @@
+<fieldset class="mb-3" data-mailing-import-operation-selector>
+  <legend class="form-label fw-semibold mb-2">Операция с Excel</legend>
+  <div class="vstack gap-2">
+    <label class="border rounded p-2 d-flex gap-2 align-items-start">
+      <input class="form-check-input mt-1" type="radio" name="import_operation" value="include"{% if not selected_import_operation or selected_import_operation == "include" %} checked{% endif %}>
+      <span>
+        <span class="fw-semibold d-block">Добавить гостей, указанных в Excel</span>
+        <span class="text-muted small">Прежний режим: телефоны файла становятся кандидатами на добавление.</span>
+      </span>
+    </label>
+    <label class="border border-warning rounded p-2 d-flex gap-2 align-items-start">
+      <input class="form-check-input mt-1" type="radio" name="import_operation" value="exclude"{% if selected_import_operation == "exclude" %} checked{% endif %}>
+      <span>
+        <span class="fw-semibold d-block">Добавить всех допустимых, кроме указанных в Excel</span>
+        <span class="text-muted small">Сначала будет показан предварительный расчёт без изменения кампании.</span>
+      </span>
+    </label>
+  </div>
+</fieldset>
+
 <fieldset class="mb-3">
   <legend class="form-label fw-semibold mb-2">Кого добавить из Excel</legend>
   <div class="vstack gap-2">
@@ -24,3 +44,39 @@
     </label>
   </div>
 </fieldset>
+
+<script>
+  (function () {
+    "use strict";
+
+    function updateImportButton(selector) {
+      const form = selector.closest("form");
+      if (!form) {
+        return;
+      }
+      const selected = form.querySelector('input[name="import_operation"]:checked');
+      const label = form.querySelector("[data-mailing-import-button-label]");
+      if (!selected || !label || form.dataset.mailingImportSubmitting === "true") {
+        return;
+      }
+      const text = selected.value === "exclude" ? "Рассчитать аудиторию" : "Импортировать";
+      label.textContent = text;
+      label.dataset.defaultText = text;
+    }
+
+    function initializeOperationSelectors() {
+      document.querySelectorAll("[data-mailing-import-operation-selector]").forEach(function (selector) {
+        selector.addEventListener("change", function () {
+          updateImportButton(selector);
+        });
+        updateImportButton(selector);
+      });
+    }
+
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initializeOperationSelectors);
+    } else {
+      initializeOperationSelectors();
+    }
+  })();
+</script>

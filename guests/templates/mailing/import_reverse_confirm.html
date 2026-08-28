@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}Подтверждение обратной аудитории{% endblock %}
+
+{% block content %}
+<div class="container py-4" style="max-width: 920px;">
+  <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+    <div>
+      <h1 class="h4 mb-1">Предварительный расчёт аудитории</h1>
+      <p class="text-muted mb-0">Кампания #{{ mailing.id }} — {{ mailing.name }}</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ next_url }}">Вернуться без изменений</a>
+  </div>
+
+  <div class="card border-0 shadow-sm mb-3">
+    <div class="card-body">
+      {% include "mailing/includes/import_reverse_preview.html" with preview=preview %}
+    </div>
+  </div>
+
+  {% if preview_token and not preview.blockers %}
+    <div class="card border-warning shadow-sm">
+      <div class="card-body">
+        <h2 class="h6">Явное подтверждение</h2>
+        <p class="mb-3">
+          Повторно выберите тот же Excel. Сервер сверит отпечаток файла, настройки кампании
+          и рассчитанный состав аудитории. При любом изменении операция будет отклонена.
+        </p>
+        <form method="post" action="{% url 'mailing_import_phones' mailing.id %}" enctype="multipart/form-data" data-mailing-import-form>
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ next_url }}">
+          <input type="hidden" name="import_operation" value="exclude">
+          <input type="hidden" name="import_action" value="confirm">
+          <input type="hidden" name="audience_channel_group" value="{{ preview.audience_channel_group }}">
+          <input type="hidden" name="preview_token" value="{{ preview_token }}">
+          <label class="form-label fw-semibold" for="reverse-confirm-file">Тот же Excel-файл</label>
+          <input id="reverse-confirm-file" type="file" name="file" accept=".xlsx" class="form-control" required>
+          <button class="btn btn-warning mt-3" type="submit" data-mailing-import-submit>
+            <span class="spinner-border spinner-border-sm me-1" aria-hidden="true" data-mailing-import-button-spinner hidden></span>
+            <span data-mailing-import-button-label>Подтвердить и создать аудиторию</span>
+          </button>
+          {% include "mailing/includes/import_progress.html" %}
+        </form>
+      </div>
+    </div>
+  {% endif %}
+</div>
+{% endblock %}
